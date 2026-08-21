@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>海安预警 · 海外利益保护情报预警平台 — 公网接入引导</title>
+<script src="qrcode.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;background:#070b14;color:#dbe4f3;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 14px 40px}
+.band{width:100%;max-width:720px;text-align:center;margin-bottom:22px}
+.badge{display:inline-block;font-size:11px;letter-spacing:3px;color:#5b9bff;border:1px solid rgba(91,155,255,.35);border-radius:3px;padding:4px 12px;margin-bottom:14px}
+h1{font-size:24px;font-weight:700;color:#eef3fc;letter-spacing:2px}
+.sub{font-size:12px;color:#7a8aa5;margin-top:8px;letter-spacing:1px}
+.card{width:100%;max-width:720px;background:#0d1424;border:1px solid #1c2740;border-radius:10px;padding:20px 22px;margin-bottom:16px}
+.card-tt{font-size:13px;font-weight:700;color:#9fb4d8;letter-spacing:2px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.status-row{display:flex;align-items:center;gap:10px;font-size:13px;margin-bottom:10px;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:#ffd60a;flex:none}
+.dot.on{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.6)}
+.dot.off{background:#ff4d5e}
+.url-box{font-family:Consolas,monospace;font-size:12px;color:#5b9bff;background:#0a101d;border:1px solid #16223c;border-radius:6px;padding:8px 12px;word-break:break-all;margin:6px 0}
+.btn{display:block;width:100%;text-align:center;background:linear-gradient(135deg,#2f6bff,#1d4fd8);color:#fff;font-size:16px;font-weight:700;letter-spacing:4px;padding:15px 0;border-radius:8px;text-decoration:none;margin-top:12px;transition:filter .15s}
+.btn:hover{filter:brightness(1.15)}
+.btn.apk{background:linear-gradient(135deg,#0f9d6c,#0b7a54)}
+.btn.ghost{background:transparent;border:1px solid #2a3a5f;color:#9fb4d8;font-size:13px;letter-spacing:2px;padding:11px 0}
+.note{font-size:11px;color:#5d6f8f;line-height:1.8;margin-top:10px}
+.cols{display:flex;gap:16px;flex-wrap:wrap}
+.col{flex:1;min-width:220px;text-align:center}
+.qr-host{background:#fff;border-radius:8px;padding:10px;display:inline-block;margin:8px 0}
+.qr-cap{font-size:11px;color:#7a8aa5;margin-top:4px}
+.footer{font-size:11px;color:#46566f;margin-top:22px;text-align:center;line-height:1.9}
+#cd{color:#ffd60a;font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="band">
+  <div class="badge">OVERSEAS INTEREST PROTECTION</div>
+  <h1>海外利益保护情报预警平台</h1>
+  <div class="sub">海安预警 · 7×24 小时实时情报监测与早期预警</div>
+</div>
+
+<div class="card">
+  <div class="card-tt">📡 服务器接入状态</div>
+  <div class="status-row"><span class="dot" id="dot"></span><span id="statusText">正在检测服务器接入地址…</span></div>
+  <div class="url-box" id="urlBox">—</div>
+  <a class="btn" id="enterBtn" href="javascript:void(0)" style="opacity:.45;pointer-events:none">进 入 系 统</a>
+  <div class="note" id="cdNote" style="display:none">将在 <span id="cd">5</span> 秒后自动进入系统 …</div>
+</div>
+
+<div class="card">
+  <div class="card-tt">📱 手机 / 平板接入</div>
+  <div class="cols">
+    <div class="col">
+      <div style="font-size:13px;color:#eef3fc;font-weight:700">方式一：安卓 APP（推荐）</div>
+      <div class="qr-host" id="qrApk"></div>
+      <div class="qr-cap">手机扫码 直接下载安装</div>
+      <a class="btn apk" id="apkBtn" href="%E6%B5%B7%E5%AE%89%E9%A2%84%E8%AD%A6.apk" download>下载 海安预警 APP</a>
+    </div>
+    <div class="col">
+      <div style="font-size:13px;color:#eef3fc;font-weight:700">方式二：手机浏览器</div>
+      <div class="qr-host" id="qrWeb"></div>
+      <div class="qr-cap">手机扫码 直达系统（无需安装）</div>
+      <a class="btn ghost" href="javascript:void(0)" onclick="copyUrl()">复制当前接入地址</a>
+    </div>
+  </div>
+  <div class="note">
+    说明：系统服务器使用动态加密隧道发布，接入地址会不定期更换。<b style="color:#9fb4d8">本页地址固定不变</b>，每次打开会自动引导至最新服务器地址；APP 启动后也会自动跟随，无需重新安装。
+  </div>
+</div>
+
+<div class="footer">
+  海外利益保护情报预警平台 · 内部系统 · 请勿外传本页地址<br>
+  西南政法大学 国家安全情报研究团队
+</div>
+
+<script>
+var PAGE_BASE = location.href.replace(/[^\/]*$/, '');
+var APK_URL = PAGE_BASE + '%E6%B5%B7%E5%AE%89%E9%A2%84%E8%AD%A6.apk';
+var liveUrl = '';
+
+function makeQr(el, text){
+  try{ new QRCode(el, {text:text, width:150, height:150, correctLevel:QRCode.CorrectLevel.M}); }
+  catch(e){ el.innerHTML = '<div style="color:#c00;font-size:11px;padding:20px">二维码生成失败</div>'; }
+}
+makeQr(document.getElementById('qrApk'), APK_URL);
+
+function copyUrl(){
+  if(!liveUrl) return;
+  var t = document.createElement('textarea');
+  t.value = liveUrl; document.body.appendChild(t); t.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(t);
+  alert('已复制：' + liveUrl);
+}
+
+fetch('orps-server.json?t=' + Date.now(), {cache:'no-store'})
+  .then(function(r){ return r.json(); })
+  .then(function(j){
+    if(!j || !j.url) throw 0;
+    liveUrl = j.url.replace(/\/+$/,'');
+    document.getElementById('dot').className = 'dot on';
+    document.getElementById('statusText').textContent = '服务器在线 · 地址更新于 ' + (j.updated || '未知时间');
+    document.getElementById('urlBox').textContent = liveUrl;
+    var btn = document.getElementById('enterBtn');
+    btn.href = liveUrl;
+    btn.style.opacity = 1; btn.style.pointerEvents = 'auto';
+    makeQr(document.getElementById('qrWeb'), liveUrl);
+    // 倒计时自动进入
+    document.getElementById('cdNote').style.display = 'block';
+    var n = 5, el = document.getElementById('cd');
+    var timer = setInterval(function(){
+      n--; el.textContent = n;
+      if(n <= 0){ clearInterval(timer); location.href = liveUrl; }
+    }, 1000);
+  })
+  .catch(function(){
+    document.getElementById('dot').className = 'dot off';
+    document.getElementById('statusText').textContent = '暂时无法获取服务器地址（服务器可能在维护），请稍后再试';
+    document.getElementById('urlBox').textContent = '—';
+    makeQr(document.getElementById('qrWeb'), location.href);
+  });
+</script>
+</body>
+</html>
