@@ -81,12 +81,34 @@ var WECHAT = (function () {
         (st.freqCooldownUntil ? '<span style="font-size:11px;color:var(--orange)">⏸ 接口风控冷却至 ' + _esc(new Date(st.freqCooldownUntil).toLocaleTimeString('zh-CN')) + '</span>' : '') +
       '</div>' +
       (st.message ? '<div class="text-xs" style="color:var(--text2);margin-top:4px">' + _esc(st.message) + '</div>' : '') +
+      _renderProfile(st.profile) +
       (lr.at ? '<div class="text-xs text-muted" style="margin-top:6px">最近一轮：' + _esc(new Date(lr.at).toLocaleString('zh-CN')) +
         ' ｜ 账号 ' + (s.accountsOk || 0) + '/' + (s.accounts || 0) +
+        (s.channels ? ' ｜ ' + _esc(s.channels) : '') +
         ' ｜ 新文章 ' + (s.fresh || 0) + '（正文 ' + (s.bodyOk || 0) + '）' +
         ' ｜ 增量跳过 ' + (s.skippedOld || 0) +
         (s.errors && s.errors.length ? ' ｜ <span style="color:var(--orange)">异常 ' + s.errors.length + ' 条</span>' : '') +
         '</div>' : '<div class="text-xs text-muted" style="margin-top:6px">尚未运行过采集（登录后每 15 分钟自动运行，也可点下方「立即采集」）</div>');
+  }
+
+  /* profile_ext 直采凭证覆盖/新鲜度（2026-08-22 三通道编排） */
+  function _renderProfile(p) {
+    if (!p) return '';
+    var total = (p.credentialed || []).length + (p.missing || []).length + (p.stale || []).length;
+    if (!total) return '';
+    var ageTxt = '';
+    if (p.newestCapture) {
+      var ageH = Math.max(0, (Date.now() - Date.parse(p.newestCapture)) / 36e5);
+      ageH = Math.round(ageH * 10) / 10;
+      var col = ageH < 24 ? 'var(--green)' : (ageH < 72 ? 'var(--orange)' : 'var(--red)');
+      ageTxt = ' ｜ 凭证新鲜度：<span style="color:' + col + '">' + ageH + ' 小时前捕获</span>' +
+        (ageH >= 72 ? '（可能已过期，建议重开一轮历史页刷新）' : '');
+    }
+    return '<div class="text-xs" style="color:var(--text2);margin-top:4px">⚡ profile_ext 直采凭证：<b style="color:var(--cyan)">' +
+      (p.credentialed || []).length + '</b>/' + total + ' 号已覆盖' + ageTxt +
+      ((p.stale || []).length ? ' ｜ <span style="color:var(--red)">已失效：' + _esc(p.stale.join('、')) + '</span>' : '') +
+      ((p.missing || []).length ? ' ｜ <span style="color:var(--orange)">未截到：' + _esc(p.missing.slice(0, 6).join('、')) + ((p.missing.length > 6) ? ' 等' : '') + '</span>' : '') +
+      ((p.credentialed || []).length < total ? '<br>💡 运行 scripts\\wechat-capture.cmd 后，用 PC 微信依次点开这些号的「历史消息」页各 5 秒即可补齐</div>' : '</div>');
   }
 
   /* ---------- 扫码登录 ---------- */

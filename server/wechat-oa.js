@@ -428,6 +428,10 @@ async function collect(opts) {
     _collecting = false;
   }
 }
+/* 三通道编排（2026-08-22，用户材料一落地）：
+ *   profile_ext 直采（有抓包凭证的号，快/稳/官方JSON，最优）
+ *   → appmsg 接口（有扫码会话）→ 搜狗检索（免登录兜底）。
+ * 同轮混跑：每个号走自己当前最优通道；各通道冷却相互独立。 */
 async function _collectInner(opts, items, stats) {
   const session = loadSession();
   let accounts;
@@ -449,6 +453,43 @@ async function _collectInner(opts, items, stats) {
       stats.batch = '第' + (off + 1) + '-' + (off + accounts.length) + '号/共' + full.length + '号';
     }
   }
+  const prof = require('./wechat-profile');
+  const withCred = [], withoutCred = [];
+  for (const n of accounts) (prof.findCred(n) ? withCred : withoutCred).push(n);
+
+  const parts = [];
+  if (withCred.length) {
+    const pr = await prof.collectViaProfile(withCred, opts);
+    parts.push({ items: pr.items, stats: pr.stats, channel: 'profile-ext', label: 'profile_ext直采' });
+  }
+  if (withoutCred.length) {
+    const lr = await _collectLegacy(opts, withoutCred, session);
+    parts.push({ items: lr.items, stats: lr.stats, channel: lr.session.channel, label: session ? 'appmsg接口' : '搜狗检索' });
+  }
+  /* 合并各通道结果：计数累加、错误拼接、通道明细留痕 */
+  const mItems = [], mStats = { accounts: 0, accountsOk: 0, fetched: 0, fresh: 0, bodyOk: 0, skippedOld: 0, errors: [] };
+  if (stats.batch) mStats.batch = stats.batch;
+  mStats.channels = parts.map(p => p.label + '(' + (p.stats.accountsOk || 0) + '/' + (p.stats.accounts || 0) + '号)').join(' + ') || '无可用通道';
+  for (const p of parts) {
+    mItems.push.apply(mItems, p.items);
+    for (const k of ['accounts', 'accountsOk', 'fetched', 'fresh', 'bodyOk', 'skippedOld']) mStats[k] += p.stats[k] || 0;
+    mStats.errors.push.apply(mStats.errors, p.stats.errors || []);
+  }
+  const hasProf = parts.some(p => p.channel === 'profile-ext');
+  return {
+    items: mItems, stats: mStats,
+    session: {
+      logged: !!session, needLogin: false,
+      channel: hasProf ? 'profile-ext（混合编排）' : (session ? 'appmsg' : 'sogou-search'),
+      message: hasProf
+        ? 'profile_ext 直采已激活：' + mStats.channels
+        : (session ? '公众平台接口通道' : '免登录通道（搜狗微信检索）。用抓包助手截凭证可升级 profile_ext 直采')
+    }
+  };
+}
+/* 既有通道（appmsg 接口 / 搜狗检索兜底），只处理无 profile 凭证的号 */
+async function _collectLegacy(opts, accounts, session) {
+  const stats = { accounts: 0, accountsOk: 0, fetched: 0, fresh: 0, bodyOk: 0, skippedOld: 0, errors: [] };
   if (!session) {
     /* 免登录降级通道（2026-08-22）：微信号未注册公众号时扫码登录不可用，
      * 自动改走搜狗微信公开检索——真实文章、真实时间、真实正文，一样入库。 */
@@ -457,6 +498,7 @@ async function _collectInner(opts, items, stats) {
       message: '免登录通道（搜狗微信检索）。注册订阅号并扫码登录后可切换为全功能接口通道。' };
     return r;
   }
+  const items = [];
   const incr = _loadIncr();
   let bodyBudget = opts.bodyBudget || BODY_BUDGET;
 
@@ -563,15 +605,25 @@ function status() {
   try { loginState = JSON.parse(fs.readFileSync(path.join(CACHE_DIR, 'wechat-login-state.json'), 'utf8')); } catch (e) {}
   const incr = _loadIncr();
   const accounts = listAccounts();
+  let profile = null;
+  try { profile = require('./wechat-profile').statusInfo(accounts); } catch (e) {}
+  const profN = profile ? profile.credentialed.length : 0;
   return {
     logged: !!s,
     savedAt: s ? s.savedAt : '',
     needLogin: false,   /* 免登录通道兜底：未扫码也能采集，不再视为阻塞态 */
-    channel: s ? 'appmsg（公众平台接口·全功能）' : 'sogou-search（搜狗微信检索·免登录）',
-    message: s
-      ? '会话有效（保存于 ' + s.savedAt + '），走公众平台接口通道'
-      : '未扫码登录：自动走免登录通道（搜狗微信检索）。注册订阅号并扫码后可升级为全功能接口通道',
+    channel: profN
+      ? 'profile_ext直采(' + profN + '号) + ' + (s ? 'appmsg接口' : '搜狗检索') + '兜底'
+      : (s ? 'appmsg（公众平台接口·全功能）' : 'sogou-search（搜狗微信检索·免登录）'),
+    message: profN
+      ? 'profile_ext 直采已覆盖 ' + profN + '/' + accounts.length + ' 个号' +
+        (profile.missing.length ? '；未截到凭证：' + profile.missing.join('、') : '') +
+        (profile.stale.length ? '；凭证已失效需重开历史页：' + profile.stale.join('、') : '')
+      : (s
+        ? '会话有效（保存于 ' + s.savedAt + '），走公众平台接口通道'
+        : '未扫码登录：自动走免登录通道（搜狗微信检索）。运行 scripts/wechat-capture.cmd 抓包可升级 profile_ext 直采'),
     freqCooldownUntil: _freqCoolUntil ? new Date(_freqCoolUntil).toISOString() : '',
+    profile: profile,
     accounts,
     resolved: accounts.filter(n => incr[n] && (incr[n].fakeid || (incr[n].seenTitles || []).length)).length,
     loginState: loginState.state || 'idle',
@@ -579,4 +631,12 @@ function status() {
   };
 }
 
-module.exports = { collect, status, listAccounts, addAccount, removeAccount };
+module.exports = {
+  collect, status, listAccounts, addAccount, removeAccount,
+  /* 内部件共享给 wechat-profile.js（直采通道复用 HTTP/正文提取/增量状态），勿对外暴露到路由 */
+  _internals: {
+    httpGet: _httpGet, fetchArticleFull: _fetchArticleFull,
+    loadIncr: _loadIncr, saveIncr: _saveIncr,
+    titleKey: _titleKey, sleep: _sleep, jitter: _jitter
+  }
+};
