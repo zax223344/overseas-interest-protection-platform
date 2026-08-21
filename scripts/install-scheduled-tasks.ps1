@@ -75,6 +75,16 @@ Register-ORPSTask `
     -TriggerType "Logon" `
     -DelaySeconds 30
 
+$projPosix = "/" + (($projectRoot -replace '\\','/') -replace '^C:','c')
+
+Register-ORPSTask `
+    -TaskName "TunnelBoot" `
+    -Description "ORPS: cloudflared tunnel keepalive + gh-pages json auto-update" `
+    -Execute "C:\Users\28737\.workbuddy\binaries\PortableGit\versions\1.2.0\usr\bin\bash.exe" `
+    -Argument "-lc 'HTTP_PROXY= HTTPS_PROXY= NODE_OPTIONS= bash $projPosix/scripts/tunnel-keepalive.sh'" `
+    -TriggerType "Logon" `
+    -DelaySeconds 45
+
 Write-Host ""
 Write-Host "[Done] ORPS auto-start tasks installed. Check: Task Scheduler -> Task Scheduler Library -> ORPS"
 Write-Host "[Tip]  Reboot to verify, or manually run: $projectRoot\scripts\start-orps.bat"
