@@ -1,0 +1,4876 @@
+/**
+ * 海外利益保护情报预警平台 - Express.js 后端服务器
+ * PostgreSQL + JWT 认证 + RESTful API
+ */
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const path = require('path');
+const fs = require('fs');
+const https = require('https');
+const dotenv = require('dotenv');
+
+dotenv.config({ path: path.join(__dirname, '.env') });
+
+const { query, testConnection } = require('./db');
+const scrapers = require('./scrapers');
+const crawler = require('./crawler');
+const agentkey = require('./agentkey');
+const geoint = require('./geoint');
+const social = require('./social');
+const fulltext = require('./fulltext');
+const ENTITY = require('../entities.js');
+const globalmedia = require('./globalmedia');
+const socialmedia = require('./socialmedia');
+const negtool = require('./negtool'); /* 社交媒体采集通道（TG+Reddit，2026-08-13 并入） */
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'orps_jwt_secret_key_2026';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+/* MyMemory 免费注册 key（可选）：匿名 5000 字符/日 → 注册 key 50000 字符/日，仍免费、非百度 */
+const MYMEMORY_KEY = process.env.MYMEMORY_KEY || '';
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+
+/* ===== 服务端文件缓存（无 PostgreSQL 时的降级存储）=====
+ * 仅缓存「公开态势通道」所需的 osint_intel / collect_logs 真实爬取数据，
+ * 数据来自 /api/crawl 与 /api/scrape 的真实抓取，绝不编造。 */
+const CACHE_DIR = path.join(__dirname, '.cache');
+/* 新鲜度闸门：公开缓存只保留近 MAX_AGE_DAYS 天内的真实情报。
+ * 无时间戳的条目无法判定新旧，予以保留（避免误删近期社交情报）。
+ * 解决"系统里一堆非实时数据"问题——陈旧条目（含 2024 年的）不再滞留与反复展示。 */
+const MAX_AGE_DAYS = 45;
+function _itemTs(it) {
+  const t = it && (it.publishedAt || it.pubDate || it.date || it.collect_time || it.audit_time);
+  if (!t) return 0;
+  const ms = Date.parse(String(t).replace(/\//g, '-'));
+  return isNaN(ms) ? 0 : ms;
+}
+function _isFresh(it) {
+  const ts = _itemTs(it);
+  if (!ts) return true;                 // 无时间戳 → 保留
+  return (Date.now() - ts) <= MAX_AGE_DAYS * 864e5;
+}
+function _readCacheRaw(type) {
+  try {
+    const f = path.join(CACHE_DIR, type + '.json');
+    if (!fs.existsSync(f)) return [];
+    const arr = JSON.parse(fs.readFileSync(f, 'utf8'));
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+function _readPublicCache(type) {
+  try {
+    const arr = _readCacheRaw(type);
+    /* 铁律①：只返回与我海外利益安全直接关联的数据，旧缓存中无关外讯自动过滤 */
+    /* 铁律②：新鲜度闸门——剔除超过 MAX_AGE_DAYS 天的陈旧情报 */
+    /* 铁律③：体裁闸门——意识形态评论/学术论述（_commentary）与商业榜单/经济统计
+     *（_ranking，如"中国企业500强""《财富》世界500强"）一票否决，绝不入库。
+     *  _genreNoise 为二者合集（新版 enrich 统一打标），旧数据可能只有单项标记，故三者并列判定。 */
+    return arr.filter(function(it) {
+      return it && it.interestLinked === true
+        && !it._commentary && !it._ranking && !it._genreNoise
+        && _isFresh(it);
+    });
+  } catch (e) { return []; }
+}
+function _writePublicCache(type, items) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const arr = Array.isArray(items) ? items : [];
+    fs.writeFileSync(path.join(CACHE_DIR, type + '.json'), JSON.stringify(arr.slice(0, 200)), 'utf8');
+  } catch (e) { /* 缓存写入失败不影响主流程 */ }
+}
+/* 增量合并入库（唯一入库口径）。
+ * 严重 bug 修复：手动采集端点 /api/scrape、/api/crawl、/api/social 原先直接
+ * _writePublicCache(type, 本批items) —— 整体覆盖缓存，导致每次手动采集都把历史
+ * 已译中文情报全部抹掉（实测 27 条被一批 14 条覆盖）。改为「旧数据优先保留 + 新数据去重追加」。
+ * 说明：_dedupKey / _isNavNoise 在本文件后段定义，函数声明提升保证此处可调用。 */
+function _mergePublicCache(type, incoming) {
+  var list = Array.isArray(incoming) ? incoming : [];
+  var existing = [];
+  try { existing = _readPublicCache(type); } catch (e) {}
+  var seen = {}, merged = [];
+  existing.forEach(function(it) {
+    var k = _dedupKey(it);
+    if (!k || seen[k]) return;
+    seen[k] = 1; merged.push(it);
+  });
+  var added = 0;
+  list.forEach(function(it) {
+    if (!it || typeof it !== 'object') return;
+    if (it.interestLinked !== true) return;      // 铁律：只入关联我海外利益的数据
+    if (!_isFresh(it)) return;                    // 新鲜度闸门
+    if (_isNavNoise(it)) return;                  // 导航噪声闸门
+    if (_isGenreNoise(it)) return;                // 体裁闸门：评论/论述、商业榜单/经济统计
+    var k = _dedupKey(it);
+    if (!k || seen[k]) return;
+    seen[k] = 1; merged.push(it); added++;
+  });
+  _writePublicCache(type, merged);
+  console.log('[MERGE] ' + type + ' 新增 ' + added + ' 条（本批 ' + list.length + '），缓存现 ' + merged.length + ' 条');
+  return { added: added, total: merged.length };
+}
+
+/* ===== 中间件 ===== */
+app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.static(path.join(__dirname, '..'), {
+  setHeaders: function (res, filePath) {
+    // 前端代码强制不缓存：避免浏览器/代理缓存旧版 gate.js/app.js，导致国内噪声清不掉
+    if (/\.(html?|js|css|mjs|json)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+  }
+}));
+
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production' || req.method !== 'GET') {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  }
+  next();
+});
+
+/* ===== JWT 认证 ===== */
+function authMiddleware(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: '未登录或登录已过期' });
+  }
+  try {
+    req.user = jwt.verify(header.substring(7), JWT_SECRET);
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: '登录令牌无效或已过期' });
+  }
+}
+
+function adminOnly(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足，需要管理员权限' });
+  }
+  next();
+}
+
+function generateToken(user) {
+  return jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+/* ===== 实时情报流 SSE 推送 ===== */
+const sseClients = new Set();
+function broadcastIntel(payload) {
+  const data = 'data: ' + JSON.stringify(payload) + '\n\n';
+  sseClients.forEach(client => { try { client.write(data); } catch (e) {} });
+}
+function verifyTokenQuery(req) {
+  const t = req.query.token || '';
+  try { return jwt.verify(t, JWT_SECRET); } catch (e) { return null; }
+}
+
+/* ===== 常量 ===== */
+const INTEL_TYPES = ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs'];
+const DH_COLLECTIONS = ['countries','enterprises','alerts','events','warning_rules','chokepoints','corridors','predictions','terror_events','china_security','playbooks','_pending_reviews'];
+
+/* ===== 健康检查 ===== */
+app.get('/api/health', async (req, res) => {
+  const dbOk = await testConnection();
+  res.json({ status: 'ok', version: '2.0.0', database: dbOk ? 'connected' : 'disconnected', time: new Date().toISOString() });
+});
+
+/* ===== 认证 API ===== */
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
+    const result = await query('SELECT * FROM users WHERE username = $1 AND is_active = true', [username]);
+    if (result.rows.length === 0) return res.status(404).json({ error: '用户不存在' });
+    const user = result.rows[0];
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(401).json({ error: '密码错误' });
+    if (user.status !== 'approved') return res.status(403).json({ error: '账号尚未审核通过，请联系管理员' });
+    if (user.trial && user.expire_time && new Date(user.expire_time) < new Date()) {
+      return res.status(403).json({ error: '试用账号已过期，请联系管理员续期' });
+    }
+    const token = generateToken(user);
+    res.json({ token, user: { name: user.username, role: user.role, status: user.status, trial: user.trial, expireTime: user.expire_time } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
+    if (password.length < 6) return res.status(400).json({ error: '密码至少6位' });
+    const existing = await query('SELECT id FROM users WHERE username = $1', [username]);
+    if (existing.rows.length > 0) return res.status(409).json({ error: '用户名已存在' });
+    const hashed = await bcrypt.hash(password, 10);
+    const result = await query('INSERT INTO users (username, password, role, status) VALUES ($1, $2, $3, $4) RETURNING id, username, role, status', [username, hashed, 'user', 'pending']);
+    res.json({ success: true, message: '注册成功，请等待管理员审核', user: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/auth/trial', async (req, res) => {
+  try {
+    const { username, password, days } = req.body;
+    if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
+    const existing = await query('SELECT id FROM users WHERE username = $1', [username]);
+    if (existing.rows.length > 0) return res.status(409).json({ error: '用户名已存在' });
+    const hashed = await bcrypt.hash(password, 10);
+    const expire = new Date();
+    expire.setDate(expire.getDate() + parseInt(days || 7, 10));
+    const result = await query('INSERT INTO users (username, password, role, status, trial, expire_time) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [username, hashed, 'user', 'approved', true, expire.toISOString()]);
+    const user = result.rows[0];
+    const token = generateToken(user);
+    res.json({ token, user: { name: user.username, role: user.role, status: user.status, trial: user.trial, expireTime: user.expire_time } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/auth/renew-trial', authMiddleware, async (req, res) => {
+  try {
+    const { username, days } = req.body;
+    if (!username || !days) return res.status(400).json({ error: '缺少参数' });
+    const result = await query('SELECT * FROM users WHERE username = $1', [username]);
+    if (result.rows.length === 0) return res.status(404).json({ error: '用户不存在' });
+    const user = result.rows[0];
+    let newExpire = (user.expire_time && new Date(user.expire_time) > new Date()) ? new Date(user.expire_time) : new Date();
+    newExpire.setDate(newExpire.getDate() + parseInt(days, 10));
+    await query('UPDATE users SET expire_time = $1 WHERE username = $2', [newExpire.toISOString(), username]);
+    res.json({ success: true, expireTime: newExpire.toISOString() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/auth/check', authMiddleware, async (req, res) => {
+  try {
+    const result = await query('SELECT id, username, role, status, trial, expire_time FROM users WHERE id = $1', [req.user.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: '用户不存在' });
+    const u = result.rows[0];
+    res.json({ name: u.username, role: u.role, status: u.status, trial: u.trial, expireTime: u.expire_time });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 用户管理 API ===== */
+app.get('/api/users', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const result = await query('SELECT id, username, role, status, reg_time, expire_time, trial, is_default, is_active FROM users ORDER BY id ASC');
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/users/:username/approve', authMiddleware, adminOnly, async (req, res) => {
+  try { await query("UPDATE users SET status = 'approved' WHERE username = $1", [req.params.username]); res.json({ success: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/users/:username/reject', authMiddleware, adminOnly, async (req, res) => {
+  try { await query("UPDATE users SET status = 'rejected' WHERE username = $1", [req.params.username]); res.json({ success: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/users/:username/role', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!['admin','user'].includes(role)) return res.status(400).json({ error: '无效角色' });
+    await query('UPDATE users SET role = $1 WHERE username = $2', [role, req.params.username]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/users/:username', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    if (req.params.username === 'admin') return res.status(400).json({ error: '不能删除默认管理员账号' });
+    await query('UPDATE users SET is_active = false WHERE username = $1', [req.params.username]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/users/:username/password', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: '密码至少6位' });
+    const hashed = await bcrypt.hash(password, 10);
+    await query('UPDATE users SET password = $1 WHERE username = $2', [hashed, req.params.username]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 情报数据 API (DBCenter 11类) ===== */
+/* 实时情报流 SSE 端点 */
+app.get('/api/stream', (req, res) => {
+  // 实时情报流为公开态势驾驶舱数据：允许匿名连接；有token则记录用户(用于审计)
+  const user = verifyTokenQuery(req);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write('retry: 3000\n\n');
+  res.write(': connected\n\n'); // 立即占用连接，避免被中间缓冲判定为空闲而重置
+  sseClients.add(res);
+  const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 15000);
+  req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
+});
+
+/* 公开情报读取：态势驾驶舱只读数据，无需登录。仅限已审核的公开类型，避免暴露敏感内容 */
+const PUBLIC_INTEL_TYPES = ['osint_intel','collect_logs'];
+/* 涉华情报全量接口（2026-08-13）：直查数据库，不按时间截断 200 条缓存环——
+ * 前端"涉华情报列表"原读公开缓存环（仅最新 200 条，涉华只剩十几条），
+ * 改为本接口按标题要素（中国/中资/华人/China/Chinese/一带一路等，含 title_zh）全量返回。 */
+app.get('/api/intel/china', async (req, res) => {
+  try {
+    const r = await query(`
+      SELECT * FROM intel_data
+      WHERE audit_status='approved' AND (
+        title ILIKE '%中国%' OR title ILIKE '%中资%' OR title ILIKE '%中企%' OR title ILIKE '%中方%'
+        OR title ILIKE '%华人%' OR title ILIKE '%华侨%' OR title ILIKE '%华裔%' OR title ILIKE '%涉华%'
+        OR title ILIKE '%对华%' OR title ILIKE '%一带一路%' OR title ILIKE '%驻华%' OR title ILIKE '%访华%'
+        OR title ILIKE '%China%' OR title ILIKE '%Chinese%' OR title ILIKE '%Beijing%'
+        OR title ILIKE '%Belt and Road%' OR title ILIKE '%CPEC%'
+        OR data_json->>'title_zh' ILIKE '%中国%' OR data_json->>'title_zh' ILIKE '%中资%'
+        OR data_json->>'title_zh' ILIKE '%中企%' OR data_json->>'title_zh' ILIKE '%华人%'
+        OR data_json->>'title_zh' ILIKE '%一带一路%'
+      )
+      ORDER BY collect_time DESC LIMIT 500`);
+    const _seen = {};
+    const list = [];
+    for (const row of r.rows) {
+      const j = row.data_json || {};
+      /* 国内新闻硬拦截（2026-08-13 用户指令：只要境外涉华+海外利益安全） */
+      if (globalmedia._isDomesticChina && globalmedia._isDomesticChina((row.title || '') + ' ' + (j.title_zh || ''))) continue;
+      const k = _normTitleKey(j.title_zh || row.title) || _normTitleKey(row.title);
+      if (k && _seen[k]) continue;
+      if (k) _seen[k] = 1;
+      list.push(Object.assign({}, j, {
+        id: row.id,
+        title: j.title_zh || row.title || '',
+        title_zh: j.title_zh || '',
+        title_en: j.title || row.title || '',
+        content: j.content_zh || j.content || row.description || '',
+        source: row.source || j.source || '',
+        country: row.country || j.country_cn || j.country || '',
+        time: j.publish_time || row.event_date || row.collect_time,
+        collect_time: row.collect_time,
+        audit_status: row.audit_status,
+        data_type: row.data_type,
+        chinaRelated: true,
+        _chinaNegative: j._chinaNegative === true || j._chinaNegative === 'true'
+      }));
+    }
+    res.json(list);
+  } catch (e) {
+    console.warn('[CHINA LIST] 查询失败:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* 前后端权威同步对账（2026-08-13 体检 P0-3）：返回服务端全部已审核条目 ID，
+ * 前端启动时对账——本地有而服务端没有的服务器来源条目（数字ID）一律移除，
+ * 解决"服务端已删除、浏览器本地副本仍在"的复发问题。 */
+/* ===== 每日简报自动生成（2026-08-14 用户指令）=====
+ * 每天 08:00（本地时区）自动汇总前一日已入库审核数据，零虚构：
+ * 全部内容来自 PostgreSQL 真实条目的统计与摘录，不调用任何生成式模型。 */
+function _escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+const _DR_TYPE_NAMES = {
+  terror_events: '恐怖袭击/武装袭击', military_conflicts: '武装冲突', social_unrest: '社会动荡',
+  sanctions_data: '制裁与合规', political_events: '政治政局', natural_disasters: '自然灾害',
+  public_health: '公共卫生', infrastructure: '基础设施与供应链', security_events: '治安事件',
+  geopolitical_intel: '地缘动态', osint_intel: '开源情报综合'
+};
+async function _generateDailyReport(dateKey) {
+  const parts = dateKey.split('-').map(Number);
+  const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+  const end = new Date(start.getTime() + 24 * 3600 * 1000);
+  const { rows } = await query(
+    "SELECT id, data_type, title, country, severity, source, event_date, collect_time, data_json FROM intel_data WHERE collect_time >= $1 AND collect_time < $2 AND audit_status='approved' ORDER BY collect_time DESC",
+    [start, end]
+  );
+  const cnRe = /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i;
+  const items = rows.map(r => {
+    const j = r.data_json || {};
+    return {
+      id: r.id, type: r.data_type, title: j.title_zh || r.title || '', country: r.country || j.country_cn || '',
+      severity: j.level_norm || r.severity || 'yellow', source: r.source || j.source || '',
+      time: j.publish_time || r.event_date || '',
+      china: cnRe.test((r.title || '') + ' ' + (j.title_zh || '')),
+      assets: j.asset_tags || [], cred: j.credibility || '', corr: j.corroboration || 0,
+      negative: j._chinaNegative === true || j._chinaNegative === 'true'
+    };
+  });
+  const total = items.length;
+  const chinaItems = items.filter(i => i.china && !i.negative);
+  const negItems = items.filter(i => i.negative);
+  const reds = items.filter(i => i.severity === 'red');
+  const byType = {}; items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+  const byCountry = {}; items.forEach(i => { const c = i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+  const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const assetHits = items.filter(i => i.assets && i.assets.length);
+  const corroborated = items.filter(i => i.corr >= 2).sort((a, b) => b.corr - a.corr);
+  const sanctions = items.filter(i => i.type === 'sanctions_data');
+  const sources = {}; items.forEach(i => { sources[i.source] = 1; });
+
+  function row(i, extra) {
+    const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
+    const lvColor = { red: '#ff3355', orange: '#ff8800', yellow: '#ffcc00', blue: '#00d4ff' }[i.severity] || '#888';
+    return '<div style="padding:8px 10px;border-left:3px solid ' + lvColor + ';background:rgba(128,128,128,0.06);border-radius:6px;margin-bottom:6px">'
+      + '<div style="font-size:13px;font-weight:600">' + _escapeHtml(i.title) + '</div>'
+      + '<div style="font-size:11px;opacity:0.65;margin-top:2px">'
+      + '<span style="color:' + lvColor + '">' + lvName + '</span>'
+      + (i.country ? ' · 📍' + _escapeHtml(i.country) : '')
+      + (i.time ? ' · 🕐' + _escapeHtml(String(i.time).slice(0, 16)) : '')
+      + ' · ' + _escapeHtml(i.source)
+      + (i.cred ? ' · 信源' + i.cred + '级' : '')
+      + (i.corr > 1 ? ' · 🔗×' + i.corr + ' 印证' : '')
+      + (extra || '')
+      + '</div></div>';
+  }
+  function section(title, icon, innerHtml, emptyText) {
+    return '<div style="margin:18px 0"><div style="font-size:15px;font-weight:700;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(128,128,128,0.25)">' + icon + ' ' + title + '</div>'
+      + (innerHtml || '<div style="opacity:0.5;font-size:12px">' + (emptyText || '当日无相关条目') + '</div>') + '</div>';
+  }
+
+  let html = '';
+  html += '<div style="opacity:0.7;font-size:12px;margin-bottom:12px">本报告由系统基于当日实际采集入库数据自动汇总生成，未使用任何生成式模型，所有条目均可回溯至数据中心原始记录。</div>';
+  const typeRows = Object.entries(byType).sort((a, b) => b[1] - a[1])
+    .map(e => '<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 10px;background:rgba(0,150,255,0.08);border-radius:10px;font-size:12px">' + (_DR_TYPE_NAMES[e[0]] || e[0]) + ' <b>' + e[1] + '</b></span>').join('');
+  html += section('采集总览', '📊',
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">'
+    + '<span>入库总量 <b style="font-size:18px">' + total + '</b></span>'
+    + '<span>涉华 <b style="font-size:18px;color:#0a84ff">' + chinaItems.length + '</b></span>'
+    + '<span>境外涉华负面 <b style="font-size:18px;color:#ff8800">' + negItems.length + '</b></span>'
+    + '<span>红色（涉华严重） <b style="font-size:18px;color:#ff3355">' + reds.length + '</b></span>'
+    + '<span>信源 <b style="font-size:18px">' + Object.keys(sources).length + '</b> 家</span></div>'
+    + '<div>' + typeRows + '</div>');
+  html += section('涉华严重事件（红色）', '🔴', reds.slice(0, 20).map(i => row(i)).join(''), '当日无涉华严重事件');
+  html += section('中资海外资产关联警报', '🏗️', assetHits.slice(0, 15).map(i => row(i, ' · 资产：' + _escapeHtml(i.assets.join('、')))).join(''), '当日无资产关联警报');
+  html += section('涉华动态', '🇨🇳', chinaItems.slice(0, 15).map(i => row(i)).join(''), '当日无涉华条目');
+  html += section('境外涉华负面舆情', '⚠️', negItems.slice(0, 10).map(i => row(i)).join(''), '当日无涉华负面条目');
+  html += section('制裁、出口管制与合规动态', '⚖️', sanctions.slice(0, 12).map(i => row(i)).join(''), '当日无制裁合规类条目');
+  html += section('多源印证事件（≥2 方独立信源）', '🔗', corroborated.slice(0, 12).map(i => row(i)).join(''), '当日无多源印证事件');
+  html += section('重点国别分布', '🌍',
+    topCountries.map(e => {
+      const pct = total ? Math.round(e[1] / total * 100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px">'
+        + '<span style="min-width:90px">' + _escapeHtml(e[0]) + '</span>'
+        + '<div style="flex:1;height:8px;background:rgba(128,128,128,0.15);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:#0a84ff"></div></div>'
+        + '<span style="min-width:60px;text-align:right;opacity:0.7">' + e[1] + ' 条</span></div>';
+    }).join(''));
+
+  const summary = { total, china: chinaItems.length, negative: negItems.length, red: reds.length, sources: Object.keys(sources).length, byType, topCountries };
+  await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
+  await query(`INSERT INTO daily_reports (report_date, html, summary, created_at) VALUES ($1, $2, $3, NOW())
+               ON CONFLICT (report_date) DO UPDATE SET html=$2, summary=$3, created_at=NOW()`,
+    [dateKey, html, JSON.stringify(summary)]);
+  return { date: dateKey, total, html, summary };
+}
+
+/* ===== 数据完整性巡检哨兵（2026-08-14 用户指令：要面对实战单位，杜绝灌水/复活复发）=====
+ * 每 30 分钟自动巡检当日数据，发现问题自动清洗并日志告警：
+ *  1. 标题重复率 > 3%（前端灌水/通道异常的早期信号）→ 自动去重（同题留最早）
+ *  2. 删除名单条目复活（用户明令删除的数据）→ 立即删除
+ *  3. 国内新闻混入（标题级判定）→ 删除
+ * 一切动作写日志，可在 pm2 logs 中审计。 */
+async function _integrityWatchdog() {
+  try {
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const { rows } = await query(
+      "SELECT id, title, data_json->>'title_zh' AS tzh, data_json->>'_fromSource' AS fs FROM intel_data WHERE collect_time >= $1 ORDER BY id ASC",
+      [d0]
+    );
+    if (!rows.length) return;
+    const seen = {}, delDup = [], delBlocked = [], delDomestic = [];
+    for (const r of rows) {
+      const t = String(r.title || '');
+      /* 删除名单 */
+      if (_POST_BLOCK_RE.test(t + ' ' + String(r.tzh || ''))) { delBlocked.push(r.id); continue; }
+      /* 国内新闻 */
+      if (globalmedia._isDomesticChina && globalmedia._isDomesticChina(t + ' ' + String(r.tzh || ''))) { delDomestic.push(r.id); continue; }
+      /* 标题重复 */
+      const k1 = _normTitleKey(t), k2 = _normTitleKey(r.tzh);
+      if ((k1.length >= 10 && seen[k1]) || (k2.length >= 10 && seen[k2])) { delDup.push(r.id); continue; }
+      if (k1.length >= 10) seen[k1] = 1;
+      if (k2.length >= 10) seen[k2] = 1;
+    }
+    const del = delBlocked.concat(delDomestic, delDup);
+    if (del.length) {
+      let done = 0;
+      for (let i = 0; i < del.length; i += 400) {
+        const b = del.slice(i, i + 400);
+        const ph = b.map((_, j) => '$' + (j + 1)).join(',');
+        const d = await query('DELETE FROM intel_data WHERE id IN (' + ph + ')', b);
+        done += d.rowCount;
+      }
+      console.warn('[WATCHDOG] ⚠️ 自动清洗 ' + done + ' 条（重复 ' + delDup.length + ' / 删除名单复活 ' + delBlocked.length + ' / 国内混入 ' + delDomestic.length + '），当日总量 ' + rows.length + ' → ' + (rows.length - done));
+    }
+    const dupRate = rows.length ? (delDup.length / rows.length * 100).toFixed(1) : '0';
+    if (parseFloat(dupRate) > 3) console.warn('[WATCHDOG] 当日重复率 ' + dupRate + '% 偏高，请关注前端同步引擎或通道异常');
+    /* 社媒通道采集量 + 重点数据触达检查（2026-08-14 用户指令） */
+    try {
+      const d1 = new Date(); d1.setHours(0, 0, 0, 0);
+      const sm = await query("SELECT COUNT(*) c FROM intel_data WHERE collect_time >= $1 AND data_json->>'_sourceType'='social_media'", [d1]);
+      const sev = await query("SELECT severity, COUNT(*) c FROM intel_data WHERE collect_time >= $1 AND severity IN ('red','orange') GROUP BY 1", [d1]);
+      const sevMap = {}; sev.rows.forEach(x => { sevMap[x.severity] = x.c; });
+      console.log('[WATCHDOG] 当日社媒采集 ' + sm.rows[0].c + ' 条；重点数据（红' + (sevMap.red || 0) + '/橙' + (sevMap.orange || 0) + '）已随 Feed 分层置顶推送预警中心');
+      if (parseInt(sm.rows[0].c, 10) === 0) console.warn('[WATCHDOG] ⚠️ 社媒通道今日零产出——检查本机 7897 代理是否在运行');
+    } catch (e) {}
+  } catch (e) { console.warn('[WATCHDOG] 巡检异常:', e.message); }
+}
+/* ===== 涉华负面专项巡检哨兵（2026-08-14 用户指令：每30分钟巡检，让每日涉华负面更多更好）=====
+ * 巡检内容：当日负面产量 vs 时间加权目标（50/天）→ 落后即清零 AP 冷却并立即加跑一轮；
+ * 产出速率/全天预估/分类分布写日志；近 20 条抽样质检（强化负面判定复核）。 */
+async function _negSentinel() {
+  try {
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const r = await query(
+      "SELECT COUNT(*) c FROM intel_data WHERE collect_time >= $1 AND (data_json->>'_chinaNegative'='true' OR data_json->>'_chinaNegative'='true')",
+      [d0]
+    );
+    const cnt = parseInt(r.rows[0].c, 10) || 0;
+    const now = new Date();
+    const dayRatio = Math.max(0.01, (now - d0) / (24 * 3600 * 1000));
+    const expected = Math.round(50 * dayRatio * 0.85);
+    const hoursElapsed = Math.max(0.5, (now - d0) / 3600000);
+    const rate = (cnt / hoursElapsed).toFixed(1);
+    const projection = Math.round(cnt / hoursElapsed * 24);
+    /* 分类分布 */
+    const cats = await query(
+      "SELECT data_json->>'_negCat' cat, COUNT(*) c FROM intel_data WHERE collect_time >= $1 AND data_json->>'_negCat' IS NOT NULL GROUP BY 1 ORDER BY c DESC LIMIT 5",
+      [d0]
+    );
+    const catStr = cats.rows.map(x => x.cat + ':' + x.c).join(' ') || '（专用工具暂无产出）';
+    console.log('[NEG-SENTINEL] 今日涉华负面 ' + cnt + '/50（时点期望 ' + expected + '）| 速率 ' + rate + ' 条/h | 全天预估 ' + projection + ' 条 | 分类 ' + catStr);
+    if (cnt < expected) {
+      console.warn('[NEG-SENTINEL] ⚠️ 负面采集落后 ' + (expected - cnt) + ' 条，清零冷却并立即加跑一轮');
+      _chinaNegativeLastApAt = 0;
+      setTimeout(() => { _runChinaNegative(); }, 3000);
+    }
+    /* 抽样质检：近 20 条负面是否真负面 */
+    const sample = await query(
+      "SELECT title, data_json->>'title_zh' tzh FROM intel_data WHERE collect_time >= $1 AND data_json->>'_chinaNegative'='true' ORDER BY collect_time DESC LIMIT 20",
+      [d0]
+    );
+    let bad = 0;
+    sample.rows.forEach(x => { if (!negtool._isChinaNegativeStrong((x.title || '') + ' ' + (x.tzh || ''))) bad++; });
+    if (bad > 0) console.warn('[NEG-SENTINEL] 质检：近20条中 ' + bad + ' 条负面特征不足，请关注闸门');
+  } catch (e) { console.warn('[NEG-SENTINEL] 巡检异常:', e.message); }
+}
+/* ===== 实时性巡检哨兵（2026-08-14 用户指令：所有数据/统计必须实时更新，不实时就修）=====
+ * 每 30 分钟检查"数据活水"：最近30分钟入库数、各通道今日产出、最新条目年龄。
+ * 发现停滞（30分钟零入库）自动重启全部采集通道并告警——不等人工发现。 */
+async function _freshnessSentinel() {
+  try {
+    const r = await query("SELECT COUNT(*) c, MAX(collect_time) latest FROM intel_data WHERE collect_time >= NOW() - INTERVAL '30 minutes'");
+    const recent = parseInt(r.rows[0].c, 10) || 0;
+    const latest = r.rows[0].latest;
+    const ageMin = latest ? Math.round((Date.now() - new Date(latest).getTime()) / 60000) : -1;
+    /* 通道产出 */
+    const ch = await query("SELECT data_json->>'_sourceType' st, COUNT(*) c FROM intel_data WHERE collect_time >= CURRENT_DATE GROUP BY 1 ORDER BY c DESC");
+    const chStr = ch.rows.map(x => (x.st || '未知') + ':' + x.c).join(' | ');
+    console.log('[FRESH-SENTINEL] 近30分钟入库 ' + recent + ' 条 | 最新条目 ' + ageMin + ' 分钟前 | 今日通道分布: ' + chStr);
+    if (recent === 0) {
+      console.warn('[FRESH-SENTINEL] ⚠️ 30分钟零入库，采集心跳停止——自动重启全部采集通道');
+      _globalMediaBusyUntil = 0; _chinaFocusBusyUntil = 0; _chinaNegativeBusyUntil = 0; _terrorBusyUntil = 0;
+      setTimeout(() => { _runGlobalMedia(); }, 2000);
+      setTimeout(() => { _runChinaFocus(); }, 8000);
+      setTimeout(() => { _runChinaNegative(); }, 15000);
+      setTimeout(() => { _runTerrorAttacks(); }, 22000);
+    }
+    /* 通道级停滞检测：某通道 2 小时零产出告警 */
+    const stall = await query("SELECT data_json->>'_sourceType' st, MAX(collect_time) latest FROM intel_data WHERE collect_time >= NOW() - INTERVAL '6 hours' GROUP BY 1");
+    const stallMap = {};
+    stall.rows.forEach(x => { stallMap[x.st] = Math.round((Date.now() - new Date(x.latest).getTime()) / 60000); });
+    ['social_media', 'gdelt_theme', 'channel_watch', 'china_negative'].forEach(k => {
+      const age = stallMap[k];
+      if (age === undefined || age > 120) console.warn('[FRESH-SENTINEL] ⚠️ 通道 ' + k + ' ' + (age === undefined ? '近6小时零产出' : '已停滞 ' + age + ' 分钟'));
+    });
+  } catch (e) { console.warn('[FRESH-SENTINEL] 巡检异常:', e.message); }
+}
+setInterval(_freshnessSentinel, 30 * 60 * 1000);
+setTimeout(_freshnessSentinel, 3 * 60 * 1000);
+
+setInterval(_negSentinel, 30 * 60 * 1000);
+setTimeout(_negSentinel, 2 * 60 * 1000); /* 启动 2 分钟后首跑 */
+
+/* ===== 交付质量哨兵（2026-08-15 用户指令：同一问题不能反复出现，部署交付后系统自愈）=====
+ * 把历次用户投诉固化为铁律自检项，每30分钟巡查、发现即自动修，不靠人工发现：
+ *  ① 共享预警库只留"今日"数据（跨天旧预警/无时间无编号条目自动清除）；
+ *  ② 历史静态种子黑名单裸条目（无原文链接）无论藏在哪个库一律清除；
+ *  ③ 今日入库统计口径（全库）抽查可见；
+ * 巡检结果经 GET /api/quality 对外透明，前端系统设置页可视化。 */
+let _qualityReport = { at: null, ok: true, checks: [], actions: [] };
+async function _qualityGuardian() {
+  const checks = [], actions = [];
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const ds = dayStart.getTime();
+    const tk = String(dayStart.getFullYear()) + String(dayStart.getMonth() + 1).padStart(2, '0') + String(dayStart.getDate()).padStart(2, '0');
+    /* ① 共享预警库当日化 + 黑名单 */
+    try {
+      const r = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
+      if (r.rows.length && Array.isArray(r.rows[0].data_json)) {
+        const arr = r.rows[0].data_json;
+        const kept = arr.filter(a => {
+          const txt = String(a.title || '') + String(a.title_zh || '');
+          if (!a.url && _POST_BLOCK_RE.test(txt)) return false;
+          const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
+          if (t) return t >= ds;
+          const m = String(a.alert_no || '').match(/(20\d{6})/);
+          return m ? m[1] === tk : false;
+        });
+        if (kept.length !== arr.length) {
+          await query('UPDATE datahub_store SET data_json=$1::jsonb, updated_at=now() WHERE collection=$2', [JSON.stringify(kept), 'alerts']);
+          actions.push('共享预警库剔除非当日/黑名单 ' + (arr.length - kept.length) + ' 条');
+        }
+        checks.push({ name: '共享预警库当日化', ok: true, detail: kept.length + ' 条（全部今日）' });
+      }
+    } catch (e) { checks.push({ name: '共享预警库当日化', ok: false, detail: e.message }); }
+    /* ② 黑名单裸条目扫描（全库任何日期，无原文链接的静态种子） */
+    try {
+      const r2 = await query("SELECT id, title, data_json->>'title_zh' tzh FROM intel_data WHERE data_json->>'url' IS NULL OR data_json->>'url'=''");
+      const bad = r2.rows.filter(x => _POST_BLOCK_RE.test((x.title || '') + ' ' + (x.tzh || '')));
+      if (bad.length) {
+        const ids = bad.map(x => x.id);
+        const marks = ids.map((_, i) => '$' + (i + 1)).join(',');
+        await query('DELETE FROM intel_data WHERE id IN (' + marks + ')', ids);
+        actions.push('情报库清除黑名单裸条目 ' + bad.length + ' 条');
+      }
+      checks.push({ name: '黑名单裸条目', ok: true, detail: bad.length ? '已清除 ' + bad.length + ' 条' : '0 命中' });
+    } catch (e) { checks.push({ name: '黑名单裸条目', ok: false, detail: e.message }); }
+    /* ③ 今日入库（全库口径，顶栏与采集指标共用此数） */
+    try {
+      const r3 = await query("SELECT COUNT(*) c FROM intel_data WHERE audit_status='approved' AND collect_time >= $1", [dayStart]);
+      checks.push({ name: '今日入库(全库口径)', ok: true, detail: r3.rows[0].c + ' 条' });
+      /* 利益关联哨兵结果并入 */
+      if (typeof _valueSentinelState !== 'undefined' && _valueSentinelState.at) {
+        checks.push({ name: '预警利益关联', ok: true, detail: '在队 ' + _valueSentinelState.kept + ' 条 · 本轮移出无关联 ' + _valueSentinelState.demoted + ' 条 · 平均关联分 ' + _valueSentinelState.avgScore });
+      }
+    } catch (e) { checks.push({ name: '今日入库统计', ok: false, detail: e.message }); }
+  } catch (e) { actions.push('巡检异常: ' + e.message); }
+  const ok = checks.every(c => c.ok);
+  _qualityReport = { at: new Date().toISOString(), ok, checks, actions };
+  console.log('[QUALITY] 巡检：' + (ok ? '全部达标' : '存在异常') + (actions.length ? ' | 自愈动作: ' + actions.join('；') : ' | 无需动作'));
+}
+/* ===== 预警利益关联哨兵（2026-08-16 用户铁律：预警中心是核心中的核心）=====
+ * 实战标准：每条预警必须体现对中国海外利益（人员/项目/资产/通道/声誉）的影响。
+ * 每30分钟巡查共享预警库：五维利益关联评分——
+ *   涉华要素(30) + 中资资产命中(30) + 威胁组织关联(10) + 伤亡烈度(20/8) + BRI沿线国(10)
+ * 红/橙级一律保留（高烈度事件本身构成环境风险）；
+ * 黄/蓝级且关联分<20 的为"与我无关的泛新闻"，移出预警中心（数据中心仍可查）。
+ * 巡检结果并入 /api/quality 报告。 */
+const _INTEREST_CN_RE = /中国|中资|中企|中方|华人|华侨|华裔|一带一路|涉华|对华|驻[^，。]{0,4}使馆|孔子|撤侨|Chinese|China|Beijing|CPEC|Belt and Road/i;
+const _INTEREST_ASSET_RE = /瓜达尔|中巴经济走廊|汉班托塔|比雷埃夫斯|皎漂|中老铁路|雅万|蒙内|亚吉|钱凯|科伦坡港口城|中白工业园|吉布提|莱基|坦赞|西芒杜|中欧班列|China Railway Express/i;
+const _INTEREST_ORG_RE = /塔利班|青年党|博科圣地|伊斯兰国|基地组织|胡塞|真主党|哈马斯|俾路支|Taliban|Shabaab|Boko|ISIS|Qaeda|Houthi|BLA|TTP/i;
+const _BRI_COUNTRIES = ['巴基斯坦', '哈萨克斯坦', '乌兹别克斯坦', '吉尔吉斯斯坦', '塔吉克斯坦', '土库曼斯坦', '老挝', '柬埔寨', '缅甸', '印度尼西亚', '马来西亚', '泰国', '越南', '塞尔维亚', '匈牙利', '希腊', '埃塞俄比亚', '肯尼亚', '吉布提', '埃及', '斯里兰卡', '孟加拉国', '尼泊尔', '沙特阿拉伯', '阿联酋', '土耳其', '白俄罗斯', '波兰'];
+/* 重点关注国全集（2026-08-17：BRI 沿线 + 中资企业高风险所在国——这些国家的安全事件
+ * 本身就构成中方人员/项目的环境风险，利益关联 +20；俄乌/欧美本土日常不在此列） */
+const _FOCUS_COUNTRIES = [...new Set(_BRI_COUNTRIES.concat(['苏丹', '刚果(金)', '刚果（金）', '尼日利亚', '伊拉克', '也门', '马里', '尼日尔', '索马里', '阿富汗', '叙利亚', '利比亚', '中非', '莫桑比克', '坦桑尼亚', '赞比亚', '津巴布韦', '安哥拉', '摩洛哥', '突尼斯', '阿尔及利亚', '约旦', '黎巴嫩', '伊朗', '印度', '菲律宾', '哥伦比亚', '秘鲁', '墨西哥', '南非', '阿根廷', '智利', '委内瑞拉', '蒙古', '喀麦隆', '乍得', '南苏丹']))];
+const _RUUA_TOPIC_RE = /乌克兰|俄罗斯|Ukraine|Ukrainian|Russia|Russian|Kyiv|Moscow|Zelensky|Putin|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯/i;
+function _isRuUaNoLink(it) {
+  const txt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.desc || it.content || '');
+  if (!_RUUA_TOPIC_RE.test(txt)) return false;
+  return !(_INTEREST_CN_RE.test(txt) || _INTEREST_ASSET_RE.test(txt));
+}
+/* 模板空壳判定（2026-08-17）：「国A-国B冲突」式九字标题 + 无链接 = 旧客户端模板生成物，非情报 */
+function _isShellAlert(it) {
+  const t = String((it && (it.title || '')) || '').trim();
+  const tz = String((it && (it.title_zh || '')) || '');
+  if (/美国-委内瑞拉冲突/.test(t + tz)) return true;
+  if (/^[^-—\s]{2,12}[-—][^-—\s]{2,12}冲突$/.test(t) && !(it && it.url)) return true;
+  const c = String((it && (it.content || it.desc || '')) || '').trim();
+  if (!t) return true;
+  if (!(it && it.url) && c.length < 30) return true; /* 无链接且正文不足30字 = 空壳 */
+  return false;
+}
+
+/* ===== 拦截审计（2026-08-17 用户指令：闸门拦了什么必须可见可审计）===== */
+const _GATE_AUDIT = { since: new Date().toISOString(), total: 0, by: {}, samples: {} };
+function _gateAudit(gate, reason, title) {
+  try {
+    _GATE_AUDIT.total++;
+    const k = gate + '|' + reason;
+    _GATE_AUDIT.by[k] = (_GATE_AUDIT.by[k] || 0) + 1;
+    const arr = _GATE_AUDIT.samples[k] || (_GATE_AUDIT.samples[k] = []);
+    arr.unshift({ t: new Date().toTimeString().slice(0, 5), title: String(title || '').slice(0, 70) });
+    if (arr.length > 5) arr.length = 5;
+  } catch (e) {}
+}
+app.get('/api/quality/gates', authMiddleware, (req, res) => {
+  const rows = Object.keys(_GATE_AUDIT.by).map(k => {
+    const [gate, reason] = k.split('|');
+    return { gate, reason, count: _GATE_AUDIT.by[k], samples: _GATE_AUDIT.samples[k] || [] };
+  }).sort((a, b) => b.count - a.count);
+  res.json({ since: _GATE_AUDIT.since, total: _GATE_AUDIT.total, rows });
+});
+
+function _alertInterestScore(a) {
+  const txt = String(a.title || '') + ' ' + String(a.title_zh || '') + ' ' + String(a.desc || '');
+  let sc = 0;
+  const hits = [];
+  if (_INTEREST_CN_RE.test(txt)) { sc += 30; hits.push('涉华'); }
+  if (_INTEREST_ASSET_RE.test(txt) || (a.asset_tags && a.asset_tags.length)) { sc += 30; hits.push('资产'); }
+  if (_INTEREST_ORG_RE.test(txt)) { sc += 10; hits.push('威胁组织'); }
+  const dm = txt.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
+  const deaths = dm ? parseInt(dm[1] || dm[2], 10) : 0;
+  if (deaths >= 10) { sc += 20; hits.push('重大伤亡'); } else if (deaths > 0) { sc += 8; hits.push('伤亡'); }
+  if (_FOCUS_COUNTRIES.indexOf(String(a.country || '')) >= 0) { sc += 20; hits.push('重点关注国'); }
+  if (a.corroboration > 1) sc += 5;
+  return { score: sc, hits: hits };
+}
+/* ===== 服务端预警生成器（2026-08-17 用户指令：预警中心数据太少）=====
+ * 旧架构：预警在浏览器端生成——没人开页面就没有新预警，这是"数据太少"的根因。
+ * 现改为服务端生成：采集入库后 3 分钟内评估，达利益关联阈值即生成预警写入共享库，
+ * 任何客户端打开即见。规则与前端 distribute 同源：利益关联分≥20（含重点国+20）。 */
+const _FOCUS_COUNTRIES_SRV = ['巴基斯坦', '苏丹', '缅甸', '刚果', '尼日利亚', '伊拉克', '也门', '马里', '尼日尔', '肯尼亚', '埃塞俄比亚', '秘鲁', '墨西哥', '南非', '伊朗', '印度', '土耳其', '埃及', '哥伦比亚', '菲律宾', '阿富汗', '叙利亚', '孟加拉国', '泰国', '阿尔及利亚', '阿根廷', '智利', '委内瑞拉', '利比亚', '索马里', '中非', '莫桑比克', '坦桑尼亚', '赞比亚', '津巴布韦', '乌克兰', '阿联酋', '沙特', '哈萨克斯坦', '蒙古', '老挝', '柬埔寨', '印度尼西亚', '马来西亚', '越南', '安哥拉', '摩洛哥', '突尼斯', '约旦', '塞尔维亚', '黎巴嫩', '以色列', '巴勒斯坦', '南苏丹', '斯里兰卡', '尼泊尔'];
+function _srvAlertScore(it) {
+  const txt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.desc || '');
+  let sc = 0;
+  if (_INTEREST_CN_RE.test(txt)) sc += 30;
+  if (_INTEREST_ASSET_RE.test(txt)) sc += 30;
+  if (_INTEREST_ORG_RE.test(txt)) sc += 10;
+  const dm = txt.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
+  const dn = dm ? parseInt(dm[1] || dm[2], 10) : 0;
+  if (dn >= 10) sc += 20; else if (dn > 0) sc += 8;
+  const ctry = String(it.country || it.country_cn || '');
+  if (_BRI_COUNTRIES.indexOf(ctry) >= 0) sc += 10;
+  if (_FOCUS_COUNTRIES_SRV.some(c => ctry.indexOf(c) >= 0)) sc += 20;
+  return sc;
+}
+let _alertGenSeen = new Set();
+async function _serverAlertGen() {
+  try {
+    const { rows } = await query(
+      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '15 minutes' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 300"
+    );
+    if (!rows.length) return;
+    const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
+    const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+    const have = new Set(alerts.map(a => String(a.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40)));
+    const added = [];
+    for (const r of rows) {
+      if (_alertGenSeen.has(r.id)) continue;
+      _alertGenSeen.add(r.id);
+      const it = r.data_json || {};
+      it.title = it.title || r.title || '';
+      it.country = it.country || r.country || '';
+      const lv = it.level_norm || r.severity || 'yellow';
+      if (it.interestLinked === false) { _gateAudit('预警生成', 'not-linked', it.title); continue; }
+      /* 2026-08-17 用户指令日产≥200：蓝色提示级凡利益关联分≥10 一并入队（队列内显示为提示级，不与高优预警混淆） */
+      if (_isShellAlert(it)) { _gateAudit('预警生成', 'shell', it.title); continue; }
+      if (_isRuUaNoLink(it)) { _gateAudit('预警生成', 'ruua-nolink', it.title); continue; }
+      if (_srvAlertScore(it) < 10) { _gateAudit('预警生成', 'low-interest', it.title); continue; } /* 2026-08-17 用户指令：日产≥200 条预警，阈值 20→10 */
+      const tkey = String(it.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
+      if (!tkey || have.has(tkey)) continue;
+      const now = new Date();
+      const p = n => String(n).padStart(2, '0');
+      const ts = now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes());
+      const typeMap = { terror_events: '安全风险', security_events: '安全风险', military_conflicts: '安全风险', political_events: '政治风险', natural_disasters: '自然环境风险', public_health: '安全风险', sanctions_data: '经济风险', social_unrest: '社会文化风险', infrastructure: '运营风险', geopolitical_intel: '地缘战略风险', economic_risk: '经济风险', legal_compliance: '法律合规', cyber_security: '网络安全' };
+      const alert = {
+        id: 'SRV-' + r.id,
+        alert_no: 'CN-SEC-' + (now.getFullYear() + '' + p(now.getMonth() + 1) + '' + p(now.getDate())) + '-' + String(r.id).slice(-4).padStart(4, '0'),
+        title: it.title_zh || it.title,
+        title_zh: it.title_zh || '',
+        desc: String(it.content || it.desc || it.title || '').slice(0, 300),
+        time: ts, level: lv, type: typeMap[r.data_type] || '安全风险',
+        country: it.country || '', source: it.source || '实时监测引擎',
+        url: it.url || '', status: 'active',
+        interestLinked: it.interestLinked === true, chinaRelated: !!it.chinaRelated,
+        publishedAt: it.publishedAt || it.pubDate || ''
+      };
+      added.unshift(alert);
+      have.add(tkey);
+    }
+    if (added.length) {
+      const merged = added.concat(alerts).slice(0, 300);
+      await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
+      console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条，共享库现有 ' + merged.length + ' 条');
+    }
+    if (_alertGenSeen.size > 20000) _alertGenSeen = new Set([..._alertGenSeen].slice(-10000));
+  } catch (e) { console.warn('[ALERT-GEN] 异常:', e.message); }
+}
+setInterval(_serverAlertGen, 3 * 60 * 1000);
+setTimeout(_serverAlertGen, 30 * 1000);
+
+async function _alertValueSentinel() {
+  try {
+    const r = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
+    if (!r.rows.length || !Array.isArray(r.rows[0].data_json)) return;
+    const alerts = r.rows[0].data_json;
+    const kept = [], demoted = [];
+    for (const a of alerts) {
+      if (!a) continue;
+      /* 2026-08-17 用户指令：红/橙不再无条件保留——无利益关联的俄乌战况红橙同样移出。
+       * 重大伤亡(≥10死)+20 分自然达标，重大国际事件不受影响 */
+      if (_isShellAlert(a)) { demoted.push(a); continue; } /* 模板空壳一律移出 */
+      if (_isRuUaNoLink(a)) { demoted.push(a); continue; } /* 俄乌无涉华关联一律移出预警中心 */
+      const v = _alertInterestScore(a);
+      a._interestScore = v.score; a._interestHits = v.hits;
+      if (v.score >= 10) kept.push(a); /* 阈值 20→10 */
+      else demoted.push(a);
+    }
+    if (demoted.length) {
+      demoted.forEach(a => _gateAudit('哨兵', 'demote', a.title));
+      await query('UPDATE datahub_store SET data_json=$1::jsonb, updated_at=now() WHERE collection=$2', [JSON.stringify(kept), 'alerts']);
+      console.log('[VALUE-SENTINEL] 移出无利益关联低烈度预警 ' + demoted.length + ' 条，保留 ' + kept.length + ' 条（红/橙全保留）');
+    }
+    /* 给保留条目回写利益关联标注（前端可直接展示"影响"标签） */
+    const avg = kept.length ? Math.round(kept.reduce((s2, a) => s2 + (a._interestScore || 0), 0) / kept.length) : 0;
+    _valueSentinelState = { at: new Date().toISOString(), total: alerts.length, kept: kept.length, demoted: demoted.length, avgScore: avg };
+  } catch (e) { console.warn('[VALUE-SENTINEL] 巡检异常:', e.message); }
+}
+let _valueSentinelState = { at: null, total: 0, kept: 0, demoted: 0, avgScore: 0 };
+setInterval(_alertValueSentinel, 30 * 60 * 1000);
+setTimeout(_alertValueSentinel, 90 * 1000);
+
+setInterval(_qualityGuardian, 30 * 60 * 1000);
+setTimeout(_qualityGuardian, 60 * 1000); /* 启动 1 分钟后首巡 */
+
+app.get('/api/quality', (req, res) => { res.json(_qualityReport); });
+
+/* ===== 大模型研判中转（2026-08-16：未来预警接入 Kimi）=====
+ * 密钥仅存服务端 .env（LLM_API_KEY/LLM_BASE_URL/LLM_MODEL），浏览器永远接触不到。
+ * 前端提交系统真实推演摘要 → 服务端组 prompt → 调大模型 → 返回研判专报。
+ * 成功结果缓存 10 分钟；账户欠费等失败如实透传，绝不编造内容。 */
+/* OpenAI 兼容协议通用调用（Kimi/星火/其他兼容服务通用） */
+function _callOpenAiCompat(pv, prompt) {
+  return new Promise((resolve) => {
+    try {
+      const https = require('https');
+      const body = JSON.stringify({ model: pv.model, messages: [{ role: 'user', content: prompt }], max_tokens: pv.maxTokens });
+      const u = new URL(pv.base + '/chat/completions');
+      const rq = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', timeout: pv.timeout, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pv.key, 'Content-Length': Buffer.byteLength(body) } }, (llmRes) => {
+        const chunks = [];
+        llmRes.on('data', c => chunks.push(c));
+        llmRes.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let j = {};
+          try { j = JSON.parse(raw); } catch (e) { return resolve({ text: '', error: '返回解析失败: ' + raw.slice(0, 160) }); }
+          if (j.error || (j.code && j.code !== 0)) {
+            const m = (j.error && j.error.message) || j.message || ('code ' + j.code);
+            return resolve({ text: '', error: m });
+          }
+          const msg = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message : {};
+          resolve({ text: msg.content || '', error: msg.content ? '' : '空内容' });
+        });
+      });
+      rq.on('error', e => resolve({ text: '', error: e.message }));
+      rq.on('timeout', () => { rq.destroy(); resolve({ text: '', error: '调用超时' }); });
+      rq.end(body);
+    } catch (e) { resolve({ text: '', error: e.message }); }
+  });
+}
+
+let _llmCache = { at: 0, key: '', text: '', model: '' };
+app.post('/api/llm/foresee-report', authMiddleware, async (req, res) => {
+  try {
+    const KEY = process.env.LLM_API_KEY || '';
+    const BASE = (process.env.LLM_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/+$/, '');
+    const MODEL = process.env.LLM_MODEL || 'kimi-k2.6';
+    if (!KEY) return res.status(503).json({ ok: false, error: '服务端未配置 LLM_API_KEY' });
+    const p = req.body || {};
+    const sig = JSON.stringify((p.countries || []).slice(0, 12).map(c => [c.name, c.cur, c.pred, c.r3]));
+    if (_llmCache.text && _llmCache.key === sig && Date.now() - _llmCache.at < 10 * 60 * 1000) {
+      return res.json({ ok: true, text: _llmCache.text, model: _llmCache.model, cached: true, at: new Date(_llmCache.at).toISOString() });
+    }
+    const lines = (p.countries || []).slice(0, 12).map((c, i) =>
+      (i + 1) + '. ' + c.name + '：当前风险 ' + c.cur + ' → 预判 ' + c.pred + '（' + c.level + '）；近72h事件 ' + c.r3 + ' 起（前72h ' + c.p3 + ' 起）；红色预警 ' + c.red + ' 起，橙色 ' + c.orange + ' 起；项目融合告警 ' + c.fusion + ' 条；活跃威胁组织关联 ' + c.orgs + ' 个；主导类型 ' + (c.domType || '—') + '；驱动因素：' + ((c.contrib || []).map(x => x.label + '(' + (x.v > 0 ? '+' : '') + x.v + ')').join('、') || '无新增信号')
+    ).join('\n');
+    const prompt = '你是中国海外利益保护情报预警平台的资深研判专家。以下是系统基于今日实时采集数据（事件增速、红橙预警、项目融合告警、威胁组织活跃度、国别风险分）推演出的未来72小时国别风险清单：\n\n' + lines + '\n\n今日系统全库新入库情报 ' + (p.todayTotal || '—') + ' 条，涉华 ' + (p.chinaToday || '—') + ' 条，境外涉华负面 ' + (p.negToday || '—') + ' 条。\n\n请输出一份《未来72小时海外利益风险研判专报》，要求：\n1. 【总体判断】一段话概括全球态势主线与未来72小时最需警惕的方向；\n2. 【重点国家】对清单前5国逐一给出：风险走向判断、最可能的触发场景、对中资人员/项目/通道的具体威胁；\n3. 【涉华关联】单独分析清单中涉及中国海外利益的信号链（项目、人员、通道、舆情）；\n4. 【行动建议】按外交部/安全部/商务部/央企四方分别给出1-2条可执行建议；\n5. 全程只基于给定数据研判，不虚构事实；判断要有分寸，区分"确定信号"与"推测"。\n中文输出，总长度控制在900字内，小标题加粗。';
+    const t0 = Date.now();
+    /* 主备双通道（2026-08-16）：Kimi 主、讯飞星火备——任一可用即出稿 */
+    const providers = [
+      { name: 'Kimi', base: BASE, key: KEY, model: MODEL, maxTokens: 6000, timeout: 150000 },
+      { name: 'Spark', base: (process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1').replace(/\/+$/, ''), key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: 3000, timeout: 90000 }
+    ].filter(x => x.key);
+    let text = '', usedModel = '', usedBy = '', lastErr = '';
+    for (const pv of providers) {
+      try {
+        const r2 = await _callOpenAiCompat(pv, prompt);
+        if (r2.text) { text = r2.text; usedModel = pv.model; usedBy = pv.name; break; }
+        lastErr = pv.name + ': ' + (r2.error || '空内容');
+      } catch (e) { lastErr = pv.name + ': ' + e.message; }
+      console.warn('[LLM] ' + pv.name + ' 失败，切换下一通道:', lastErr);
+    }
+    if (!text) {
+      const friendly = /insufficient balance|exceeded_current_quota/i.test(lastErr) ? '大模型账户欠费停机，充值后立即可用'
+        : /HMAC|does not match|Unauthorized|401/i.test(lastErr) ? '大模型密钥鉴权失败（请核对控制台完整密钥）'
+        : (lastErr || '大模型调用失败');
+      return res.status(502).json({ ok: false, error: friendly, raw: lastErr });
+    }
+    _llmCache = { at: Date.now(), key: sig, text: text, model: usedModel };
+    res.json({ ok: true, text: text, model: usedModel + (usedBy === 'Spark' ? '（星火备援）' : ''), elapsed: ((Date.now() - t0) / 1000).toFixed(1) + 's', at: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/* ===== 通用大模型研判（2026-08-16：专家团会商 / 情景路径推演）=====
+ * kind=expert-panel：AI 专家团四方会商（安全/外交/经贸/风控），严格使用给定真实数据；
+ * kind=scenario-path：对指定情景生成 恶化/僵持/缓和 三分支路径推演。
+ * 结果按 kind+数据签名缓存 10 分钟。 */
+const _llmRunCache = {};
+app.post('/api/llm/run', authMiddleware, async (req, res) => {
+  try {
+    const KEY = process.env.LLM_API_KEY || '';
+    const BASE = (process.env.LLM_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/+$/, '');
+    const MODEL = process.env.LLM_MODEL || 'kimi-k2.6';
+    const p = req.body || {};
+    const kind = String(p.kind || '');
+    const sig = kind + '|' + JSON.stringify(p).slice(0, 400);
+    const ck = _llmRunCache[sig];
+    if (ck && Date.now() - ck.at < 10 * 60 * 1000) return res.json({ ok: true, text: ck.text, model: ck.model, cached: true, at: new Date(ck.at).toISOString() });
+    let prompt = '';
+    if (kind === 'expert-panel') {
+      const stats = p.stats || {};
+      const clist = (p.countries || []).slice(0, 10).map((c, i) => (i + 1) + '. ' + c.name + '：当前 ' + c.cur + ' → 预判 ' + c.pred + '；近72h事件 ' + c.r3 + ' 起；红/橙预警 ' + c.red + '/' + c.orange + '；主导维度 ' + (c.domType || '—')).join('\n');
+      prompt = '你是中国海外利益保护平台的AI专家团。基于以下系统实时数据，以四位专家身份分别输出研判（每位120字内）：\n' +
+        '【安全态势专家】聚焦人员与项目安全威胁；【外交地缘专家】聚焦大国博弈与外交窗口；【经贸合规专家】聚焦制裁/关税/合规风险；【项目风控专家】聚焦中资项目资产敞口与保险安排。\n\n' +
+        '今日全库新入库 ' + (stats.total || '—') + ' 条，涉华 ' + (stats.china || '—') + ' 条，境外涉华负面 ' + (stats.neg || '—') + ' 条。\n重点国家清单：\n' + clist + '\n\n' +
+        '输出格式严格为四段，每段以【安全态势专家】等标记开头；只基于给定数据，不虚构；每段末尾给一句可执行建议（以"建议："起头）。中文。';
+    } else if (kind === 'scenario-path') {
+      const sc = p.scenario || {};
+      prompt = '你是海外利益风险推演专家。基于以下真实数据情景，推演未来1-3个月的发展路径：\n' +
+        '情景：' + (sc.name || '') + '\n主导维度：' + (sc.domDim || '—') + '；当前风险 ' + (sc.cur || '—') + ' → 预判 ' + (sc.pred || '—') + '\n' +
+        '驱动因素：' + ((sc.drivers || []).join('、') || '—') + '\n波及资产：' + ((sc.affected || []).join('、') || '—') + '\n\n' +
+        '输出三分支：【恶化路径】（概率X%、关键触发点、连锁影响、预警信号）；【僵持路径】（同上结构）；【缓和路径】（同上结构）。概率合计100%，每分支120字内。只基于给定数据，不虚构。中文。';
+    } else if (kind === 'playbook-recommend') {
+      /* 预案智能匹配（2026-08-19 用户指令：推荐预案必须 AI 语义研判，不许关键词瞎匹配） */
+      const al = p.alert || {};
+      const pbs = (p.playbooks || []).slice(0, 60).map(b => b.id + '《' + b.title + '》(' + (b.type || '') + '/' + (b.level || '') + ')').join('\n');
+      prompt = '你是中国海外利益保护情报预警平台的应急预案匹配专家。给你一条预警和应急预案清单，请先判断这条预警是否真的需要启动应急预案，再从清单中选出语义上最匹配的一份。\n\n' +
+        '预警标题：' + (al.title || '') + '\n预警摘要：' + String(al.desc || '').slice(0, 300) + '\n事发国：' + (al.country || '—') + '；级别：' + (al.level || '—') + '；类型：' + (al.type || '—') + '\n\n' +
+        '应急预案清单：\n' + pbs + '\n\n' +
+        '研判规则：\n1. 先判断事件本质：若并非真实紧急事件（历史纪念、文化探访、一般新闻评论、财经资讯，且无现实安全威胁），不需要启动预案，id 输出 "none"；\n2. 若确需预案，按事件本质选最匹配的一份，不要被个别词语误导（标题含"铁路"不等于交通事故，含"爆炸"需区分恐袭与工业事故）；\n3. 只输出一行 JSON，不要输出任何其他内容：{"id":"预案id或none","reason":"中文一句话理由，30字内"}。';
+    } else {
+      return res.status(400).json({ ok: false, error: '未知 kind' });
+    }
+    const providers = [
+      { name: 'Kimi', base: BASE, key: KEY, model: MODEL, maxTokens: 6000, timeout: 150000 },
+      { name: 'Spark', base: (process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1').replace(/\/+$/, ''), key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: 3000, timeout: 90000 }
+    ].filter(x => x.key);
+    const t0 = Date.now();
+    let text = '', usedModel = '', lastErr = '';
+    for (const pv of providers) {
+      const r2 = await _callOpenAiCompat(pv, prompt);
+      if (r2.text) { text = r2.text; usedModel = pv.model; break; }
+      lastErr = pv.name + ': ' + (r2.error || '空内容');
+    }
+    if (!text) return res.status(502).json({ ok: false, error: lastErr || '大模型调用失败' });
+    _llmRunCache[sig] = { at: Date.now(), text: text, model: usedModel };
+    res.json({ ok: true, text: text, model: usedModel, elapsed: ((Date.now() - t0) / 1000).toFixed(1) + 's', at: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+setInterval(_integrityWatchdog, 30 * 60 * 1000);setInterval(_integrityWatchdog, 30 * 60 * 1000);
+setTimeout(_integrityWatchdog, 90 * 1000); /* 启动 90s 后先跑一次 */
+
+/* 每天 08:00 生成前一日简报；启动时若已过时点且昨日简报缺失则补生成 */
+let _dailyReportLastTry = '';
+async function _maybeGenerateDailyReport() {
+  const now = new Date();
+  if (now.getHours() < 8) return;
+  const y = new Date(now.getTime() - 24 * 3600 * 1000);
+  const key = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
+  if (_dailyReportLastTry === key) return;
+  _dailyReportLastTry = key;
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
+    const r = await query(`SELECT report_date FROM daily_reports WHERE report_date=$1`, [key]);
+    if (!r.rows.length) {
+      const rep = await _generateDailyReport(key);
+      console.log('[DAILY REPORT] 已生成 ' + key + ' 简报：' + rep.total + ' 条数据');
+    }
+  } catch (e) { console.warn('[DAILY REPORT] 生成失败:', e.message); }
+}
+setInterval(_maybeGenerateDailyReport, 60 * 1000);
+
+app.get('/api/reports/daily', async (req, res) => {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
+    const r = await query(`SELECT report_date, summary, created_at FROM daily_reports ORDER BY report_date DESC LIMIT 60`);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/reports/daily/:date', async (req, res) => {
+  try {
+    const r = await query(`SELECT report_date, html, summary, created_at FROM daily_reports WHERE report_date=$1`, [req.params.date]);
+    if (!r.rows.length) return res.status(404).json({ error: '该日简报不存在' });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/reports/daily/generate', express.json(), async (req, res) => {
+  try {
+    let key = req.body && req.body.date;
+    if (!key) {
+      const y = new Date(Date.now() - 24 * 3600 * 1000);
+      key = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+    const rep = await _generateDailyReport(key);
+    res.json({ ok: true, date: rep.date, total: rep.total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* 权威统计接口（2026-08-14 用户指令：所有统计对话框实时统一数据源）：
+ * 数据中心统计卡、态势总览"数据库:N条" 全部以本接口为准（PostgreSQL 实数） */
+app.get('/api/intel/stats', async (req, res) => {
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const r = await query(`SELECT data_type, COUNT(*) c, COUNT(*) FILTER (WHERE collect_time >= $1) today FROM intel_data WHERE audit_status='approved' GROUP BY 1`, [dayStart]);
+    const byType = {};
+    let total = 0, today = 0;
+    r.rows.forEach(x => { byType[x.data_type] = parseInt(x.c, 10); total += parseInt(x.c, 10); today += parseInt(x.today, 10); });
+    /* 涉华总量（标题要素口径，与涉华列表一致） */
+    const cn = await query(`SELECT COUNT(*) c FROM intel_data WHERE audit_status='approved' AND (
+      title ILIKE '%中国%' OR title ILIKE '%中资%' OR title ILIKE '%中企%' OR title ILIKE '%中方%' OR title ILIKE '%华人%'
+      OR title ILIKE '%华侨%' OR title ILIKE '%一带一路%' OR title ILIKE '%China%' OR title ILIKE '%Chinese%' OR title ILIKE '%Beijing%'
+      OR data_json->>'title_zh' ILIKE '%中国%' OR data_json->>'title_zh' ILIKE '%中资%' OR data_json->>'title_zh' ILIKE '%华人%'
+      OR data_json->>'title_zh' ILIKE '%一带一路%')`);
+    res.json({ total, today, byType, chinaTotal: parseInt(cn.rows[0].c, 10), updatedAt: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ===== 天地图瓦片中转（2026-08-14）=====
+ * 背景：用户浏览器经代理访问天地图时图片跨域被 ORB 拦截（ERR_BLOCKED_BY_ORB），
+ * 瓦片全部白图。改为服务端中转：浏览器只请求 localhost，本机直连天地图取图。
+ * 密钥仅存在于服务端，不下发前端。 */
+const TDT_TK = process.env.TDT_TK || 'e02e9033f07bd03176ab869ab1c61064';
+const _tdtCache = new Map(); /* url → {buf, ct, at} 简单内存缓存，上限 2000 张 */
+app.get('/api/tdt/:layer/:z/:x/:y', async (req, res) => {
+  try {
+    const { layer, z, x, y } = req.params;
+    if (!/^(img_w|cia_w|vec_w|cva_w|ter_w|cta_w)$/.test(layer)) return res.status(400).end();
+    if (!/^\d{1,2}$/.test(z) || !/^\d+$/.test(x) || !/^\d+$/.test(y)) return res.status(400).end();
+    const key = layer + '/' + z + '/' + x + '/' + y;
+    const hit = _tdtCache.get(key);
+    if (hit && (Date.now() - hit.at) < 6 * 3600 * 1000) {
+      res.set('Content-Type', hit.ct); res.set('Cache-Control', 'public, max-age=21600');
+      return res.end(hit.buf);
+    }
+    const sub = '01234567'[Math.abs((+x) + (+y)) % 8];
+    const url = 'https://t' + sub + '.tianditu.gov.cn/DataServer?T=' + layer + '&x=' + x + '&y=' + y + '&l=' + z + '&tk=' + TDT_TK;
+    const https = require('https');
+    const r = await new Promise((resolve, reject) => {
+      /* 天地图反爬：浏览器 UA 一律 403 白图，必须不带 User-Agent（2026-08-14 实测） */
+      const rq = https.get(url, { timeout: 12000 }, resolve);
+      rq.on('error', reject); rq.on('timeout', () => { rq.destroy(); reject(new Error('timeout')); });
+    });
+    if (r.statusCode !== 200) { r.resume(); return res.status(502).end(); }
+    const chunks = [];
+    r.on('data', c => chunks.push(c));
+    r.on('end', () => {
+      const buf = Buffer.concat(chunks);
+      const ct = r.headers['content-type'] || 'image/jpeg';
+      if (buf.length > 500) { /* 太小的多半是错误图，不缓存 */
+        _tdtCache.set(key, { buf, ct, at: Date.now() });
+        if (_tdtCache.size > 2000) { const k0 = _tdtCache.keys().next().value; _tdtCache.delete(k0); }
+      }
+      res.set('Content-Type', ct); res.set('Cache-Control', 'public, max-age=21600');
+      res.end(buf);
+    });
+  } catch (e) { res.status(502).end(); }
+});
+
+app.get('/api/intel/ids', async (req, res) => {
+  try {
+    const r = await query("SELECT id FROM intel_data WHERE audit_status='approved'");
+    res.json({ count: r.rows.length, ids: r.rows.map(x => x.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* 指挥调度闭环状态（2026-08-13 体检 P1-4）：事件/工单/复盘服务端持久化，
+ * 单文档状态存储，前端全量读写，本地 IndexedDB 作离线兜底 */
+app.get('/api/command/state', async (req, res) => {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS command_state (id INT PRIMARY KEY, state JSONB, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    const r = await query(`SELECT state, updated_at FROM command_state WHERE id=1`);
+    res.json(r.rows[0] ? r.rows[0] : { state: null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.put('/api/command/state', express.json({ limit: '8mb' }), async (req, res) => {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS command_state (id INT PRIMARY KEY, state JSONB, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    const st = JSON.stringify(req.body && req.body.state ? req.body.state : {});
+    await query(`INSERT INTO command_state (id, state, updated_at) VALUES (1, $1::jsonb, NOW())
+                 ON CONFLICT (id) DO UPDATE SET state=$1::jsonb, updated_at=NOW()`, [st]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/intel/public/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!PUBLIC_INTEL_TYPES.includes(type)) return res.status(403).json({ error: '该情报类型不对外公开' });
+    /* 优先读取 PostgreSQL 中已审核情报；数据库不可用时降级为服务端文件缓存（真实爬取数据） */
+    try {
+      /* 2026-08-13 均衡分发（用户指令：不能全是俄乌/伊朗，类别要均衡）：
+       * 1. 只取近 24 小时（时效铁律）；
+       * 2. 涉华条目（标题要素）全部放行，不受国别限额；
+       * 3. 同一国家/地区最多 12 条，防止单一方向刷屏；
+       * 4. 总量 300 条，按时间倒序。 */
+      const dayAgo = new Date(); dayAgo.setHours(0,0,0,0); /* 2026-08-17 铁律：实时流只流今日采集（原 24h 窗口会让昨日条目跨天残留） */
+      const result = await query(
+        "SELECT * FROM intel_data WHERE (data_type = $1 OR data_type = 'geopolitical_intel') AND audit_status = 'approved' AND collect_time >= $2 ORDER BY collect_time DESC LIMIT 1500",
+        [type, dayAgo]
+      );
+      const _seen = {};
+      const _cnRe = /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i;
+      const _ctyCnt = {};
+      const PER_COUNTRY_CAP = 12, TOTAL_CAP = 300, CHINA_RESERVE = 80;
+      const filtered = [];
+      /* 第一趟：涉华保底（2026-08-14 用户指令：实时流里涉华太少）——窗口内涉华条目全量进（上限80），
+       * 不参与国别限额，保证涉华情报始终可见 */
+      for (const r of result.rows) {
+        if (filtered.length >= CHINA_RESERVE) break;
+        const txt = (r.title || '') + ' ' + (r.data_json?.content || r.data_json?.desc || '');
+        if (!scrapers.chinaOverseasGate(txt).pass) continue;
+        if (!_cnRe.test((r.title || '') + ' ' + (r.data_json?.title_zh || ''))) continue;
+        const k = _dedupKey(r.data_json);
+        if (!k || _seen[k]) continue;
+        _seen[k] = 1;
+        filtered.push(r);
+      }
+      /* 俄乌话题硬限额（2026-08-17 用户铁律：这是海外利益预警平台，不是俄乌数据采集器）：
+       * 非涉华的俄乌话题每次响应最多 5 条，任何版本客户端拿到的都是限流后的数据 */
+      const _ruRe = /乌克兰|俄罗斯|Ukraine|Ukrainian|Russia|Russian|Kyiv|Moscow|Zelensky|Putin|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯/i;
+      let _ruN = 0;
+      /* 第二趟：其他条目按国别限额补齐 */
+      for (const r of result.rows) {
+        const txt = (r.title || '') + ' ' + (r.data_json?.content || r.data_json?.desc || '');
+        if (!scrapers.chinaOverseasGate(txt).pass) continue;
+        const k = _dedupKey(r.data_json);
+        if (!k || _seen[k]) continue;
+        const isCn = _cnRe.test((r.title || '') + ' ' + (r.data_json?.title_zh || ''));
+        if (isCn) continue; /* 涉华已在第一趟处理 */
+        if (_ruRe.test((r.title || '') + ' ' + (r.data_json?.title_zh || ''))) { _ruN++; if (_ruN > 5) continue; }
+        _seen[k] = 1;
+        const cty = r.country || r.data_json?.country_cn || '未知';
+        _ctyCnt[cty] = (_ctyCnt[cty] || 0) + 1;
+        if (_ctyCnt[cty] > PER_COUNTRY_CAP) continue;
+        filtered.push(r);
+        if (filtered.length >= TOTAL_CAP) break;
+      }
+      /* 2026-08-14 用户指令：涉华负面优先——Feed 输出按优先级分层排序
+       * （第1层 境外涉华负面；第2层 涉华；第3层 红/橙严重事件；第4层 其他，层内按时间倒序），
+       * 且红/橙级强制 interestLinked=true，保证重点数据必达预警中心，不躺在库里。 */
+      const _tier = (it) => {
+        const neg = it._chinaNegative === true || it._chinaNegative === 'true';
+        const cn = _cnRe.test((it.title || '') + ' ' + (it.title_zh || ''));
+        const lv = it.level_norm || it.severity || '';
+        if (neg) return 0;
+        if (cn) return 1;
+        if (lv === 'red' || lv === 'orange') return 2;
+        return 3;
+      };
+      const mapped = filtered.map(r => {
+        const it = { ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time };
+        if (!it.title && r.title) it.title = r.title;
+        /* 补跑 enrich：旧数据/直接入库数据可能未打 interestLinked，前端铁律要求该标记才分发预警 */
+        if (it.interestLinked === undefined || it.interestLinked === null) {
+          try { ENTITY.enrich(it); } catch (e) {}
+        }
+        const lv = it.level_norm || r.severity || '';
+        if (lv === 'red' || lv === 'orange') it.interestLinked = true;
+        return it;
+      });
+      mapped.sort((a, b) => {
+        const ta = _tier(a), tb = _tier(b);
+        if (ta !== tb) return ta - tb;
+        return new Date(String(b.publish_time || b.publishedAt || 0).replace('T', ' ')) - new Date(String(a.publish_time || a.publishedAt || 0).replace('T', ' '));
+      });
+      return res.json(mapped);
+    } catch (dbErr) {
+      console.warn('[PUBLIC] PostgreSQL 不可用，降级读取文件缓存:', dbErr.message);
+      /* 实战系统要求：公开流只呈现已译中文条目；未译外文暂留缓存待翻译，绝不以英文暴露。
+       * 同时兜底剔除导航噪声，并按稳定键去重（防同一情报因译文措辞不同而重复呈现）。 */
+      const _seen = {};
+      const items = _readPublicCache(type)
+        .filter(function(r) { return !_looksForeign(r.title) || r.title_zh; })
+        .filter(function(r) { return !_isNavNoise(r); })
+        .filter(function(r) { const k = _dedupKey(r); if (!k || _seen[k]) return false; _seen[k] = 1; return true; })
+        .filter(function(r) { const txt = (r.title || '') + ' ' + (r.content || ''); return scrapers.chinaOverseasGate(txt).pass; })
+        .map(r => ({ ...r, audit_status: 'approved', dbOffline: true }));
+      return res.json(items);
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 真实情报抓取（同源、无 CORS、公开） =====
+ *  ?url=xxx             -> 白名单代理抓取原始文本（供前端复用既有解析器）
+ *  ?source=usgs         -> 抓取指定源并返回归一化条目
+ *  ?category=security_events -> 抓取该分类全部源
+ *  ?all=1               -> 抓取全部分类
+ *  无参数                -> 返回可用 source key 列表
+ */
+/* 源健康快照：真实统计（在线/预留/离线、成功失败次数、条目数、冷却剩余）
+ * 无任何模拟：未抓取过的源 status=idle，items=0，不虚构历史量。 */
+app.get('/api/sources', (req, res) => {
+  try {
+    const list = scrapers.sourceHealth();
+    const stat = { total: list.length, online: 0, reserved: 0, offline: 0, idle: 0, items: 0 };
+    list.forEach(s => { stat[s.status] = (stat[s.status] || 0) + 1; stat.items += (s.items || 0); });
+    res.json({ ok: true, stat, sources: list });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+app.get('/api/scrape', async (req, res) => {
+  try {
+    const { url, source, category, all } = req.query;
+    if (url) {
+      const text = await scrapers.proxyFetchText(url);
+      return res.json({ ok: !!text, url, text: text || '' });
+    }
+    /* 铁律三「落库即中文」：单源/单分类通道同样必须译。
+     * 踩坑记录(2026-08-05)：此前只有 ?all=1 接了翻译，而前端自动采集引擎
+     * datasources._refreshReal() 的主力入库路径恰恰是 ?category=，导致
+     * 自动采集入库的全是英文原文（实测 osint_intel 31 条中 18 条纯外文）。 */
+    if (source) {
+      const items = await scrapers.scrapeSource(source);
+      try { await _translateListToZhParallel(items || [], 6); } catch (e) { console.warn('[SCRAPE:source] 翻译异常(保留原文):', e.message); }
+      return res.json({ source, items: items || [] });
+    }
+    if (category) {
+      const items = await scrapers.scrapeCategory(category);
+      /* 关联判定：给前端自动采集引擎提供 interestLinked 标记，避免入池数据无关联标志 */
+      (items || []).forEach(function(it) { try { ENTITY.enrich(it); } catch (e) {} });
+      try { await _translateListToZhParallel(items || [], 6); } catch (e) { console.warn('[SCRAPE:category] 翻译异常(保留原文):', e.message); }
+      return res.json({ category, items: items || [] });
+    }
+    if (all) {
+      const data = await scrapers.scrapeAll();
+      /* ── 按内容重分类 + 去重（用户要求：一键采集数据按12要素分类）──
+       * 中新网多个分类别名指向同一国际feed，原始分类是"贴标签"；此处用
+       * crawler.classify 按标题+内容真实归类：灾害/卫生/恐袭/军事/制裁/
+       * 动荡/政治/基建/地缘 各归其位，无法判定的保留原分类。 */
+      const seen = new Set();
+      const out = {};
+      Object.keys(data).forEach(cat => {
+        (data[cat] || []).forEach(it => {
+          const key = (it.title || '').slice(0, 60);
+          if (!key || seen.has(key)) return;
+          seen.add(key);
+          const text = (it.title || '') + ' ' + (it.content || it.desc || '');
+          let c = crawler.classify(text, crawler.chinaRelated(text), crawler.chinaNegative(text));
+          /* USGS/GDACS 等本身就是精确分类源：classify 判不出时保留原分类 */
+          if (c === 'osint_intel' && cat !== 'osint_intel') c = cat;
+          it.data_type = c;
+          (out[c] = out[c] || []).push(it);
+        });
+      });
+      /* 全分类关联判定：给所有返回条目打上 interestLinked，前端才能按铁律分发 */
+      Object.keys(out).forEach(function(c) {
+        (out[c] || []).forEach(function(it) { try { ENTITY.enrich(it); } catch (e) {} });
+      });
+      /* 降级存储：scrape 全量时把 osint_intel 分类的真实数据写入文件缓存（供无 PostgreSQL 时的公开态势通道）
+       * 铁律：入库前必须经过 ENTITY.enrich 关联判定，只保留 interestLinked=true 的数据 */
+      try {
+        if (out && out['osint_intel'] && out['osint_intel'].length) {
+          var linkedOnly = out['osint_intel'].filter(function(it) { return it.interestLinked === true; });
+          if (linkedOnly.length) { await _translateListToZh(linkedOnly); _mergePublicCache('osint_intel', linkedOnly); }
+        }
+      } catch (e) {}
+      /* 落库即中文（铁律三）：对全部分类并行翻译外文条目后再返回前端，
+       * 修复"全量采集数据是外文原文"。TranSmart/有道免密钥 + 持久缓存 + 并发6，全量约十几秒。
+       * 单条翻译失败保留原文，绝不丢数据。 */
+      try {
+        var _allItems = [];
+        Object.keys(out).forEach(function (c) { (out[c] || []).forEach(function (it) { _allItems.push(it); }); });
+        await _translateListToZhParallel(_allItems, 6);
+      } catch (e) { console.warn('[SCRAPE] 全量翻译异常(保留原文):', e.message); }
+      return res.json({ ok: true, data: out });
+    }
+    return res.json({ ok: true, sources: Object.keys(scrapers.SCRAPE_SOURCES) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 特种兵爬虫（一键全网深抓：涉华负面 + 各国媒体 + 社交平台） =====
+ *  ?all=1        -> 执行预设任务（全部关键词 × 搜索引擎/社交 + 各国媒体 feed）
+ *  ?q=keyword    -> 自定义关键词精准深抓
+ *  无参数         -> 返回可用目标列表
+ *  仅接受"关键词"，绝不接受"任意URL"（SSRF 防护在 crawler.js 内部复用 scrapers 白名单）
+ */
+app.get('/api/crawl', async (req, res) => {
+  try {
+    const { q, all } = req.query;
+    if (all) {
+      const items = await crawler.crawlAll();
+      const cn = items.filter(it => it.chinaNegative).length;
+      /* 降级存储：将真实爬取的公开 OSINT 数据写入服务端文件缓存，供无 PostgreSQL 时的公开态势通道使用 */
+      await _translateListToZh(items); _mergePublicCache('osint_intel', items);
+      return res.json({ ok: true, mode: 'all', count: items.length, chinaNegative: cn, items });
+    }
+    if (q) {
+      const items = await crawler.crawlQuery(q);
+      const cn = items.filter(it => it.chinaNegative).length;
+      return res.json({ ok: true, mode: 'query', query: q, count: items.length, chinaNegative: cn, items });
+    }
+    const sources = crawler.SEARCH_ENGINES.concat(crawler.SOCIAL_TARGETS, crawler.MEDIA_FEEDS)
+      .map(s => ({ id: s.id, name: s.name, country: s.country || '' }));
+    return res.json({ ok: true, sources });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ==================== 全球多国媒体真实情报端点 ====================
+ * 主数据 = 实测可达的直连 RSS（server/globalmedia.js 的 DIRECT_RSS，覆盖全球多国）。
+ * 增强 = GDELT 全球媒体库（按国家批量拉取，环境允许时自动补充；当前运行环境
+ *        若限流/超时则自动跳过，绝不伪造）。
+ * 铁律一：只返回真实抓取到的公开信息；通道不可用时如实返回 0 条。 */
+let _mediaCache = { items: [], byCountry: {}, updatedAt: 0, status: {} };
+const MEDIA_CACHE_FILE = path.join(CACHE_DIR, 'media_cache.json');
+/* 我方资产坐标（供后续资产邻近判定使用）。后续可从企业项目库
+ * 动态抽取 lat/lng；当前先置空，避免缺少坐标时报错。 */
+const _intelAssets = [];
+
+function _writeMediaCache(items, byCountry, extra) {
+  // 内存紧张：只保留最近 200 条，避免缓存无限增长
+  const recent = (items || []).slice(-200);
+  _mediaCache = {
+    items: recent, byCountry: byCountry || {},
+    updatedAt: Date.now(),
+    status: Object.assign({ countries: Object.keys(byCountry || {}).length, total: recent.length }, extra || {})
+  };
+  try { fs.writeFileSync(MEDIA_CACHE_FILE, JSON.stringify(_mediaCache)); } catch (e) {}
+}
+function _mergeMedia(extraItems, extraByCountry, extra) {
+  const base = (_mediaCache.items || []).slice();
+  const seen = new Set(base.map(it => it.url || it.title));
+  let added = 0;
+  (extraItems || []).forEach(it => { const k = it.url || it.title; if (k && !seen.has(k)) { seen.add(k); base.push(it); added++; } });
+  const byC = Object.assign({}, _mediaCache.byCountry || {}, extraByCountry || {});
+  _writeMediaCache(base, byC, Object.assign({}, _mediaCache.status || {}, extra || {}, { total: base.length }));
+  console.log('[GLOBALMEDIA] 合并 +' + added + ' 条，现 ' + base.length);
+}
+/* busy 锁全部改为"时间戳锁 + 10分钟硬超时自动释放"：
+ * 2026-08-12 事故：某轮采集 Promise 挂死（finally 永远等不到），_chinaFocusBusy 卡死 true，
+ * 涉华专项停摆 7 小时。时间戳锁保证挂死最多只停摆 10 分钟。 */
+let _globalMediaBusyUntil = 0;
+let _chinaFocusBusyUntil = 0;
+let _chinaNegativeBusyUntil = 0;
+let _terrorBusyUntil = 0;
+const BUSY_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+let _chinaNegativeLastApAt = 0;
+let CHINA_NEGATIVE_AP_INTERVAL_MS = 5 * 60 * 1000; // AP 搜索默认每 5 分钟一次（调速器可动态下调）
+let _rssRoundIndex = 0;
+let RSS_ROTATE_COUNT = 30;     // 普通源轮询窗口（调速器可动态扩大）
+const RSS_PRIORITY_COUNT = 40;   // 重点源池：涉华源+亚太源每轮优先抓（降低以缓解内存）
+const TT_PRIORITY_COUNT = 15;    // 中国/亚太专项智库每轮必抓
+let TT_ROTATE_COUNT = 20;      // 每轮轮询智库源数量（调速器可动态扩大）
+let CHINA_FOCUS_COUNT = 40;    // 涉华专项源每轮必抓（调速器可动态扩大）
+let THEME_ROTATE_COUNT = 4;    // GDELT/AP 主题词每轮轮换数（调速器可动态扩大）
+const RSS_CONCURRENCY = 6;       // RSS 并发请求数（系统内存 96%，必须降低并发）
+const RSS_TIMEOUT_MS = 7000;     // 单个 RSS 超时 7 秒
+const GLOBAL_MEDIA_INTERVAL_MS = 60 * 1000; // 每 60 秒运行一轮，降低内存/GC 压力
+
+/* ===== 每日采集指标统计（用户硬性指标：总量≥500条/天，涉华80-100条/天）===== */
+function _todayKey() {
+  /* 本地自然日（服务器在中国时区 GMT+8），不能用 toISOString() 的 UTC 日期——
+   * UTC 比本地晚 8 小时，凌晨 0~8 点 UTC 仍是昨天，导致日指标跨天不重置。 */
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+const DAILY_STATS_FILE = path.join(CACHE_DIR, 'daily_stats.json');
+
+/* ===== 标题归一化去重（2026-08-12 用户指令：同一事件只留一条）=====
+ * 背景：同一通稿被多家媒体转载，URL 不同导致 URL 级去重失效（实测同一事件入库 34 份）。
+ * 方案：标题归一化（小写+去标点空格+截断 48 字）作为事件指纹，近 24 小时已入库指纹缓存 5 分钟，
+ * 入库前命中即跳过。翻译差异会导致中英文标题指纹不同，故指纹同时对 title 与 title_zh 生成。
+ * 2026-08-15 修：指纹窗口 3 天 → 24 小时。3 天窗口会把同一热点事件的所有后续进展报道全部饿死
+ * （实测每轮 128 条里 46 条被"标题同事件"丢弃，日入库仅 69）；时效闸门本来也只放 24h 内新闻，
+ * 超过 24h 的指纹没有额外防重价值。 */
+function _normTitleKey(t) {
+  return String(t || '').toLowerCase()
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[^\w一-龥]+/g, '')
+    .slice(0, 48);
+}
+let _titleKeyCache = { t: 0, set: new Set() };
+async function _getRecentTitleKeys() {
+  if (Date.now() - _titleKeyCache.t < 5 * 60 * 1000 && _titleKeyCache.set.size) return _titleKeyCache.set;
+  try {
+    const since = new Date(Date.now() - 24 * 3600 * 1000);
+    const { rows } = await query(`SELECT title, data_json->>'title_zh' AS tzh FROM intel_data WHERE collect_time >= $1`, [since]);
+    const set = new Set();
+    rows.forEach(r => {
+      const k1 = _normTitleKey(r.title); if (k1.length >= 10) set.add(k1);
+      const k2 = _normTitleKey(r.tzh); if (k2.length >= 10) set.add(k2);
+    });
+    _titleKeyCache = { t: Date.now(), set };
+  } catch (e) { console.warn('[TITLE-DEDUP] 指纹缓存构建失败:', e.message); }
+  return _titleKeyCache.set;
+}
+/* 单条检查（循环内用）：命中任一指纹即视为同事件转载 */
+function _isDupTitle(titleKeys, it) {
+  const k1 = _normTitleKey(it.title);
+  if (k1.length >= 10 && titleKeys.has(k1)) return true;
+  const k2 = _normTitleKey(it.title_zh);
+  if (k2.length >= 10 && titleKeys.has(k2)) return true;
+  return false;
+}
+function _addTitleKey(titleKeys, it) {
+  const k1 = _normTitleKey(it.title); if (k1.length >= 10) titleKeys.add(k1);
+  const k2 = _normTitleKey(it.title_zh); if (k2.length >= 10) titleKeys.add(k2);
+}
+/* ===== 时效硬闸门（2026-08-13 用户铁律：预警系统只采近 48 小时的数据）=====
+ * 旧闻（如 4 月的中粮巴西建厂、6 天前的联合国新闻）没有预警价值。
+ * 能解析出发布日期且超过 48 小时 → 拦截；解析不出日期 → 放行（不误杀无日期源）。 */
+const FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/* ===== 俄乌冲突配额（2026-08-15 用户指令：俄乌每天不能超过 30 条，采重要的）=====
+ * 旧版：内存计数 20 条/日，PM2 重启即清零，超量后一律硬拦。
+ * 新版：① 配额 30 条/日；② 计数 DB 背书（5分钟缓存+异步刷新），重启不丢；
+ * ③ 超配额后只放行"重要事件"（伤亡/重大/撤侨类），琐事不再进库；④ 涉华要素豁免保留。 */
+let _ruUaCount = 0, _ruUaDate = '';
+let _ruUaDb = { date: '', n: 0, t: 0 };
+const RUUA_DAILY_CAP = 30;
+const _RUUA_RE = /乌克兰|俄罗斯|Ukraine|Ukrainian|Russia|Russian|Kyiv|Kiev|Moscow|Zelensky|Putin|Donetsk|Donbas|Kharkiv|Belgorod|Kherson|Zaporizhzhia|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯|顿涅茨克|赫尔松|TASS|Euromaidan/i;
+const _RUUA_IMPORTANT_RE = /死亡|遇难|身亡|伤亡|killed|dead|deaths|casualt|撤侨|evacuat|重大|大规模|mass |平民|civilian|儿童医院|学校|医院|核电站|核|nuclear|中国|中资|中企|华人|华侨|Chinese|China/i;
+function _isRuUaTopic(it) {
+  return _RUUA_RE.test(String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.source || ''));
+}
+async function _ruUaRefreshDbCount() {
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const { rows } = await query(`SELECT COUNT(*) c FROM intel_data WHERE collect_time >= $1 AND (
+      title ~* '乌克兰|俄罗斯|Ukraine|Ukrainian|Russia|Russian|Kyiv|Moscow|Zelensky|Putin|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯'
+      OR data_json->>'title_zh' ~* '乌克兰|俄罗斯|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯')`, [dayStart]);
+    _ruUaDb = { date: _todayKey(), n: parseInt(rows[0].c, 10) || 0, t: Date.now() };
+  } catch (e) {}
+}
+/* ===== 内容分类 + 级别归一 + 中资资产标签（2026-08-13 体检 P0 整改）=====
+ * P0-1：入库时按内容分到 12 类 data_type（此前 95% 堆在 osint_intel，分类视图全空）
+ * P0-2：severity 归一为 red/orange/yellow/blue 四级（此前"中/low/high/red"五套值混用）
+ * P1-5：命中中资资产档案打 asset_tags；资产+严重事件 = 红色（视同直接涉华） */
+/* 分类器 v2（2026-08-17 用户指令：什么数据放什么类别，别乱放）：
+ * ① 标题优先——标题能定类就用标题，正文只作兜底（正文提及≠事件本体）；
+ * ② 综述/评论/分析体裁前置——非事件类内容归地缘情报，不占事件类席位；
+ * ③ 去掉 ied 裸匹配——ied 是 denied/studied/allied 的子串，曾经把一切含 denied 的文章误判成恐袭。 */
+const _CLS_RULES = [
+  ['terror_events', /恐袭|恐怖|爆炸|绑架|劫持|人质|自杀式|枪手|武装分子|伏击|塔利班|基地组织|博科|青年党|terror|bomb|blast|explosion|kidnap|hostage|gunmen|militant|suicide bomb|vbied|car bomb|ambush|isis|isil|taliban|qaeda|al-shabaab|boko haram/i],
+  ['sanctions_data', /制裁|关税|出口管制|实体清单|黑名单|反倾销|反补贴|禁运|安全审查|sanction|tariff|export control|entity list|blacklist|anti-dumping|countervailing|embargo|cfius|uflpa/i],
+  ['public_health', /疫情|病毒|传染病|霍乱|埃博拉|outbreak|epidemic|pandemic|virus|cholera|ebola|mpox/i],
+  ['cyber_security', /网络攻击|数据泄露|勒索软件|黑客|漏洞利用|cyberattack|cyber attack|data breach|ransomware|malware|phishing|cve-|ddos/i],
+  ['legal_compliance', /诉讼|仲裁|罚款|处罚|合规审查|监管|lawsuit|litigation|arbitration|penalty|compliance|regulatory|antitrust/i],
+  ['economic_risk', /债务危机|通胀|汇率|金融|衰退|股市|央行|利率|debt crisis|inflation|recession|default|currency|central bank|interest rate|stock market/i],
+  ['social_unrest', /抗议|示威|骚乱|暴动|罢工|宵禁|protest|riot|unrest|strike action|curfew|demonstration/i],
+  ['political_events', /政变|军政府|选举|弹劾|政权更迭|coup|junta|election|impeach|president-elect|parliament/i],
+  ['military_conflicts', /战争|空袭|导弹|交火|停火|炮击|无人机|军事行动|战线|war|airstrike|missile|ceasefire|shelling|artillery|drone strike|offensive|frontline/i],
+  ['natural_disasters', /地震|洪水|台风|飓风|暴雨|海啸|火山|山火|earthquake|flood|typhoon|hurricane|tsunami|volcano|wildfire|cyclone/i],
+  ['infrastructure', /港口|矿山|管道|铁路|大桥|电站|供应链|关键矿产|稀土|port|mine|mining|pipeline|railway|bridge|power plant|supply chain|critical mineral|rare earth|lithium|cobalt/i],
+  ['security_events', /枪击|抢劫|谋杀|治安|被捕|shooting|robbery|murder|arrest/i],
+  ['geopolitical_intel', /外交|会晤|协议|争端|紧张|沙文主义|diplomat|summit|treaty|dispute|tension|chauvinism/i]
+];
+const _CLS_GENRE_RE = /综述|社评|专栏|观察家|深度分析|盘点|回顾|展望|解读|民调|民意调查|支持率|批准率|批判性考察|opinion|editorial|analysis|review of|commentary|explained|chauvinism|opinion poll|approval rating|survey/i;
+function _classifyIntelType(it) {
+  const title = (String(it.title || '') + ' ' + String(it.title_zh || '')).toLowerCase();
+  const all = title + ' ' + String(it.content || '').toLowerCase();
+  if (_CLS_GENRE_RE.test(title) && !/爆炸|袭击|枪击|绑架|劫持|恐袭|地震|blast|attack|shooting|kidnap|hostage|killed/i.test(title)) {
+    return 'geopolitical_intel';
+  }
+  for (const [type, re] of _CLS_RULES) { if (re.test(title)) return type; }
+  for (const [type, re] of _CLS_RULES) { if (re.test(all)) return type; }
+  return 'geopolitical_intel'; /* 2026-08-17 用户指令：取消开源情报泛类——无明确类别信号的全球动态归地缘情报 */
+}
+function _classifyIntelType_legacy(it) {
+  const t = (String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '')).toLowerCase();
+  if (/恐袭|恐怖|爆炸|绑架|劫持|人质|自杀式|枪手|武装分子|伏击|塔利班|基地组织|博科|青年党|terror|bomb|blast|explosion|kidnap|hostage|gunmen|militant|suicide|vbied|ied|ambush|isis|isil|taliban|qaeda|al-shabaab|boko haram/i.test(t)) return 'terror_events';
+  if (/制裁|关税|出口管制|实体清单|黑名单|反倾销|反补贴|禁运|合规|安全审查|sanction|tariff|export control|entity list|blacklist|anti-dumping|countervailing|embargo|cfius|compliance|wro|uflpa/i.test(t)) return 'sanctions_data';
+  if (/疫情|病毒|传染病|霍乱|埃博拉|outbreak|epidemic|pandemic|virus|cholera|ebola|mpox/i.test(t)) return 'public_health';
+  if (/网络攻击|数据泄露|勒索软件|黑客|漏洞利用|cyberattack|cyber attack|data breach|ransomware|malware|phishing|cve-|ddos/i.test(t)) return 'cyber_security';
+  if (/诉讼|仲裁|罚款|处罚|合规审查|监管|lawsuit|litigation|arbitration|fine[ds]?|penalty|compliance|regulatory|antitrust/i.test(t)) return 'legal_compliance';
+  if (/债务危机|通胀|汇率|金融|衰退|股市|央行|利率|debt crisis|inflation|recession|default|currency|central bank|interest rate|stock market/i.test(t)) return 'economic_risk';
+  if (/抗议|示威|骚乱|暴动|罢工|宵禁|protest|riot|unrest|strike action|curfew|demonstration/i.test(t)) return 'social_unrest';
+  if (/政变|军政府|选举|弹劾|政权更迭|coup|junta|election|impeach|president-elect|parliament/i.test(t)) return 'political_events';
+  if (/战争|空袭|导弹|交火|停火|炮击|无人机|军事行动|战线|war|airstrike|missile|ceasefire|shelling|artillery|drone strike|offensive|frontline/i.test(t)) return 'military_conflicts';
+  if (/地震|洪水|台风|飓风|暴雨|海啸|火山|山火|earthquake|flood|typhoon|hurricane|tsunami|volcano|wildfire|cyclone/i.test(t)) return 'natural_disasters';
+  if (/港口|矿山|管道|铁路|大桥|电站|供应链|关键矿产|稀土|port|mine|mining|pipeline|railway|bridge|power plant|supply chain|critical mineral|rare earth|lithium|cobalt/i.test(t)) return 'infrastructure';
+  if (/枪击|抢劫|谋杀|治安|被捕|shooting|robbery|murder|arrest/i.test(t)) return 'security_events';
+  if (/外交|会晤|协议|争端|紧张|diplomat|summit|treaty|dispute|tension/i.test(t)) return 'geopolitical_intel';
+  return 'osint_intel';
+}
+
+/* 中资海外资产档案（涉华安全预警的锚点，持续扩充） */
+const ASSET_PROFILES = [
+  { name: '瓜达尔港', re: /瓜达尔|gwadar/i },
+  { name: '中巴经济走廊', re: /中巴经济走廊|cpec|china-pakistan economic corridor/i },
+  { name: '汉班托塔港', re: /汉班托塔|hambantota/i },
+  { name: '比雷埃夫斯港', re: /比雷埃夫斯|piraeus/i },
+  { name: '皎漂港', re: /皎漂|kyaukpyu/i },
+  { name: '中老铁路', re: /中老铁路|china-laos railway/i },
+  { name: '雅万高铁', re: /雅万|jakarta-bandung|whoosh/i },
+  { name: '蒙内铁路', re: /蒙内铁路|mombasa-nairobi|sgr/i },
+  { name: '亚吉铁路', re: /亚吉铁路|addis ababa-djibouti/i },
+  { name: '钱凯港', re: /钱凯|chancay/i },
+  { name: '科伦坡港口城', re: /科伦坡港口城|colombo port city/i },
+  { name: '中白工业园', re: /中白工业园|great stone/i },
+  { name: '吉布提保障基地', re: /吉布提.*基地|djibouti.*base/i },
+  { name: '莱基深水港', re: /莱基|lekki/i },
+  { name: '坦赞铁路', re: /坦赞铁路|tazara/i },
+  { name: '马来东海岸铁路', re: /马来.*东铁|东海岸铁路|ecrl|east coast rail/i },
+  { name: '西芒杜铁矿', re: /西芒杜|simandou/i },
+  { name: '卡莫阿铜矿', re: /卡莫阿|kamoa/i },
+  { name: '拉姆镍矿', re: /拉姆镍|ramu/i },
+  { name: '苏伊士经贸合作区', re: /苏伊士.*经贸|teda/i }
+];
+function _tagAssets(it) {
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '');
+  const hits = [];
+  for (const a of ASSET_PROFILES) { if (a.re.test(t)) hits.push(a.name); }
+  if (hits.length) it.asset_tags = hits;
+  /* 2026-08-18 注：曾尝试用正则从事发标题自动纠正 country（来源国→事发国），但正则无法可靠区分
+   * 行为主体国与事发地（如"美国制裁北极LNG"事发在俄而非美；且"索马里"含"马里"子串误判）。
+   * 故不在入库时改 country（保留来源国），事发国由前端 distribute._extractCountryFromText 在显示时提取。 */
+  return hits;
+}
+
+function _normLevelForStore(it) {
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+  const china = /中资|中企|中方|华人|华侨|华裔|中国公民|中国游客|留学生|一带一路|中国使领馆|中国驻|中国|chinese|china|beijing/i.test(t)
+    || (it.asset_tags && it.asset_tags.length > 0);
+  const severe = /死亡|伤亡|遇害|遇难|绑架|人质|劫持|恐袭|爆炸|空袭|枪击|战争|政变|屠杀|撤侨|killed|deadly|bombing|blast|hostage|kidnap|airstrike|massacre|coup/i.test(t);
+  /* 提级关注（2026-08-14 安全部实战视角）：非涉华但重大伤亡（死亡≥5人）或大规模袭击特征 → 提级红色 */
+  const _cm = t.match(/(\d{1,4})\s*(?:名|人|个)?\s*(?:死亡|身亡|遇难|丧生|被打死|被击毙)/) ||
+              t.match(/(\d{1,4})\s*(?:people\s+)?(?:killed|dead|deaths)/i) ||
+              t.match(/(?:death toll|kills)\s*(\d{1,4})/i);
+  const _casN = _cm ? parseInt(_cm[1], 10) : 0;
+  const _mass = _casN >= 5 || /大屠杀|大规模袭击|自杀式|集体处决|灭门|massacre|mass shooting|suicide bomb/i.test(t);
+  if (china && severe) return 'red';
+  if (severe && _mass) { it._promoted = '重大伤亡提级'; return 'red'; }
+  if (severe) return 'orange';
+  if (/袭击|冲突|骚乱|抗议|制裁|封锁|限制|风险|威胁|紧张|摩擦|争端|审查|调查|批评|attack|clash|protest|sanction|risk|threat|tension|probe|review/i.test(t)) return 'yellow';
+  return 'blue';
+}
+
+function _ruUaQuotaOk(it) {
+  const d = _todayKey();
+  if (_ruUaDate !== d) { _ruUaDate = d; _ruUaCount = 0; }
+  if (!_isRuUaTopic(it)) return true;
+  /* DB 计数 5 分钟异步刷新（服务重启内存清零也不失控） */
+  if (_ruUaDb.date !== d || Date.now() - _ruUaDb.t > 5 * 60 * 1000) { _ruUaDb.t = Date.now(); _ruUaRefreshDbCount(); }
+  const todayTotal = (_ruUaDb.date === d ? _ruUaDb.n : 0) + _ruUaCount;
+  if (/中国|Chinese|China|Beijing|中资|中企|华人/i.test(String(it.title || ''))) { _ruUaCount++; return true; } /* 涉华豁免 */
+  if (todayTotal < RUUA_DAILY_CAP) { _ruUaCount++; return true; }
+  /* 超配额：只放行重要事件（伤亡/重大/核/平民设施），战况琐事拦截 */
+  if (_RUUA_IMPORTANT_RE.test(String(it.title || '') + ' ' + String(it.title_zh || ''))) { _ruUaCount++; return true; }
+  return false;
+}
+/* ===== 高发国家日配额（2026-08-17 用户指令：采集全球均衡）=====
+ * 伊朗/美国/巴基斯坦等高产国：非涉华条目达日配额即停收（涉华/重大伤亡豁免）。
+ * 与俄乌配额同思路：保证拉美/非洲/中亚/欧洲在库里有位置。 */
+const DOMINANT_DAILY_CAP = { '伊朗': 45, '美国': 45, '巴基斯坦': 65, '阿富汗': 45, '巴勒斯坦': 30, '以色列': 25 };
+const _domCounts = { date: '', by: {}, t: 0 };
+function _dominantQuotaOk(it) {
+  const ctry = String(it.country || it.country_cn || '');
+  const cap = Object.keys(DOMINANT_DAILY_CAP).find(c => ctry.indexOf(c) >= 0);
+  if (!cap) return true;
+  const d = _todayKey();
+  if (_domCounts.date !== d) { _domCounts.date = d; _domCounts.by = {}; }
+  /* 涉华/重大伤亡豁免 */
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '');
+  if (/中国|中资|中企|中方|华人|一带一路|涉华|Chinese|China|CPEC/i.test(t)) return true;
+  const dm = t.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
+  if (dm && parseInt(dm[1] || dm[2], 10) >= 5) return true;
+  _domCounts.by[cap] = (_domCounts.by[cap] || 0) + 1;
+  return _domCounts.by[cap] <= DOMINANT_DAILY_CAP[cap];
+}
+
+/* ===== 多源印证（2026-08-13 用户指令）=====
+ * 事件签名 = 国家 + 事件类型词 + 日期；同签名不同来源的条数 = 印证数。
+ * 同一事件被越多独立信源报道，预警置信度越高。 */
+function _eventSignature(it) {
+  const t = String(it.title || '').toLowerCase();
+  const m = t.match(/attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|袭击|爆炸|死亡|绑架|枪击|制裁|抗议|冲突|炮击|撤离/);
+  const ev = m ? m[0] : '';
+  const cty = String(it.country_iso || it.country_cn || it.country || '');
+  const day = String(it.publish_time || it.publishedAt || '').slice(0, 10);
+  return cty + '|' + ev + '|' + day;
+}
+/* 入库后计算印证数（近2天同签名独立来源数+1），写回本条 data_json */
+async function _markCorroboration(id, it) {
+  try {
+    const sig = it._eventSig;
+    if (!sig || sig.indexOf('|') < 0) return;
+    const since = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+    const { rows } = await query(
+      `SELECT COUNT(DISTINCT source) c FROM intel_data WHERE collect_time >= $1 AND data_json->>'_eventSig' = $2`,
+      [since, sig]
+    );
+    const n = Math.max(1, parseInt(rows[0].c || '1', 10));
+    if (n > 1) {
+      await query(`UPDATE intel_data SET data_json = jsonb_set(data_json, '{corroboration}', $1::jsonb) WHERE id = $2`, [String(n), id]);
+    }
+  } catch (e) {}
+}
+
+function _isFreshEnough(it) {
+  const v = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
+  if (!v) return true;
+  const d = new Date(String(v).replace('T', ' ').replace('Z', ''));
+  const t = isNaN(d.getTime()) ? new Date(v) : d;
+  if (isNaN(t.getTime())) return true;
+  return (Date.now() - t.getTime()) <= FRESH_WINDOW_MS;
+}
+function _loadDailyStats() {
+  try {
+    if (!fs.existsSync(DAILY_STATS_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(DAILY_STATS_FILE, 'utf8'));
+    if (raw && raw.date === _todayKey()) return raw;
+  } catch (e) {}
+  return null;
+}
+function _saveDailyStats() {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(DAILY_STATS_FILE, JSON.stringify(_dailyStats), 'utf8');
+  } catch (e) {}
+}
+let _dailyStats = _loadDailyStats() || { date: _todayKey(), total: 0, linked: 0, china: 0, chinaNegative: 0, rounds: 0, lastRound: null };
+if (_dailyStats.date !== _todayKey()) {
+  _dailyStats = { date: _todayKey(), total: 0, linked: 0, china: 0, chinaNegative: 0, rounds: 0, lastRound: null };
+}
+/* 启动时/跨天从数据库同步当日实际入库量，避免服务重启导致统计归零或漏计 */
+async function _syncDailyStatsFromDB() {
+  try {
+    /* 本地自然日 0 点作为边界（不能用 CURRENT_DATE——它取决于 PG 会话时区，可能不是中国时区） */
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const { rows } = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE collect_time >= $1) AS total_today,
+        COUNT(*) FILTER (WHERE collect_time >= $1 AND (
+          title ILIKE '%中国%' OR title ILIKE '%Chinese%' OR title ILIKE '%China%' OR title ILIKE '%中资%'
+          OR title ILIKE '%华人%' OR title ILIKE '%华侨%' OR title ILIKE '%中方%' OR title ILIKE '%中企%'
+          OR title ILIKE '%一带一路%' OR title ILIKE '%BRI%' OR title ILIKE '%Belt and Road%'
+          OR title ILIKE '%Beijing%' OR title ILIKE '%CPEC%' OR title ILIKE '%涉华%' OR title ILIKE '%对华%'
+          OR data_json->>'title_zh' ILIKE '%中国%' OR data_json->>'title_zh' ILIKE '%中资%'
+          OR data_json->>'title_zh' ILIKE '%华人%' OR data_json->>'title_zh' ILIKE '%一带一路%'
+        )) AS china_today
+      FROM intel_data
+    `, [dayStart]);
+    const dbTotal = parseInt(rows[0].total_today || '0', 10);
+    const dbChinaRaw = parseInt(rows[0].china_today || '0', 10);
+    const { rows: negRows } = await query(`
+      SELECT title, data_json->>'_chinaNegative' AS neg
+      FROM intel_data
+      WHERE collect_time >= $1 AND (
+        title ILIKE '%中国%' OR title ILIKE '%Chinese%' OR title ILIKE '%China%' OR title ILIKE '%中资%'
+        OR title ILIKE '%华人%' OR title ILIKE '%华侨%' OR title ILIKE '%中方%' OR title ILIKE '%中企%'
+        OR title ILIKE '%一带一路%' OR title ILIKE '%BRI%' OR title ILIKE '%Belt and Road%'
+      )
+    `, [dayStart]);
+    let dbChinaNeg = 0;
+    negRows.forEach(r => { if (_isChinaNegative({ title: r.title, _chinaNegative: r.neg === 'true' })) dbChinaNeg++; });
+    const dbChina = Math.max(0, dbChinaRaw - dbChinaNeg);
+    const d = _todayKey();
+    if (_dailyStats.date !== d) _dailyStats = { date: d, total: 0, linked: 0, china: 0, chinaNegative: 0, rounds: 0, lastRound: null };
+    const oldTotal = _dailyStats.total, oldChina = _dailyStats.china, oldNeg = _dailyStats.chinaNegative;
+    /* 2026-08-14：总量同样直接采用 DB 实数（清库/去重后内存虚值会回落，指标必须诚实） */
+    _dailyStats.total = Math.max(dbTotal, 0);
+    /* 2026-08-13：涉华/负面以数据库标题口径为准（直接采用，不再 Math.max）——
+     * 内存计数曾按"来源是中国媒体即涉华"虚增（85 vs 实际 30 余条），此处会自动纠偏回落 */
+    _dailyStats.china = Math.max(dbChina, 0);
+    _dailyStats.chinaNegative = Math.max(dbChinaNeg, 0);
+    if (_dailyStats.total !== oldTotal || _dailyStats.china !== oldChina || _dailyStats.chinaNegative !== oldNeg) {
+      console.log('[DAILY STATS] 已从数据库同步：总量 ' + _dailyStats.total + ' / 涉华 ' + _dailyStats.china + ' / 境外涉华负面 ' + _dailyStats.chinaNegative + '（文件旧值 ' + oldTotal + '/' + oldChina + '/' + oldNeg + '）');
+      _saveDailyStats();
+      _logDailyStats();
+    }
+  } catch (e) { console.warn('[DAILY STATS] 数据库同步失败:', e.message); }
+}
+/* 涉华/负面专项轮询索引：避免每轮都抓前 N 个源导致重复 URL 爆炸 */
+let _chinaFocusRoundIndex = 0;
+let _chinaNegativeRoundIndex = 0;
+function _isChinaLinked(it) {
+  if (!it) return false;
+  // 境外涉华负面数据独立计数，不占常规涉华指标
+  if (it._chinaNegative === true) return false;
+  if (it.interestLinked !== true && it.interestLinked !== 'true') return false;
+  /* 2026-08-13 用户铁律：涉华 = 标题含中国/中资/华人等要素。
+   * 口径收紧：废除"来源是中国媒体/来源国是中国即涉华"的旧规则——
+   * 新华社发的伊拉克新闻、中国日报发的美国新闻都不是涉华情报。 */
+  if (it._chinaFocus === true) return true;
+  // dims A/B 在采集时基于标题计算（A=中国要素，B=一带一路项目），等同标题级判定
+  if (it.dims && (it.dims.indexOf('A') >= 0 || it.dims.indexOf('B') >= 0)) return true;
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+  return /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i.test(t);
+}
+function _isChinaNegative(it) {
+  if (!it) return false;
+  if (it._chinaNegative === true) return true;
+  // 对历史已入库数据兼容识别：标题/内容同时命中涉华词与负面关键词
+  const txt = String(it.title || '') + ' ' + String(it.content || '');
+  if (!/中国|Chinese|China|Beijing|Shanghai|中资|中企|中方|华人|华侨|华裔|一带一路|Hong Kong|Taiwan|Macau|RMB|Yuan|Huawei|ZTE|TikTok|WeChat|BRI|Belt and Road/i.test(txt)) return false;
+  const negRe = globalmedia._CHINA_NEGATIVE_KW_RE;
+  return negRe ? negRe.test(txt) : false;
+}
+function _bumpDailyStats(inserted, linked, china, chinaNegative) {
+  const d = _todayKey();
+  if (_dailyStats.date !== d) {
+    console.log('[DAILY STATS] 日期切换 ' + _dailyStats.date + ' -> ' + d + '，昨日总量 ' + _dailyStats.total + ' / 涉华 ' + _dailyStats.china + ' / 境外涉华负面 ' + _dailyStats.chinaNegative);
+    _dailyStats = { date: d, total: 0, linked: 0, china: 0, chinaNegative: 0, rounds: 0, lastRound: null };
+  }
+  _dailyStats.total += (inserted || 0);
+  _dailyStats.linked += (linked || 0);
+  _dailyStats.china += (china || 0);
+  _dailyStats.chinaNegative += (chinaNegative || 0);
+  _dailyStats.rounds += 1;
+  _dailyStats.lastRound = new Date().toISOString();
+  _saveDailyStats();
+}
+function _logDailyStats() {
+  const s = _dailyStats;
+  const totalGap = Math.max(0, 500 - s.total);
+  const chinaGap = Math.max(0, 80 - s.china);
+  const chinaCap = Math.max(0, s.china - 100);
+  const negGap = Math.max(0, 50 - s.chinaNegative);
+  console.log('[DAILY STATS] 今日 ' + s.date + ' | 总量 ' + s.total + '（距≥500差' + totalGap + '）| 涉华 ' + s.china + '（目标80-100，差' + chinaGap + '，超' + chinaCap + '）| 境外涉华负面 ' + s.chinaNegative + '（目标≥50，差' + negGap + '）| 已跑' + s.rounds + '轮');
+}
+function _dedupByUrl(arr) {
+  const seen = new Set();
+  return (arr || []).filter(o => {
+    const k = String(o.url || '').replace(/\/+$/, '').toLowerCase();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+async function _runGlobalMedia() {
+  if (Date.now() < _globalMediaBusyUntil) return;
+  _globalMediaBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  console.log('[GLOBALMEDIA] 开始本轮采集...');
+  const t0 = Date.now();
+  try {
+    /* 新闻媒体 RSS：涉华/中国源优先 + 亚太源加权 + 重点源必抓 + 普通源轮询 */
+    const allRss = globalmedia.DIRECT_RSS || [];
+    const _sourceText = s => ((s.cn || '') + ' ' + (s.name || '') + ' ' + (s.focus || '') + ' ' + (s.region || '')).toLowerCase();
+    const chinaBoost = allRss.filter(s => /中国|hong kong|taiwan|macau|chinese|scmp|nikkei asia|cgtn|xinhua|global times|china daily/.test(_sourceText(s))).slice(0, 15);
+    const chinaUrlSet = new Set(chinaBoost.map(s => String(s.url || '').replace(/\/+$/, '').toLowerCase()));
+    const asiaBoost = allRss.filter(s => {
+      if (chinaUrlSet.has(String(s.url || '').replace(/\/+$/, '').toLowerCase())) return false;
+      return /东亚|东南亚|南亚|中亚|东北亚|大洋洲|俄罗斯与独联体|日本|韩国|印度|印尼|新加坡|马来西亚|泰国|越南|菲律宾|缅甸|老挝|柬埔寨|文莱|澳大利亚|新西兰|蒙古|亚太|asia|asean|indo-pacific|pacific/.test(_sourceText(s));
+    }).slice(0, 15);
+    const priority = _dedupByUrl(chinaBoost.concat(asiaBoost).concat(allRss.slice(0, Math.max(0, RSS_PRIORITY_COUNT - chinaBoost.length - asiaBoost.length))));
+    const normalStart = RSS_PRIORITY_COUNT + ((_rssRoundIndex * RSS_ROTATE_COUNT) % Math.max(1, allRss.length - RSS_PRIORITY_COUNT));
+    const rotated = allRss.slice(normalStart, normalStart + RSS_ROTATE_COUNT);
+    const rssSources = _dedupByUrl(priority.concat(rotated));
+    _rssRoundIndex++;
+
+    /* 智库 RSS：中国/亚太专项智库每轮必抓 + 普通智库轮询 */
+    const allTt = globalmedia.THINK_TANK_FEEDS || [];
+    const chinaTtBoost = allTt.filter(s => /china|chinese|asia|asian|indo-pacific|pacific|merics|asan|lowy|aspi|east asia|siis|ciis|cicir|jiia|nids|kida|iseas|rsis|pangoal|cf40|cass|think tank china/.test(((s.name || '') + ' ' + (s.focus || '')).toLowerCase())).slice(0, TT_PRIORITY_COUNT);
+    const ttStart = ((_rssRoundIndex * TT_ROTATE_COUNT) % Math.max(1, allTt.length));
+    const ttRotated = allTt.slice(ttStart, ttStart + TT_ROTATE_COUNT);
+    const ttSources = _dedupByUrl(chinaTtBoost.concat(ttRotated));
+
+    console.log('[GLOBALMEDIA] 本轮源: 媒体 ' + rssSources.length + '（重点' + priority.length + '+轮询' + rotated.length + '）/ 智库 ' + ttSources.length);
+
+    /* 并行抓取：新闻媒体 RSS + 智库/研究机构 RSS + GDELT 主题检索通道（增量新URL来源） */
+    const gnAll = globalmedia.GDELT_THEME_QUERIES || [];
+    /* 涉华专项 4 条每轮必抓；其余每轮轮换 THEME_ROTATE_COUNT 条（调速器动态调整） */
+    const gnChina = gnAll.slice(0, 4);
+    const gnRest = gnAll.slice(4);
+    const gnStart = gnRest.length ? ((_rssRoundIndex * THEME_ROTATE_COUNT) % gnRest.length) : 0;
+    const gnRotated = gnRest.slice(gnStart, gnStart + THEME_ROTATE_COUNT).concat(gnRest.slice(0, Math.max(0, gnStart + THEME_ROTATE_COUNT - gnRest.length)));
+    const [rss, tanks, gnews, social, channel] = await Promise.all([
+      globalmedia.scrapeDirectRss({ sources: rssSources, concurrency: RSS_CONCURRENCY, timeout: RSS_TIMEOUT_MS }),
+      globalmedia.scrapeThinkTanks({ sources: ttSources, concurrency: RSS_CONCURRENCY, timeout: RSS_TIMEOUT_MS }),
+      globalmedia.scrapeGdeltThemes({ queries: gnChina.concat(gnRotated), maxPerQuery: 20 }).catch(e => { console.warn('[GLOBALMEDIA] GDELT主题通道异常:', e.message); return { count: 0, items: [] }; }),
+      /* 社交媒体通道（Telegram 公开频道网页预览 + Reddit RSS，2026-08-13 并入主循环；模块内部5分钟节流） */
+      socialmedia.scrapeSocialMedia().catch(e => { console.warn('[GLOBALMEDIA] 社媒通道异常:', e.message); return { count: 0, items: [] }; }),
+      /* 航道与走廊安全专项通道（2026-08-14：海盗/航运要道/中欧班列，11个专业源） */
+      globalmedia.scrapeChannelWatch({ concurrency: 5, timeout: 9000 }).catch(e => { console.warn('[GLOBALMEDIA] 航道通道异常:', e.message); return { count: 0, items: [] }; })
+    ]);
+
+    /* 涉华抓取重点说明：
+     * 1. media_feeds.js 已登记大量国际主流媒体、中国及亚太媒体、智库研究机构；
+     * 2. globalmedia.gateRelevant / scoreDimensions 中的 A/B 维度专门捕获涉华/一带一路/中资内容；
+     * 3. 直连 RSS 中的 SCMP、Nikkei Asia、中国日报、环球时报、新华社、CGTN 等是涉华高密度源；
+     * 4. 智库源中的 CSIS China Power、Brookings China、MERICS、Asan Institute 等专门研究中国。
+     * 因此无需在每轮都调用慢速 GDELT 涉华搜索，避免阻塞 30-60 秒。 */
+    let items = (rss.items || []).concat(tanks.items || []).concat(gnews.items || []).concat(social.items || []).concat(channel.items || []);
+    console.log('[GLOBALMEDIA] 主题检索通道(AP主/GDELT兜底)本轮: ' + (gnews.count || 0) + ' 条（涉华专项6词+轮换' + gnRotated.length + '词）');
+    if (!social.throttled) console.log('[GLOBALMEDIA] 社媒通道(TG+Reddit)本轮: ' + (social.count || 0) + ' 条');
+    console.log('[GLOBALMEDIA] 航道走廊专项本轮: ' + (channel.count || 0) + ' 条');
+    let byCountry = Object.assign({}, rss.byCountry || {});
+    Object.keys(tanks.byCountry || {}).forEach(k => { byCountry[k] = (byCountry[k] || []).concat(tanks.byCountry[k]); });
+
+    try { await _translateListToZhParallel(items, 6); } catch (e) { console.warn('[GLOBALMEDIA] 翻译异常:', e.message); }
+
+    _writeMediaCache(items, byCountry, { rss: rss.count, thinkTanks: tanks.count });
+
+    /* 入库前统一跑实体关联 enrich：获取 riskScore/alertLevel/关联实体等字段；
+     * 但 GLOBALMEDIA 的 RSS 条目已经过 chinaOverseasGate 权威闸门判定为与我海外利益安全相关，
+     * 因此即使 enrich 未命中具体企业/项目（如关税争端、台海航运、海外华企遇袭等新闻性标题），
+     * 仍应入库并标记 interestLinked=true，避免大量相关情报被 entities.js 的硬关联门槛误拦。 */
+    let _beforeTrue = 0, _afterTrue = 0;
+    const negRe = globalmedia._CHINA_NEGATIVE_KW_RE;
+    const chinaRe = /中国|Chinese|China|Beijing|Shanghai|中资|中企|中方|华人|华侨|华裔|一带一路|Hong Kong|Taiwan|Macau|RMB|Yuan|Huawei|ZTE|TikTok|WeChat|BRI|Belt and Road/i;
+    items.forEach(it => {
+      try {
+        const before = it.interestLinked;
+        if (before === true) _beforeTrue++;
+        ENTITY.enrich(it);
+        /* 强制保留 gate 已放行的海外利益安全情报 */
+        if (before === true) it.interestLinked = true;
+        if (it.interestLinked === true) _afterTrue++;
+        /* 境外涉华负面信号标记：已放行涉华条目若同时命中负面关键词，单独计数（不占常规涉华指标） */
+        if (negRe && it.interestLinked === true && chinaRe.test((it.title || '') + ' ' + (it.content || '')) && negRe.test((it.title || '') + ' ' + (it.content || ''))) {
+          it._chinaNegative = true;
+          it.sentiment = 'negative';
+          it.category = '境外涉华负面情报';
+        }
+      } catch (e) {}
+    });
+    console.log('[GLOBALMEDIA] enrich 前后 interestLinked=true: ' + _beforeTrue + ' -> ' + _afterTrue + ' / 总 ' + items.length);
+
+    /* 实时入库：按 url 去重后直入 PostgreSQL 数据库系统。 */
+    try {
+      const linked = items.filter(it => it.interestLinked === true);
+      console.log('[GLOBALMEDIA] 待入库 linked: ' + linked.length + ' 条');
+      if (linked.length) {
+        const urls = linked.map(it => it.url).filter(Boolean);
+        const existing = new Set();
+        if (urls.length) {
+          const batch = urls.map((_, i) => `$${i + 1}`).join(',');
+          const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+          dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
+        }
+        console.log('[GLOBALMEDIA] urls=' + urls.length + ' existing=' + existing.size);
+        let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0;
+        let chinaInserted = 0, chinaNegativeInserted = 0;
+        const titleKeys = await _getRecentTitleKeys();
+        for (const it of linked) {
+          const u = it.url || it.title;
+          if (!u) { skippedNoUrl++; continue; }
+          if (existing.has(u)) { skippedDup++; continue; }
+          if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; continue; }
+          if (!_isFreshEnough(it)) { skippedStale++; continue; }
+          if (!_ruUaQuotaOk(it)) { skippedRuUa++; continue; }
+          if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; continue; }
+          try {
+            it._eventSig = _eventSignature(it);
+            _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+            const _ins = await query(
+              `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+              [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '全球海量媒体监测', JSON.stringify(it), 'approved']
+            );
+            existing.add(u);
+            _addTitleKey(titleKeys, it);
+            if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+            inserted++;
+            if (_isChinaNegative(it)) chinaNegativeInserted++;
+            else if (_isChinaLinked(it)) chinaInserted++;
+          } catch (e) { insertErr++; console.warn('[GLOBALMEDIA] INSERT ERR:', e.message); }
+        }
+        _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted);
+        _logDailyStats();
+        console.log('[GLOBALMEDIA] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，跳过标题同事件 ' + skippedDupTitle + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + '（媒体' + (rss.count || 0) + ' / 智库' + (tanks.count || 0) + '）');
+      }
+    } catch (e) {
+      console.warn('[GLOBALMEDIA] PostgreSQL 入库异常（可能未启动），降级写入 osint_intel 文件缓存:', e.message);
+      try {
+        const linked = items.filter(it => it.interestLinked === true);
+        let cacheChina = 0;
+        linked.forEach(it => { if (_isChinaLinked(it)) cacheChina++; });
+        if (linked.length) {
+          _mergePublicCache('osint_intel', linked);
+          _bumpDailyStats(linked.length, linked.length, cacheChina, 0);
+          _logDailyStats();
+        }
+      } catch (e2) {}
+    }
+
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[GLOBALMEDIA] 采集完成(' + sec + 's): 媒体' + (rss.count || 0) + '条 / 智库' + (tanks.count || 0) + '条，覆盖 ' + Object.keys(byCountry).length + ' 国/地区');
+  } catch (e) { console.warn('[GLOBALMEDIA] 采集失败:', e.message); }
+  finally { _globalMediaBusyUntil = 0; }
+}
+
+/* ===== 涉华专项采集：每轮单独抓取高命中中文媒体/涉华外媒，确保日涉华80-100条 ===== */
+async function _runChinaFocus() {
+  if (Date.now() < _chinaFocusBusyUntil) return;
+  _chinaFocusBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  console.log('[CHINA FOCUS] 开始涉华专项采集...');
+  const t0 = Date.now();
+  try {
+    const sources = (globalmedia.CHINA_FOCUS_SOURCES || []).slice();
+    // 若当日涉华已达标，减少专项源数量避免过度采集；若不足则全量抓
+    const s = _dailyStats;
+    const needChina = Math.max(0, 90 - s.china);
+    const batchSize = needChina <= 0 ? Math.min(10, sources.length) : Math.min(CHINA_FOCUS_COUNT, sources.length);
+    // 关键修复：轮询源，避免每轮都抓前 N 个源导致大量重复 URL
+    const start = (_chinaFocusRoundIndex * batchSize) % Math.max(1, sources.length);
+    let rotated = sources.slice(start, start + batchSize);
+    if (rotated.length < batchSize) {
+      rotated = rotated.concat(sources.slice(0, batchSize - rotated.length));
+    }
+    _chinaFocusRoundIndex++;
+    if (!rotated.length) { console.log('[CHINA FOCUS] 无涉华专项源'); return; }
+    const rss = await globalmedia.scrapeChinaFocus({ sources: rotated, concurrency: RSS_CONCURRENCY, timeout: RSS_TIMEOUT_MS });
+    let items = rss.items || [];
+    const seenUrl = new Set(items.map(it => it.url).filter(Boolean));
+
+    /* 补充1：GDELT 全球新闻检索涉华外交/经贸/BRI/基础设施信号，扩大新 URL 发现面 */
+    try {
+      const gdeltQueries = [
+        '(China OR Chinese OR Beijing) (diplomat OR embassy OR trade OR investment OR BRI)',
+        '(China OR Chinese) (Belt and Road OR infrastructure OR railway OR port OR corridor)',
+        '(China OR Chinese OR Beijing) (ASEAN OR Africa OR Latin America OR Middle East)'
+      ];
+      const gdeltRes = await Promise.all(gdeltQueries.map(q =>
+        Promise.race([
+          crawler.gdeltSearch(q, { timespan: '2d', maxrecords: 15 }),
+          new Promise(resolve => setTimeout(() => resolve([]), 15000))
+        ]).catch(() => [])
+      ));
+      for (const arts of gdeltRes) {
+        for (const a of arts || []) {
+          if (!a.url || seenUrl.has(a.url)) continue;
+          const txt = (a.title || '');
+          if (globalmedia._isSoftJunk && globalmedia._isSoftJunk(txt)) continue;
+          if (globalmedia._isDomesticChina && globalmedia._isDomesticChina(txt)) continue;
+          if (!globalmedia.gateRelevant(txt)) continue;
+          const gate = scrapers.chinaOverseasGate(txt);
+          if (!globalmedia.chinaFocusGate(txt, gate)) continue;
+          seenUrl.add(a.url);
+          const cn = globalmedia._isoToCn(a.sourcecountry || '');
+          const countryDims = globalmedia._resolveDims({ iso: a.sourcecountry || 'INT', region: '' });
+          const sc = globalmedia.scoreDimensions(txt, countryDims);
+          items.push({
+            title: a.title, content: '', url: a.url,
+            country: a.country || cn || '国际', country_cn: cn || '国际', country_iso: a.sourcecountry || 'INT',
+            city: '', location: '',
+            dims: sc.dims, maxScore: sc.maxScore, dimScores: sc.scores,
+            source: a.domain || 'GDELT', credibility: globalmedia._sourceCredibility(a.domain || ''), category: '涉华专项情报', data_type: 'osint_intel',
+            interestLinked: true, chinaRelated: true, _chinaFocus: true,
+            language: a.language || 'en', date: a.seendate || '', publishedAt: a.seendate || '',
+            severity: '中',
+            _real: true, _fromSource: 'CHINA_FOCUS:GDELT:' + (a.sourcecountry || 'INT'),
+            _sourceType: 'china_focus'
+          });
+        }
+      }
+    } catch (e) { console.warn('[CHINA FOCUS] GDELT 补充失败:', e.message); }
+
+    /* 补充2：从全部直连 RSS+智库源中扫描涉华信号；与专项源去重，避免重复抓取 */
+    try {
+      const scanSources = (globalmedia.DIRECT_RSS || []).concat(globalmedia.THINK_TANK_FEEDS || []).filter(s => s && s.url);
+      const scan = await globalmedia.scrapeChinaFocus({ sources: scanSources.slice(0, 80), concurrency: RSS_CONCURRENCY, timeout: RSS_TIMEOUT_MS });
+      for (const it of scan.items || []) {
+        if (!it.url || seenUrl.has(it.url)) continue;
+        seenUrl.add(it.url);
+        it._chinaFocus = true;
+        it._fromSource = (it._fromSource || '').replace('CHINA_FOCUS:', 'CHINA_FOCUS:SCAN:') || 'CHINA_FOCUS:SCAN';
+        items.push(it);
+      }
+    } catch (e) { console.warn('[CHINA FOCUS] RSS 扫描补充失败:', e.message); }
+
+    try { await _translateListToZhParallel(items, 6); } catch (e) { console.warn('[CHINA FOCUS] 翻译异常:', e.message); }
+    /* scrapeChinaFocus 已按海外利益安全闸门 + 中国源放宽规则过滤 */
+    items.forEach(it => { if (it._chinaFocus !== true) it._chinaFocus = true; });
+    _writeMediaCache(items, rss.byCountry || {}, { chinaFocus: rss.count });
+    let inserted = 0, chinaInserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedStale = 0, skippedRuUa = 0;
+    const urls = items.map(it => it.url).filter(Boolean);
+    const existing = new Set();
+    if (urls.length) {
+      const batch = urls.map((_, i) => `$${i + 1}`).join(',');
+      const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+      dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
+    }
+    // 详细日志：按源统计命中/入库/重复
+    const bySource = {};
+    const titleKeys = await _getRecentTitleKeys();
+    let skippedDupTitle = 0;
+    for (const it of items) {
+      const src = it.source || 'unknown';
+      bySource[src] = bySource[src] || { hit: 0, dup: 0, inserted: 0 };
+      bySource[src].hit++;
+      const u = it.url || it.title;
+      if (!u) { skippedNoUrl++; continue; }
+      if (existing.has(u)) { skippedDup++; bySource[src].dup++; continue; }
+      if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; bySource[src].dup++; continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; bySource[src].dup++; continue; }
+      if (!_ruUaQuotaOk(it)) { skippedRuUa++; bySource[src].dup++; continue; }
+      if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; bySource[src].dup++; continue; }
+      try {
+        it._eventSig = _eventSignature(it);
+        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        const _ins = await query(
+          `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '涉华专项监测', JSON.stringify(it), 'approved']
+        );
+        existing.add(u);
+        _addTitleKey(titleKeys, it);
+        if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+        inserted++;
+        chinaInserted++;
+        bySource[src].inserted++;
+      } catch (e) { insertErr++; console.warn('[CHINA FOCUS] INSERT ERR:', e.message); }
+    }
+    // 打印前 5 个源明细，方便定位哪些源在贡献/在重复
+    const sourceDetails = Object.entries(bySource)
+      .sort((a, b) => b[1].hit - a[1].hit)
+      .slice(0, 5)
+      .map(([k, v]) => k + ': hit=' + v.hit + '/dup=' + v.dup + '/in=' + v.inserted)
+      .join(' | ');
+    _bumpDailyStats(inserted, items.length, chinaInserted, 0);
+    _logDailyStats();
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[CHINA FOCUS] 完成(' + sec + 's): 源' + rotated.length + ' / 命中' + (rss.count || 0) + ' / 入库' + inserted + '（涉华' + chinaInserted + '）跳过重复' + skippedDup + ' | TOP: ' + sourceDetails);
+  } catch (e) { console.warn('[CHINA FOCUS] 采集失败:', e.message); }
+  finally { _chinaFocusBusyUntil = 0; }
+}
+
+/* ===== 境外涉华负面专项采集：独立通道，每日目标≥50条，不计入常规涉华80-100指标 =====
+ * 核心策略：以 AP 开放检索（crawler.apSearch）为主，主动搜索涉华负面关键词；
+ * RSS 负面源为兜底补充。AP 检索在当前环境实测可达、命中率高，可稳定补充日采集量。 */
+const _CHINA_NEGATIVE_AP_QUERIES = [
+  'China sanctions', 'China ban restriction', 'China trade war tariffs',
+  'Chinese company raid investigation', 'China protest demonstration',
+  'Chinese workers attack kidnapped', 'China espionage spy',
+  'South China Sea tensions', 'Taiwan Strait tensions',
+  'BRI backlash protest', 'Huawei ban restriction', 'TikTok ban WeChat ban'
+];
+async function _runChinaNegative() {
+  if (Date.now() < _chinaNegativeBusyUntil) return;
+  _chinaNegativeBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  console.log('[CHINA NEGATIVE] 开始境外涉华负面专项采集...');
+  const t0 = Date.now();
+  try {
+    let items = [];
+    const seenUrl = new Set();
+
+    /* 1) RSS 负面源：每轮必跑，作为主要稳定来源 */
+    try {
+      const sources = (globalmedia.CHINA_NEGATIVE_SOURCES || []).slice();
+      // 关键修复：轮询负面源，避免每轮都抓前 20 个导致重复；扩大窗口提高发现率
+      const rssBatchSize = Math.min(50, sources.length);
+      const start = (_chinaNegativeRoundIndex * rssBatchSize) % Math.max(1, sources.length);
+      let rssBatch = sources.slice(start, start + rssBatchSize);
+      if (rssBatch.length < rssBatchSize) {
+        rssBatch = rssBatch.concat(sources.slice(0, rssBatchSize - rssBatch.length));
+      }
+      _chinaNegativeRoundIndex++;
+      const rss = await Promise.race([
+        globalmedia.scrapeChinaNegative({ sources: rssBatch, concurrency: 8, timeout: 8000, debug: true }),
+        new Promise(resolve => setTimeout(() => resolve({ items: [], count: 0 }), 30000))
+      ]);
+      console.log('[CHINA NEGATIVE] RSS源 ' + rssBatch.length + ' / 命中 ' + (rss.count || 0));
+      for (const it of rss.items || []) {
+        if (!it.url || seenUrl.has(it.url)) continue;
+        seenUrl.add(it.url);
+        items.push(it);
+      }
+    } catch (e) { console.warn('[CHINA NEGATIVE] RSS 失败:', e.message); }
+
+    /* 2) GDELT 补充：全球新闻大数据检索涉华负面信号 */
+    try {
+      const gdeltQueries = [
+        '(China OR Chinese OR Beijing) (sanction OR boycott OR ban OR restriction OR tariff OR export control)',
+        '(China OR Chinese) (attack OR protest OR raid OR violence OR kidnapped OR killed OR explosion)',
+        '(BRI OR "Belt and Road") (backlash OR protest OR debt OR risk OR delay OR dispute)'
+      ];
+      const gdeltRes = await Promise.all(gdeltQueries.map(q =>
+        Promise.race([
+          crawler.gdeltSearch(q, { timespan: '2d', maxrecords: 20 }),
+          new Promise(resolve => setTimeout(() => resolve([]), 18000))
+        ]).catch(() => [])
+      ));
+      for (const arts of gdeltRes) {
+        for (const a of arts || []) {
+          if (!a.url || seenUrl.has(a.url)) continue;
+          const txt = (a.title || '');
+          if (globalmedia._isSoftJunk && globalmedia._isSoftJunk(txt)) continue;
+          if (globalmedia._isDomesticChina && globalmedia._isDomesticChina(txt)) continue;
+          if (!globalmedia.gateRelevant(txt)) continue;
+          const gate = scrapers.chinaOverseasGate(txt);
+          if (!globalmedia.chinaNegativeGate(txt, gate)) continue;
+          seenUrl.add(a.url);
+          const sc = globalmedia.scoreDimensions(txt, []);
+          items.push({
+            title: a.title, content: '', url: a.url,
+            country: a.country || '国际', country_cn: a.country || '国际', country_iso: a.countryIso || 'INT',
+            city: '', location: '',
+            dims: sc.dims, maxScore: sc.maxScore, dimScores: sc.scores,
+            source: a.domain || 'GDELT', credibility: globalmedia._sourceCredibility(a.domain || ''), category: '境外涉华负面情报', data_type: 'osint_intel',
+            interestLinked: true, chinaRelated: false, sentiment: 'negative', _chinaNegative: true,
+            language: a.language || 'en', date: a.seendate || '', publishedAt: a.seendate || '',
+            severity: '中',
+            _real: true, _fromSource: 'CHINA_NEGATIVE:GDELT',
+            _sourceType: 'china_negative'
+          });
+        }
+      }
+    } catch (e) { console.warn('[CHINA NEGATIVE] GDELT 失败:', e.message); }
+
+    /* 2.5) 涉华负面专用采集器（2026-08-14 用户指令：专门工具，8大类词库轮动，负面双闸） */
+    try {
+      const neg = await Promise.race([
+        negtool.collect({ perRound: 6 }),
+        new Promise(resolve => setTimeout(() => resolve({ items: [], count: 0 }), 90000))
+      ]);
+      let negAdded = 0;
+      for (const it of neg.items || []) {
+        if (!it.url || seenUrl.has(it.url)) continue;
+        seenUrl.add(it.url);
+        items.push(it);
+        negAdded++;
+      }
+      console.log('[CHINA NEGATIVE] 专用工具本轮: ' + negAdded + ' 条');
+    } catch (e) { console.warn('[CHINA NEGATIVE] 专用工具异常:', e.message); }
+
+    /* 3) AP 开放检索：低频次补充，每 5 分钟才跑一次，避免触发 429 */
+    if (Date.now() - _chinaNegativeLastApAt >= CHINA_NEGATIVE_AP_INTERVAL_MS) {
+      _chinaNegativeLastApAt = Date.now();
+      const _apItem = (a) => {
+        if (!a.url || seenUrl.has(a.url)) return null;
+        const txt = (a.title || '') + ' ' + (a.description || '');
+        if (!globalmedia.gateRelevant(txt)) return null;
+        const gate = scrapers.chinaOverseasGate(txt);
+        if (!globalmedia.chinaNegativeGate(txt, gate)) return null;
+        seenUrl.add(a.url);
+        const sc = globalmedia.scoreDimensions(txt, []);
+        return {
+          title: a.title, content: a.description || '', url: a.url,
+          country: a.country || '国际', country_cn: a.country || '国际', country_iso: a.countryIso || 'INT',
+          city: a.city || '', location: a.city || '',
+          dims: sc.dims, maxScore: sc.maxScore, dimScores: sc.scores,
+          source: a.source || 'AP News', category: '境外涉华负面情报', data_type: 'osint_intel',
+          interestLinked: true, chinaRelated: false, sentiment: 'negative', _chinaNegative: true,
+          language: a.language || 'en', date: a.publishedAt || '', publishedAt: a.publishedAt || '',
+          severity: '中',
+          _real: true, _fromSource: 'CHINA_NEGATIVE:AP',
+          _sourceType: 'china_negative'
+        };
+      };
+      // 每次只跑 3 个查询，降低对 AP 的压力
+      const qs = _CHINA_NEGATIVE_AP_QUERIES.slice().sort(() => Math.random() - 0.5).slice(0, 3);
+      for (const q of qs) {
+        try {
+          const arts = await Promise.race([
+            crawler.apSearch(q, { maxrecords: 20, pages: 1 }),
+            new Promise(resolve => setTimeout(() => resolve([]), 20000))
+          ]);
+          for (const a of arts || []) {
+            const it = _apItem(a);
+            if (it) items.push(it);
+          }
+        } catch (e) { console.warn('[CHINA NEGATIVE] AP 查询失败:', e.message); }
+        await new Promise(r => setTimeout(r, 2500));
+      }
+    }
+
+    /* 3) 翻译 + 入库 */
+    try { await _translateListToZhParallel(items, 6); } catch (e) { console.warn('[CHINA NEGATIVE] 翻译异常:', e.message); }
+    let inserted = 0, negativeInserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedStale = 0, skippedRuUa = 0;
+    const urls = items.map(it => it.url).filter(Boolean);
+    const existing = new Set();
+    if (urls.length) {
+      const batch = urls.map((_, i) => `$${i + 1}`).join(',');
+      const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+      dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
+    }
+    // 详细日志：按源统计命中/入库/重复
+    const bySource = {};
+    const titleKeys = await _getRecentTitleKeys();
+    let skippedDupTitle = 0;
+    for (const it of items) {
+      const src = it.source || 'unknown';
+      bySource[src] = bySource[src] || { hit: 0, dup: 0, inserted: 0 };
+      bySource[src].hit++;
+      const u = it.url || it.title;
+      if (!u) { skippedNoUrl++; continue; }
+      if (existing.has(u)) { skippedDup++; bySource[src].dup++; continue; }
+      if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; bySource[src].dup++; continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; bySource[src].dup++; continue; }
+      if (!_ruUaQuotaOk(it)) { skippedRuUa++; bySource[src].dup++; continue; }
+      if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; bySource[src].dup++; continue; }
+      try {
+        it._eventSig = _eventSignature(it);
+        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        const _ins = await query(
+          `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '境外涉华负面监测', JSON.stringify(it), 'approved']
+        );
+        existing.add(u);
+        _addTitleKey(titleKeys, it);
+        if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+        inserted++;
+        negativeInserted++;
+        bySource[src].inserted++;
+      } catch (e) { insertErr++; console.warn('[CHINA NEGATIVE] INSERT ERR:', e.message); }
+    }
+    const sourceDetails = Object.entries(bySource)
+      .sort((a, b) => b[1].hit - a[1].hit)
+      .slice(0, 5)
+      .map(([k, v]) => k + ': hit=' + v.hit + '/dup=' + v.dup + '/in=' + v.inserted)
+      .join(' | ');
+    _bumpDailyStats(inserted, items.length, 0, negativeInserted);
+    _logDailyStats();
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[CHINA NEGATIVE] 完成(' + sec + 's): 命中' + items.length + ' / 入库' + inserted + '（境外涉华负面' + negativeInserted + '）跳过重复' + skippedDup + ' | TOP: ' + sourceDetails);
+  } catch (e) { console.warn('[CHINA NEGATIVE] 采集失败:', e.message); }
+  finally { _chinaNegativeBusyUntil = 0; }
+}
+/* ===== 采集自动驾驶调速器（2026-08-12 用户指令：系统自动达标，不靠人催）=====
+ * 每 10 分钟自检一次日指标进度（按当日已过去时间加权），落后即自动升档加码，
+ * 达标后自动降档回常态。全程无人值守。 */
+let _governorLevel = 0; /* 0=常态 1=加速 2=全力 */
+const GOVERNOR_LEVELS = [
+  { name: '常态', rssRotate: 30, ttRotate: 20, themeRotate: 4, negApMs: 5 * 60 * 1000 },
+  { name: '加速', rssRotate: 50, ttRotate: 30, themeRotate: 6, negApMs: 3 * 60 * 1000 },
+  { name: '全力', rssRotate: 80, ttRotate: 40, themeRotate: 9, negApMs: 2 * 60 * 1000 }
+];
+function _governorApply(level) {
+  const L = GOVERNOR_LEVELS[level];
+  RSS_ROTATE_COUNT = L.rssRotate;
+  TT_ROTATE_COUNT = L.ttRotate;
+  THEME_ROTATE_COUNT = L.themeRotate;
+  CHINA_NEGATIVE_AP_INTERVAL_MS = L.negApMs;
+  console.log('[GOVERNOR] 档位切换 → ' + L.name + '（RSS轮询' + L.rssRotate + ' / 智库' + L.ttRotate + ' / 主题词' + L.themeRotate + ' / 负面AP间隔' + (L.negApMs / 60000) + 'min）');
+}
+function _governorCheck() {
+  try {
+    const now = new Date();
+    const elapsedMin = now.getHours() * 60 + now.getMinutes();
+    if (elapsedMin < 30) return; /* 凌晨前30分钟不评估，避免误加码 */
+    const dayRatio = elapsedMin / 1440;
+    const s = _dailyStats;
+    /* 期望值 = 目标 × 时间进度 × 0.8 容差 */
+    const expTotal = 500 * dayRatio * 0.8;
+    const expChina = 80 * dayRatio * 0.8;
+    const expNeg = 50 * dayRatio * 0.8;
+    const behind = (s.total < expTotal ? 1 : 0) + (s.china < expChina ? 1 : 0) + (s.chinaNegative < expNeg ? 1 : 0);
+    let target = _governorLevel;
+    if (behind >= 2) target = 2;
+    else if (behind === 1) target = Math.max(1, target - 0) || 1;
+    else target = Math.max(0, _governorLevel - 1); /* 全部达标：降一档 */
+    if (behind === 0) target = 0;
+    if (target !== _governorLevel) {
+      _governorLevel = target;
+      _governorApply(target);
+      /* 升档时立即追加一轮采集，不等下个周期 */
+      if (target > 0) {
+        setTimeout(() => { _runGlobalMedia(); }, 2000);
+        if (s.chinaNegative < expNeg) { _chinaNegativeLastApAt = 0; setTimeout(() => { _runChinaNegative(); }, 8000); }
+        if (s.china < expChina) setTimeout(() => { _runChinaFocus(); }, 15000);
+      }
+    }
+    console.log('[GOVERNOR] 自检：进度' + Math.round(dayRatio * 100) + '% | 总量' + s.total + '/' + Math.round(expTotal) + ' 涉华' + s.china + '/' + Math.round(expChina) + ' 负面' + s.chinaNegative + '/' + Math.round(expNeg) + ' | 落后项=' + behind + ' | 当前档位=' + GOVERNOR_LEVELS[_governorLevel].name);
+  } catch (e) { console.warn('[GOVERNOR] 自检异常:', e.message); }
+}
+
+/* ===== 采集巡检哨兵（2026-08-15 用户指令：30分钟巡查一遍，采集少了自动加速）=====
+ * 与 10 分钟调速器互补：调速器管"档位"，哨兵管"断粮/空转/卡死"。
+ * 每 30 分钟：1) 以 PostgreSQL 全库当日实数核对进度（时间加权期望）；
+ * 2) 总量落后 → 强行升档 + 立即补跑主通道与涉华专项；
+ * 3) 空转检测（相邻两次巡检入库增量 <5 条）→ 重建标题指纹缓存 + 补跑负面/恐袭专项；
+ * 4) 巡检状态通过 /api/media/daily-stats 的 patrol 字段对前端透明。 */
+let _patrolState = { lastCheck: null, lastDbTotal: 0, lastGain: 0, actions: [], gear: '常态' };
+async function _patrolSentinel() {
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const { rows } = await query(`SELECT COUNT(*) c FROM intel_data WHERE audit_status='approved' AND collect_time >= $1`, [dayStart]);
+    const dbToday = parseInt(rows[0].c || '0', 10);
+    const now = new Date();
+    const elapsedMin = now.getHours() * 60 + now.getMinutes();
+    if (elapsedMin < 20) { _patrolState.lastDbTotal = dbToday; _patrolState.lastCheck = now.toISOString(); return; } /* 凌晨前20分钟只记基线 */
+    const dayRatio = elapsedMin / 1440;
+    const expected = 500 * dayRatio * 0.8;
+    const gain = _patrolState.lastDbTotal > 0 ? (dbToday - _patrolState.lastDbTotal) : -1; /* -1=首次巡检无基线 */
+    const acts = [];
+    /* 1) 总量落后 → 升档 + 立即补跑 */
+    if (dbToday < expected) {
+      if (_governorLevel < GOVERNOR_LEVELS.length - 1) {
+        _governorLevel++;
+        _governorApply(_governorLevel);
+        acts.push('升档至「' + GOVERNOR_LEVELS[_governorLevel].name + '」');
+      }
+      acts.push('补跑主采集通道');
+      setTimeout(() => { try { _runGlobalMedia(); } catch (e) {} }, 2000);
+      if (_dailyStats.china < 80 * dayRatio * 0.8) { acts.push('补跑涉华专项'); setTimeout(() => { try { _runChinaFocus(); } catch (e) {} }, 12000); }
+    }
+    /* 2) 空转检测：30 分钟几乎无入库 → 重建去重指纹缓存 + 补跑专项 */
+    if (gain >= 0 && gain < 5) {
+      _titleKeyCache = { t: 0, set: new Set() };
+      acts.push('空转修复（指纹缓存重建）');
+      setTimeout(() => { try { _runChinaNegative(); } catch (e) {} }, 22000);
+      setTimeout(() => { try { _runTerrorAttacks(); } catch (e) {} }, 35000);
+    }
+    /* BRI 专项进度巡检（日100/巴40 时间加权，落后补跑） */
+    if (_briStats.total < 100 * dayRatio * 0.8 || _briStats.pakistan < 40 * dayRatio * 0.8) {
+      acts.push('补跑BRI专项');
+      setTimeout(() => { try { _runBriFocus(); } catch (e) {} }, 45000);
+    }
+    _patrolState = { lastCheck: now.toISOString(), lastDbTotal: dbToday, lastGain: gain, actions: acts, gear: GOVERNOR_LEVELS[_governorLevel].name };
+    console.log('[PATROL] 巡检：今日入库 ' + dbToday + ' / 期望 ' + Math.round(expected) + '（进度 ' + Math.round(dayRatio * 100) + '%）| 30min增量 ' + (gain < 0 ? '基线' : gain) + ' | 档位 ' + GOVERNOR_LEVELS[_governorLevel].name + (acts.length ? ' | 动作: ' + acts.join('、') : ' | 正常'));
+  } catch (e) { console.warn('[PATROL] 巡检异常:', e.message); }
+}
+
+/* ===== BRI 专项采集器（2026-08-16 用户指令）=====
+ * 一带一路国家 / 中巴经济走廊 / 中欧班列沿线 专项采集。
+ * 硬性指标：BRI 总量 ≥100 条/日，其中巴基斯坦 ≥40 条/日。
+ * 复用 AP/GDELT 主题检索通道；独立统计、独立调度、巡检哨兵联动补跑。 */
+const BRI_PK_QUERIES = [
+  { q: 'Pakistan (CPEC OR "China-Pakistan Economic Corridor" OR Gwadar) (project OR security OR attack OR progress)', cn: '巴基斯坦', iso: 'PK', focus: '中巴经济走廊' },
+  { q: 'Pakistan (TTP OR "Tehrik-e-Taliban" OR BLA OR Balochistan) (attack OR blast OR killed OR clash)', cn: '巴基斯坦', iso: 'PK', focus: '巴安全局势' },
+  { q: '(Karachi OR Lahore OR Islamabad OR Quetta OR Peshawar OR Gwadar) (attack OR blast OR explosion OR gunmen OR protest)', cn: '巴基斯坦', iso: 'PK', focus: '巴城市安全' },
+  { q: 'Pakistan (China OR Chinese) (workers OR engineers OR nationals OR investment OR project)', cn: '巴基斯坦', iso: 'PK', focus: '在巴中方人员项目' },
+  { q: 'Pakistan (IMF OR debt OR inflation OR rupee OR economy OR default)', cn: '巴基斯坦', iso: 'PK', focus: '巴经济风险' },
+  { q: '(Lashkar OR Jaish OR LeT OR JeM OR Hizbul) (Pakistan OR Kashmir OR attack OR arrested)', cn: '巴基斯坦', iso: 'PK', focus: '巴恐怖组织' },
+  { q: 'Pakistan (army OR "security forces" OR police) (operation OR raid OR killed OR arrested) (militant OR terrorist)', cn: '巴基斯坦', iso: 'PK', focus: '巴反恐行动' },
+  { q: 'Pakistan (flood OR earthquake OR epidemic OR polio OR dengue OR monsoon)', cn: '巴基斯坦', iso: 'PK', focus: '巴灾害卫生' },
+  { q: 'Pakistan (border OR "border crossing" OR Torkham OR Chaman OR Wagah) (Afghanistan OR India OR clash OR trade)', cn: '巴基斯坦', iso: 'PK', focus: '巴边境动态' },
+  { q: 'Pakistan (sectarian OR Shia OR Sunni OR mosque OR procession) (attack OR blast OR tension)', cn: '巴基斯坦', iso: 'PK', focus: '巴教派冲突' },
+  { q: '(Gwadar OR "port of Gwadar") (protest OR security OR development OR "free zone" OR airport)', cn: '巴基斯坦', iso: 'PK', focus: '瓜达尔专项' },
+  { q: 'Pakistan (military OR ISPR OR army) (statement OR operation OR "cross-border" OR Afghanistan)', cn: '巴基斯坦', iso: 'PK', focus: '巴军方动态' }
+];
+const BRI_CORRIDOR_QUERIES = [
+  { q: '(Kazakhstan OR Uzbekistan OR Kyrgyzstan OR Tajikistan OR Turkmenistan) (China OR Chinese) (pipeline OR railway OR investment OR security)', cn: '哈萨克斯坦', iso: 'KZ', focus: '中亚走廊' },
+  { q: '(Laos OR Cambodia OR "China-Laos railway" OR Boten) (China OR railway OR investment OR security)', cn: '老挝', iso: 'LA', focus: '中老走廊' },
+  { q: '(Myanmar OR "China-Myanmar") (pipeline OR "economic corridor" OR Kyaukpyu OR conflict)', cn: '缅甸', iso: 'MM', focus: '中缅走廊' },
+  { q: '(Indonesia OR "Jakarta-Bandung" OR Whoosh) (China OR railway OR investment OR protest)', cn: '印度尼西亚', iso: 'ID', focus: '印尼走廊' },
+  { q: '(Malaysia OR Thailand OR Vietnam OR Philippines) (China OR "Belt and Road" OR railway OR port) (investment OR dispute OR security)', cn: '马来西亚', iso: 'MY', focus: '东盟走廊' },
+  { q: '(Serbia OR Hungary OR Greece OR Piraeus) (China OR Chinese OR "Belt and Road") (railway OR port OR investment)', cn: '塞尔维亚', iso: 'RS', focus: '欧洲走廊' },
+  { q: '(Ethiopia OR Kenya OR Djibouti OR Egypt) (China OR Chinese) (railway OR port OR debt OR project)', cn: '埃塞俄比亚', iso: 'ET', focus: '非洲走廊' },
+  { q: '(Sri Lanka OR Hambantota OR Colombo) (China OR Chinese OR port OR debt)', cn: '斯里兰卡', iso: 'LK', focus: '斯里兰卡走廊' },
+  { q: '(Saudi OR UAE OR Iran OR Turkey) (China OR Chinese) ("Belt and Road" OR investment OR railway OR energy)', cn: '沙特阿拉伯', iso: 'SA', focus: '中东走廊' },
+  { q: '(Bangladesh OR Nepal OR Maldives) (China OR Chinese) (project OR loan OR port OR bridge)', cn: '孟加拉国', iso: 'BD', focus: '南亚走廊' }
+];
+const BRI_RAIL_QUERIES = [
+  { q: '("China Railway Express" OR "China-Europe Railway" OR "China-Europe freight train")', cn: '国际', iso: 'UN', focus: '中欧班列' },
+  { q: '(Belarus OR Poland OR Malaszewicze OR Brest) (railway OR freight OR border) (China OR container)', cn: '白俄罗斯', iso: 'BY', focus: '班列东欧段' },
+  { q: '("China-Europe" OR "China freight") (train OR railway) (Germany OR Duisburg OR Hamburg OR Poland)', cn: '德国', iso: 'DE', focus: '班列西欧段' },
+  { q: '("middle corridor" OR "Trans-Caspian") (China OR freight OR railway)', cn: '哈萨克斯坦', iso: 'KZ', focus: '跨里海通道' }
+];
+/* BRI 沿线国家本地媒体直连 RSS（2026-08-16：主题检索与主通道同后端导致全重复 0 入库，
+ * 本地媒体 RSS 的 URL 与 AP/GDELT 不重叠，是巴基斯坦日 40 条的增量来源） */
+const BRI_RSS = [
+  /* 巴基斯坦（重点，每轮必抓） */
+  { name: 'Dawn', url: 'https://www.dawn.com/feeds/home', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'Dawn National', url: 'https://www.dawn.com/feeds/national', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'Express Tribune', url: 'https://tribune.com.pk/feed/', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'The News', url: 'https://www.thenews.com.pk/rss/', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'ARY News', url: 'https://arynews.tv/feed/', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'Pakistan Today', url: 'https://www.pakistantoday.com.pk/feed/', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'Daily Times PK', url: 'https://dailytimes.com.pk/feed/', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'The Nation PK', url: 'https://nation.com.pk/rss.xml', cn: '巴基斯坦', iso: 'PK' },
+  { name: 'Business Recorder', url: 'https://www.brecorder.com/feeds/rss', cn: '巴基斯坦', iso: 'PK' },
+  /* 走廊国家（轮换） */
+  { name: 'Astana Times', url: 'https://astanatimes.com/feed/', cn: '哈萨克斯坦', iso: 'KZ' },
+  { name: 'Phnom Penh Post', url: 'https://www.phnompenhpost.com/rss', cn: '柬埔寨', iso: 'KH' },
+  { name: 'Jakarta Post', url: 'https://www.thejakartapost.com/rss', cn: '印度尼西亚', iso: 'ID' },
+  { name: 'Daily Star BD', url: 'https://www.thedailystar.net/rss', cn: '孟加拉国', iso: 'BD' },
+  { name: 'Dhaka Tribune', url: 'https://www.dhakatribune.com/feed/', cn: '孟加拉国', iso: 'BD' },
+  { name: 'Daily Mirror LK', url: 'https://www.dailymirror.lk/rss/breaking-news.xml', cn: '斯里兰卡', iso: 'LK' },
+  { name: 'Kathmandu Post', url: 'https://kathmandupost.com/rss', cn: '尼泊尔', iso: 'NP' },
+  { name: 'N1 Serbia EN', url: 'https://rs.n1info.com/english/feed/', cn: '塞尔维亚', iso: 'RS' },
+  { name: 'Hungary Today', url: 'https://hungarytoday.hu/feed/', cn: '匈牙利', iso: 'HU' },
+  { name: 'eKathimerini', url: 'https://www.ekathimerini.com/rss', cn: '希腊', iso: 'GR' },
+  { name: 'Daily Sabah', url: 'https://www.dailysabah.com/rss', cn: '土耳其', iso: 'TR' },
+  { name: 'Egypt Today', url: 'https://www.egypttoday.com/RSS', cn: '埃及', iso: 'EG' },
+  { name: 'Nation Kenya', url: 'https://nation.africa/kenya/rss', cn: '肯尼亚', iso: 'KE' },
+  { name: 'Addis Fortune', url: 'https://addisfortune.news/feed/', cn: '埃塞俄比亚', iso: 'ET' },
+  { name: 'Myanmar Now EN', url: 'https://myanmar-now.org/en/feed/', cn: '缅甸', iso: 'MM' },
+  { name: 'Vientiane Times', url: 'https://www.vientianetimes.org.la/rss.xml', cn: '老挝', iso: 'LA' }
+];
+const BRI_STATS_FILE = path.join(CACHE_DIR, 'bri_stats.json');
+function _loadBriStats() { try { const j = JSON.parse(require('fs').readFileSync(BRI_STATS_FILE, 'utf8')); return j; } catch (e) { return null; } }
+function _saveBriStats() { try { require('fs').writeFileSync(BRI_STATS_FILE, JSON.stringify(_briStats)); } catch (e) {} }
+let _briStats = _loadBriStats() || { date: _todayKey(), total: 0, pakistan: 0, rounds: 0, lastRun: null };
+if (_briStats.date !== _todayKey()) _briStats = { date: _todayKey(), total: 0, pakistan: 0, rounds: 0, lastRun: null };
+let _briRoundIndex = 0;
+let _briBusyUntil = 0;
+const _PAK_RE = /巴基斯坦|Pakistan|Pakistani|Gwadar|Karachi|CPEC|Balochistan|Lahore|Islamabad|Quetta|Peshawar|TTP/i;
+async function _syncBriStatsFromDB() {
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const { rows } = await query(`SELECT COUNT(*) c, COUNT(*) FILTER (WHERE title ~* '巴基斯坦|Pakistan|Pakistani|Gwadar|Karachi|CPEC|Balochistan' OR data_json->>'title_zh' ~* '巴基斯坦|瓜达尔|卡拉奇|俾路支' OR country='巴基斯坦') pk FROM intel_data WHERE data_json->>'_briFocus' = 'true' AND collect_time >= $1`, [dayStart]);
+    _briStats.total = parseInt(rows[0].c, 10) || 0;
+    _briStats.pakistan = parseInt(rows[0].pk, 10) || 0;
+  } catch (e) {}
+}
+async function _runBriFocus() {
+  if (Date.now() < _briBusyUntil) return;
+  _briBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  const t0 = Date.now();
+  try {
+    const d = _todayKey();
+    if (_briStats.date !== d) { _briStats = { date: d, total: 0, pakistan: 0, rounds: 0, lastRun: null }; await _syncBriStatsFromDB(); }
+    /* 每轮：巴基斯坦 2 词 + 走廊国 3 词 + 班列 1 词，轮询全覆盖 */
+    const pkS = (_briRoundIndex * 3) % BRI_PK_QUERIES.length;
+    const pkQ = [0, 1, 2].map(i => BRI_PK_QUERIES[(pkS + i) % BRI_PK_QUERIES.length]);
+    const coS = (_briRoundIndex * 4) % BRI_CORRIDOR_QUERIES.length;
+    const coQ = [0, 1, 2, 3].map(i => BRI_CORRIDOR_QUERIES[(coS + i) % BRI_CORRIDOR_QUERIES.length]);
+    const railQ = [BRI_RAIL_QUERIES[_briRoundIndex % BRI_RAIL_QUERIES.length]];
+    _briRoundIndex++;
+    /* RSS 轮换：巴基斯坦源每轮必抓，走廊国轮换 6 个 */
+    const pkRss = BRI_RSS.filter(x => x.iso === 'PK');
+    const coRssAll = BRI_RSS.filter(x => x.iso !== 'PK');
+    const rssS = (_briRoundIndex * 6) % Math.max(1, coRssAll.length);
+    const coRss = [0, 1, 2, 3, 4, 5].map(i => coRssAll[(rssS + i) % coRssAll.length]).filter(Boolean);
+    const [r, rssR] = await Promise.all([
+      globalmedia.scrapeGdeltThemes({ queries: pkQ.concat(coQ, railQ), maxPerQuery: 30 })
+        .catch(e => { console.warn('[BRI] 主题通道异常:', e.message); return { count: 0, items: [] }; }),
+      globalmedia.scrapeDirectRss({ sources: pkRss.concat(coRss), concurrency: 6, timeout: 9000 })
+        .catch(e => { console.warn('[BRI] RSS通道异常:', e.message); return { count: 0, items: [] }; })
+    ]);
+    const items = (r.items || []).concat(rssR.items || []);
+    items.forEach(it => { it._sourceType = 'bri_focus'; it._briFocus = true; });
+    try { await _translateListToZhParallel(items, 6); } catch (e) {}
+    items.forEach(it => {
+      try {
+        const before = it.interestLinked;
+        ENTITY.enrich(it);
+        if (before === true) it.interestLinked = true;
+      } catch (e) {}
+    });
+    const linked = items.filter(it => it.interestLinked === true);
+    let inserted = 0, pkInserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedNoUrl = 0, insertErr = 0;
+    if (linked.length) {
+      const urls = linked.map(it => it.url).filter(Boolean);
+      const existing = new Set();
+      if (urls.length) {
+        const batch = urls.map((_, i) => '$' + (i + 1)).join(',');
+        const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+        dup.rows.forEach(x => { if (x.url) existing.add(x.url); });
+      }
+      const titleKeys = await _getRecentTitleKeys();
+      for (const it of linked) {
+        const u = it.url || it.title;
+        if (!u) { skippedNoUrl++; continue; }
+        if (existing.has(u)) { skippedDup++; continue; }
+        if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; continue; }
+        if (!_isFreshEnough(it)) { skippedStale++; continue; }
+        if (!_ruUaQuotaOk(it)) { skippedRuUa++; continue; }
+        try {
+          it._eventSig = _eventSignature(it);
+          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          const _ins = await query(
+            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || 'BRI专项采集', JSON.stringify(it), 'approved']
+          );
+          existing.add(u); _addTitleKey(titleKeys, it);
+          if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+          inserted++;
+          if (_PAK_RE.test((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.country_cn || it.country || ''))) pkInserted++;
+        } catch (e) { insertErr++; }
+      }
+    }
+    _briStats.total += inserted; _briStats.pakistan += pkInserted; _briStats.rounds++; _briStats.lastRun = new Date().toISOString();
+    _saveBriStats();
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[BRI] 本轮(' + sec + 's): 抓取 主题' + (r.count || 0) + '+RSS' + (rssR.count || 0) + ' / 入库 ' + inserted + '（巴基斯坦 ' + pkInserted + '）| 今日 BRI ' + _briStats.total + '/100 · 巴 ' + _briStats.pakistan + '/40 | 去重' + (skippedDup + skippedDupTitle) + ' 旧闻' + skippedStale);
+  } catch (e) { console.warn('[BRI] 采集失败:', e.message); }
+  finally { _briBusyUntil = 0; }
+}
+
+/* ===== 中文媒体采集通道（2026-08-17 用户实战检验：阿富汗中资矿山遇袭中国系统零捕捉）=====
+ * 涉华人员伤亡/项目遇袭的首报信源几乎全在国内中文媒体（中新网/环球等），
+ * 英文通道（AP/GDELT）对这类事件覆盖慢甚至不覆盖。此通道专抓中文国际新闻 RSS，
+ * 过相关性闸门后走标准入库管道（URL 去重/标题去重/鲜度/分类/自动审核分发）。 */
+const CN_MEDIA_SOURCES = [
+  { name: '中新网国际', url: 'https://www.chinanews.com.cn/rss/world.xml', cn: '国际', iso: 'UN' },
+  { name: '中新网即时', url: 'https://www.chinanews.com.cn/rss/scroll-news.xml', cn: '国际', iso: 'UN' }
+];
+let _cnMediaBusyUntil = 0;
+async function _runCnMedia() {
+  if (Date.now() < _cnMediaBusyUntil) return;
+  _cnMediaBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  const t0 = Date.now();
+  try {
+    const r = await globalmedia.scrapeDirectRss({ sources: CN_MEDIA_SOURCES, concurrency: 2, timeout: 10000 })
+      .catch(e => { console.warn('[CNMEDIA] 通道异常:', e.message); return { count: 0, items: [] }; });
+    /* 中文源含大量国内民生/文娱内容（中新网即时频道），境内内容硬过滤（2026-08-17 体检发现"深圳青少年朋友圈"入库） */
+    const items = (r.items || []).filter(it => {
+      const t = String(it.title || '') + ' ' + String(it.content || '');
+      if (globalmedia._isDomesticChina && globalmedia._isDomesticChina(t)) return false;
+      return true;
+    });
+    items.forEach(it => { it._sourceType = 'cn_media'; });
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      try {
+        const before = it.interestLinked;
+        ENTITY.enrich(it);
+        if (before === true) it.interestLinked = true;
+      } catch (e) {}
+    });
+    const linked = items.filter(it => it.interestLinked === true);
+    let inserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0;
+    if (linked.length) {
+      const urls = linked.map(it => it.url).filter(Boolean);
+      const existing = new Set();
+      if (urls.length) {
+        const batch = urls.map((_, i) => '$' + (i + 1)).join(',');
+        const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+        dup.rows.forEach(x => { if (x.url) existing.add(x.url); });
+      }
+      const titleKeys = await _getRecentTitleKeys();
+      for (const it of linked) {
+        const u = it.url || it.title;
+        if (!u) continue;
+        if (existing.has(u)) { skippedDup++; continue; }
+        if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; continue; }
+        if (!_isFreshEnough(it)) { skippedStale++; continue; }
+        try {
+          it._eventSig = _eventSignature(it);
+          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          const _ins = await query(
+            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || '中文媒体监测', JSON.stringify(it), 'approved']
+          );
+          existing.add(u); _addTitleKey(titleKeys, it);
+          if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+          inserted++;
+        } catch (e) { /* URL 唯一索引冲突等 */ }
+      }
+    }
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[CNMEDIA] 本轮(' + sec + 's): 抓取 ' + (r.count || 0) + ' / 入库 ' + inserted + ' | 去重' + (skippedDup + skippedDupTitle) + ' 旧闻' + skippedStale);
+  } catch (e) { console.warn('[CNMEDIA] 采集失败:', e.message); }
+  finally { _cnMediaBusyUntil = 0; }
+}
+
+/* ===== 区域均衡采集器（2026-08-17 用户指令：采集不能全是美/伊/俄乌，要全球均衡+高质量）=====
+ * 每 30 分钟：统计今日各区域入库量，挑最薄弱的 2 个区域，用 GDELT sourcecountry 定向采集
+ * （拉美/非洲/中亚/中东非伊以/欧洲五区轮换）。葡语/西语/俄语内容由 pivot 翻译管线处理。 */
+const REGION_PACKS = {
+  southasia: {
+    name: '南亚',
+    countries: ['印度', '巴基斯坦', '孟加拉国', '斯里兰卡', '尼泊尔', '阿富汗', '不丹', '马尔代夫'],
+    queries: [
+      'sourcecountry:IN (attack OR killed OR terrorism OR protest OR China)',
+      'sourcecountry:PK (attack OR killed OR Taliban OR China OR CPEC)',
+      'sourcecountry:AF (Taliban OR attack OR killed OR explosion)',
+      'sourcecountry:LK (attack OR protest OR crisis OR China)',
+      'sourcecountry:BD (attack OR killed OR protest OR political)'
+    ],
+    catQueries: [
+      'sourcecountry:IN (flood OR earthquake OR cyclone OR landslide)',
+      'sourcecountry:PK (dam OR pipeline OR CPEC OR railway OR port)',
+      'sourcecountry:BD (election OR protest OR political crisis)',
+      'sourcecountry:LK (debt OR economic OR default OR crisis)'
+    ]
+  },
+  latam: {
+    name: '拉美',
+    countries: ['墨西哥', '巴西', '哥伦比亚', '秘鲁', '智利', '阿根廷', '委内瑞拉', '厄瓜多尔', '玻利维亚'],
+    queries: [
+      'sourcecountry:MX (kidnapping OR cartel OR attack OR killed OR security)',
+      'sourcecountry:BR (attack OR killed OR police OR security OR mining)',
+      'sourcecountry:CO (attack OR armed OR ELN OR killed OR cocaine)',
+      'sourcecountry:PE (protest OR mining OR security OR attack)',
+      'sourcecountry:VE (sanctions OR oil OR crisis OR protest)',
+      'sourcecountry:EC (cartel OR attack OR killed OR security)'
+    ],
+    catQueries: [
+      'sourcecountry:AR (debt OR default OR inflation OR strike OR crisis)',
+      'sourcecountry:BR (dam OR mining OR disaster OR flood)',
+      'sourcecountry:CL (earthquake OR wildfire OR flood OR port)',
+      'sourcecountry:BO (protest OR political OR election OR crisis)'
+    ]
+  },
+  africa: {
+    name: '非洲',
+    countries: ['尼日利亚', '肯尼亚', '埃塞俄比亚', '苏丹', '马里', '尼日尔', '刚果', '索马里', '布基纳法索', '喀麦隆', '南非', '埃及', '利比亚', '中非', '莫桑比克', '坦桑尼亚'],
+    queries: [
+      'sourcecountry:NG (Boko OR bandits OR kidnapped OR attack OR killed)',
+      'sourcecountry:KE (attack OR al-Shabaab OR security OR killed)',
+      'sourcecountry:ET (conflict OR Amhara OR Oromo OR killed)',
+      'sourcecountry:SD (RSF OR fighting OR killed OR attack)',
+      'sourcecountry:SO (al-Shabaab OR attack OR Mogadishu)',
+      'sourcecountry:ML (attack OR jihadist OR kidnapping OR killed)',
+      'sourcecountry:CD (rebel OR attack OR killed OR mining)',
+      'sourcecountry:ZA (protest OR strike OR load-shedding OR crisis)'
+    ],
+    catQueries: [
+      'sourcecountry:NG (flood OR earthquake OR oil OR pipeline)',
+      'sourcecountry:ET (flood OR drought OR disaster)',
+      'sourcecountry:ZA (economy OR debt OR power OR port)',
+      'sourcecountry:EG (economy OR Suez OR default OR inflation)'
+    ]
+  },
+  centralasia: {
+    name: '中亚',
+    countries: ['哈萨克斯坦', '乌兹别克斯坦', '吉尔吉斯斯坦', '塔吉克斯坦', '土库曼斯坦', '蒙古'],
+    queries: [
+      '(Kazakhstan OR Uzbekistan OR Kyrgyzstan OR Tajikistan) (China OR security OR border OR protest)',
+      '(Kazakhstan OR Central Asia) (railway OR pipeline OR China OR investment)',
+      'sourcecountry:KZ (China OR security OR government OR attack)',
+      'sourcecountry:UZ (China OR border OR security OR protest)',
+      'sourcecountry:MN (China OR mining OR protest OR economy)'
+    ],
+    catQueries: [
+      'sourcecountry:KZ (pipeline OR railway OR mining OR China)',
+      'sourcecountry:UZ (protest OR election OR political)',
+      'sourcecountry:KG (border OR conflict OR China OR mining)'
+    ]
+  },
+  mideast: {
+    name: '中东（非伊以）',
+    countries: ['沙特阿拉伯', '阿联酋', '埃及', '卡塔尔', '约旦', '伊拉克', '也门', '阿曼', '科威特', '巴林', '摩洛哥', '突尼斯', '阿尔及利亚', '黎巴嫩'],
+    queries: [
+      'sourcecountry:SA (Houthi OR oil OR security OR China OR attack)',
+      'sourcecountry:EG (security OR Sinai OR economy OR Suez OR attack)',
+      'sourcecountry:IQ (attack OR militia OR security OR killed)',
+      'sourcecountry:JO (security OR border OR economy OR protest)',
+      'sourcecountry:YE (Houthi OR attack OR killed OR airstrike)',
+      'sourcecountry:LB (attack OR Hezbollah OR security OR crisis)'
+    ],
+    catQueries: [
+      'sourcecountry:SA (pipeline OR oil OR investment OR China)',
+      'sourcecountry:QA (investment OR China OR port OR economy)',
+      'sourcecountry:DZ (economy OR protest OR election OR crisis)',
+      'sourcecountry:MA (earthquake OR flood OR disaster)'
+    ]
+  },
+  europe: {
+    name: '欧洲',
+    countries: ['法国', '德国', '英国', '波兰', '意大利', '西班牙', '荷兰', '比利时', '瑞典', '挪威', '罗马尼亚', '捷克', '塞尔维亚', '匈牙利', '希腊'],
+    queries: [
+      'sourcecountry:FR (attack OR security OR terrorism OR protest OR China)',
+      'sourcecountry:DE (security OR China OR sanctions OR economy OR attack)',
+      'sourcecountry:GB (security OR defense OR China OR sanctions OR attack)',
+      'sourcecountry:PL (border OR security OR Belarus OR migration)',
+      'sourcecountry:RS (protest OR political OR election OR crisis)'
+    ],
+    catQueries: [
+      'sourcecountry:FR (election OR protest OR political OR strike)',
+      'sourcecountry:DE (economy OR energy OR pipeline OR inflation)',
+      'sourcecountry:IT (earthquake OR flood OR disaster OR migration)',
+      'sourcecountry:GR (migration OR border OR economy OR crisis)'
+    ]
+  }
+};
+const _COUNTRY_TO_REGION = {};
+Object.keys(REGION_PACKS).forEach(k => REGION_PACKS[k].countries.forEach(c => { _COUNTRY_TO_REGION[c] = k; }));
+let _regionBalanceBusyUntil = 0;
+async function _runRegionBalance() {
+  if (Date.now() < _regionBalanceBusyUntil) return;
+  _regionBalanceBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  const t0 = Date.now();
+  const REGION_TARGET = 42;   // 单区域当日达标量，达标后不再补（自限，防过采）
+  /* 轻量噪声排除：体育/娱乐/民生攻略类（不重跑严格门禁，避免把当地安全风险新闻误掐） */
+  const _NOISE = /(football|soccer|cricket|NBA|tennis|olympic|world cup|champions league|celebrity|movie|album|concert|wedding|recipe|netflix|box office|球赛|足球|篮球|娱乐|明星|演唱会|综艺|美食|旅游攻略|旅游推荐)/i;
+  const _EXCLUDE = ['伊朗', '以色列', 'IR', 'IL'];   // 中东包明确排除伊以
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const cnt = await query('SELECT country, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1', [dayStart]);
+    const regionN = {}; Object.keys(REGION_PACKS).forEach(k => regionN[k] = 0);
+    cnt.rows.forEach(r => { const rg = _COUNTRY_TO_REGION[r.country]; if (rg && regionN[rg] !== undefined) regionN[rg] += parseInt(r.n, 10); });
+    /* 仅补未达标的区域；全部达标则空闲，不重复过采 */
+    const targets = Object.keys(regionN).filter(k => regionN[k] < REGION_TARGET)
+      .sort((a, b) => regionN[a] - regionN[b]).slice(0, 4);
+    if (!targets.length) { console.log('[REGION] 各区域均已达标(' + REGION_TARGET + ')，本轮回填空闲'); return; }
+    const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
+    let inserted = 0, fetched = 0, rejected = 0;
+    for (const rg of targets) {
+      const pack = REGION_PACKS[rg];
+      /* 每区域本轮：2 条风险查询 + 1 条类别查询（轮换，避免组合爆炸） */
+      const ql = []; const nq = pack.queries.length, nc = (pack.catQueries || []).length;
+      const qi = cyc % nq;
+      ql.push(pack.queries[qi], pack.queries[(qi + 1) % nq]);
+      if (nc) ql.push(pack.catQueries[cyc % nc]);
+      let arts = [];
+      for (const q of ql) {
+        let a = [];
+        try { a = await crawler.gdeltSearch(q, { timespan: '1d', maxrecords: 12 }); } catch (e) { console.warn('[REGION] 查询失败:', q.slice(0, 28), e.message); }
+        /* GDELT 限流/无召回时回退 AP 站内检索（GDELT 对单 IP 有惩罚箱，不能单点依赖） */
+        if (!a.length) {
+          try { const apq = q.replace(/sourcecountry:\w+/g, '').replace(/[()"]/g, ' ').replace(/OR/g, ' ').replace(/\s+/g, ' ').trim();
+            a = await crawler.apSearch(apq, { maxrecords: 12, pages: 1 }); a.forEach(x => { x._viaAp = true; }); } catch (e) {}
+        }
+        if (a.length) arts = arts.concat(a);
+      }
+      fetched += arts.length;
+      if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
+      const titleKeys = await _getRecentTitleKeys();
+      let regIns = 0;
+      for (const it of arts) {
+        const text = String(it.title || '') + ' ' + String(it.content || it.description || '');
+        if (_NOISE.test(text)) { rejected++; continue; }
+        const cc = (it.country || '') + ' ' + (it.country_cn || '');
+        if (_EXCLUDE.some(x => cc.indexOf(x) >= 0)) { rejected++; continue; }
+        /* 国别 × 风险/类别查询 = 海外利益暴露面信号（中资/华人/一带一路项目所在国的安全与风险事件），
+           直接标记利益关联，不再重跑严格门禁（那会把没提"中国"二字的当地安全风险新闻掐掉）。 */
+        it.interestLinked = true;
+        const u = it.url || it.title; if (!u) continue;
+        if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
+        if (!_isFreshEnough(it)) { rejected++; continue; }
+        if (!_dominantQuotaOk(it)) { rejected++; continue; }
+        try {
+          it._eventSig = _eventSignature(it); _tagAssets(it);
+          const _lv = _normLevelForStore(it); it.level_norm = _lv;
+          const _dt = _classifyIntelType(it); it.data_type = _dt;
+          await query(
+            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || ('区域均衡·' + pack.name), JSON.stringify(it), 'approved']
+          );
+          _addTitleKey(titleKeys, it); inserted++; regIns++;
+          if (regIns >= 10) break;   // 单区域单轮回填上限，均衡铺开
+        } catch (e) { /* URL 唯一冲突等 */ }
+      }
+    }
+    console.log('[REGION] 均衡采集(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 补 ' + targets.map(w => REGION_PACKS[w].name + '(' + regionN[w] + ')').join('+') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected);
+  } catch (e) { console.warn('[REGION] 采集失败:', e.message); }
+  finally { _regionBalanceBusyUntil = 0; }
+}
+
+function startGlobalMediaCron() {
+  setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); }); }, 5000);  // 启动后5s先同步统计再首跑
+  setInterval(_runGlobalMedia, GLOBAL_MEDIA_INTERVAL_MS); // 每60秒刷新一轮
+  setInterval(_runChinaFocus, GLOBAL_MEDIA_INTERVAL_MS);  // 涉华专项同步运行
+  setInterval(_runChinaNegative, 60 * 1000);  // 境外涉华负面专项每60秒运行一次（AP检索耗时较长，避免阻塞主循环）
+  setInterval(_runTerrorAttacks, 90 * 1000);  // 恐怖袭击/武装袭击专项每90秒运行一次（高危国家重点监控）
+  // 每5分钟再同步一次数据库，防止统计漂移
+  setInterval(_syncDailyStatsFromDB, 5 * 60 * 1000);
+  // 采集自动驾驶调速器：每10分钟自检，落后自动加码，达标自动降档
+  setInterval(_governorCheck, 10 * 60 * 1000);
+  setTimeout(_governorCheck, 30 * 1000); // 启动30s后首次自检
+  // 采集巡检哨兵：每30分钟巡查，断粮/空转自动修复加速（2026-08-15 用户指令）
+  setInterval(_patrolSentinel, 30 * 60 * 1000);
+  setTimeout(_patrolSentinel, 2 * 60 * 1000); // 启动2分钟后首巡建立基线
+  // BRI 专项采集器：每5分钟一轮，日≥100条/巴基斯坦≥40条（2026-08-16 用户指令）
+  setTimeout(() => { _syncBriStatsFromDB().then(() => { _runBriFocus(); }); }, 25000);
+  setInterval(_runBriFocus, 5 * 60 * 1000);
+  // 中文媒体通道：每10分钟一轮——涉华突发（人员伤亡/项目遇袭）国内信源首报最快（2026-08-17）
+  setTimeout(_runCnMedia, 40000);
+  setInterval(_runCnMedia, 10 * 60 * 1000);
+  // 区域均衡采集器：每30分钟挑最薄弱2区域定向采集（2026-08-17 用户指令：采集全球均衡）
+  setTimeout(_runRegionBalance, 90000);
+  setInterval(_runRegionBalance, 30 * 60 * 1000);
+}
+
+/* ===== 全球恐怖袭击/武装袭击专项采集 ===== */
+/* _terrorBusy 已改为 _terrorBusyUntil 时间戳锁 */
+async function _runTerrorAttacks() {
+  if (Date.now() < _terrorBusyUntil) return;
+  _terrorBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  console.log('[TERROR] 开始恐怖袭击/武装袭击专项采集...');
+  const t0 = Date.now();
+  try {
+    const res = await globalmedia.scrapeTerrorAttacks({ concurrency: 6, timeout: 10000 });
+    let items = res.items || [];
+    const seenUrl = new Set(items.map(it => it.url).filter(Boolean));
+
+    /* 翻译 */
+    try { await _translateListToZhParallel(items, 3); } catch (e) { console.warn('[TERROR] 翻译异常:', e.message); }
+
+    /* 入库 */
+    let inserted = 0, redCount = 0, orangeCount = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0;
+    const urls = items.map(it => it.url).filter(Boolean);
+    const existing = new Set();
+    if (urls.length) {
+      const batch = urls.map((_, i) => `$${i + 1}`).join(',');
+      const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_type='terror_events' AND data_json->>'url' IN (${batch})`, urls);
+      dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
+    }
+    const titleKeys = await _getRecentTitleKeys();
+    for (const it of items) {
+      const u = it.url || it.title;
+      if (!u) continue;
+      if (existing.has(u)) { skippedDup++; continue; }
+      if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; continue; }
+      if (!_ruUaQuotaOk(it)) { skippedRuUa++; continue; }
+      try {
+        it._eventSig = _eventSignature(it);
+        _tagAssets(it); it.level_norm = it.level || 'yellow';
+        const _ins = await query(
+          `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          ['terror_events', it.title, it.country_cn || '', '', it.publish_time || '', it.level || 'yellow', it.content || '', it.source || '', JSON.stringify(it), 'approved']
+        );
+        _addTitleKey(titleKeys, it);
+        if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+        inserted++;
+        if (it.level === 'red') redCount++;
+        else if (it.level === 'orange') orangeCount++;
+      } catch (e) { console.warn('[TERROR] 入库失败:', e.message); }
+    }
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[TERROR] 完成(' + sec + 's): 命中' + items.length + ' / 入库' + inserted + '（红色' + redCount + ' 橙色' + orangeCount + '）跳过URL重复' + skippedDup + ' 标题同事件' + skippedDupTitle + ' 超时旧闻' + skippedStale + ' 俄乌超配额' + skippedRuUa);
+  } catch (e) { console.warn('[TERROR] 采集失败:', e.message); }
+  finally { _terrorBusyUntil = 0; }
+}
+app.get('/api/media', async (req, res) => {
+  try {
+    const { country, all, status, limit, refresh } = req.query;
+    if (refresh === 'gdelt') {
+      /* 手动触发 GDELT 全球媒体补充（环境允许时）。带超时保护：不可达则异步放弃，不伪造。 */
+      Promise.race([
+        globalmedia.scrapeGlobalMedia({ max: 15, timespan: '7d' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('gdelt-timeout')), 120000))
+      ]).then(async g => {
+        if (g && g.items && g.items.length) {
+          try { await _translateListToZhParallel(g.items, 6); } catch (e) {}
+          _mergeMedia(g.items, g.byCountry, { gdelt: g.count });
+        }
+      }).catch(e => console.warn('[GLOBALMEDIA] GDELT 补充本轮回避:', e.message));
+      return res.json({ ok: true, note: 'GDELT 全球媒体补充任务已触发（环境允许时异步入库），稍后刷新查看' });
+    }
+    if (status !== undefined) {
+      const itemSet = new Set((_mediaCache.items || []).map(it => it.country_cn).filter(Boolean));
+      return res.json({
+        ok: true, status: _mediaCache.status || {},
+        countries: globalmedia.GLOBAL_COUNTRIES.length,
+        sources: (globalmedia.DIRECT_RSS || []).length,
+        thinkTanks: (globalmedia.THINK_TANK_FEEDS || []).length,
+        distinctCountries: itemSet.size,
+        total: (_mediaCache.items || []).length,
+        itemCountries: Array.from(itemSet).sort(),
+        updatedAt: _mediaCache.updatedAt || 0
+      });
+    }
+    let items = (_mediaCache.items || []).slice();
+    if (country) items = items.filter(it => it.country_cn === country || it.country_iso === country);
+    const lim = Math.min(500, parseInt(limit || '200', 10) || 200);
+    return res.json({ ok: true, count: items.length, items: items.slice(0, lim) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* 每日采集指标：总量≥500条/天，涉华80-100条/天，境外涉华负面≥50条/天 */
+app.get('/api/media/daily-stats', async (req, res) => {
+  try {
+    /* 本地自然日 0 点边界（不能用 CURRENT_DATE——取决于 PG 会话时区，跨天可能不切换） */
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const { rows: dbStats } = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE collect_time >= $1) AS total_today,
+        COUNT(*) FILTER (WHERE collect_time >= $1 AND (
+          title ILIKE '%中国%' OR title ILIKE '%Chinese%' OR title ILIKE '%China%' OR title ILIKE '%中资%'
+          OR title ILIKE '%华人%' OR title ILIKE '%华侨%' OR title ILIKE '%中方%' OR title ILIKE '%中企%'
+          OR title ILIKE '%一带一路%' OR title ILIKE '%BRI%' OR title ILIKE '%Belt and Road%'
+        )) AS china_today
+      FROM intel_data
+    `, [dayStart]);
+    // 境外涉华负面计数：兼容历史数据，标题命中涉华+负面关键词即计入
+    const { rows: chinaRows } = await query(`
+      SELECT title, data_json->>'_chinaNegative' AS neg
+      FROM intel_data
+      WHERE collect_time >= $1 AND (
+        title ILIKE '%中国%' OR title ILIKE '%Chinese%' OR title ILIKE '%China%' OR title ILIKE '%中资%'
+        OR title ILIKE '%华人%' OR title ILIKE '%华侨%' OR title ILIKE '%中方%' OR title ILIKE '%中企%'
+        OR title ILIKE '%一带一路%' OR title ILIKE '%BRI%' OR title ILIKE '%Belt and Road%'
+      )
+    `, [dayStart]);
+    let dbChinaNeg = 0;
+    chinaRows.forEach(r => {
+      if (_isChinaNegative({ title: r.title, _chinaNegative: r.neg === 'true' })) dbChinaNeg++;
+    });
+    const s = _dailyStats;
+    const dbTotal = parseInt(dbStats[0].total_today || '0', 10);
+    const dbChinaRaw = parseInt(dbStats[0].china_today || '0', 10);
+    // 常规涉华计数排除境外涉华负面，保持二者独立
+    const dbChina = Math.max(0, dbChinaRaw - dbChinaNeg);
+    res.json({
+      ok: true,
+      runtime: { date: s.date, total: s.total, linked: s.linked, china: s.china, chinaNegative: s.chinaNegative, rounds: s.rounds, lastRound: s.lastRound },
+      database: { total: dbTotal, china: dbChina, chinaNegative: dbChinaNeg },
+      targets: { totalMin: 500, chinaMin: 80, chinaMax: 100, chinaNegativeMin: 50 },
+      gaps: { total: Math.max(0, 500 - Math.max(s.total, dbTotal)), china: Math.max(0, 80 - Math.max(s.china, dbChina)), chinaNegative: Math.max(0, 50 - Math.max(s.chinaNegative, dbChinaNeg)) },
+      patrol: _patrolState, /* 巡检哨兵状态（2026-08-15）：档位/最近动作对前端可见 */
+      bri: { total: _briStats.total, pakistan: _briStats.pakistan, rounds: _briStats.rounds, lastRun: _briStats.lastRun, targetTotal: 100, targetPakistan: 40 },
+      nextRoundSec: GLOBAL_MEDIA_INTERVAL_MS / 1000
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/* ==================== 开放网络深度检索端点 ====================
+ * 真正的开放网络检索：任意关键词 → 远程真实检索（AP 通讯社站内检索 + GDELT 全球检索）
+ *                    → 跟进命中的真实文章 URL → 抓取真实正文 → 相关性闸门
+ *                    → 实体关联引擎（中资主体/海外项目/国别/资产/风险分/预警等级）
+ * 铁律：只返回真实检索到的公开信息；通道不可用时如实返回 0 条并给出通道台账，绝不伪造。
+ */
+app.get('/api/deepsearch', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.json({ ok: true, channels: crawler.WEB_CHANNELS, count: 0, items: [], note: '缺少 q 参数（检索关键词）' });
+    const max = Math.min(30, parseInt(req.query.max || '12', 10) || 12);
+    const items = await crawler.crawlWeb(q, {
+      max: max,
+      maxPages: Math.min(max, parseInt(req.query.pages || '8', 10) || 8),
+      lang: req.query.lang || 'en',
+      timespan: req.query.timespan || '7d',
+      country: req.query.country || ''
+    });
+    /* 正文深度补全：对只抓到标题/摘要的条目回源抓全文 + 抽结构化要素，抓不到就原样保留 */
+    let ftStat = null;
+    try {
+      ftStat = await fulltext.enrichBatch(items, {
+        resolveUrl: crawler.resolveUrl, concurrency: 5, budgetMs: 45000, minLen: 400
+      });
+    } catch (e) { /* 补全失败不影响检索结果返回 */ }
+    items.forEach(function(it) { if (!it.alert_no) { try { it.alert_no = fulltext.makeAlertNo(it); } catch (e) {} } });
+    const linked = items.filter(it => it.interestLinked).length;
+    res.json({
+      ok: true, query: q, count: items.length, interestLinked: linked,
+      fulltext: ftStat, channels: crawler.WEB_CHANNELS, items: items
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* 开放网络检索通道健康台账（如实反映各通道实测状态） */
+app.get('/api/deepsearch/channels', (req, res) => {
+  res.json({ ok: true, channels: crawler.WEB_CHANNELS });
+});
+
+/* ==================== 境外社交媒体情报采集端点 ====================
+ * SOCMINT：Telegram 公开频道 + Hacker News 全文检索（均为真实公开数据）
+ * 采集结果一律标记 verified:false，须经人工审核后方可进入预警中心。
+ */
+app.get('/api/social', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const limit = Math.min(60, parseInt(req.query.limit || '25', 10) || 25);
+    const r = q
+      ? await social.searchSocial(q, { limit: limit })
+      : await social.collectSocial({ limit: limit, perChannel: parseInt(req.query.perChannel || '20', 10) || 20 });
+    /* 降级存储：写入服务端文件缓存，供无 PostgreSQL 时的公开通道使用 */
+    if (r && r.items && r.items.length) { await _translateListToZh(r.items); _mergePublicCache('socmint_intel', r.items); }
+    res.json(Object.assign({ ok: true }, r));
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* 社交媒体通道健康台账（真实可达性，不可达通道如实标注） */
+app.get('/api/social/channels', (req, res) => {
+  try { res.json({ ok: true, channels: social.socialHealth() }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* ==================== 实体关联与预警规则引擎端点 ====================
+ * 供前端"企业安全/项目关联/预警定级"复用同一套规则，保证前后端判定完全一致。
+ */
+app.get('/api/entities/registry', (req, res) => {
+  try {
+    res.json({
+      ok: true,
+      enterprises: ENTITY.ENTERPRISES.map(e => ({ id: e.id, name: e.name, type: e.type, sector: e.sector })),
+      projects: ENTITY.PROJECTS.map(p => ({ id: p.id, name: p.name, country: p.country, tier: p.tier, corp: p.corp })),
+      corridors: ENTITY.CORRIDORS,
+      assetTypes: ENTITY.ASSET_TYPES.map(a => ({ id: a.id, name: a.name, weight: a.weight })),
+      threatRules: ENTITY.THREAT_RULES.map(r => ({ id: r.id, name: r.name, score: r.score })),
+      countries: Object.keys(ENTITY.COUNTRY_RISK).length
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* 对任意文本做实体识别 + 风险定级（人工研判/审核辅助） */
+app.post('/api/entities/assess', (req, res) => {
+  try {
+    const b = req.body || {};
+    const text = String(b.text || ((b.title || '') + ' ' + (b.content || ''))).trim();
+    if (!text) return res.status(400).json({ ok: false, error: '缺少 text' });
+    const r = ENTITY.assessRisk({ title: b.title || '', content: b.content || text, country: b.country || '', source: b.source || '', pubDate: b.pubDate || '' });
+    res.json({ ok: true, result: r });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* ==================== AgentKey 连接器端点 ====================
+ * 部署 AgentKey 为系统实战数据源：搜索 + 全文抓取 → 详细情报（标题+正文+来源+URL+国家+分类）
+ * 实战模式：仅真实数据。无密钥时 /collect 回退种子文件，保证开箱即有详细内容。
+ */
+/* ==================== GEOINT 实时卫星影像接入端点 ====================
+ * 仅真实数据源（Sentinel-2 / Maxar Open Data / Planet NICFI），全免费。
+ * 公开端点（与 /api/scrape、/api/crawl 一致，非鉴权），由前端 GEOINTLIVE 面板调用。
+ */
+app.get('/api/geoint/search', async (req, res) => {
+  try {
+    const { source, lat, lon } = req.query;
+    const r = await geoint.search({ source: source || 'sentinel2', lat, lon });
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+app.get('/api/geoint/change', async (req, res) => {
+  try {
+    const { lat, lon, recentDays, baselineDays } = req.query;
+    const r = await geoint.change({ lat, lon, recentDays, baselineDays });
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+app.get('/api/agentkey/status', (req, res) => {
+  try { res.json({ ok: true, status: agentkey.status() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/agentkey/collect', async (req, res) => {
+  try {
+    const raw = req.query.queries || req.query.q || '';
+    const queries = String(raw).split('|').map(s => s.trim()).filter(Boolean);
+    if (!queries.length) return res.json({ ok: false, error: '缺少 queries 参数（用 | 分隔多个关键词）' });
+    const limitPer = parseInt(req.query.limitPer || '8', 10) || 8;
+    const scrapeTop = parseInt(req.query.scrapeTop || '3', 10) || 3;
+    const st = agentkey.status();
+    if (!st.search.length || !st.scrape.length) {
+      /* 未配置上游密钥：回退种子文件（真实详细数据），并提示如何启用实时采集 */
+      const seed = agentkey.loadSeed();
+      return res.json({
+        ok: true, mode: 'seed-fallback', live: false,
+        count: seed.length, items: seed,
+        hint: '未配置 AgentKey 上游密钥（server/.env 的 AGENTKEY_*_KEY）。当前返回已落盘的真实详细种子数据；配置密钥后将自动实时搜索+全文抓取。',
+        status: st
+      });
+    }
+    const items = await agentkey.collect(queries, { limitPer, scrapeTop });
+    res.json({ ok: true, mode: 'live', live: true, count: items.length, items, status: st });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ==================== 翻译接口（外文情报→中文）====================
+ * 通道优先级（2026-07-31 重构，修复"翻译工具没用"）：
+ *   1) 可选密钥翻译服务：环境变量 BAIDU_TRANSLATE_APPID / BAIDU_TRANSLATE_KEY
+ *      —— 百度翻译开放平台免费版 200 万字符/月，国内稳定可达，无需 Beta 审核
+ *   2) MyMemory 免费翻译（匿名 5000 字符/天，国内可达，无需密钥）
+ *      —— 带【持久化翻译缓存】，同一文本只翻一次、跨会话复用，大幅突破配额瓶颈
+ *   3) Edge 微软翻译（本机网络常不可达）→ 电路熔断 + 4s 快速失败，仅在偶发可用时兜底
+ *   4) 全部失败/配额耗尽 → 返回 ok:false，前端自动降级为内置安全词典
+ * 关键修复：
+ *   - Edge 从"每次白等 10s"改为熔断器 + 4s 超时（不可达即熔断 10 分钟，恢复自动重试）
+ *   - 新增 .translate_cache.json 持久化缓存：单分类首次翻译后永久免费，translatePage 不再一次烧光配额
+ */
+const crypto = require('crypto');
+const _TRANS_CACHE_FILE = path.join(__dirname, '..', '.translate_cache.json');
+let _transCache = {};
+try {
+  const _tc = JSON.parse(fs.readFileSync(_TRANS_CACHE_FILE, 'utf8') || '{}');
+  if (_tc && typeof _tc === 'object') _transCache = _tc;
+} catch (e) {}
+let _transCacheDirty = false;
+function _transCacheSave() {
+  if (!_transCacheDirty) return;
+  try { fs.writeFileSync(_TRANS_CACHE_FILE, JSON.stringify(_transCache)); _transCacheDirty = false; } catch (e) {}
+}
+setInterval(_transCacheSave, 15000);
+function _tkey(text) { return String(text || '').slice(0, 600); }
+function _isGarbage(v) {
+  if (!v) return true;
+  if (/不清楚/.test(v)) return true;
+  if (/^\?+$/.test(String(v).trim())) return true;
+  if (/NOT TRANSLATED/i.test(v)) return true;
+  /* 乱码特征：不含中文，却含阿拉伯/叙利亚/科普特/希伯来组合符等本不应出现在中译文的区段（多为 UTF-8→latin1 双重误编码） */
+  const hasCJK = /[一-鿿]/.test(v);
+  if (!hasCJK && /[؀-ۿ֐-׿͢-ͯⴢ-⴯Ⲁ-⳿]/.test(v)) return true;
+  return false;
+}
+function _cacheGet(text) {
+  const k = _tkey(text);
+  const v = _transCache[k];
+  if (!v) return undefined;
+  /* 自愈：缓存中可能残留占位符/编码损坏，检出即剔除并视为未命中（重新翻译且不回写垃圾） */
+  if (_isGarbage(v)) { delete _transCache[k]; _transCacheDirty = true; return undefined; }
+  return v;
+}
+function _cacheSet(text, val) { if (val && !_isGarbage(val)) { _transCache[_tkey(text)] = val; _transCacheDirty = true; } }
+
+/* 长文分块：按句子/空格边界切分为 <=size 的片段，使详细长文（数千字）可分块翻译后拼接，
+   避免 MyMemory 500 字/次 与 5000 字/天 配额下"只翻前 500 字 / 返回空"的失效现象 */
+function _chunkText(text, size) {
+  text = String(text || '');
+  if (text.length <= size) return [text];
+  const out = [];
+  let cur = '';
+  const seps = /(?<=[.!?。！？\n])\s+/;
+  const parts = text.split(seps);
+  for (const p of parts) {
+    if (cur.length && cur.length + p.length > size) { out.push(cur.trim()); cur = ''; }
+    if (p.length > size) {
+      for (let i = 0; i < p.length; i += size) out.push(p.slice(i, i + size));
+    } else {
+      cur += (cur ? ' ' : '') + p;
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(c => c.trim());
+}
+
+/* 通道3: Edge 微软翻译（电路熔断，快速失败） */
+let _edgeJwt = null, _edgeJwtTime = 0;
+let _edgeOk = true, _edgeBlockedUntil = 0;
+async function _getEdgeJwt() {
+  if (_edgeJwt && Date.now() - _edgeJwtTime < 8 * 60 * 1000) return _edgeJwt;
+  let lastErr = null;
+  // 沙箱内 edge.microsoft.com/translate/auth 偶发 ECONNRESET，重试 3 次避免瞬时抽风打死整段翻译
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch('https://edge.microsoft.com/translate/auth', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' },
+        signal: AbortSignal.timeout(4000)
+      });
+      if (!r.ok) throw new Error('edge auth ' + r.status);
+      _edgeJwt = (await r.text()).trim();
+      _edgeJwtTime = Date.now();
+      return _edgeJwt;
+    } catch (e) { lastErr = e; if (attempt < 2) await new Promise(rs => setTimeout(rs, 500)); }
+  }
+  throw lastErr || new Error('edge auth failed');
+}
+async function _tryEdge(texts) {
+  if (!_edgeOk && Date.now() < _edgeBlockedUntil) return null; // 熔断中，直接跳过
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const jwt2 = await _getEdgeJwt();
+      const r = await fetch('https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + jwt2, 'Content-Type': 'application/json' },
+        body: JSON.stringify(texts.map(t => ({ Text: t }))),
+        signal: AbortSignal.timeout(4000)
+      });
+      if (!r.ok) throw new Error('translate ' + r.status);
+      /* 强制 UTF-8 解码，避免微软接口按 latin1 误解码产生乱码 */
+      const buf = await r.arrayBuffer();
+      const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
+      _edgeOk = true;
+      /* 过滤乱码/占位符结果（Edge 对非拉丁语向常返回双重误编码乱码），避免污染译文与缓存 */
+      return (j || []).map(x => {
+        const t = (x && x.translations && x.translations[0] && x.translations[0].text) || '';
+        return _isGarbage(t) ? '' : t;
+      });
+    } catch (err) {
+      if (attempt < 1) { _edgeJwt = null; continue; } // 重试时强制换新 token，规避偶发失效 JWT
+      _edgeOk = false; _edgeBlockedUntil = Date.now() + 30 * 1000; // 连续失败才短暂熔断 30s，避免单次沙箱抽风长期阻断可用的 Edge 兜底
+      console.warn('[TRANSLATE] Edge通道不可用，熔断3分钟:', err.message);
+      return null;
+    }
+  }
+  return null;
+}
+/* 通道2: MyMemory 免费翻译API（国内可达，无需密钥，单条<=500字符，匿名 5000 字符/天） */
+function _guessLang(t) {
+  if (/[\u0600-\u06FF]/.test(t)) return 'ar';
+  if (/[\u0400-\u04FF]/.test(t)) return 'ru';
+  if (/[\u3040-\u30FF]/.test(t)) return 'ja';
+  if (/[\uAC00-\uD7AF]/.test(t)) return 'ko';
+  return 'en';
+}
+async function _myMemoryOne(t, key) {
+  const q = String(t || '').slice(0, 500);
+  if (!q.trim()) return '';
+  let url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q) + '&langpair=' + _guessLang(q) + '|zh-CN';
+  if (key) url += '&key=' + encodeURIComponent(key); // 注册 key 提升免费配额至 50000 字符/日
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error('mymemory ' + r.status);
+  /* 强制 UTF-8 解码，规避 MyMemory 偶发 charset 声明错误导致的乱码/问号 */
+  const buf = await r.arrayBuffer();
+  const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
+  const tr = (j && j.responseData && j.responseData.translatedText) || '';
+  if (/YOU USED ALL AVAILABLE FREE/.test(tr)) return '__QUOTA__'; // 配额耗尽
+  if (/MYMEMORY WARNING/.test(tr)) return '';
+  if (/\*不清楚\*|\*未翻译\*|\* NOT TRANSLATED \*/.test(tr)) return ''; // 占位符（MyMemory 不支持该语向）
+  if (/^\?+$/.test(tr.trim())) return ''; // 编码损坏（纯问号）
+  if (!tr || !tr.trim()) return '';
+  if (tr.trim().toLowerCase() === q.trim().toLowerCase()) return ''; // 原样返回=未翻译（配额/限频时 MyMemory 回显原文）
+  return tr;
+}
+/* MyMemory 通道（带持久化缓存，先查缓存避免重复消耗配额；长文分块翻译）。
+ * 注意：单块失败（配额/限频/回显原文）绝不回退为原文——整条标记失败交由 Edge 兜底，
+ * 否则会出现"英文原文被当译文写回 title_zh"的致命错误。 */
+async function _translateViaMyMemory(texts) {
+  const out = new Array(texts.length);
+  const need = [];
+  texts.forEach((t, i) => {
+    const c = _cacheGet(t);
+    if (c) out[i] = c; else need.push(i);
+  });
+  let quota = false;
+  if (need.length) {
+    const res = await Promise.all(need.map(async (i) => {
+      const t = texts[i];
+      if (!t.trim()) return { ok: true, text: '' };
+      const chunks = _chunkText(t, 480); // MyMemory 单条 <=500 字符
+      const translated = [];
+      for (const ch of chunks) {
+        const tr = await _myMemoryOne(ch, MYMEMORY_KEY).catch(() => '');
+        if (tr === '__QUOTA__') { quota = true; return { ok: false, text: '' }; }
+        if (!tr) return { ok: false, text: '' }; // 块失败→整条失败，交由 Edge 兜底
+        translated.push(tr);
+      }
+      return { ok: true, text: translated.join(' ') };
+    }));
+    need.forEach((i, k) => {
+      const r = res[k];
+      if (r.ok && r.text) { out[i] = r.text; _cacheSet(texts[i], r.text); }
+      else { out[i] = ''; } // 失败（空），交给 Edge
+    });
+  }
+  return { out, quota };
+}
+/* 通道2.5: LibreTranslate 免费公共 API（开源翻译引擎，多公共实例轮询，无需密钥） */
+const _LIBRE_ENDPOINTS = [
+  'https://libretranslate.de',
+  'https://translate.argosopentech.com',
+  'https://libretranslate.pussthecat.org'
+];
+let _libreIdx = 0;
+async function _tryLibreTranslate(texts) {
+  const src = _guessLang(texts[0] || '');
+  const body = JSON.stringify({ q: texts, source: src, target: 'zh', format: 'text' });
+  const startIdx = _libreIdx;
+  for (let attempt = 0; attempt < _LIBRE_ENDPOINTS.length; attempt++) {
+    const ep = _LIBRE_ENDPOINTS[(_libreIdx + attempt) % _LIBRE_ENDPOINTS.length];
+    try {
+      const r = await fetch(ep + '/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const out = (j && j.translatedText) ? (Array.isArray(j.translatedText) ? j.translatedText : [j.translatedText]) : [];
+      if (out.length && out.some(t => t && /[\u4e00-\u9fff]/.test(t))) {
+        _libreIdx = (_libreIdx + attempt + 1) % _LIBRE_ENDPOINTS.length;
+        return out.map(t => _isGarbage(t) ? '' : t);
+      }
+    } catch (e) { /* 换下一个实例 */ }
+  }
+  return null;
+}
+/* 通道1: 百度翻译开放平台（可选，需环境变量配置；免费 200 万字符/月，国内稳定） */
+function _baiduSign(q, appid, key, salt) {
+  return crypto.createHash('md5').update(appid + q + salt + key).digest('hex');
+}
+async function _translateViaBaidu(texts, appid, key) {
+  return await Promise.all(texts.map(async (t) => {
+    t = String(t || '');
+    if (!t.trim()) return '';
+    /* 长文分块（百度单条上限 6000 字符，分块后拼接可翻译任意长度详细正文） */
+    const chunks = _chunkText(t, 5000);
+    const parts = [];
+    for (const ch of chunks) {
+      const q = ch;
+      const salt = Date.now() + '' + Math.floor(Math.random() * 10000);
+      const sign = _baiduSign(q, appid, key, salt);
+      const body = 'q=' + encodeURIComponent(q) + '&from=auto&to=zh&appid=' + encodeURIComponent(appid) + '&salt=' + salt + '&sign=' + sign;
+      const r = await fetch('https://fanyi-api.baidu.com/api/trans/vip/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!r.ok) throw new Error('baidu ' + r.status);
+      const j = await r.json();
+      if (j && Array.isArray(j.trans_result) && j.trans_result.length) {
+        parts.push(j.trans_result.map(x => x.dst).join('\n'));
+      } else if (j && j.error_code) {
+        throw new Error('baidu err ' + j.error_code);
+      } else {
+        parts.push(ch); // 单块失败回退原文
+      }
+    }
+    const tr = parts.join('\n');
+    _cacheSet(t, tr);
+    return tr;
+  }));
+}
+app.post('/api/translate', async (req, res) => {
+  let texts = req.body && req.body.texts;
+  if (!texts && req.body && req.body.text) texts = [req.body.text];
+  if (!Array.isArray(texts) || !texts.length) return res.json({ ok: false, error: 'no text' });
+  // 截断单条长度 + 去重（保留原始顺序映射，去重进一步省配额；长文由通道内部分块翻译）
+  const norm = texts.map(t => String(t || '').slice(0, 6000).trim()).filter(t => t);
+  if (!norm.length) return res.json({ ok: false, error: 'empty' });
+  const uniq = [...new Set(norm)];
+  let engine = 'mymemory';
+  let resUniq = null;
+
+  const baiduId = process.env.BAIDU_TRANSLATE_APPID;
+  const baiduKey = process.env.BAIDU_TRANSLATE_KEY;
+  /* 0) 腾讯 TranSmart / 有道 —— 首选：国内直连、免密钥、无日配额（实测 ~300ms/条）。
+   * 二者任一成功即返回，避免百度免费额度耗尽(54004)导致整体翻译停摆。 */
+  try {
+    const out = [];
+    let okAll = true;
+    for (const t of uniq) {
+      const cached = _cacheGet(t);
+      if (cached) { out.push(cached); continue; }
+      const r = await _translateAny(t);
+      if (r && r.trim() && r.trim() !== t.trim()) { out.push(r.trim()); _cacheSet(t, r.trim()); }
+      else { out.push(''); okAll = false; }
+      await new Promise(r2 => setTimeout(r2, 200));
+    }
+    if (out.some(x => x)) { resUniq = out; engine = 'transmart'; }
+    if (!okAll) console.warn('[TRANSLATE] 部分条目首选通道未译，交由后续通道补翻');
+  } catch (e) { console.warn('[TRANSLATE] 首选通道异常，降级:', e.message); resUniq = null; }
+
+  // 1) 可选百度密钥（仅在首选通道整体失败时启用）
+  if (!resUniq && baiduId && baiduKey) {
+    try { resUniq = await _translateViaBaidu(uniq, baiduId, baiduKey); engine = 'baidu'; }
+    catch (e) { console.warn('[TRANSLATE] Baidu通道失败，降级MyMemory:', e.message); resUniq = null; }
+  }
+  // 2) MyMemory（带缓存）
+  let quotaExhausted = false;
+  if (!resUniq) {
+    const mm = await _translateViaMyMemory(uniq);
+    resUniq = mm.out;
+    engine = 'mymemory';
+    quotaExhausted = mm.quota;
+    // 3) LibreTranslate 公共实例兜底（对 MyMemory 未译/非中文条目逐条补翻）
+    const needLibre = [];
+    uniq.forEach((t, i) => {
+      const r = resUniq[i] || '';
+      if (!r.trim() || r.trim() === t.trim() || !/[\u4e00-\u9fff]/.test(r)) needLibre.push(i);
+    });
+    if (needLibre.length) {
+      const libreRes = await _tryLibreTranslate(needLibre.map(i => uniq[i]));
+      if (libreRes) {
+        needLibre.forEach((origIdx, k) => {
+          const lr = libreRes[k] || '';
+          if (lr.trim() && lr.trim() !== uniq[origIdx].trim()) {
+            resUniq[origIdx] = lr;
+            _cacheSet(uniq[origIdx], lr);
+            if (engine === 'mymemory') engine = 'libretranslate';
+          }
+        });
+      }
+    }
+    // 4) Edge 兜底（免费、无密钥）：对前面所有通道仍未译/原样返回/非中文的条目逐条补翻
+    const needEdge = [];
+    uniq.forEach((t, i) => {
+      const r = resUniq[i] || '';
+      if (!r.trim() || r.trim() === t.trim() || !/[\u4e00-\u9fff]/.test(r)) needEdge.push(i);
+    });
+    if (needEdge.length) {
+      const edgeRes = await _tryEdge(needEdge.map(i => uniq[i]));
+      if (edgeRes) {
+        needEdge.forEach((origIdx, k) => {
+          const er = edgeRes[k] || '';
+          if (er.trim() && er.trim() !== uniq[origIdx].trim()) {
+            resUniq[origIdx] = er;
+            _cacheSet(uniq[origIdx], er);
+            if (engine === 'mymemory' || engine === 'libretranslate') engine = 'microsoft-edge';
+          }
+        });
+      }
+    }
+  }
+  _transCacheSave();
+  // 映射回原始顺序
+  const map = {};
+  uniq.forEach((t, i) => { map[t] = resUniq[i] || ''; });
+  const results = norm.map(t => map[t] || '');
+  const okCount = results.filter(x => x).length;
+  const baiduConfigured = !!(baiduId && baiduKey);
+  if (okCount) return res.json({ ok: true, results, engine, cacheEnabled: true, quotaExhausted: quotaExhausted && okCount < results.length, baiduConfigured });
+  return res.json({ ok: false, error: 'all channels failed / quota exhausted', results: results.map(() => ''), quotaExhausted: quotaExhausted, baiduConfigured });
+});
+/* ===== 存量外文情报回填翻译（服务端持久化）=====
+ * 问题背景：公开缓存里存量英文情报一直没被翻成中文——前端自动翻译调度器依赖 /api/translate，
+ * 但本受限网络下 MyMemory(429限频)/LibreTranslate(实例全挂)/Edge(中国不可达) 全部失败，仅 Baidu 可达。
+ * 该端点：当 Baidu 免费密钥已配置时，把缓存里所有"缺 title_zh 且标题含外文"的条目用 Baidu 翻译，
+ * 并回写 title_zh/content_zh 到 .cache/*.json，使公开 API 直接返回中文。
+ * 触发方式：POST /api/intel/translate-backfill （无需登录；Baidu 未配置时返回明确提示，不报错）。 */
+function _looksForeign(s) {
+  if (!s) return false;
+  /* 标题/正文判定为"需要翻译"。
+   * 2026-08-05 修复：旧实现是"含任意一个中文字符就判定为无需翻译"，
+   * 于是采集端加的中文标签前缀（如「[HDX 数据集] Afghanistan - Socio-economic
+   * assessment of ...」「参考消息：Hezbollah rejects ...」）只要出现，
+   * 整条外文标题就永久逃过翻译。改为：先剥离标签前缀，再按中英字符占比判定。 */
+  const body = String(s)
+    .replace(/^\s*[\[【][^\]】]{0,24}[\]】]\s*/, '')      // [HDX 数据集] / 【GEOINT】
+    .replace(/^[^:：]{0,12}[:：]\s*/, '');                 // 参考消息： / RT：
+  /* 外文脚本判定（2026-08-05 补：旧版只认拉丁字母，
+   * 西里尔/希腊/阿拉伯/谚文/假名等非拉丁外文标题（如俄语报道）永久逃过翻译）。
+   * 任意连续 4+ 字符为外文脚本 → 判定为外文主体。 */
+  const FOREIGN_RUN = /([a-zA-Z]|\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}){4,}/u;
+  if (!FOREIGN_RUN.test(body)) return false;
+  const zh = (body.match(/[一-龥]/g) || []).length;
+  const foreign = (body.match(/[a-zA-Z]/g) || []).length
+                + (body.match(/\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}/gu) || []).length;
+  /* 中文字符不足外文主体字符的 1/4 —— 主体仍是外文，需要翻译 */
+  return zh === 0 || zh * 4 < foreign;
+}
+/* 稳定去重键：翻译后中文标题会因通道不同而措辞不一（"对等制裁"/"相互制裁"），
+ * 若以译文为键会导致同一条情报重复入库、污染态势热度研判。
+ * 故按稳定性优先取：原文链接 > 英文原标题 > 当前标题，并归一化去除标点空白。 */
+function _dedupKey(it) {
+  if (!it) return '';
+  var raw = String(it.link || it.url || '').trim();
+  if (raw) return 'u:' + raw.toLowerCase().replace(/[#?].*$/, '').replace(/\/+$/, '');
+  var t = String(it.title_en || it.title || '');
+  return 't:' + t.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '').slice(0, 60);
+}
+/* 网站导航/栏目页噪声识别：爬虫命中官网首页时会把"下载中心""个人客户""欢迎访问XX网站"
+ * 等导航标题当成情报入库（实测混入建行官网 6 条）。这些不含事件语义，实战系统必须剔除。 */
+var _NAV_NOISE_RE = /^(欢迎访问|welcome to)|[-—|｜]\s*(网上银行|个人客户|企业客户|下载中心|首页|登录|注册|客服中心|关于我们|联系我们|网站地图|信息披露|电子银行|手机银行|信用卡|个人网上银行|企业电子银行首页)\s*$|^(首页|登录|注册|下载中心|网站地图|关于我们|联系我们|更多|详情|返回顶部|home|login|sign in|download|sitemap|about us|contact us)$/i;
+function _isNavNoise(it) {
+  var t = String((it && (it.title_zh || it.title)) || '').trim();
+  if (!t) return true;
+  if (_NAV_NOISE_RE.test(t)) return true;
+  /* 同一域名下标题形如「机构名-栏目名」且栏目名极短，视为导航页 */
+  if (/^[^\s]{2,12}[-—]{1}[^\s]{2,8}$/.test(t) && !/[，。、；：？！]/.test(t) && t.length <= 16) {
+    if (/银行|集团|公司|大学|政府|部|局|中心|网/.test(t)) return true;
+  }
+  return false;
+}
+/* 体裁噪声统一判定（评论/学术论述 + 商业榜单/经济统计）。
+ * 背景：「2025中国企业500强」「《财富》世界500强营收总和41.7万亿美元」这类商业榜单
+ * 必然罗列中国石油/国家电网等中资巨头 → 在 enrich 里命中企业主体 hardLink=true →
+ * 绕过全部风险分门槛直入实时情报流。体裁噪声必须压过 hardLink，一票否决。
+ * 优先调实体层权威判定 ENTITY.nonIntelGenre（与前端同源），失败则退回既有标记。 */
+function _isGenreNoise(it) {
+  if (!it || typeof it !== 'object') return true;
+  if (it._commentary || it._ranking || it._genreNoise) return true;
+  try {
+    if (ENTITY && typeof ENTITY.nonIntelGenre === 'function') return !!ENTITY.nonIntelGenre(it);
+    if (ENTITY && typeof ENTITY.isCommentaryPiece === 'function') return !!ENTITY.isCommentaryPiece(it);
+  } catch (e) {}
+  return false;
+}
+/* 百度翻译单条 + 54003 频率限制退避重试（免费版 QPS 严格，靠退避逐条推进，绝不批量拼接以免错位误译） */
+async function _baiduTranslateRetry(text, id, key, attempt) {
+  attempt = attempt || 0;
+  try {
+    const r = await _translateViaBaidu([String(text || '')], id, key);
+    return (r && r[0]) ? r[0] : '';
+  } catch (e) {
+    if (/54003/.test(e.message) && attempt < 5) {
+      const wait = 1500 * Math.pow(2, attempt); // 1.5s,3s,6s,12s,24s
+      console.warn('[BACKFILL] 54003 限速，退避 ' + wait + 'ms 后重试 (attempt ' + (attempt + 1) + ')');
+      await new Promise(r => setTimeout(r, wait));
+      return _baiduTranslateRetry(text, id, key, attempt + 1);
+    }
+    throw e;
+  }
+}
+/* 腾讯 TranSmart 交互翻译：国内直连、免密钥、无日配额，术语质量优于通用机翻。
+ * 实测 ~300ms/条，作为实战系统首选翻译通道。 */
+const _TRANS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+async function _tryTranSmart(text, from, to) {
+  const src = String(text || '').slice(0, 2000);
+  if (!src.trim()) return '';
+  from = from || 'auto'; to = to || 'zh';
+  const res = await fetch('https://transmart.qq.com/api/imt', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': _TRANS_UA,
+      'Referer': 'https://transmart.qq.com/zh-CN/index'
+    },
+    body: JSON.stringify({
+      header: { fn: 'auto_translation', client_key: 'browser-chrome-120.0.0-Windows 10-' + Date.now() },
+      type: 'plain',
+      model_category: 'normal',
+      source: { lang: from, text_list: ['', src, ''] },
+      target: { lang: to }
+    }),
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) throw new Error('TranSmart HTTP ' + res.status);
+  const j = await res.json();
+  return (j.auto_translation || []).filter(Boolean).join('').trim();
+}
+/* 有道公开演示接口：国内直连、免密钥，作为 TranSmart 的同级备份通道。 */
+async function _tryYoudao(text) {
+  const src = String(text || '').slice(0, 2000);
+  if (!src.trim()) return '';
+  const res = await fetch('https://aidemo.youdao.com/trans', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': _TRANS_UA },
+    body: 'q=' + encodeURIComponent(src) + '&from=Auto&to=Auto',
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) throw new Error('Youdao HTTP ' + res.status);
+  const j = await res.json();
+  return (j.translation || []).join('').trim();
+}
+/* 统一翻译通道（多通道兜底，按国内可用性与质量排序）：
+ * TranSmart(免密钥/无配额) → 有道(免密钥) → Baidu(配置时) → MyMemory → LibreTranslate → Edge。
+ * 任一通道不可用/限频/余额耗尽即自动切换下一通道，保证实战系统翻译不中断。 */
+/* 翻译质量校验（2026-08-17 用户指令：译文必须是合格中文，不是原文复读/乱码）：
+ * ① 非空且≠原文 ② 含足量中文（CJK 占比≥15%）③ 长度比合理（0.2x~4x）④ 无大面积未译外文 */
+function _translationOk(src, dst) {
+  const a = String(src || '').trim(), b = String(dst || '').trim();
+  if (!a || !b) return false;
+  if (b === a) return false;
+  const cjk = (b.match(/[一-龥]/g) || []).length;
+  if (cjk < 2) return false;
+  if (cjk / b.length < 0.15) return false;
+  const ratio = b.length / Math.max(1, a.length);
+  if (ratio < 0.2 || ratio > 4) return false;
+  return true;
+}
+
+async function _translateAny(text) {
+  const baiduId = process.env.BAIDU_TRANSLATE_APPID;
+  const baiduKey = process.env.BAIDU_TRANSLATE_KEY;
+  const src = String(text || '');
+  if (!src.trim()) return '';
+  /* 1) 腾讯 TranSmart（auto 源语言，2026-08-17 修：原来写死 en→小语种必出乱码） */
+  try {
+    const r = await _tryTranSmart(src);
+    if (_translationOk(src, r)) return r;
+  } catch (e) { console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message); }
+  /* 2) 有道（from=Auto 本就支持自动识别） */
+  try {
+    const r = await _tryYoudao(src);
+    if (_translationOk(src, r)) return r;
+  } catch (e) { console.warn('[TRANSLATE] 有道失败，试 Baidu:', e.message); }
+  /* 3) Baidu */
+  if (baiduId && baiduKey) {
+    try {
+      const r = await _baiduTranslateRetry(src, baiduId, baiduKey);
+      if (_translationOk(src, r)) return r.trim();
+    } catch (e) { console.warn('[TRANSLATE] Baidu 失败，试 MyMemory:', e.message); }
+  }
+  /* 4) MyMemory */
+  try {
+    const tr = await _myMemoryOne(src.slice(0, 500), MYMEMORY_KEY);
+    if (_translationOk(src, tr)) return tr.trim();
+  } catch (e) {}
+  /* 5) LibreTranslate */
+  try {
+    const lr = await _tryLibreTranslate([src.slice(0, 500)]);
+    if (lr && lr[0] && _translationOk(src, lr[0])) return lr[0].trim();
+  } catch (e) {}
+  /* 6) 小语种 pivot（2026-08-17 用户指令：小语种先译英文再译中文）：
+   * 直译全部不合格时，先 auto→en（TranSmart 英译覆盖好），en 再→zh 走主链 */
+  try {
+    const en = await _tryTranSmart(src, 'auto', 'en');
+    if (en && en.trim() && en.trim() !== src.trim() && /[a-zA-Z]{4}/.test(en)) {
+      const zh = await _tryTranSmart(en, 'en', 'zh').catch(() => '');
+      if (_translationOk(en, zh)) { console.log('[TRANSLATE] pivot(en) 成功:', src.slice(0, 24)); return zh.trim(); }
+      const zh2 = await _tryYoudao(en).catch(() => '');
+      if (_translationOk(en, zh2)) { console.log('[TRANSLATE] pivot(en) 成功(有道):', src.slice(0, 24)); return zh2.trim(); }
+    }
+  } catch (e) {}
+  /* 7) Edge 微软翻译 */
+  try {
+    const er = await _tryEdge([src.slice(0, 500)]);
+    if (er && er[0] && _translationOk(src, er[0])) return er[0].trim();
+  } catch (e) {}
+  return ''; /* 全部不合格 → 返回空，调用方保留原文并打 _untranslated 标记，绝不入库乱码 */
+}
+/* 采集即译：把一批情报的标题+正文翻译成中文，落库即中文（原文留 title_en/content_en 溯源）。
+ * 实战系统要求：入库数据全中文。仅对含外文(连续≥4字母且无中文)的字段翻译；已中文的跳过。
+ * 翻译失败则保留原文并标记，绝不丢数据；54003 频率限制由 _baiduTranslateRetry 退避重试。 */
+async function _translateListToZh(list) {
+  /* 首选通道 TranSmart/有道 均免密钥，无需任何配置即可翻译；百度仅作为第三备份 */
+  let done = 0, failed = 0;
+  for (const it of list) {
+    if (!it || typeof it !== 'object') continue;
+    try {
+      const titleForeign = _looksForeign(it.title);
+      const contentForeign = _looksForeign(it.content) && String(it.content || '').length > 20;
+      let tZh = it.title, cZh = it.content;
+      if (titleForeign) {
+        const tr = await _translateAny(it.title);
+        if (tr && tr.trim() && tr.trim() !== String(it.title || '').trim()) tZh = tr.trim();
+      }
+      if (contentForeign) {
+        const tr = await _translateAny(it.content);
+        if (tr && tr.trim() && tr.trim() !== String(it.content || '').trim().slice(0, 6000)) cZh = tr.trim();
+      }
+      if (titleForeign && tZh && tZh !== String(it.title || '').trim()) {
+        it.title_en = it.title; it.title = tZh; it.title_zh = tZh; it.translated = true;
+        done++;
+      } else if (titleForeign) { failed++; }
+      if (contentForeign && cZh && cZh !== String(it.content || '').trim()) {
+        it.content_en = it.content; it.content = cZh; it.content_zh = cZh; it.translated = true;
+      }
+    } catch (e) {
+      failed++;
+      console.warn('[TRANSLATE] 采集翻译单条失败:', (it.title || '').slice(0, 30), e.message);
+    }
+    await new Promise(r => setTimeout(r, 250)); // TranSmart 无日配额，250ms 轻节流即可
+  }
+  if (done || failed) console.log('[TRANSLATE] 采集即译完成：成功 ' + done + ' 条，失败 ' + failed + ' 条');
+  /* 收尾：国名/媒体专名本地化 + 要素抽取（与并行版保持一致，覆盖 socmint/缓存合并路径） */
+  list.forEach(function (it) {
+    if (!it || typeof it !== 'object') return;
+    const t1 = _localizeCountryNames(it.title);
+    if (t1 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t1; it.title_zh = t1; }
+    const t2 = _localizeMedia(it.title);
+    if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; }
+    const t3 = _localizeCities(it.title);
+    if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; }
+    _extractElements(it);
+  });
+}
+
+/* ===== 并行采集即译（2026-08-05 新增，修复"全量采集数据是外文原文"） =====
+ * 背景：/api/scrape?all=1 一次抓取约 270 条、85% 是外文需翻译；串行 _translateListToZh
+ *       每条 250ms 节流 → 全量约 2 分钟，会拖垮/超时采集接口。此处并行化 + 持久缓存。
+ * 与串行版区别：① _translateAnyCached 先查持久缓存（重复文本零外部调用，且保证同文本译文一致→利于前端去重）
+ *              ② 并发池并行翻译（默认 6，TranSmart/有道免密钥无日配额，可承受）
+ *              ③ 只译外文（_looksForeign 判定，已中文跳过）。
+ * 落库即中文：原文留 title_en/content_en 溯源；单条失败保留原文，绝不丢数据。 */
+/* ── USGS 地震标题模板化（2026-08-05）──
+ * USGS 的标题是结构化格式「M 4.6 - 112 km WSW of Puerto Madero, Mexico」，
+ * 通用机翻处理不了：实测要么原样返回，要么只把 Russia 译成"俄罗斯"、
+ * 方位缩写和距离照旧（"M 4.9 - 204 km SE of Severo-Kuril'sk，俄罗斯"），
+ * 这类半吊子译文正是用户看到的"翻译没起作用"。
+ * 结构化数据用模板转换：零延迟、零配额、结果稳定，地名保留原文利于溯源。 */
+const _QUAKE_DIR = {
+  N: '以北', S: '以南', E: '以东', W: '以西',
+  NE: '东北方', NW: '西北方', SE: '东南方', SW: '西南方',
+  NNE: '北偏东', ENE: '东偏北', ESE: '东偏南', SSE: '南偏东',
+  SSW: '南偏西', WSW: '西偏南', WNW: '西偏北', NNW: '北偏西'
+};
+function _formatQuakeTitle(s) {
+  const m = /^\s*M\s*([\d.]+)\s*[-–—]\s*(\d+)\s*km\s+([NSEW]{1,3})\s+of\s+(.+?)\s*[,，]\s*(.+?)\s*$/i.exec(String(s || ''));
+  if (!m) return '';
+  const dir = _QUAKE_DIR[m[3].toUpperCase()];
+  if (!dir) return '';
+  let country = m[5].trim();
+  try { const c = ENTITY.normalizeCountry(country); if (c) country = c; } catch (e) {}
+  return country + ' ' + m[4].trim() + dir + ' ' + m[2] + ' 公里发生 M' + m[1] + ' 地震';
+}
+async function _translateAnyCached(text) {
+  const src = String(text || '').trim();
+  if (!src) return '';
+  /* 结构化标题优先走模板，避免机翻返回半中半英 */
+  const quake = _formatQuakeTitle(src);
+  if (quake) return quake;
+  const cached = _cacheGet(src);
+  if (cached) return cached;
+  const r = await _translateAny(src);
+  if (r && r.trim() && r.trim() !== src) _cacheSet(src, r.trim());
+  return r;
+}
+/* ── 英文国家名本地化（2026-08-05）──
+ * 结构化标题如「[UNHCR 2024] Afghanistan 收容 流离失所人口 3,220,946」中文占比够高，
+ * 不会被 _looksForeign 判为外文，于是国家名永远停留在英文。
+ * 用 ENTITY.COUNTRY_ALIAS（123 条英文映射）本地替换：零延迟、零配额、不依赖外部通道。
+ * 按长度倒序匹配，避免 "South Sudan" 被 "Sudan" 抢先替换。 */
+let _CTY_EN_PAIRS = null;
+function _countryPairs() {
+  if (_CTY_EN_PAIRS) return _CTY_EN_PAIRS;
+  const out = [];
+  try {
+    const A = ENTITY.COUNTRY_ALIAS || {};
+    Object.keys(A).forEach(k => {
+      if (/^[A-Za-z][A-Za-z .'\-]*$/.test(k) && k.length >= 4 && A[k]) out.push([k, A[k]]);
+    });
+    out.sort((a, b) => b[0].length - a[0].length);
+  } catch (e) {}
+  _CTY_EN_PAIRS = out;
+  return out;
+}
+function _localizeCountryNames(s) {
+  let t = String(s || '');
+  if (!t || !/[A-Za-z]{4,}/.test(t)) return t;
+  _countryPairs().forEach(([en, zh]) => {
+    /* 整词匹配，避免 China 命中 Chinatown、Chad 命中 Chadwick */
+    const re = new RegExp('(?<![A-Za-z])' + en.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z])', 'g');
+    t = t.replace(re, zh);
+  });
+  return t;
+}
+/* ===== 正文补抓 + 要素抽取（2026-08-18 修复"要素不全/看不懂"） =====
+ * 背景：apSearch/GDELT 仅返回标题（无正文），导致入库情报正文长期为空、用户"看不懂"；
+ *       且 enrich 不抽 location/event_date，预警卡片要素大量留空。此处在统一翻译环节后补救：
+ *   ① 对 content 为空且有 url 的条目，跟进抓取真实正文并翻译（落库即中文）；
+ *   ② 从标题+正文抽取 location / event_date 写入 it.location / it.date（即 DB 入库口径）；
+ *   ③ 媒体专名本地化（在国名本地化之上补充常见国际媒体名）。
+ * 仅做"尽力补全"：已有值不覆盖、抽不到留空，绝不臆造。 */
+
+/* 跟进抓取单条正文（带 SSRF 防护，复用 crawler 既有能力） */
+async function _fetchBodyForItem(it) {
+  const url = it.url || it.link;
+  if (!url || typeof url !== 'string') return false;
+  if (it.content && String(it.content).trim().length >= 80) return false;
+  if (!crawler || typeof crawler.fetchPublic !== 'function') return false;
+  try {
+    const html = await crawler.fetchPublic(String(url), 12000);
+    if (!html) return false;
+    let body = crawler.extractArticle(html);
+    if (!body || body.length < 60) return false;
+    if (_looksForeign(body)) {
+      const zh = await _translateAnyCached(body.slice(0, 6000));
+      if (zh && zh.trim() && zh.trim() !== body.trim()) { it.content_en = body; it.content = zh.trim(); it.content_zh = zh.trim(); }
+      else { it.content = body; }
+    } else { it.content = body; }
+    it.translated = it.translated || !!it.content_zh;
+    return true;
+  } catch (e) { return false; }
+}
+
+/* 日期归一化 YYYY-MM-DD */
+const _MONTHS_EN = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+function _fmtDate(y, mo, d) {
+  if (!y || !mo || !d || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+  const dt = new Date(y, mo - 1, d);
+  if (isNaN(dt.getTime())) return '';
+  return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+function _extractDateFromText(s) {
+  if (!s) return '';
+  let m;
+  if ((m = s.match(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/))) return _fmtDate(+m[1], +m[2], +m[3]);
+  if ((m = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/))) return _fmtDate(+m[1], +m[2], +m[3]);
+  if ((m = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/))) return _fmtDate(new Date().getFullYear(), +m[1], +m[2]);
+  if ((m = s.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+(20\d{2})/i))) { const mo = _MONTHS_EN[m[1].toLowerCase()]; if (mo) return _fmtDate(+m[3], mo, +m[2]); }
+  if ((m = s.match(/(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})/i))) { const mo = _MONTHS_EN[m[2].toLowerCase()]; if (mo) return _fmtDate(+m[1], mo, +m[3]); }
+  return '';
+}
+
+/* 中文国名集合（用于从标题反推地点），按长度倒序匹配避免"中国"误吞"中非" */
+let _CN_COUNTRY_SET = null;
+function _cnCountrySet() {
+  if (_CN_COUNTRY_SET) return _CN_COUNTRY_SET;
+  const s = new Set();
+  try { Object.values(ENTITY.COUNTRY_ALIAS || {}).forEach(function (c) { if (/^[一-龥]/.test(String(c))) s.add(c); }); } catch (e) {}
+  _CN_COUNTRY_SET = s; return s;
+}
+function _extractLocationFromText(text) {
+  const t = String(text || '');
+  if (!t) return '';
+  let hit = '';
+  const names = Array.from(_cnCountrySet()).sort(function (a, b) { return b.length - a.length; });
+  for (let i = 0; i < names.length; i++) { if (t.indexOf(names[i]) >= 0) { hit = names[i]; break; } }
+  return hit;
+}
+
+/* ===== 重点城市词典（2026-08-18 新增）：让 location 落到具体城市而非停留在国家 =====
+ * 键为英文城市名，值为中文。覆盖中东/南亚/中亚/非洲/拉美/东南亚/欧洲/CIS 等重点区域。 */
+const _CITY_ALIAS = {
+  'Kabul':'喀布尔','Tehran':'德黑兰','Isfahan':'伊斯法罕','Baghdad':'巴格达','Basra':'巴士拉','Mosul':'摩苏尔',
+  'Damascus':'大马士革','Aleppo':'阿勒颇','Beirut':'贝鲁特','Amman':'安曼','Jerusalem':'耶路撒冷','Tel Aviv':'特拉维夫',
+  'Riyadh':'利雅得','Jeddah':'吉达','Doha':'多哈','Abu Dhabi':'阿布扎比','Dubai':'迪拜','Kuwait City':'科威特城',
+  'Muscat':'马斯喀特','Sanaa':'萨那','Aden':'亚丁','Manama':'麦纳麦','Ankara':'安卡拉','Istanbul':'伊斯坦布尔',
+  'Cairo':'开罗','Alexandria':'亚历山大','Tripoli':'的黎波里','Benghazi':'班加西','Tunis':'突尼斯','Algiers':'阿尔及尔',
+  'Rabat':'拉巴特','Casablanca':'卡萨布兰卡','Khartoum':'喀土穆','Addis Ababa':'亚的斯亚贝巴','Nairobi':'内罗毕',
+  'Mombasa':'蒙巴萨','Lagos':'拉各斯','Abuja':'阿布贾','Accra':'阿克拉','Dakar':'达喀尔','Bamako':'巴马科',
+  'Johannesburg':'约翰内斯堡','Cape Town':'开普敦','Pretoria':'比勒陀利亚','Kinshasa':'金沙萨','Luanda':'罗安达',
+  'Dar es Salaam':'达累斯萨拉姆','Dodoma':'多多马','Kampala':'坎帕拉','Kigali':'基加利','Lusaka':'卢萨卡','Harare':'哈拉雷',
+  'Maputo':'马普托','New Delhi':'新德里','Mumbai':'孟买','Kolkata':'加尔各答','Chennai':'金奈','Bangalore':'班加罗尔',
+  'Karachi':'卡拉奇','Lahore':'拉合尔','Islamabad':'伊斯兰堡','Peshawar':'白沙瓦','Quetta':'奎达',
+  'Dhaka':'达卡','Chittagong':'吉大港','Colombo':'科伦坡','Kathmandu':'加德满都','Thimphu':'廷布','Male':'马累',
+  'Moscow':'莫斯科','St Petersburg':'圣彼得堡','Kyiv':'基辅','Kharkiv':'哈尔科夫','Odessa':'敖德萨','Minsk':'明斯克',
+  'Tbilisi':'第比利斯','Yerevan':'埃里温','Baku':'巴库','Almaty':'阿拉木图','Nur-Sultan':'努尔苏丹','Astana':'阿斯塔纳',
+  'Tashkent':'塔什干','Samarkand':'撒马尔罕','Bishkek':'比什凯克','Dushanbe':'杜尚别','Ashgabat':'阿什哈巴德',
+  'Ulaanbaatar':'乌兰巴托','Bangkok':'曼谷','Chiang Mai':'清迈','Jakarta':'雅加达','Surabaya':'泗水',
+  'Manila':'马尼拉','Hanoi':'河内','Ho Chi Minh':'胡志明市','Da Nang':'岘港','Kuala Lumpur':'吉隆坡',
+  'Singapore':'新加坡','Yangon':'仰光','Naypyidaw':'内比都','Phnom Penh':'金边','Vientiane':'万象','Bandar Seri Begawan':'斯里巴加湾市',
+  'Brasilia':'巴西利亚','Sao Paulo':'圣保罗','Rio de Janeiro':'里约热内卢','Buenos Aires':'布宜诺斯艾利斯',
+  'Santiago':'圣地亚哥','Lima':'利马','Bogota':'波哥大','Medellin':'麦德林','Caracas':'加拉加斯','Quito':'基多',
+  'La Paz':'拉巴斯','Asuncion':'亚松森','Montevideo':'蒙得维的亚','Mexico City':'墨西哥城','Havana':'哈瓦那',
+  'Panama City':'巴拿马城','London':'伦敦','Paris':'巴黎','Berlin':'柏林','Munich':'慕尼黑','Rome':'罗马','Milan':'米兰',
+  'Madrid':'马德里','Barcelona':'巴塞罗那','Brussels':'布鲁塞尔','Amsterdam':'阿姆斯特丹','Vienna':'维也纳',
+  'Warsaw':'华沙','Budapest':'布达佩斯','Prague':'布拉格','Athens':'雅典','Lisbon':'里斯本','Stockholm':'斯德哥尔摩',
+  'Oslo':'奥斯陆','Copenhagen':'哥本哈根','Helsinki':'赫尔辛基','Zurich':'苏黎世','Geneva':'日内瓦',
+  'Washington':'华盛顿','New York':'纽约','Los Angeles':'洛杉矶','Chicago':'芝加哥','Ottawa':'渥太华','Toronto':'多伦多',
+  'Canberra':'堪培拉','Sydney':'悉尼','Tokyo':'东京','Osaka':'大阪','Seoul':'首尔','Busan':'釜山',
+  /* 战略水道/热点海域（非城市，但常是事件真实地点，归入 location 更准） */
+  'Strait of Hormuz':'霍尔木兹海峡','Hormuz':'霍尔木兹海峡','Suez Canal':'苏伊士运河','Suez':'苏伊士运河',
+  'Bab el-Mandeb':'曼德海峡','Strait of Malacca':'马六甲海峡','Malacca':'马六甲海峡','Panama Canal':'巴拿马运河',
+  'Gibraltar':'直布罗陀海峡','Bosphorus':'博斯普鲁斯海峡','Red Sea':'红海','Persian Gulf':'波斯湾',
+  'Gulf of Aden':'亚丁湾','South China Sea':'南海','East China Sea':'东海','Black Sea':'黑海','Mediterranean':'地中海'
+};
+let _CITY_PAIRS = null;
+function _cityPairs() {
+  if (_CITY_PAIRS) return _CITY_PAIRS;
+  const out = Object.keys(_CITY_ALIAS).map(function (k) { return [k, _CITY_ALIAS[k]]; });
+  out.sort(function (a, b) { return b[0].length - a[0].length; });
+  _CITY_PAIRS = out; return out;
+}
+let _CN_CITY_SET = null;
+function _cnCitySet() {
+  if (_CN_CITY_SET) return _CN_CITY_SET;
+  const s = new Set();
+  Object.keys(_CITY_ALIAS).forEach(function (k) { s.add(_CITY_ALIAS[k]); });
+  _CN_CITY_SET = s; return s;
+}
+/* 从文本抽具体城市：先中文城市名，再英文城市名（返回中文）。找不到返回 '' */
+function _extractCityFromText(text) {
+  const t = String(text || '');
+  if (!t) return '';
+  const cnNames = Array.from(_cnCitySet()).sort(function (a, b) { return b.length - a.length; });
+  for (let i = 0; i < cnNames.length; i++) { if (t.indexOf(cnNames[i]) >= 0) return cnNames[i]; }
+  const en = _cityPairs();
+  for (let i = 0; i < en.length; i++) {
+    const re = new RegExp('(?<![A-Za-z])' + en[i][0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z])');
+    if (re.test(t)) return en[i][1];
+  }
+  return '';
+}
+/* 标题里残留的英文城市名换中文（须在国家/媒体本地化之后调用，避免长词被切碎） */
+function _localizeCities(s) {
+  let t = String(s || '');
+  if (!t || !/[A-Za-z]{4,}/.test(t)) return t;
+  _cityPairs().forEach(function (p) {
+    const re = new RegExp('(?<![A-Za-z])' + p[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z])', 'g');
+    t = t.replace(re, p[1]);
+  });
+  return t;
+}
+
+/* 要素抽取：补全 location / event_date（DB 入库字段为 it.location||it.city 与 it.date||it.publishedAt） */
+function _extractElements(it) {
+  if (!it || typeof it !== 'object') return it;
+  if (!it.date) {
+    let d = '';
+    if (it.publishedAt && /^\d{4}/.test(String(it.publishedAt))) {
+      const pd = new Date(String(it.publishedAt));
+      if (!isNaN(pd.getTime())) d = _fmtDate(pd.getFullYear(), pd.getMonth() + 1, pd.getDate());
+    }
+    if (!d) d = _extractDateFromText(String(it.title || '') + ' ' + String(it.content || it.content_zh || ''));
+    if (d) it.date = d;
+  }
+  if (!it.location && !it.city) {
+    const titleTxt = String(it.title || '');
+    const bodyTxt = String(it.content || it.content_zh || '');
+    const text = titleTxt + ' ' + bodyTxt;
+    /* 1) 具体城市优先（标题先匹配，命中不了再看正文，降低"顺带提及"误判） */
+    let cityHit = _extractCityFromText(titleTxt);
+    if (!cityHit) cityHit = _extractCityFromText(bodyTxt);
+    let loc = cityHit;
+    if (cityHit && !it.city) it.city = cityHit;
+    /* 2) 中文地名后缀补强（省/市/州/地区/镇/港/岛），仅取首个 */
+    if (!loc) {
+      const lm = String(it.title || '').match(/([一-龥]{2,6}?)(省|市|州|地区|特区|首都|边境|镇|岛|港|湾)/);
+      if (lm) { loc = lm[1] + lm[2]; if (!it.city && /市|镇|首都/.test(lm[2])) it.city = loc; }
+    }
+    /* 3) 文本里的国名 */
+    if (!loc) loc = _extractLocationFromText(text);
+    /* 4) 最后才退回国家字段（country 归一化） */
+    if (!loc) {
+      const cn = it.country_cn || (it.country && ENTITY && ENTITY.normalizeCountry ? ENTITY.normalizeCountry(it.country) : '');
+      if (cn && /^[一-龥]/.test(cn)) loc = cn;
+    }
+    if (loc) it.location = loc;
+  }
+  return it;
+}
+
+/* 媒体专名本地化（在国名本地化之上补充，仅作用于标题，避免污染正文） */
+const _MEDIA_ALIAS = {
+  'La Repubblica': '共和报', 'Le Monde': '世界报', 'Le Figaro': '费加罗报',
+  'Der Spiegel': '明镜周刊', 'Die Zeit': '时代周报', 'The Guardian': '卫报',
+  'The Washington Post': '华盛顿邮报', 'The New York Times': '纽约时报',
+  'Al Jazeera': '半岛电视台', 'Al-Arabiya': '阿拉伯电视台', 'Al Mayadeen': '迈亚丁电视台',
+  'Associated Press': '美联社', 'Reuters': '路透社', 'AFP': '法新社', 'Xinhua': '新华社'
+};
+let _MEDIA_PAIRS = null;
+function _mediaPairs() {
+  if (_MEDIA_PAIRS) return _MEDIA_PAIRS;
+  const out = [];
+  Object.keys(_MEDIA_ALIAS).forEach(function (k) { if (k.length >= 4) out.push([k, _MEDIA_ALIAS[k]]); });
+  out.sort(function (a, b) { return b[0].length - a[0].length; });
+  _MEDIA_PAIRS = out; return out;
+}
+function _localizeMedia(s) {
+  let t = String(s || '');
+  if (!t || !/[A-Za-z]{4,}/.test(t)) return t;
+  _mediaPairs().forEach(function (p) {
+    const re = new RegExp('(?<![A-Za-z])' + p[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z])', 'g');
+    t = t.replace(re, p[1]);
+  });
+  return t;
+}
+async function _translateListToZhParallel(list, concurrency) {
+  concurrency = concurrency || 3;
+  if (concurrency > 3) concurrency = 3; // 限制翻译并发，缓解系统内存压力
+  const tasks = [];
+  list.forEach(function (it) {
+    if (!it || typeof it !== 'object') return;
+    if (_looksForeign(it.title)) tasks.push({ it: it, field: 'title' });
+    if (_looksForeign(it.content) && String(it.content || '').length > 20) tasks.push({ it: it, field: 'content' });
+  });
+  if (!tasks.length) console.log('[TRANSLATE] 本批无需翻译，继续正文补抓与要素抽取');
+  let idx = 0, done = 0;
+  async function worker() {
+    while (idx < tasks.length) {
+      const t = tasks[idx++];
+      try {
+        /* 优先用干净原文重译：若条目已有 title_en 却仍被判定为外文，
+           说明上一轮译文不合格（半中半英），拿原文重来比拿污染文本再译更准。 */
+        const raw = t.field === 'title' ? (t.it.title_en || t.it.title)
+                                        : String(t.it.content_en || t.it.content || '').slice(0, 6000);
+        /* 采集端加的来源标签「[HDX 数据集]」若一起送去机翻，会被揉进译文导致
+           括号不闭合（实测「[HDX阿富汗--2017年对…」）。先摘下、译完再拼回。 */
+        let tag = '', src = raw;
+        if (t.field === 'title') {
+          const tm = /^\s*([\[【][^\]】]{0,24}[\]】])\s*/.exec(String(raw));
+          if (tm) { tag = tm[1] + ' '; src = String(raw).slice(tm[0].length); }
+        }
+        const zh0 = await _translateAnyCached(src);
+        const zh = zh0 && zh0.trim() ? (tag + zh0.trim()) : zh0;
+        if (zh && zh.trim() && zh.trim() !== String(raw).trim()) {
+          /* 溯源原文只在首次翻译时写入。重译场景下 title 已是上一轮译文，
+             若无条件覆盖 title_en 会把译文冒充成原文，永久丢失真正的外文出处。 */
+          if (t.field === 'title') {
+            if (!t.it.title_en) t.it.title_en = t.it.title;
+            t.it.title = zh.trim(); t.it.title_zh = zh.trim();
+          } else {
+            if (!t.it.content_en) t.it.content_en = t.it.content;
+            t.it.content = zh.trim(); t.it.content_zh = zh.trim();
+          }
+          t.it.translated = true; done++;
+        }
+      } catch (e) { /* 单条失败保留原文，不中断整批 */ }
+    }
+  }
+  if (tasks.length) await Promise.all(Array.from({ length: concurrency }, worker));
+  /* 正文补抓（增量）：apSearch/GDELT 仅返回标题，导致正文长期为空、用户看不懂。
+   * 对 content 为空且有 url 的条目跟进抓正文并翻译；按列表规模自适应限流，避免大批量采集超时。 */
+  const needBody = [];
+  list.forEach(function (it) {
+    if (!it || typeof it !== 'object') return;
+    const url = it.url || it.link;
+    const have = it.content && String(it.content).trim().length >= 80;
+    if (url && !have) needBody.push(it);
+  });
+  let bodyCap = 10;
+  if (list.length <= 40) bodyCap = needBody.length;        // 小批量（专项/区域均衡）→ 全抓
+  else if (list.length <= 90) bodyCap = 25;
+  const bodyQueue = needBody.slice(0, bodyCap);
+  if (bodyQueue.length) {
+    let bDone = 0, bIdx = 0;
+    async function bworker() {
+      while (bIdx < bodyQueue.length) {
+        const it = bodyQueue[bIdx++];
+        try { if (await _fetchBodyForItem(it)) bDone++; } catch (e) {}
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, bodyQueue.length) }, bworker));
+    if (bDone) console.log('[TRANSLATE] 正文补抓：' + bDone + '/' + bodyQueue.length + ' 条获得正文');
+  }
+  /* 收尾：① 国名本地化 ② 媒体专名本地化 ③ 城市本地化 ④ 要素抽取（location/event_date）
+   * 顺序保证长词优先：媒体 > 城市，避免 "The Washington Post" 被城市表先切成 "The 华盛顿 Post"。 */
+  let locN = 0, mediaN = 0, cityN = 0;
+  list.forEach(function (it) {
+    if (!it || typeof it !== 'object') return;
+    const t1 = _localizeCountryNames(it.title);
+    if (t1 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t1; it.title_zh = t1; locN++; }
+    const t2 = _localizeMedia(it.title);
+    if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; mediaN++; }
+    const t3 = _localizeCities(it.title);
+    if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; cityN++; }
+    _extractElements(it);
+  });
+  console.log('[TRANSLATE] 并行采集即译：' + done + '/' + tasks.length + ' 个字段译成中文'
+    + (locN ? '，本地化国家名 ' + locN + ' 条' : '')
+    + (mediaN ? '，媒体专名 ' + mediaN + ' 条' : '')
+    + (cityN ? '，城市名 ' + cityN + ' 条' : '')
+    + (needBody.length ? '，正文待补 ' + needBody.length + ' 条（已抓 ' + bodyQueue.length + '）' : ''));
+  return done;
+}
+app.post('/api/intel/translate-backfill', async (req, res) => {
+  /* 首选通道 TranSmart/有道 免密钥、无日配额，无需任何配置即可回填 */
+  const types = ['osint_intel', 'socmint_intel'];
+  const stats = { osint_intel: { scanned: 0, translated: 0, skipped: 0 }, socmint_intel: { scanned: 0, translated: 0, skipped: 0 } };
+  let errMsg = '';
+  let remaining = 0;
+  for (const type of types) {
+    let arr = [];
+    try { arr = require(path.join(CACHE_DIR, type + '.json')); } catch (e) { continue; }
+    if (!Array.isArray(arr)) continue;
+    for (const it of arr) {
+      if (!it || typeof it !== 'object') continue;
+      /* 实战系统：落库即中文。当前 title/content 是否仍含外文（已中文的跳过） */
+      const titleForeign = _looksForeign(it.title);
+      const contentForeign = _looksForeign(it.content) && String(it.content || '').length > 20;
+      if (!titleForeign && !contentForeign) { stats[type].skipped++; continue; }
+      stats[type].scanned++;
+      let did = false;
+      try {
+        if (titleForeign) {
+          /* 已有译文则直接提升为主字段（免重复调用）；否则走多通道翻译 */
+          let zh = it.title_zh;
+          if (!zh || zh.trim() === String(it.title || '').trim()) {
+            zh = await _translateAny(it.title);
+          }
+          if (zh && zh.trim() && zh.trim() !== String(it.title || '').trim()) {
+            it.title_en = it.title; it.title = zh.trim(); it.title_zh = zh.trim(); did = true;
+          }
+        }
+        if (contentForeign) {
+          let zh = it.content_zh;
+          if (!zh || zh.trim() === String(it.content || '').trim().slice(0, 6000)) {
+            zh = await _translateAny(String(it.content || '').slice(0, 6000));
+          }
+          if (zh && zh.trim() && zh.trim() !== String(it.content || '').trim().slice(0, 6000)) {
+            it.content_en = it.content; it.content = zh.trim(); it.content_zh = zh.trim(); did = true;
+          }
+        }
+        if (did) stats[type].translated++; else remaining++;
+      } catch (e) {
+        errMsg = e.message;
+        remaining++;
+        console.warn('[BACKFILL] 翻译单条失败', type, (it.title || '').slice(0, 30), e.message);
+      }
+      await new Promise(r => setTimeout(r, 250)); // TranSmart 无日配额，轻节流
+    }
+    _writePublicCache(type, arr);
+    console.log('[BACKFILL]', type, '扫描', stats[type].scanned, '翻译', stats[type].translated, '跳过', stats[type].skipped, '残留', remaining);
+  }
+  const allDone = remaining === 0;
+  return res.json({ ok: allDone, configured: true, engine: 'transmart+youdao+baidu', stats, remaining, note: errMsg || (allDone ? 'done' : '部分条目仍受限，可再次调用本端点续翻') });
+});
+/* 免费注册 MyMemory key 生成（镜像 Dart 客户端 MyMemoryTranslator.generateKey）。
+ * 注册用户凭用户名/密码可获取专属 key，翻译配额从匿名 5000 字符/日升至 50000 字符/日，
+ * 仍完全免费、非百度。获取后写入 server/.env 的 MYMEMORY_KEY 并重启即生效。 */
+async function _mymemoryGetKey(user, pass) {
+  for (const ep of ['gettranslationkey', 'createtranslationkey']) {
+    try {
+      const r = await fetch('https://api.mymemory.translated.net/accounts/' + ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'user=' + encodeURIComponent(user) + '&pass=' + encodeURIComponent(pass),
+        signal: AbortSignal.timeout(10000)
+      });
+      const j = await r.json().catch(() => ({}));
+      const key = (j && j.key) || (j && j.responseData && j.responseData.key) || '';
+      if (key) return key;
+    } catch (e) { /* 尝试下一个端点 */ }
+  }
+  return '';
+}
+app.post('/api/translate/mymemory-key', async (req, res) => {
+  const user = (req.body && (req.body.user || req.body.username)) || '';
+  const pass = (req.body && req.body.pass) || '';
+  if (!user || !pass) return res.json({ ok: false, error: '需要 user 与 pass（MyMemory 注册账号的用户名/邮箱与密码）' });
+  try {
+    const key = await _mymemoryGetKey(user, pass);
+    if (!key) return res.json({ ok: false, error: '未能生成 key（账号不存在或凭据错误）' });
+    return res.json({ ok: true, key, note: '将此 key 写入 server/.env 的 MYMEMORY_KEY 并重启服务即可把免费配额从 5000 提升至 50000 字符/日' });
+  } catch (e) {
+    return res.json({ ok: false, error: '请求 MyMemory 失败: ' + e.message });
+  }
+});
+
+/* 存量正文回填端点必须注册在 /api/intel/:type 通配路由之前，
+ * 否则 POST /api/intel/enrich 会被匹配成 type='enrich' 并被 authMiddleware 拦截。
+ * 实现见文件末尾的 _handleIntelEnrich（函数声明，已提升）。 */
+app.post('/api/intel/enrich', (req, res) => _handleIntelEnrich(req, res));
+
+/* 公开读取：态势情报为公开 OSINT，无需登录即可读取；写入/审核/删除仍受 JWT 保护 */
+app.get('/api/intel/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
+    const result = await query('SELECT * FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC', [type]);
+    res.json(result.rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* 前端同步入口闸门（2026-08-14 重大修复）：前端 datasources 引擎曾把同一条情报
+ * 按数据源轮换署名反复 POST（同一标题最多 15 份副本，含已被用户删除的旧闻复活）。
+ * 三个 POST 入库口统一加装：标题去重 + 24h 时效 + 国内新闻拦截 + 删除名单 + 分类/级别归一。 */
+const _POST_BLOCK_RE = /阿富汗承诺在跨境袭击中合作.*塔吉克斯坦|3名中国工人在塔吉克斯坦死亡|暗网论坛出现针对中资矿业公司的雇佣兵招募信息|卡拉奇港中资码头出现可疑车辆|马里北部发生武装袭击，金矿区安全形势恶化|苏丹武装冲突升级，多国发布撤侨警告/i;
+/* URL 级去重缓存（2026-08-16：POST 通道此前无 URL 去重，同一 URL 被反复灌库 349 次） */
+let _urlCache = { t: 0, set: new Set() };
+async function _getKnownUrls() {
+  if (Date.now() - _urlCache.t < 10 * 60 * 1000 && _urlCache.set.size) return _urlCache.set;
+  try {
+    const { rows } = await query("SELECT DISTINCT data_json->>'url' u FROM intel_data WHERE collect_time >= NOW() - INTERVAL '7 days' AND data_json->>'url' IS NOT NULL AND data_json->>'url' <> ''");
+    _urlCache = { t: Date.now(), set: new Set(rows.map(r => r.u)) };
+  } catch (e) {}
+  return _urlCache.set;
+}
+async function _postGate(item) {
+  if (!item || !item.title) { _gateAudit('入库闸', 'empty', ''); return 'empty'; }
+  /* 空壳条目一票否决（2026-08-17：旧版前端模板生成器产出的"美国-委内瑞拉冲突"式无正文垃圾）：
+   * 无链接 且 正文与标题几乎相同/为空（真正的情报必有正文或链接佐证） */
+  {
+    const _c = String(item.content || item.desc || '').trim();
+    const _t0 = String(item.title || '').trim();
+    const _meaningful = _c.length > 30 && _c.replace(/[|\s]/g, '').length > _t0.replace(/[|\s]/g, '').length + 10;
+    if (!item.url && !_meaningful) return 'shell';
+  }
+  if (_POST_BLOCK_RE.test(String(item.title || '') + ' ' + String(item.title_zh || ''))) { _gateAudit('入库闸', 'blocked-blacklist', item.title); return 'blocked'; }
+  /* 精确标题去重（2026-08-16 用户铁律）：30 天内同标题（含译文标题）一律拒收——
+   * 24h 窗口对"每天回灌一次"的旧缓存失效，精确同标题重发永远不可能是新事件 */
+  try {
+    const _t = String(item.title || '').trim();
+    const _tz = String(item.title_zh || '').trim();
+    if (_t.length >= 8 || _tz.length >= 8) { /* 阈值 10→8：9 字壳标题（美国-委内瑞拉冲突）曾漏网 */
+      const { rows } = await query(
+        `SELECT 1 FROM intel_data WHERE collect_time >= NOW() - INTERVAL '30 days' AND (title = $1 OR ($2 <> '' AND data_json->>'title_zh' = $2) OR ($2 <> '' AND title = $2)) LIMIT 1`,
+        [_t, _tz]
+      );
+      if (rows.length) { _gateAudit('入库闸', 'dup-exact-title', item.title); return 'dup-exact-title'; }
+    }
+  } catch (e) {}
+  if (item.url) { const urls = await _getKnownUrls(); if (urls.has(String(item.url).replace(/\/+$/, '').toLowerCase()) || urls.has(String(item.url))) return 'dup-url'; }
+  if (!_isFreshEnough(item)) { _gateAudit('入库闸', 'stale', item.title); return 'stale'; }
+  if (globalmedia._isDomesticChina && globalmedia._isDomesticChina(String(item.title || '') + ' ' + String(item.title_zh || ''))) return 'domestic';
+  const _pt = String(item.title || '') + ' ' + String(item.content || item.desc || '');
+  if (globalmedia._isSoftJunk && globalmedia._isSoftJunk(_pt)) return 'softjunk';
+  if (globalmedia.gateRelevant && !globalmedia.gateRelevant(_pt)) return 'irrelevant';
+  const titleKeys = await _getRecentTitleKeys();
+  if (_isDupTitle(titleKeys, item)) return 'dup';
+  return '';
+}
+
+app.post('/api/intel/:type', authMiddleware, async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
+    const item = req.body;
+    const blocked = await _postGate(item);
+    if (blocked) return res.json({ skipped: blocked });
+    _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
+    const _dt = type === 'osint_intel' ? _classifyIntelType(item) : type;
+    item.data_type = _dt;
+    const result = await query(
+      'INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      [_dt, item.title||'', item.country||'', item.location||'', item.date||'', _lv, item.desc||'', item.source||'', JSON.stringify(item), item.audit_status||'approved']
+    );
+    res.json({ id: result.rows[0].id, ...item });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/intel/:type/batch', authMiddleware, async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
+    const items = req.body;
+    if (!Array.isArray(items)) return res.status(400).json({ error: '请提供数组' });
+    let count = 0, skipped = 0;
+    for (const item of items) {
+      const blocked = await _postGate(item);
+      if (blocked) { skipped++; continue; }
+      _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
+      const _dt = type === 'osint_intel' ? _classifyIntelType(item) : type;
+      item.data_type = _dt;
+      await query('INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        [_dt, item.title||'', item.country||'', item.location||'', item.date||'', _lv, item.desc||'', item.source||'', JSON.stringify(item), item.audit_status||'approved']);
+      count++;
+    }
+    res.json({ success: true, count, skipped });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/intel/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const item = req.body;
+    await query('UPDATE intel_data SET title=$1, country=$2, data_json=$3, audit_status=$4 WHERE id=$5', [item.title||'', item.country||'', JSON.stringify(item), item.audit_status||'approved', id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/intel/:id/audit', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { status } = req.body;
+    if (!['approved','rejected','pending'].includes(status)) return res.status(400).json({ error: '无效审核状态' });
+    await query('UPDATE intel_data SET audit_status=$1, audit_time=$2 WHERE id=$3', [status, new Date().toISOString(), id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/intel/:id', authMiddleware, async (req, res) => {
+  try { await query('DELETE FROM intel_data WHERE id = $1', [parseInt(req.params.id, 10)]); res.json({ success: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/intel/:type/all', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
+    await query('DELETE FROM intel_data WHERE data_type = $1', [type]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== DataHub 数据集 API ===== */
+app.get('/api/datahub/:collection', async (req, res) => {
+  try {
+    const { collection } = req.params;
+    if (!DH_COLLECTIONS.includes(collection)) return res.status(400).json({ error: '无效的集合名' });
+    const result = await query('SELECT data_json FROM datahub_store WHERE collection = $1', [collection]);
+    let arr = result.rows.length > 0 ? result.rows[0].data_json : [];
+    /* 预警集合只下发今日（2026-08-17 铁律）：午夜后昨日预警自动失效，不依赖任何客户端清理 */
+    if (collection === 'alerts' && Array.isArray(arr)) {
+      const ds = new Date(); ds.setHours(0, 0, 0, 0);
+      arr = arr.filter(a => {
+        const t = new Date(a && (a.time || a.date || a.publishedAt || a.collect_time) || '').getTime();
+        return t && t >= ds.getTime();
+      });
+    }
+    res.json(arr);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
+  try {
+    const { collection } = req.params;
+    if (!DH_COLLECTIONS.includes(collection)) return res.status(400).json({ error: '无效的集合名' });
+    let data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: '数据必须是数组' });
+    /* 防误清（2026-08-17）：现有库存较大时，拒绝用极小数组全量覆盖（空库客户端启动保存会把共享库清零） */
+    try {
+      const cur = await query('SELECT data_json FROM datahub_store WHERE collection = $1', [collection]);
+      const curN = (cur.rows.length && Array.isArray(cur.rows[0].data_json)) ? cur.rows[0].data_json.length : 0;
+      if (curN >= 10 && data.length < curN * 0.2) {
+        console.log('[DATAHUB] 拒绝小数组覆盖: ' + collection + ' 现有' + curN + ' →  incoming' + data.length);
+        return res.json({ success: true, skipped: 'wipe-guard', kept: curN });
+      }
+    } catch (e) {}
+    /* 服务端权威过滤（2026-08-16 用户铁律：旧闻绝不盖新戳）——
+     * 旧版客户端会把历史条目盖新时间戳回灌共享预警库。写入咽喉统一拦截：
+     * ① 黑名单无链接条目；② 数字 id 条目以 PG collect_time 为准，早于今日拒收；
+     * ③ 前端时间字段非今日拒收；④ 无时间用 alert_no 内嵌日期兜底，全无则拒收。 */
+    if (collection === 'alerts') {
+      const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+      const ds = dayStart.getTime();
+      const tk = String(dayStart.getFullYear()) + String(dayStart.getMonth() + 1).padStart(2, '0') + String(dayStart.getDate()).padStart(2, '0');
+      const numIds = data.map(a => a && a.id).filter(id => /^\d+$/.test(String(id)));
+      const pgTime = {};
+      if (numIds.length) {
+        try {
+          const { rows } = await query('SELECT id, collect_time FROM intel_data WHERE id = ANY($1)', [numIds]);
+          rows.forEach(r => { pgTime[String(r.id)] = new Date(r.collect_time).getTime(); });
+        } catch (e) {}
+      }
+      /* URL/标题 权威对照（2026-08-16 深夜加固：旧客户端换前端新 id 绕过 id 校验——
+       * 只要 URL 或标题在 PG 有早于今日的记录，即为盖戳回灌，一律拒收） */
+      const urlTime = {}, titleTime = {};
+      try {
+        const urls = data.map(a => a && a.url).filter(Boolean).slice(0, 400);
+        if (urls.length) {
+          const marks = urls.map((_, i) => '$' + (i + 1)).join(',');
+          const { rows } = await query(`SELECT data_json->>'url' u, MAX(collect_time) mx FROM intel_data WHERE data_json->>'url' IN (${marks}) GROUP BY 1`, urls);
+          rows.forEach(r => { if (r.u) urlTime[r.u] = new Date(r.mx).getTime(); });
+        }
+        const titles = [...new Set(data.map(a => String((a && (a.title || a.title_zh)) || '').trim()).filter(t => t.length >= 10))].slice(0, 300);
+        if (titles.length) {
+          const marks = titles.map((_, i) => '$' + (i + 1)).join(',');
+          const { rows } = await query(`SELECT title, MAX(collect_time) mx FROM intel_data WHERE title IN (${marks}) GROUP BY 1`, titles);
+          rows.forEach(r => { if (r.title) titleTime[r.title] = new Date(r.mx).getTime(); });
+        }
+      } catch (e) {}
+      const before = data.length;
+      data = data.filter(a => {
+        if (!a) return false;
+        const txt = String(a.title || '') + String(a.title_zh || '');
+        if (!a.url && _POST_BLOCK_RE.test(txt)) { _gateAudit('写入闸', 'blacklist', a.title); return false; }
+        const pt = pgTime[String(a.id)];
+        if (pt !== undefined) return pt >= ds; /* PG id 有案：以 PG 采集时间为准 */
+        if (a.url && urlTime[a.url] !== undefined) return urlTime[a.url] >= ds; /* URL 有案：以 PG 为准 */
+        const tt = String(a.title || '').trim();
+        if (tt.length >= 10 && titleTime[tt] !== undefined) return titleTime[tt] >= ds; /* 标题有案：以 PG 为准 */
+        /* 利益关联闸（2026-08-16 用户指令永久化：黄/蓝级无海外利益关联 = 非预警，任何客户端写入一律拒收） */
+        if (_isShellAlert(a)) { _gateAudit('写入闸', 'shell', a.title); return false; } /* 模板空壳一律拒收 */
+        if (_isRuUaNoLink(a)) { _gateAudit('写入闸', 'ruua-nolink', a.title); return false; }
+        if (_alertInterestScore(a).score < 10) { _gateAudit('写入闸', 'no-interest', a.title); return false; } /* 阈值 20→10（日产≥200 条目标） */
+        const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
+        if (t) return t >= ds;
+        const m = String(a.alert_no || '').match(/(20\d{6})/);
+        return m ? m[1] === tk : false;
+      });
+      if (data.length !== before) console.log('[DATAHUB] alerts 写入过滤: ' + before + ' → ' + data.length + '（剔除非今日/盖戳回灌）');
+    }
+    await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (collection) DO UPDATE SET data_json = $2, updated_at = NOW()', [collection, JSON.stringify(data)]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== AI 报告 API ===== */
+app.get('/api/reports', authMiddleware, async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM ai_reports ORDER BY created_at DESC');
+    res.json(result.rows.map(r => ({ id: r.report_id||r.id, title: r.title, mode: r.mode, country: r.country, level: r.level, reportType: r.report_type, materials: r.materials, threatAnalysis: r.threat_analysis, impactAnalysis: r.impact_analysis, advice: r.advice, author: r.author, createdAt: r.created_at })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await query('SELECT * FROM ai_reports WHERE report_id = $1 OR id = $2', [id, id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: '报告不存在' });
+    const r = result.rows[0];
+    res.json({ id: r.report_id||r.id, title: r.title, mode: r.mode, country: r.country, level: r.level, reportType: r.report_type, materials: r.materials, threatAnalysis: r.threat_analysis, impactAnalysis: r.impact_analysis, advice: r.advice, author: r.author, createdAt: r.created_at });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/reports', authMiddleware, async (req, res) => {
+  try {
+    const r = req.body;
+    const reportId = r.id || (Date.now() + Math.floor(Math.random() * 100000));
+    const result = await query(
+      'INSERT INTO ai_reports (report_id, title, mode, country, level, report_type, materials, threat_analysis, impact_analysis, advice, content_json, author) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id',
+      [reportId, r.title||'', r.mode||'elements', r.country||'', r.level||'', r.reportType||r.report_type||'', r.materials||'', r.threatAnalysis||r.threat_analysis||'', r.impactAnalysis||r.impact_analysis||'', r.advice||'', JSON.stringify(r), req.user.username]
+    );
+    res.json({ id: reportId, dbId: result.rows[0].id, ...r });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/reports/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const r = req.body;
+    await query('UPDATE ai_reports SET title=$1, mode=$2, country=$3, level=$4, report_type=$5, materials=$6, threat_analysis=$7, impact_analysis=$8, advice=$9, content_json=$10 WHERE report_id=$11 OR id=$12',
+      [r.title||'', r.mode||'elements', r.country||'', r.level||'', r.reportType||r.report_type||'', r.materials||'', r.threatAnalysis||r.threat_analysis||'', r.impactAnalysis||r.impact_analysis||'', r.advice||'', JSON.stringify(r), id, id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/reports/:id', authMiddleware, async (req, res) => {
+  try { await query('DELETE FROM ai_reports WHERE report_id = $1 OR id = $2', [parseInt(req.params.id, 10), parseInt(req.params.id, 10)]); res.json({ success: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 威胁组织 API ===== */
+app.get('/api/threat-orgs', async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM threat_orgs ORDER BY updated_at DESC');
+    res.json(result.rows.map(r => ({ ...r.data_json, id: r.org_id||r.id, _dbId: r.id })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/threat-orgs', authMiddleware, async (req, res) => {
+  try {
+    const data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: '数据必须是数组' });
+    await query('DELETE FROM threat_orgs');
+    /* 同 auto-alerts/risk-fusion 修复：去重 + 单行容错，缺 id 用名称兜底 */
+    const seen = new Set();
+    let inserted = 0, skipped = 0;
+    for (const org of data) {
+      const oid = String(org.id || org.name || Date.now());
+      if (seen.has(oid)) { skipped++; continue; }
+      seen.add(oid);
+      try {
+        await query('INSERT INTO threat_orgs (org_id, name, type, country, level, "desc", data_json) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (org_id) DO NOTHING',
+          [oid, org.name||'', org.type||'', org.country||'', org.level||'', org.desc||'', JSON.stringify(org)]);
+        inserted++;
+      } catch (e) { skipped++; }
+    }
+    res.json({ success: true, count: inserted, skipped });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 企业项目 API ===== */
+app.get('/api/enterprise-projects', async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM enterprise_projects ORDER BY updated_at DESC');
+    res.json(result.rows.map(r => ({ ...r.data_json, _dbId: r.id })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/enterprise-projects', authMiddleware, async (req, res) => {
+  try {
+    const data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: '数据必须是数组' });
+    await query('DELETE FROM enterprise_projects');
+    for (const proj of data) {
+      await query('INSERT INTO enterprise_projects (enterprise, project, country, location, status, data_json) VALUES ($1,$2,$3,$4,$5,$6)',
+        [proj.enterprise||'', proj.project||'', proj.country||'', proj.location||'', proj.status||'', JSON.stringify(proj)]);
+    }
+    res.json({ success: true, count: data.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 风险融合 API ===== */
+app.get('/api/risk-fusion', async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM risk_fusion ORDER BY fusion_time DESC');
+    res.json(result.rows.map(r => ({ ...r.data_json, _dbId: r.id, fusionTime: r.fusion_time })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/risk-fusion', authMiddleware, async (req, res) => {
+  try {
+    const data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: '数据必须是数组' });
+    await query('DELETE FROM risk_fusion');
+    /* 2026-08-14 修复：融合结果对象无 id 字段，原代码用 Date.now() 兜底，
+     * 同毫秒批量插入产生重复 fusion_id 触发 UNIQUE 冲突 → 整表回写 500。
+     * 改用 事件×项目 复合键 + 去重 + 单行容错。 */
+    const seen = new Set();
+    let inserted = 0, skipped = 0;
+    for (const fusion of data) {
+      const fid = String(fusion.id || ((fusion.event_id || 'e') + '-' + (fusion.project_id || 'p') + '-' + (fusion.match_score || 0)));
+      if (seen.has(fid)) { skipped++; continue; }
+      seen.add(fid);
+      try {
+        await query('INSERT INTO risk_fusion (fusion_id, title, country, level, sources, data_json) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (fusion_id) DO NOTHING',
+          [fid, fusion.event_title || fusion.title || '', fusion.project_country || fusion.country || '', fusion.alert_level || fusion.level || '', fusion.match_reasons || fusion.sources || '', JSON.stringify(fusion)]);
+        inserted++;
+      } catch (e) { skipped++; }
+    }
+    res.json({ success: true, count: inserted, skipped });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 自动预警 API ===== */
+app.get('/api/auto-alerts', async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM auto_alerts ORDER BY created_at DESC');
+    res.json(result.rows.map(r => ({ ...r.data_json, _dbId: r.id })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/auto-alerts', authMiddleware, async (req, res) => {
+  try {
+    const data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: '数据必须是数组' });
+    await query('DELETE FROM auto_alerts');
+    /* 2026-08-14 修复：前端整表回写时若数组内含重复 alert_id，
+     * UNIQUE(alert_id) 约束会让整个 PUT 500，自动预警持久化长期失败。
+     * 按 alert_id 去重 + 单行容错 + ON CONFLICT 兜底。 */
+    const seen = new Set();
+    let inserted = 0, skipped = 0;
+    for (const alert of data) {
+      const aid = String(alert.id || Date.now());
+      if (seen.has(aid)) { skipped++; continue; }
+      seen.add(aid);
+      try {
+        await query('INSERT INTO auto_alerts (alert_id, title, country, level, type, "desc", status, data_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (alert_id) DO NOTHING',
+          [aid, alert.title||'', alert.country||'', alert.level||'', alert.type||'', alert.desc||'', alert.status||'active', JSON.stringify(alert)]);
+        inserted++;
+      } catch (e) { skipped++; }
+    }
+    res.json({ success: true, count: inserted, skipped });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 审计日志 API ===== */
+app.get('/api/audit-logs', authMiddleware, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit || '200', 10);
+    const result = await query('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT $1', [limit]);
+    res.json(result.rows.map(r => ({ ...r.data_json, _dbId: r.id, time: r.created_at })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/audit-logs', authMiddleware, async (req, res) => {
+  try {
+    const { action, target, detail } = req.body;
+    await query('INSERT INTO audit_logs (action, operator, target, detail, data_json) VALUES ($1,$2,$3,$4,$5)',
+      [action||'', req.user.username, target||'', detail||'', JSON.stringify(req.body)]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 航班与 AIS 数据代理 ===== */
+function _httpsGetJson(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { timeout: 15000 }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { reject(new Error('JSON parse error')); }
+      });
+    }).on('error', reject).on('timeout', () => reject(new Error('timeout')));
+  });
+}
+
+app.get('/api/flight/opensky', async (req, res) => {
+  try {
+    /* OpenSky Network 免费 API：全球航班状态向量 */
+    const url = 'https://opensky-network.org/api/states/all';
+    const data = await _httpsGetJson(url);
+    res.json(data);
+  } catch (err) {
+    console.warn('[API /flight/opensky] 失败:', err.message);
+    res.status(503).json({ ok: false, error: 'OpenSky 服务暂不可用', states: [] });
+  }
+});
+
+app.get('/api/ais/all', async (req, res) => {
+  try {
+    /* 公开 AIS 数据源受访问限制，先尝试 VesselFinder 免费层（无稳定开放接口）
+     * 此处作为通道预留：真实环境可接入 AISHub/MarineTraffic API key */
+    const vessels = [];
+    /* 若有 MARINETRAFFIC_KEY 则调用；否则返回空并提示 */
+    const key = process.env.MARINETRAFFIC_KEY || '';
+    if (key) {
+      const url = 'https://services.marinetraffic.com/api/exportvessels/v:8/protocol:json/' + encodeURIComponent(key) + '/timespan:10';
+      try {
+        const data = await _httpsGetJson(url);
+        if (Array.isArray(data)) {
+          data.slice(0, 200).forEach(v => {
+            vessels.push({
+              mmsi: v.MMSI, name: v.SHIPNAME, lat: parseFloat(v.LAT), lon: parseFloat(v.LON),
+              speed: v.SPEED, heading: v.HEADING, type: v.TYPE, status: v.STATUS,
+              fetchedAt: new Date().toISOString()
+            });
+          });
+        }
+      } catch (e) { console.warn('[API /ais/all] MarineTraffic 失败:', e.message); }
+    }
+    res.json(vessels);
+  } catch (err) {
+    console.warn('[API /ais/all] 失败:', err.message);
+    res.status(503).json([]);
+  }
+});
+
+/* ===== 威胁评估 API ===== */
+app.get('/api/threat-assessments/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!['assess','custom'].includes(type)) return res.status(400).json({ error: '无效类型' });
+    const result = await query('SELECT data_json FROM threat_assessments WHERE assess_type = $1', [type]);
+    res.json(result.rows.length > 0 ? result.rows[0].data_json : []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/threat-assessments/:type', authMiddleware, async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!['assess','custom'].includes(type)) return res.status(400).json({ error: '无效类型' });
+    await query('INSERT INTO threat_assessments (assess_type, data_json) VALUES ($1, $2) ON CONFLICT (assess_type) DO UPDATE SET data_json = $2', [type, JSON.stringify(req.body)]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 采集数据 API ===== */
+app.get('/api/collected/:sourceType', async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM collected_data WHERE source_type = $1 ORDER BY collect_time DESC', [req.params.sourceType]);
+    res.json(result.rows.map(r => ({ ...r.data_json, _dbId: r.id })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/collected/:sourceType', authMiddleware, async (req, res) => {
+  try {
+    const data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: '数据必须是数组' });
+    await query('DELETE FROM collected_data WHERE source_type = $1', [req.params.sourceType]);
+    for (const item of data) {
+      await query('INSERT INTO collected_data (source_type, title, url, content, country, data_json) VALUES ($1,$2,$3,$4,$5,$6)',
+        [req.params.sourceType, item.title||'', item.url||'', item.content||'', item.country||'', JSON.stringify(item)]);
+    }
+    res.json({ success: true, count: data.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 用户设置 API ===== */
+app.get('/api/settings/:key', authMiddleware, async (req, res) => {
+  try {
+    const result = await query('SELECT setting_val FROM user_settings WHERE user_id = $1 AND setting_key = $2', [req.user.id, req.params.key]);
+    res.json(result.rows.length > 0 ? result.rows[0].setting_val : null);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/settings/:key', authMiddleware, async (req, res) => {
+  try {
+    await query('INSERT INTO user_settings (user_id, setting_key, setting_val) VALUES ($1, $2, $3) ON CONFLICT (user_id, setting_key) DO UPDATE SET setting_val = $3',
+      [req.user.id, req.params.key, JSON.stringify(req.body)]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 自动采集引擎（7×24 持续运转：深度检索 + 社交媒体） =====
+ * 定时自动执行特种兵采集，结果统一合并写入 osint_intel 公开缓存，
+ * 供首页实时情报流 /api/intel/public/osint_intel 自动消费。
+ * 铁律：只采集真实数据；采集结果自动 approved 并写入公开缓存。
+ * 调度：深度检索每 1 分钟 / 社交通道每 1 分钟，确保数据实时流转。
+ */
+const AUTO_ENGINE = {
+  _running: false,
+  _lastRun: null,
+  _lastResult: null,
+  _stats: { crawlRuns: 0, socialRuns: 0, totalFetched: 0, totalLinked: 0, errors: 0 },
+  _timers: [],
+  _crawlBusy: false,
+  _socialBusy: false,
+
+  async _runCrawl() {
+    if (this._crawlBusy) return;
+    this._crawlBusy = true;
+    const tag = '[AUTO-ENGINE crawlAll]';
+    try {
+      console.log(tag, 'starting...');
+      const t0 = Date.now();
+      const items = await crawler.crawlAll();
+      /* 补充实体关联（crawlAll 内部 normalizeItem 但不 enrich） */
+      items.forEach(function(it) {
+        try { ENTITY.enrich(it); } catch (e) {}
+        it.audit_status = 'approved'; /* 自动审核：系统采集即通过 */
+        it.verified = false;
+        it._auto = true;
+      });
+      /* 正文深度补全：只对与我海外利益关联的条目回源抓全文（省时且不做无用功） */
+      const ftTargets = items.filter(function(it) { return it.interestLinked; });
+      let ftStat = null;
+      try {
+        ftStat = await fulltext.enrichBatch(ftTargets, {
+          resolveUrl: crawler.resolveUrl, concurrency: 5, budgetMs: 120000, minLen: 200
+        });
+        console.log(tag, 'fulltext:', JSON.stringify(ftStat));
+      } catch (e) { console.warn(tag, 'fulltext failed:', e && e.message); }
+      const linked = ftTargets.length;
+      const sec = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(tag, 'done in', sec + 's | fetched=' + items.length + ' linked=' + linked);
+      await this._mergeToCache(items, 'crawlAll');
+      this._stats.crawlRuns++;
+      this._stats.totalFetched += items.length;
+      this._stats.totalLinked += linked;
+      this._lastRun = new Date().toISOString();
+      this._lastResult = { type: 'crawlAll', count: items.length, linked: linked, sec: sec, fulltext: ftStat };
+    } catch (e) {
+      console.error(tag, 'ERROR:', e && e.message);
+      this._stats.errors++;
+    } finally {
+      this._crawlBusy = false;
+    }
+  },
+
+  async _runSocial() {
+    if (this._socialBusy) return;
+    this._socialBusy = true;
+    const tag = '[AUTO-ENGINE collectSocial]';
+    try {
+      console.log(tag, 'starting...');
+      const t0 = Date.now();
+      const r = await social.collectSocial({ limit: 15, perChannel: 15 });
+      const items = (r && r.items) || [];
+      /* SOCMINT 结果统一格式化为 osint_intel 兼容结构 */
+      const normalized = items.map(function(it) {
+        return {
+          title: it.title || it.rawTitle || '(无标题)',
+          content: it.content || '',
+          country: it.country || '',
+          source: it.source || '社交媒体情报',
+          severity: it.severity || '中',
+          url: it.url || '',
+          /* 时间字段必须透传：social.collectSocial 归一化后带 publishedAt/pubDate，
+           * 漏掉会导致 FORECAST 预测引擎把社交情报当"时间未知"退化为45天前，
+           * 系统性压低动量、造出"全体降温"假象。 */
+          publishedAt: it.publishedAt || it.pubDate || '',
+          pubDate: it.pubDate || it.publishedAt || '',
+          /* 社交帖子正文多为转述/评论，原文外链才是细节所在，透传给正文引擎 */
+          ext_url: it.extUrl || it.ext_url || '',
+          category: it.category || 'osint_intel',
+          data_type: it.data_type || 'osint_intel',
+          platform: '社交媒体情报',
+          chinaNegative: !!it.chinaNegative,
+          chinaRelated: !!it.chinaRelated,
+          rel_enterprises: it.rel_enterprises || [],
+          rel_projects: it.rel_projects || [],
+          rel_assets: it.rel_assets || [],
+          riskScore: it.riskScore || 0,
+          alertLevel: it.alertLevel || '蓝色',
+          ruleHits: it.ruleHits || [],
+          riskRationale: it.riskRationale || '',
+          interestLinked: !!it.interestLinked,
+          audit_status: 'approved', /* 自动审核：系统采集即通过 */
+          verified: false,
+          _auto: true,
+          _social: true
+        };
+      });
+      /* 正文深度补全：社交条目优先抓 ext_url 原文外链，无外链的直接跳过（不抓评论区） */
+      const ftTargets = normalized.filter(function(it) { return it.interestLinked; });
+      let ftStat = null;
+      try {
+        ftStat = await fulltext.enrichBatch(ftTargets, {
+          resolveUrl: crawler.resolveUrl, concurrency: 4, budgetMs: 90000, minLen: 200
+        });
+        console.log(tag, 'fulltext:', JSON.stringify(ftStat));
+      } catch (e) { console.warn(tag, 'fulltext failed:', e && e.message); }
+      const linked = ftTargets.length;
+      const sec = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(tag, 'done in', sec + 's | fetched=' + normalized.length + ' linked=' + linked);
+      await this._mergeToCache(normalized, 'collectSocial');
+      this._stats.socialRuns++;
+      this._stats.totalFetched += normalized.length;
+      this._stats.totalLinked += linked;
+      this._lastRun = new Date().toISOString();
+      this._lastResult = { type: 'collectSocial', count: normalized.length, linked: linked, sec: sec, fulltext: ftStat };
+    } catch (e) {
+      console.error(tag, 'ERROR:', e && e.message);
+      this._stats.errors++;
+    } finally {
+      this._socialBusy = false;
+    }
+  },
+
+  async _mergeToCache(items, sourceTag) {
+    if (!items || !items.length) return;
+    /* 铁律：只保留与我海外利益安全直接关联的数据写入公开缓存，
+     * 杜绝无关外国新闻（如美国油轮遇袭、意大利地震等）污染首页实时情报流 */
+    var linkedOnly = items.filter(function(it) { return it.interestLinked; });
+    /* 新鲜度闸门：陈旧条目（> MAX_AGE_DAYS 天，有时间戳可判定者）不入库，避免非实时数据反复滞留 */
+    var before = linkedOnly.length;
+    linkedOnly = linkedOnly.filter(function(it) { return _isFresh(it); });
+    if (linkedOnly.length < before) console.log('[AUTO-ENGINE] 新鲜度闸门剔除', before - linkedOnly.length, '条陈旧情报 from', sourceTag);
+    /* 导航噪声闸门：剔除爬虫命中官网首页产生的"下载中心/个人客户"等非情报条目 */
+    var beforeNav = linkedOnly.length;
+    linkedOnly = linkedOnly.filter(function(it) { return !_isNavNoise(it); });
+    if (linkedOnly.length < beforeNav) console.log('[AUTO-ENGINE] 导航噪声闸门剔除', beforeNav - linkedOnly.length, '条非情报页 from', sourceTag);
+    /* 实战系统要求：采集入库即译为中文，落库数据全中文（原文留 title_en/content_en 溯源） */
+    await _translateListToZh(linkedOnly);
+    if (!linkedOnly.length) {
+      console.log('[AUTO-ENGINE] skipped', items.length, 'from', sourceTag, '(zero interestLinked)');
+      return;
+    }
+    /* 规范预警编号：CN-{类型码}-{YYYYMMDD}-{4位哈希}，替代无意义的标题 slug */
+    linkedOnly.forEach(function(it) {
+      if (!it.alert_no) { try { it.alert_no = fulltext.makeAlertNo(it); } catch (e) {} }
+    });
+    /* 统一走增量合并入库口径（旧数据优先保留，新数据去重追加），与手动采集端点完全一致 */
+    var r = _mergePublicCache('osint_intel', linkedOnly);
+    console.log('[AUTO-ENGINE] merged', r.added, '/' + items.length, 'from', sourceTag, '→ cache now', r.total);
+  },
+
+  status() {
+    return {
+      running: this._running,
+      lastRun: this._lastRun,
+      lastResult: this._lastResult,
+      stats: this._stats,
+      nextCrawlIn: this._running ? '~1 min' : 'stopped',
+      nextSocialIn: this._running ? '~1 min' : 'stopped'
+    };
+  },
+
+  start() {
+    if (this._running) return;
+    this._running = true;
+    console.log('[AUTO-ENGINE] 自动采集引擎启动 | 深度检索每1分钟 / 社交通道每1分钟');
+    /* 启动后 10 秒开始第一次采集，快速进数据 */
+    setTimeout(() => { this._runCrawl(); }, 10000);
+    setTimeout(() => { this._runSocial(); }, 20000);
+    /* 定时循环 */
+    this._timers.push(setInterval(() => { this._runCrawl(); }, 60 * 1000));
+    this._timers.push(setInterval(() => { this._runSocial(); }, 60 * 1000));
+  },
+
+  stop() {
+    this._running = false;
+    this._timers.forEach(function(t) { clearInterval(t); });
+    this._timers = [];
+    console.log('[AUTO-ENGINE] 自动采集引擎已停止');
+  }
+};
+
+/* 自动采集引擎状态端点 */
+app.get('/api/engine/status', (req, res) => {
+  try { res.json({ ok: true, engine: AUTO_ENGINE.status() }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+/* 手动触发采集（管理员） */
+app.post('/api/engine/trigger', async (req, res) => {
+  try {
+    const type = String(req.body && req.body.type || 'crawl');
+    if (type === 'social') { await AUTO_ENGINE._runSocial(); }
+    else { await AUTO_ENGINE._runCrawl(); }
+    res.json({ ok: true, engine: AUTO_ENGINE.status() });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* ===== 存量情报正文回填 =====
+ * 对已在公开缓存中、但只有一句话概述的历史条目，回源抓取原文正文 +
+ * 抽取结构化要素 + 补发规范预警编号。
+ * 抓不到就原样保留（保留原摘要），绝不编造任何内容。
+ */
+let _enrichBusy = false;
+async function _handleIntelEnrich(req, res) {
+  if (_enrichBusy) return res.status(429).json({ ok: false, error: '回填任务进行中，请稍候' });
+  _enrichBusy = true;
+  const t0 = Date.now();
+  try {
+    const type = String((req.body && req.body.type) || 'osint_intel');
+    const limit = Math.min(200, Math.max(1, parseInt((req.body && req.body.limit) || 60, 10)));
+    const all = _readPublicCache(type);
+    if (!all.length) { _enrichBusy = false; return res.json({ ok: true, total: 0, note: '缓存为空' }); }
+    /* 只挑「内容过短 / 内容等于标题 / 尚无 factSheet」的条目回填 */
+    const targets = all.filter(function(it) {
+      const c = String(it.content || '');
+      return !it.factSheet && (c.length < 400 || c === it.title || !!it._ftPending);
+    }).slice(0, limit);
+    const stat = await fulltext.enrichBatch(targets, {
+      resolveUrl: crawler.resolveUrl, concurrency: 5, budgetMs: 150000, minLen: 400
+    });
+    /* 统一补发规范预警编号 */
+    let noStamped = 0;
+    all.forEach(function(it) {
+      if (!it.alert_no) { try { it.alert_no = fulltext.makeAlertNo(it); noStamped++; } catch (e) {} }
+    });
+    _writePublicCache(type, all);
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[ENRICH] type=' + type + ' scanned=' + all.length + ' targets=' + targets.length +
+                ' ' + JSON.stringify(stat) + ' alertNo+' + noStamped + ' in ' + sec + 's');
+    res.json({ ok: true, total: all.length, targets: targets.length, alertNoStamped: noStamped, stat: stat, sec: sec });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e && e.message || e) });
+  } finally { _enrichBusy = false; }
+}
+
+/* ===== 进程自愈：单条未捕获异常/拒绝绝不让进程退出（避免整站被打不开） ===== */
+process.on('uncaughtException', (err) => { console.error('[GUARD] uncaughtException:', err && err.message); });
+process.on('unhandledRejection', (reason) => { console.error('[GUARD] unhandledRejection:', reason && (reason.message || reason)); });
+
+/* ===== 启动服务器 ===== */
+/* 启动自净：对存量缓存做「导航噪声剔除 + 稳定键去重」。
+ * 背景：早期去重以译文标题为键，同一条外媒情报经不同翻译通道得到不同措辞
+ *（如"对等制裁"/"相互制裁"）会重复入库，污染态势热度；另有爬虫命中机构官网
+ * 首页把"下载中心/个人客户"等导航页当情报收录。二者对实战研判均为噪声。 */
+function _selfCleanCache() {
+  ['osint_intel', 'socmint_intel'].forEach(function(type) {
+    var arr = _readCacheRaw(type);   // 读原始文件，才能把评论/论述类脏数据真正从磁盘剔除
+    if (!Array.isArray(arr) || !arr.length) return;
+    var seen = {}, kept = [], dupN = 0, navN = 0, ctyN = 0, oldN = 0, rankN = 0, unlinkN = 0;
+    arr.forEach(function(it) {
+      if (!it || typeof it !== 'object') { navN++; return; }
+      if (_isNavNoise(it)) { navN++; return; }
+      /* 铁律③：体裁闸门——存量缓存里可能未打体裁标记（旧版入库时闸门尚未上线），
+       * 逐条重新判定：意识形态评论/学术论述 + 商业榜单/经济统计，一票否决绝不入库。
+       * 商业榜单尤其危险：因罗列中资巨头而 hardLink=true，会绕过风险分门槛，必须在此拦下。 */
+      var genre = '';
+      if (it._ranking) genre = 'ranking-list';
+      else if (it._commentary) genre = 'commentary-piece';
+      if (!genre && typeof ENTITY !== 'undefined') {
+        try {
+          if (typeof ENTITY.nonIntelGenre === 'function') genre = ENTITY.nonIntelGenre(it) || '';
+          else if (typeof ENTITY.isCommentaryPiece === 'function' && ENTITY.isCommentaryPiece(it)) genre = 'commentary-piece';
+        } catch (e) {}
+      }
+      if (genre) {
+        it._genreNoise = true;
+        if (genre === 'ranking-list') { it._ranking = true; rankN++; }
+        else { it._commentary = true; ctyN++; }
+        return;
+      }
+      if (!it.interestLinked) { unlinkN++; return; }  // 非关联我海外利益的数据剔除
+      if (!_isFresh(it)) { oldN++; return; }          // 陈旧情报剔除
+      var k = _dedupKey(it);
+      if (!k || seen[k]) { dupN++; return; }
+      seen[k] = 1;
+      kept.push(it);
+    });
+    if (dupN || navN || ctyN || oldN || rankN || unlinkN) {
+      _writePublicCache(type, kept);
+      console.log('[SELF-CLEAN] ' + type + ' 剔除重复 ' + dupN + '、导航噪声 ' + navN
+        + '、评论/论述 ' + ctyN + '、商业榜单 ' + rankN + '、未关联 ' + unlinkN
+        + '、陈旧 ' + oldN + ' 条，保留 ' + kept.length + ' 条');
+    } else {
+      console.log('[SELF-CLEAN] ' + type + ' 无需清理，' + kept.length + ' 条');
+    }
+  });
+}
+
+const _server = app.listen(PORT, async () => {
+  console.log('========================================');
+  console.log('  海外利益保护情报预警平台 - 后端服务');
+  console.log('  版本: 2.0.0 (PostgreSQL)');
+  console.log('  端口: ' + PORT);
+  console.log('  环境: ' + (process.env.NODE_ENV || 'development'));
+  console.log('========================================');
+  await testConnection();
+  /* 存量缓存自净（去重 + 去导航噪声） */
+  try { _selfCleanCache(); } catch (e) { console.warn('[SELF-CLEAN] 失败:', e.message); }
+  /* 启动自动采集引擎（30秒后首次执行） */
+  AUTO_ENGINE.start();
+  /* 启动全球多国媒体真实情报采集（20秒后首跑；直连 RSS 真实数据快速进缓存） */
+  startGlobalMediaCron();
+});
+/* 端口被占用时必须立刻退出：
+ * 上面的 uncaughtException 守卫会吞掉 EADDRINUSE，导致每次重启都残留一个
+ * "起不来又不退出"的僵尸进程（实测曾堆积 6 个）。这里显式处理并退出。 */
+_server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error('[FATAL] 端口 ' + PORT + ' 已被占用，本实例退出（请先停止旧进程）。');
+    process.exit(1);
+  }
+  console.error('[FATAL] 服务器监听失败:', err && err.message);
+  process.exit(1);
+});
+
+/* ===== 实时情报生成器（已停用 · 实战模式零模拟数据） =====
+ * 原实现以模板国家/事件/企业 + Math.random() 每30秒合成 [实时] 假预警并写入
+ * 数据库(approved)、经 SSE 广播。该行为违反"实战模式：系统只跑真实抓取管线"
+ * 铁律，已于 2026-07-30 整体禁用。真实预警唯一来源：数据中心审核分发链路
+ * （/api/crawl、/api/scrape 真实抓取 → 数据中心 pending → 审核通过 → 分发）。
+ * broadcastIntel 仅保留为合法通道，待真实审核通过的情报经 SSE 推送时调用。 */
+function generateLiveIntel() { /* 实战模式：不再生成任何模拟预警 */ }
+/* 原 setTimeout(generateLiveIntel, 3000) / setInterval(generateLiveIntel, 30000) 已移除 */

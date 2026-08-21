@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>诊断</title>
+<style>
+body{background:#0a1525;color:#fff;font-family:sans-serif;padding:20px}
+.btn{padding:12px 24px;background:#0066ff;color:#fff;border:none;border-radius:6px;cursor:pointer;margin:8px;font-size:16px}
+.btn:hover{background:#0055dd}
+#log{background:#000;padding:16px;margin-top:20px;border-radius:8px;font-family:monospace;font-size:12px;max-height:400px;overflow-y:auto}
+.log-line{padding:2px 0;border-bottom:1px solid #333}
+.ok{color:#0f0}
+.err{color:#f44}
+</style>
+</head>
+<body>
+<h2>WorkBuddy 浏览器诊断</h2>
+<p>点下面的按钮，看右边日志有没有反应：</p>
+<button class="btn" onclick="testClick('按钮1')">测试按钮1</button>
+<button class="btn" onclick="testClick('按钮2')">测试按钮2</button>
+<button class="btn" onclick="testNav()">测试导航</button>
+<div id="log"></div>
+<script>
+function log(msg, ok){
+  var el=document.getElementById('log');
+  var line=document.createElement('div');
+  line.className='log-line '+(ok===false?'err':'ok');
+  line.textContent=new Date().toLocaleTimeString()+' '+msg;
+  el.appendChild(line);
+  el.scrollTop=el.scrollHeight;
+}
+function testClick(name){
+  log('✓ '+name+' 被点击了！onclick 正常工作');
+}
+function testNav(){
+  log('✓ 导航函数被调用');
+  try{
+    if(typeof navigateTo==='function'){
+      log('✓ navigateTo 函数存在');
+      navigateTo('situation');
+      log('✓ navigateTo 执行成功');
+    }else{
+      log('✗ navigateTo 函数不存在',false);
+    }
+  }catch(e){
+    log('✗ 导航错误: '+e.message,false);
+  }
+}
+log('页面已加载');
+log('如果点击按钮后这里显示"被点击了"，说明 onclick 正常');
+</script>
+</body>
+</html>

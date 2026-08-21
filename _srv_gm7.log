@@ -1,0 +1,729 @@
+========================================
+  海外利益保护情报预警平台 - 后端服务
+  版本: 2.0.0 (PostgreSQL)
+  端口: 3000
+  环境: development
+========================================
+[DB] 连接失败: 
+[SELF-CLEAN] osint_intel 无需清理，44 条
+[SELF-CLEAN] socmint_intel 无需清理，6 条
+[AUTO-ENGINE] 自动采集引擎启动 | 深度检索每5分钟 / 社交通道每10分钟
+[2026-08-06T19:16:28.022Z] GET /api/media?status
+[2026-08-06T19:16:36.050Z] GET /api/media?status
+(node:30592) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[2026-08-06T19:16:44.058Z] GET /api/media?status
+[AUTO-ENGINE crawlAll] starting...
+[2026-08-06T19:16:52.066Z] GET /api/media?status
+[2026-08-06T19:17:00.073Z] GET /api/media?status
+[2026-08-06T19:17:08.080Z] GET /api/media?status
+[2026-08-06T19:17:16.087Z] GET /api/media?status
+[AUTO-ENGINE collectSocial] starting...
+[2026-08-06T19:17:24.096Z] GET /api/media?status
+[2026-08-06T19:17:32.104Z] GET /api/media?status
+[2026-08-06T19:17:40.119Z] GET /api/media?status
+[2026-08-06T19:17:48.126Z] GET /api/media?status
+[TRANSLATE] 并行采集即译：1391/1391 个字段译成中文，另本地化国家名 2 条
+[GLOBALMEDIA] 直连 RSS 采集完成: 718 条，覆盖 36 国
+[2026-08-06T19:17:56.130Z] GET /api/media?status
+[2026-08-06T19:18:04.149Z] GET /api/media?status
+[2026-08-06T19:18:12.160Z] GET /api/media?status
+[2026-08-06T19:18:20.166Z] GET /api/media?status
+[2026-08-06T19:18:28.181Z] GET /api/media?status
+[2026-08-06T19:18:36.200Z] GET /api/media?status
+[2026-08-06T19:18:44.207Z] GET /api/media?status
+[2026-08-06T19:18:52.219Z] GET /api/media?status
+[2026-08-06T19:19:00.227Z] GET /api/media?status
+[2026-08-06T19:19:08.237Z] GET /api/media?status
+[2026-08-06T19:19:16.245Z] GET /api/media?status
+[AUTO-ENGINE collectSocial] fulltext: {"total":5,"ok":2,"fail":3,"skipped":24,"chars":5125,"sec":"9.0"}
+[AUTO-ENGINE collectSocial] done in 122.5s | fetched=31 linked=29
+[AUTO-ENGINE] 新鲜度闸门剔除 19 条陈旧情报 from collectSocial
+[2026-08-06T19:19:24.262Z] GET /api/media?status
+[TRANSLATE] 采集即译完成：成功 10 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 10），缓存现 44 条
+[AUTO-ENGINE] merged 0 /31 from collectSocial → cache now 44
+[2026-08-06T19:19:32.270Z] GET /api/media?status
+[2026-08-06T19:19:40.281Z] GET /api/media?status
+[2026-08-06T19:19:48.293Z] GET /api/media?status
+[2026-08-06T19:19:56.300Z] GET /api/media?status
+[2026-08-06T19:20:04.310Z] GET /api/media?status
+[2026-08-06T19:20:12.318Z] GET /api/media?status
+[AUTO-ENGINE crawlAll] fulltext: {"total":3,"ok":1,"fail":2,"skipped":0,"chars":3223,"sec":"4.2"}
+[AUTO-ENGINE crawlAll] done in 210.5s | fetched=86 linked=3
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[2026-08-06T19:20:20.330Z] GET /api/media?status
+[TRANSLATE] 采集即译完成：成功 2 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 2），缓存现 44 条
+[AUTO-ENGINE] merged 0 /86 from crawlAll → cache now 44
+[2026-08-06T19:20:28.345Z] GET /api/media?status
+[2026-08-06T19:20:36.357Z] GET /api/media?status
+[2026-08-06T19:20:44.368Z] GET /api/media?status
+[2026-08-06T19:20:52.379Z] GET /api/media?status
+[2026-08-06T19:21:00.391Z] GET /api/media?status
+[2026-08-06T19:21:08.402Z] GET /api/media?status
+[2026-08-06T19:21:16.413Z] GET /api/media?status
+[AUTO-ENGINE crawlAll] starting...
+[2026-08-06T19:21:24.421Z] GET /api/media?status
+[AUTO-ENGINE crawlAll] fulltext: {"total":2,"ok":1,"fail":1,"skipped":0,"chars":3223,"sec":"0.1"}
+[AUTO-ENGINE crawlAll] done in 11.2s | fetched=82 linked=2
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 1 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 1），缓存现 44 条
+[AUTO-ENGINE] merged 0 /82 from crawlAll → cache now 44
+[2026-08-06T19:21:32.426Z] GET /api/media?status
+[2026-08-06T19:21:40.437Z] GET /api/media?status
+[2026-08-06T19:21:48.445Z] GET /api/media?status
+[2026-08-06T19:21:56.456Z] GET /api/media?status
+[2026-08-06T19:22:04.462Z] GET /api/media?status
+[2026-08-06T19:22:12.470Z] GET /api/media?status
+[2026-08-06T19:22:20.478Z] GET /api/media?status
+[2026-08-06T19:22:28.485Z] GET /api/media?status
+[2026-08-06T19:22:36.495Z] GET /api/media?status
+[2026-08-06T19:22:44.503Z] GET /api/media?status
+[2026-08-06T19:22:52.510Z] GET /api/media?status
+[2026-08-06T19:23:00.517Z] GET /api/media?status
+[2026-08-06T19:23:08.525Z] GET /api/media?limit=500
+[2026-08-06T19:23:25.597Z] GET /api/media?status
+[2026-08-06T19:24:20.190Z] GET /api/media?status=1
+[AUTO-ENGINE collectSocial] starting...
+[AUTO-ENGINE crawlAll] starting...
+[AUTO-ENGINE crawlAll] fulltext: {"total":3,"ok":1,"fail":2,"skipped":0,"chars":3223,"sec":"0.2"}
+[AUTO-ENGINE crawlAll] done in 11.8s | fetched=83 linked=3
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 2 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 2），缓存现 44 条
+[AUTO-ENGINE] merged 0 /83 from crawlAll → cache now 44
+[AUTO-ENGINE collectSocial] fulltext: {"total":5,"ok":2,"fail":3,"skipped":24,"chars":5125,"sec":"9.0"}
+[AUTO-ENGINE collectSocial] done in 123.3s | fetched=31 linked=29
+[AUTO-ENGINE] 新鲜度闸门剔除 19 条陈旧情报 from collectSocial
+[TRANSLATE] 采集即译完成：成功 10 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 10），缓存现 44 条
+[AUTO-ENGINE] merged 0 /31 from collectSocial → cache now 44
+[TRANSLATE] 并行采集即译：1416/1416 个字段译成中文，另本地化国家名 2 条
+[GLOBALMEDIA] 直连 RSS 采集完成: 730 条，覆盖 36 国
+[AUTO-ENGINE crawlAll] starting...
+[AUTO-ENGINE crawlAll] fulltext: {"total":3,"ok":1,"fail":2,"skipped":0,"chars":3223,"sec":"0.2"}
+[AUTO-ENGINE crawlAll] done in 276.4s | fetched=89 linked=3
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 2 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 2），缓存现 44 条
+[AUTO-ENGINE] merged 0 /89 from crawlAll → cache now 44
+[AUTO-ENGINE collectSocial] starting...
+[AUTO-ENGINE crawlAll] starting...
+[AUTO-ENGINE crawlAll] fulltext: {"total":1,"ok":1,"fail":0,"skipped":0,"chars":3223,"sec":"0.2"}
+[AUTO-ENGINE crawlAll] done in 16.0s | fetched=80 linked=1
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[AUTO-ENGINE] skipped 80 from crawlAll (zero interestLinked)
+[AUTO-ENGINE collectSocial] fulltext: {"total":5,"ok":1,"fail":4,"skipped":23,"chars":3225,"sec":"10.3"}
+[AUTO-ENGINE collectSocial] done in 122.3s | fetched=30 linked=28
+[AUTO-ENGINE] 新鲜度闸门剔除 19 条陈旧情报 from collectSocial
+[TRANSLATE] 采集即译完成：成功 9 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 9），缓存现 44 条
+[AUTO-ENGINE] merged 0 /30 from collectSocial → cache now 44
+[AUTO-ENGINE crawlAll] starting...
+[AUTO-ENGINE crawlAll] fulltext: {"total":3,"ok":1,"fail":2,"skipped":0,"chars":3223,"sec":"0.1"}
+[AUTO-ENGINE crawlAll] done in 22.6s | fetched=82 linked=3
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 2 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 2），缓存现 44 条
+[AUTO-ENGINE] merged 0 /82 from crawlAll → cache now 44
+[TRANSLATE] 并行采集即译：1376/1376 个字段译成中文，另本地化国家名 2 条
+[GLOBALMEDIA] 直连 RSS 采集完成: 710 条，覆盖 36 国
+[AUTO-ENGINE collectSocial] starting...
+[AUTO-ENGINE crawlAll] starting...
+[2026-08-06T19:46:57.719Z] GET /api/health
+[DB] 连接失败: 
+[2026-08-06T19:46:57.925Z] GET /api/media?limit=80
+[2026-08-06T19:46:58.091Z] GET /favicon.ico
+[2026-08-06T19:47:00.942Z] GET /api/scrape?category=security_events
+[2026-08-06T19:47:00.946Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:47:00.952Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:47:00.953Z] GET /api/scrape?category=political_events
+[2026-08-06T19:47:00.954Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:47:00.957Z] GET /api/media?limit=200
+[2026-08-06T19:47:00.963Z] GET /api/scrape?category=public_health
+[2026-08-06T19:47:01.855Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:47:01.861Z] GET /api/scrape?category=social_unrest
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[2026-08-06T19:47:03.040Z] GET /api/scrape?category=geopolitical_intel
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:47:03.778Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:47:03.872Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:47:04.022Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：88/88 个字段译成中文
+[2026-08-06T19:47:06.414Z] GET /api/scrape?all=1
+[2026-08-06T19:47:07.220Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:07.229Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:07.230Z] POST /api/intel/osint_intel
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：38/38 个字段译成中文
+[2026-08-06T19:47:10.939Z] POST /api/intel/security_events
+[2026-08-06T19:47:10.954Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:10.970Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:10.972Z] POST /api/intel/infrastructure
+[2026-08-06T19:47:10.977Z] POST /api/intel/social_unrest
+[TRANSLATE] Baidu 失败，试 MyMemory: baidu err 54004
+[BACKFILL] 54003 限速，退避 1500ms 后重试 (attempt 1)
+[BACKFILL] 54003 限速，退避 1500ms 后重试 (attempt 1)
+[BACKFILL] 54003 限速，退避 1500ms 后重试 (attempt 1)
+[TRANSLATE] Baidu 失败，试 MyMemory: baidu err 54004
+[BACKFILL] 54003 限速，退避 3000ms 后重试 (attempt 2)
+[BACKFILL] 54003 限速，退避 3000ms 后重试 (attempt 2)
+[TRANSLATE] 并行采集即译：202/202 个字段译成中文
+[2026-08-06T19:47:15.065Z] GET /api/sources
+[2026-08-06T19:47:15.067Z] GET /api/agentkey/status
+[2026-08-06T19:47:15.069Z] GET /api/social/channels
+[2026-08-06T19:47:15.959Z] POST /api/intel/security_events
+[2026-08-06T19:47:15.990Z] POST /api/intel/osint_intel
+[TRANSLATE] Baidu 失败，试 MyMemory: baidu err 54004
+[BACKFILL] 54003 限速，退避 6000ms 后重试 (attempt 3)
+[2026-08-06T19:47:20.939Z] POST /api/intel/military_conflicts
+[2026-08-06T19:47:20.954Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:20.964Z] POST /api/intel/social_unrest
+[TRANSLATE] Baidu 失败，试 MyMemory: baidu err 54004
+[2026-08-06T19:47:25.266Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:47:25.268Z] POST /api/intel/security_events
+[2026-08-06T19:47:25.268Z] GET /api/scrape?category=security_events
+[2026-08-06T19:47:25.269Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:47:25.270Z] GET /api/scrape?category=political_events
+[2026-08-06T19:47:25.274Z] GET /api/scrape?category=natural_disasters
+[TRANSLATE] 并行采集即译：512/512 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:47:25.340Z] GET /api/scrape?category=public_health
+[2026-08-06T19:47:25.466Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:47:25.482Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:47:25.483Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:47:25.581Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:47:25.587Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[2026-08-06T19:47:25.656Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:47:25.759Z] GET /api/media?limit=200
+[2026-08-06T19:47:25.769Z] POST /api/intel/sanctions_data
+[2026-08-06T19:47:25.771Z] POST /api/intel/sanctions_data
+[2026-08-06T19:47:25.772Z] POST /api/intel/sanctions_data
+[2026-08-06T19:47:25.773Z] POST /api/intel/natural_disasters
+[2026-08-06T19:47:25.774Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：38/38 个字段译成中文
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：88/88 个字段译成中文
+[TRANSLATE] 并行采集即译：460/460 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:47:30.956Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:30.974Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:35.938Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:44.112Z] GET /api/sources
+[2026-08-06T19:47:44.112Z] GET /api/agentkey/status
+[2026-08-06T19:47:44.113Z] GET /api/social/channels
+[2026-08-06T19:47:45.957Z] POST /api/intel/public_health
+[2026-08-06T19:47:45.980Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:50.943Z] POST /api/intel/osint_intel
+[2026-08-06T19:47:50.967Z] POST /api/intel/military_conflicts
+[2026-08-06T19:47:55.950Z] POST /api/intel/social_unrest
+[2026-08-06T19:48:00.951Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:00.970Z] POST /api/intel/sanctions_data
+[2026-08-06T19:48:00.995Z] POST /api/intel/sanctions_data
+[2026-08-06T19:48:01.004Z] POST /api/intel/sanctions_data
+[2026-08-06T19:48:01.010Z] POST /api/intel/sanctions_data
+[2026-08-06T19:48:05.955Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:05.984Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:06.003Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:10.939Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:10.954Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:10.971Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:10.978Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:10.981Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:14.114Z] GET /api/sources
+[2026-08-06T19:48:15.942Z] POST /api/intel/sanctions_data
+[2026-08-06T19:48:15.954Z] PUT /api/datahub/alerts
+[2026-08-06T19:48:15.957Z] PUT /api/datahub/events
+[2026-08-06T19:48:15.958Z] PUT /api/datahub/terror_events
+[2026-08-06T19:48:15.959Z] PUT /api/datahub/countries
+[2026-08-06T19:48:15.970Z] POST /api/intel/infrastructure
+[2026-08-06T19:48:15.981Z] POST /api/intel/osint_intel
+[AUTO-ENGINE collectSocial] fulltext: {"total":5,"ok":2,"fail":3,"skipped":24,"chars":5125,"sec":"9.0"}
+[AUTO-ENGINE collectSocial] done in 120.9s | fetched=31 linked=29
+[AUTO-ENGINE] 新鲜度闸门剔除 19 条陈旧情报 from collectSocial
+[2026-08-06T19:48:20.947Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:20.965Z] POST /api/intel/sanctions_data
+[2026-08-06T19:48:20.974Z] PUT /api/datahub/alerts
+[2026-08-06T19:48:20.976Z] PUT /api/datahub/events
+[2026-08-06T19:48:20.978Z] PUT /api/datahub/terror_events
+[2026-08-06T19:48:20.980Z] PUT /api/datahub/countries
+[2026-08-06T19:48:20.989Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:20.994Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:21.008Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:21.012Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:25.941Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:25.955Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:25.978Z] POST /api/intel/military_conflicts
+[TRANSLATE] 采集即译完成：成功 10 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 10），缓存现 44 条
+[AUTO-ENGINE] merged 0 /31 from collectSocial → cache now 44
+[2026-08-06T19:48:31.834Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:36.872Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:36.895Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:41.846Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:44.823Z] GET /api/sources
+[2026-08-06T19:48:51.872Z] POST /api/intel/osint_intel
+[2026-08-06T19:48:51.928Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:48:56.875Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:01.842Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:01.879Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:01.926Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:49:01.927Z] GET /api/scrape?category=security_events
+[2026-08-06T19:49:01.928Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:49:01.929Z] GET /api/scrape?category=political_events
+[2026-08-06T19:49:01.930Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:49:01.931Z] GET /api/scrape?category=public_health
+[2026-08-06T19:49:02.120Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:49:02.121Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:49:02.172Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:49:02.278Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:49:02.285Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[2026-08-06T19:49:03.604Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:49:03.709Z] GET /api/media?limit=200
+[2026-08-06T19:49:03.712Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:49:06.865Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:06.893Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:11.838Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:11.888Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:14.822Z] GET /api/sources
+[2026-08-06T19:49:21.840Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:32.839Z] POST /api/intel/military_conflicts
+[2026-08-06T19:49:32.876Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:32.949Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:33.027Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:33.038Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:35.682Z] GET /api/health
+[DB] 连接失败: 
+[2026-08-06T19:49:35.843Z] GET /api/media?limit=80
+[2026-08-06T19:49:38.854Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:49:38.855Z] GET /api/scrape?category=security_events
+[2026-08-06T19:49:38.855Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:49:38.857Z] GET /api/scrape?category=political_events
+[2026-08-06T19:49:38.857Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:49:38.858Z] GET /api/scrape?category=public_health
+[2026-08-06T19:49:39.020Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:49:39.034Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:49:39.035Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:49:39.124Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:49:39.131Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:49:39.668Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:49:39.762Z] GET /api/media?limit=200
+[2026-08-06T19:49:39.767Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:49:41.096Z] GET /api/media?status=1
+[2026-08-06T19:49:41.106Z] GET /api/scrape?category=osint_intel&all=1
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:49:43.859Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:43.874Z] POST /api/intel/social_unrest
+[2026-08-06T19:49:43.889Z] POST /api/intel/military_conflicts
+[2026-08-06T19:49:48.858Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:48.875Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:53.853Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:53.867Z] POST /api/intel/sanctions_data
+[2026-08-06T19:49:53.878Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:53.883Z] POST /api/intel/social_unrest
+[2026-08-06T19:49:53.887Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:58.852Z] POST /api/intel/osint_intel
+[2026-08-06T19:49:58.865Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:08.854Z] POST /api/intel/sanctions_data
+[2026-08-06T19:50:08.866Z] POST /api/intel/sanctions_data
+[2026-08-06T19:50:08.876Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:08.882Z] POST /api/intel/sanctions_data
+[2026-08-06T19:50:08.886Z] POST /api/intel/security_events
+[2026-08-06T19:50:08.892Z] POST /api/intel/security_events
+[2026-08-06T19:50:09.011Z] GET /api/media?limit=80
+[2026-08-06T19:50:09.878Z] GET /api/media?limit=80
+[2026-08-06T19:50:11.570Z] GET /api/scrape?category=osint_intel&all=1
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:50:13.856Z] POST /api/intel/social_unrest
+[2026-08-06T19:50:13.869Z] POST /api/intel/sanctions_data
+[2026-08-06T19:50:13.881Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:13.885Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:18.560Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:50:18.564Z] POST /api/intel/security_events
+[2026-08-06T19:50:18.565Z] GET /api/scrape?category=security_events
+[2026-08-06T19:50:18.566Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:50:18.568Z] GET /api/scrape?category=political_events
+[2026-08-06T19:50:18.569Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:50:18.571Z] GET /api/scrape?category=public_health
+[2026-08-06T19:50:18.637Z] GET /api/scrape?category=osint_intel
+[2026-08-06T19:50:18.739Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:50:18.758Z] GET /api/scrape?category=social_unrest
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[2026-08-06T19:50:19.736Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:50:19.832Z] GET /api/scrape?category=geopolitical_intel
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:50:20.221Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[2026-08-06T19:50:21.186Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:50:21.276Z] GET /api/media?limit=200
+[2026-08-06T19:50:21.279Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[2026-08-06T19:50:24.572Z] POST /api/intel/sanctions_data
+[2026-08-06T19:50:24.573Z] POST /api/intel/sanctions_data
+[2026-08-06T19:50:24.573Z] POST /api/intel/natural_disasters
+[2026-08-06T19:50:24.573Z] POST /api/intel/osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:50:32.847Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:32.879Z] POST /api/intel/military_conflicts
+[2026-08-06T19:50:32.892Z] POST /api/intel/military_conflicts
+[2026-08-06T19:50:32.908Z] POST /api/intel/military_conflicts
+[2026-08-06T19:50:32.935Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.041Z] POST /api/intel/infrastructure
+[2026-08-06T19:50:33.099Z] POST /api/intel/public_health
+[2026-08-06T19:50:33.268Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.385Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.409Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.431Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.443Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:50:33.452Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:50:33.487Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:50:33.519Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.529Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.548Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.629Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:33.660Z] GET /api/sources
+[2026-08-06T19:50:34.829Z] POST /api/intel/social_unrest
+[2026-08-06T19:50:34.851Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:50:34.869Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:34.878Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:39.830Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:39.836Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:39.840Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:44.357Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:44.358Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:49.827Z] POST /api/intel/military_conflicts
+[2026-08-06T19:50:49.848Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:49.861Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:49.868Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:49.906Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:59.837Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:59.859Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:59.869Z] POST /api/intel/osint_intel
+[2026-08-06T19:50:59.882Z] POST /api/intel/osint_intel
+[AUTO-ENGINE crawlAll] fulltext: {"total":5,"ok":1,"fail":4,"skipped":0,"chars":3223,"sec":"0.2"}
+[AUTO-ENGINE crawlAll] done in 282.3s | fetched=90 linked=5
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[2026-08-06T19:51:01.821Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:51:01.823Z] GET /api/scrape?category=security_events
+[2026-08-06T19:51:01.825Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:51:01.826Z] GET /api/scrape?category=political_events
+[2026-08-06T19:51:01.827Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:51:01.828Z] GET /api/scrape?category=public_health
+[2026-08-06T19:51:01.991Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:51:02.000Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:51:02.034Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:51:02.104Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:51:02.143Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:51:02.678Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:51:02.772Z] GET /api/media?limit=200
+[2026-08-06T19:51:02.775Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 采集即译完成：成功 4 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 4），缓存现 44 条
+[AUTO-ENGINE] merged 0 /90 from crawlAll → cache now 44
+[2026-08-06T19:51:04.822Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:04.830Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:04.837Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:04.845Z] POST /api/intel/geopolitical_intel
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:51:14.822Z] POST /api/intel/osint_intel
+[AUTO-ENGINE crawlAll] starting...
+[2026-08-06T19:51:24.819Z] POST /api/intel/public_health
+[2026-08-06T19:51:24.828Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:29.812Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:29.818Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:29.824Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:29.831Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:29.840Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:29.849Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:32.882Z] POST /api/intel/military_conflicts
+[2026-08-06T19:51:32.923Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:32.937Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:32.970Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.078Z] POST /api/intel/public_health
+[2026-08-06T19:51:33.194Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.232Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.268Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.382Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.448Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.467Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.482Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.562Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:51:33.580Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.620Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.638Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:33.701Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:34.813Z] POST /api/intel/infrastructure
+[AUTO-ENGINE crawlAll] fulltext: {"total":2,"ok":1,"fail":1,"skipped":0,"chars":3223,"sec":"0.1"}
+[AUTO-ENGINE crawlAll] done in 17.7s | fetched=82 linked=2
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 1 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 1），缓存现 44 条
+[AUTO-ENGINE] merged 0 /82 from crawlAll → cache now 44
+[2026-08-06T19:51:39.821Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:51:39.823Z] GET /api/scrape?category=security_events
+[2026-08-06T19:51:39.823Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:51:39.824Z] GET /api/scrape?category=political_events
+[2026-08-06T19:51:39.825Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:51:39.826Z] GET /api/scrape?category=public_health
+[2026-08-06T19:51:39.990Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:51:39.997Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:51:40.027Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:51:40.087Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:51:40.135Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:51:40.649Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:51:40.733Z] GET /api/media?limit=200
+[2026-08-06T19:51:40.736Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:51:44.818Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:49.816Z] POST /api/intel/osint_intel
+[2026-08-06T19:51:49.829Z] POST /api/intel/infrastructure
+[2026-08-06T19:52:32.829Z] GET /api/sources
+[2026-08-06T19:52:32.830Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.848Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.856Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.864Z] POST /api/intel/military_conflicts
+[2026-08-06T19:52:32.885Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.892Z] POST /api/intel/military_conflicts
+[2026-08-06T19:52:32.893Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.905Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.912Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.918Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.923Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.928Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.938Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.947Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.953Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.959Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:52:32.965Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.966Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.975Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.983Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.985Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.989Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:32.998Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.002Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.130Z] POST /api/intel/infrastructure
+[2026-08-06T19:52:33.184Z] POST /api/intel/public_health
+[2026-08-06T19:52:33.220Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.245Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.343Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.430Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.515Z] POST /api/intel/osint_intel
+[2026-08-06T19:52:33.562Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:52:33.598Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:12.239Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:53:12.239Z] GET /api/scrape?category=security_events
+[2026-08-06T19:53:12.240Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:53:12.241Z] GET /api/scrape?category=political_events
+[2026-08-06T19:53:12.242Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:53:12.244Z] GET /api/scrape?category=public_health
+[2026-08-06T19:53:12.471Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:53:12.478Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:53:12.523Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:53:12.568Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:53:12.616Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:53:13.235Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:53:13.390Z] GET /api/media?limit=200
+[2026-08-06T19:53:13.393Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：480/480 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：202/202 个字段译成中文
+[2026-08-06T19:53:30.668Z] GET /api/media?limit=2
+[2026-08-06T19:53:32.826Z] POST /api/intel/public_health
+[2026-08-06T19:53:32.836Z] POST /api/intel/military_conflicts
+[2026-08-06T19:53:32.844Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.852Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.862Z] POST /api/intel/military_conflicts
+[2026-08-06T19:53:32.877Z] POST /api/intel/military_conflicts
+[2026-08-06T19:53:32.884Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.890Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.891Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.898Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.912Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.919Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.927Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.934Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.941Z] POST /api/intel/military_conflicts
+[2026-08-06T19:53:32.942Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:32.963Z] POST /api/intel/military_conflicts
+[2026-08-06T19:53:32.993Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.050Z] POST /api/intel/infrastructure
+[2026-08-06T19:53:33.197Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.226Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.359Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.388Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.412Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.470Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.565Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.594Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.619Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.648Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.673Z] POST /api/intel/osint_intel
+[2026-08-06T19:53:33.750Z] POST /api/intel/osint_intel
+[TRANSLATE] 并行采集即译：1407/1407 个字段译成中文，另本地化国家名 2 条
+[GLOBALMEDIA] 直连 RSS 采集完成: 725 条，覆盖 36 国
+[2026-08-06T19:53:39.826Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:53:39.826Z] GET /api/scrape?category=security_events
+[2026-08-06T19:53:39.826Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:53:39.828Z] GET /api/scrape?category=political_events
+[2026-08-06T19:53:39.828Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:53:39.830Z] GET /api/scrape?category=public_health
+[2026-08-06T19:53:39.982Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:53:39.999Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:53:40.007Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:53:40.096Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:53:40.101Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:53:40.654Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:53:40.748Z] GET /api/media?limit=200
+[2026-08-06T19:53:40.753Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:54:06.208Z] GET /api/intel/public/osint_intel
+[DB] 查询错误: 
+[PUBLIC] PostgreSQL 不可用，降级读取文件缓存: 
+[2026-08-06T19:54:32.825Z] POST /api/intel/military_conflicts
+[2026-08-06T19:54:32.852Z] POST /api/intel/military_conflicts
+[2026-08-06T19:54:32.877Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.884Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.892Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.901Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.910Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.925Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.934Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.943Z] POST /api/intel/terror_events
+[2026-08-06T19:54:32.954Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.959Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.965Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.972Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.979Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:32.987Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:54:32.994Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:54:32.999Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:33.005Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:33.014Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:54:33.028Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:54:33.039Z] POST /api/intel/osint_intel
+[2026-08-06T19:54:47.373Z] GET /api/sources
+[2026-08-06T19:55:32.829Z] POST /api/intel/public_health
+[2026-08-06T19:55:32.836Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.851Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.860Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.868Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.874Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.883Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.894Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.904Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.910Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:32.918Z] POST /api/intel/military_conflicts
+[2026-08-06T19:55:32.985Z] POST /api/intel/terror_events
+[2026-08-06T19:55:33.031Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.056Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.077Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.107Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.281Z] POST /api/intel/infrastructure
+[2026-08-06T19:55:33.311Z] POST /api/intel/infrastructure
+[2026-08-06T19:55:33.428Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.497Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.518Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.666Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.738Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.750Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.785Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.794Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.835Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:33.858Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:34.093Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:34.138Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:39.829Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:55:39.834Z] GET /api/scrape?category=security_events
+[2026-08-06T19:55:39.835Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:55:39.837Z] GET /api/scrape?category=political_events
+[2026-08-06T19:55:39.839Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:55:39.843Z] GET /api/scrape?category=public_health
+[2026-08-06T19:55:40.018Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:55:40.022Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:55:40.047Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:55:40.136Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:55:40.152Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[2026-08-06T19:55:40.680Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:55:40.762Z] GET /api/media?limit=200
+[2026-08-06T19:55:40.766Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:55:55.435Z] POST /api/intel/military_conflicts
+[2026-08-06T19:55:55.439Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:55.448Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:55.454Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:55.459Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:55.465Z] POST /api/intel/osint_intel
+[2026-08-06T19:55:55.471Z] POST /api/intel/geopolitical_intel
+[2026-08-06T19:55:58.301Z] GET /api/health
+[DB] 连接失败: 
+[2026-08-06T19:56:01.369Z] GET /api/scrape?category=terror_events
+[2026-08-06T19:56:01.370Z] GET /api/scrape?category=security_events
+[2026-08-06T19:56:01.370Z] GET /api/scrape?category=military_conflicts
+[2026-08-06T19:56:01.373Z] GET /api/scrape?category=natural_disasters
+[2026-08-06T19:56:01.376Z] GET /api/scrape?category=political_events
+[2026-08-06T19:56:01.376Z] GET /api/scrape?category=public_health
+[2026-08-06T19:56:01.546Z] GET /api/scrape?category=sanctions_data
+[2026-08-06T19:56:01.548Z] GET /api/scrape?category=social_unrest
+[2026-08-06T19:56:01.581Z] GET /api/scrape?category=infrastructure
+[2026-08-06T19:56:01.631Z] GET /api/scrape?category=geopolitical_intel
+[2026-08-06T19:56:01.668Z] GET /api/scrape?category=osint_intel
+[TRANSLATE] 并行采集即译：142/142 个字段译成中文
+[2026-08-06T19:56:01.820Z] GET /api/scrape?category=economic_risks
+[2026-08-06T19:56:01.917Z] GET /api/media?limit=200
+[2026-08-06T19:56:01.920Z] GET /api/scrape?all=1
+[TRANSLATE] 并行采集即译：36/36 个字段译成中文
+[TRANSLATE] 并行采集即译：20/20 个字段译成中文
+[TRANSLATE] 并行采集即译：54/54 个字段译成中文，另本地化国家名 5 条
+[TRANSLATE] 并行采集即译：178/178 个字段译成中文
+[TRANSLATE] 并行采集即译：58/58 个字段译成中文
+[TRANSLATE] 并行采集即译：456/456 个字段译成中文，另本地化国家名 5 条
+[2026-08-06T19:56:06.380Z] POST /api/intel/social_unrest

@@ -1,0 +1,129 @@
+========================================
+  海外利益保护情报预警平台 - 后端服务
+  版本: 2.0.0 (PostgreSQL)
+  端口: 3000
+  环境: development
+========================================
+[DB] 连接失败: 
+[SELF-CLEAN] osint_intel 无需清理，44 条
+[SELF-CLEAN] socmint_intel 无需清理，6 条
+[AUTO-ENGINE] 自动采集引擎启动 | 深度检索每5分钟 / 社交通道每10分钟
+[2026-08-06T18:52:41.363Z] GET /api/media?status
+[2026-08-06T18:52:49.389Z] GET /api/media?status
+(node:30852) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[2026-08-06T18:52:57.407Z] GET /api/media?status
+[AUTO-ENGINE crawlAll] starting...
+[2026-08-06T18:53:05.426Z] GET /api/media?status
+[2026-08-06T18:53:13.431Z] GET /api/media?status
+[2026-08-06T18:53:21.438Z] GET /api/media?status
+[2026-08-06T18:53:29.453Z] GET /api/media?status
+[AUTO-ENGINE collectSocial] starting...
+[2026-08-06T18:53:37.457Z] GET /api/media?status
+[2026-08-06T18:53:45.476Z] GET /api/media?status
+[2026-08-06T18:53:53.484Z] GET /api/media?status
+[2026-08-06T18:54:01.491Z] GET /api/media?status
+[2026-08-06T18:54:09.495Z] GET /api/media?status
+[2026-08-06T18:54:17.506Z] GET /api/media?status
+[TRANSLATE] 并行采集即译：1035/1035 个字段译成中文，另本地化国家名 2 条
+[GLOBALMEDIA] 直连 RSS 采集完成: 540 条，覆盖 27 国
+[2026-08-06T18:54:25.512Z] GET /api/media?status
+[2026-08-06T18:54:25.521Z] GET /api/media?limit=500
+[2026-08-06T18:54:42.837Z] GET /api/scrape?category=osint_intel&all=1
+[TRANSLATE] 并行采集即译：38/38 个字段译成中文
+[AUTO-ENGINE collectSocial] fulltext: {"total":4,"ok":3,"fail":1,"skipped":28,"chars":7810,"sec":"9.0"}
+[AUTO-ENGINE collectSocial] done in 135.8s | fetched=34 linked=32
+[AUTO-ENGINE] 新鲜度闸门剔除 19 条陈旧情报 from collectSocial
+[TRANSLATE] 采集即译完成：成功 13 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 13），缓存现 44 条
+[AUTO-ENGINE] merged 0 /34 from collectSocial → cache now 44
+[AUTO-ENGINE crawlAll] fulltext: {"total":3,"ok":1,"fail":2,"skipped":0,"chars":3223,"sec":"4.8"}
+[AUTO-ENGINE crawlAll] done in 200.9s | fetched=85 linked=3
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 2 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 2），缓存现 44 条
+[AUTO-ENGINE] merged 0 /85 from crawlAll → cache now 44
+[AUTO-ENGINE crawlAll] starting...
+[AUTO-ENGINE crawlAll] fulltext: {"total":1,"ok":1,"fail":0,"skipped":0,"chars":3223,"sec":"0.1"}
+[AUTO-ENGINE crawlAll] done in 7.8s | fetched=82 linked=1
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[AUTO-ENGINE] skipped 82 from crawlAll (zero interestLinked)
+[2026-08-06T18:59:12.674Z] GET /api/media?status
+[2026-08-06T18:59:20.701Z] GET /api/media?status
+[2026-08-06T18:59:28.711Z] GET /api/media?status
+[2026-08-06T18:59:36.723Z] GET /api/media?status
+[2026-08-06T18:59:44.736Z] GET /api/media?status
+[2026-08-06T18:59:52.749Z] GET /api/media?status
+[2026-08-06T19:00:00.762Z] GET /api/media?status
+[2026-08-06T19:00:08.776Z] GET /api/media?status
+[2026-08-06T19:00:16.796Z] GET /api/media?status
+[2026-08-06T19:00:24.807Z] GET /api/media?status
+[2026-08-06T19:00:32.828Z] GET /api/media?status
+[2026-08-06T19:00:40.848Z] GET /api/media?status
+[2026-08-06T19:00:48.869Z] GET /api/media?status
+[2026-08-06T19:00:56.888Z] GET /api/media?status
+[2026-08-06T19:01:04.898Z] GET /api/media?status
+[2026-08-06T19:01:12.916Z] GET /api/media?status
+[2026-08-06T19:01:20.935Z] GET /api/media?status
+[2026-08-06T19:01:28.947Z] GET /api/media?status
+[2026-08-06T19:01:36.959Z] GET /api/media?status
+[2026-08-06T19:01:44.981Z] GET /api/media?status
+[2026-08-06T19:01:52.994Z] GET /api/media?status
+[2026-08-06T19:02:01.004Z] GET /api/media?status
+[2026-08-06T19:02:01.010Z] GET /api/media?limit=800
+[2026-08-06T19:02:14.215Z] GET /api/media?refresh=gdelt
+[2026-08-06T19:02:31.174Z] GET /api/media?status
+[AUTO-ENGINE collectSocial] starting...
+[AUTO-ENGINE crawlAll] starting...
+[2026-08-06T19:02:39.190Z] GET /api/media?status
+[AUTO-ENGINE crawlAll] fulltext: {"total":2,"ok":1,"fail":1,"skipped":0,"chars":3223,"sec":"0.2"}
+[AUTO-ENGINE crawlAll] done in 7.9s | fetched=82 linked=2
+[AUTO-ENGINE] 新鲜度闸门剔除 1 条陈旧情报 from crawlAll
+[TRANSLATE] 采集即译完成：成功 1 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 1），缓存现 44 条
+[AUTO-ENGINE] merged 0 /82 from crawlAll → cache now 44
+[2026-08-06T19:02:47.200Z] GET /api/media?status
+[2026-08-06T19:02:55.215Z] GET /api/media?status
+[2026-08-06T19:03:03.229Z] GET /api/media?status
+[2026-08-06T19:03:11.237Z] GET /api/media?status
+[2026-08-06T19:03:19.248Z] GET /api/media?status
+[2026-08-06T19:03:27.268Z] GET /api/media?status
+[2026-08-06T19:03:35.287Z] GET /api/media?status
+[2026-08-06T19:03:43.302Z] GET /api/media?status
+[2026-08-06T19:03:51.320Z] GET /api/media?status
+[2026-08-06T19:03:59.329Z] GET /api/media?status
+[2026-08-06T19:04:07.349Z] GET /api/media?status
+[2026-08-06T19:04:15.364Z] GET /api/media?status
+[2026-08-06T19:04:23.373Z] GET /api/media?status
+[2026-08-06T19:04:31.393Z] GET /api/media?status
+[2026-08-06T19:04:39.400Z] GET /api/media?status
+[AUTO-ENGINE collectSocial] fulltext: {"total":4,"ok":3,"fail":1,"skipped":28,"chars":7810,"sec":"9.0"}
+[AUTO-ENGINE collectSocial] done in 125.1s | fetched=34 linked=32
+[AUTO-ENGINE] 新鲜度闸门剔除 19 条陈旧情报 from collectSocial
+[2026-08-06T19:04:47.420Z] GET /api/media?status
+[TRANSLATE] 采集即译完成：成功 13 条，失败 0 条
+[MERGE] osint_intel 新增 0 条（本批 13），缓存现 44 条
+[AUTO-ENGINE] merged 0 /34 from collectSocial → cache now 44
+[2026-08-06T19:04:55.438Z] GET /api/media?status
+[2026-08-06T19:05:03.459Z] GET /api/media?status
+[2026-08-06T19:05:11.476Z] GET /api/media?status
+[2026-08-06T19:05:19.484Z] GET /api/media?status
+[2026-08-06T19:05:27.494Z] GET /api/media?status
+[2026-08-06T19:05:35.500Z] GET /api/media?status
+[TRANSLATE] 并行采集即译：1019/1019 个字段译成中文，另本地化国家名 2 条
+[GLOBALMEDIA] 直连 RSS 采集完成: 532 条，覆盖 27 国
+[2026-08-06T19:05:43.512Z] GET /api/media?status
+[2026-08-06T19:05:51.522Z] GET /api/media?status
+[2026-08-06T19:05:59.535Z] GET /api/media?status
+[2026-08-06T19:06:07.561Z] GET /api/media?status
+[2026-08-06T19:06:15.568Z] GET /api/media?status
+[2026-08-06T19:06:23.581Z] GET /api/media?status
+[2026-08-06T19:06:31.595Z] GET /api/media?status
+[2026-08-06T19:06:39.612Z] GET /api/media?status
+[2026-08-06T19:06:47.623Z] GET /api/media?status
+[2026-08-06T19:06:55.631Z] GET /api/media?status
+[2026-08-06T19:07:03.642Z] GET /api/media?status
+[2026-08-06T19:07:11.651Z] GET /api/media?status
+[2026-08-06T19:07:19.662Z] GET /api/media?status
+[2026-08-06T19:07:19.668Z] GET /api/media?limit=800
+[AUTO-ENGINE crawlAll] starting...

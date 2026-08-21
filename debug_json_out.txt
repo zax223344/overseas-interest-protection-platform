@@ -1,0 +1,6 @@
+line 1 FAIL Expected double-quoted property name in JSON at position 944 (line 1 column 945)
+around: 员会将BLA及其马吉德旅列入制裁名单。","structure":[{"role":"最高指挥官",current:"巴希尔·泽布",desc:"组织战略决策"},{"role":"马吉德旅",cur
+line 2 FAIL Expected double-quoted property name in JSON at position 974 (line 1 column 975)
+around: 胁，其活动区域与中巴经济走廊部分区段重叠。","structure":[{"role":"埃米尔",current:"努尔·瓦利·马哈苏德",desc:"最高领导人"},{"role":"舒拉委员会"
+line 3 FAIL Expected double-quoted property name in JSON at position 917 (line 1 column 918)
+around: 中国海外利益安全和新疆稳定面临的重要威胁。","structure":[{"role":"埃米尔",current:"不详",desc:"最高宗教与军事领袖"},{"role":"军事委员会",cur

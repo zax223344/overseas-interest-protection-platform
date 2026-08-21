@@ -1,0 +1,3 @@
+parse error: Expected property name or '}' in JSON at position 3 (line 2 column 2)
+around: 
+{id:'isis',name:'伊斯兰国',aliases:['ISIS','ISIL','DAESH','达伊沙'],type:'恐怖组织',category:'宗教极端',subcategory:'逊尼派萨拉菲圣战',founded:'1999',foundedLocation:'阿富汗/伊拉克',status:'潜伏活跃',threatLevel:9.5,threatTrend:'下降'

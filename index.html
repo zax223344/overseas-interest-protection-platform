@@ -3,11 +3,57 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>海外利益保护情报预警平台</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>海外利益保护情报预警平台 v2.4</title>
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#070b14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="海安预警">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<script>
+if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(e){console.warn('SW 注册失败',e);});});}
+</script>
+<!-- 应急清洗：页面加载瞬间无条件清除 localStorage 中的纯国内噪声（不依赖外部JS，防缓存导致旧gate不生效） -->
+<script>
+(function(){
+  var badAny = /青年奔赴湖南|广西创新开展民族团结进步促进法|海事部门保障超大型外籍船舶顺利抵穗进厂维修|国防部.*民进党.*全民防卫|奔赴高原|马背上的法官/;
+  var total = 0, keysCleaned = [];
+  // 扫描所有 localStorage key（覆盖 DBCenter / COLLECTED_DB / 其他所有存储）
+  for(var ki = 0; ki < localStorage.length; ki++){
+    var key = localStorage.key(ki);
+    if(!key) continue;
+    try{
+      var raw = localStorage.getItem(key);
+      var arr = JSON.parse(raw);
+      if(!Array.isArray(arr)) continue;
+      var n = arr.length;
+      arr = arr.filter(function(it){
+        if(!it || typeof it !== 'object') return true;
+        var text = (it.title || '') + ' ' + (it.content || it.desc || it.summary || it.description || it.detail || '');
+        if(badAny.test(text)) return false;
+        return true;
+      });
+      if(arr.length < n){
+        localStorage.setItem(key, JSON.stringify(arr));
+        total += (n - arr.length);
+        keysCleaned.push(key + ':' + (n - arr.length));
+      }
+    }catch(e){}
+  }
+  console.log('[EMERGENCY-PURGE] 全量清洗: 删除 ' + total + ' 条, keys=' + keysCleaned.join(', '));
+})();
+</script>
+<script src="vendor/chart.umd.min.js" onerror="console.warn('LOCAL: chart.js 加载失败')"></script>
+<script src="vendor/d3.min.js" onerror="console.warn('LOCAL: d3 加载失败')"></script>
+<script src="vendor/topojson.min.js" onerror="console.warn('LOCAL: topojson 加载失败')"></script>
+<link rel="stylesheet" href="vendor/leaflet.css" onerror="console.warn('LOCAL: leaflet.css 加载失败')">
+<script src="vendor/leaflet.js" onerror="console.warn('LOCAL: leaflet 加载失败')"></script>
 <style>
 /* ===== DARK TECH THEME ===== */
 :root{
@@ -88,6 +134,40 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 .tb-stat{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);padding:4px 10px;background:var(--panel2);border-radius:6px;border:1px solid var(--border)}
 .tb-stat .dot{width:6px;height:6px;border-radius:50%;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.5;box-shadow:0 0 4px var(--cyan)}}
+/* ===== 实时情报流面板：时间轴卡片 ===== */
+.live-item{position:relative;display:flex;gap:8px;padding:7px 8px 7px 4px;margin-bottom:5px;border-radius:6px;cursor:pointer;background:rgba(0,212,255,0.04);transition:background .15s;overflow:hidden}
+.live-item:hover{background:rgba(0,212,255,0.1)}
+.live-rail{position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px}
+.live-body{flex:1;min-width:0;padding-left:6px}
+.live-top{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.live-lv{font-size:10px;font-weight:800;white-space:nowrap}
+.live-type{font-size:9px;padding:0 4px;border-radius:2px;background:rgba(255,255,255,0.06);white-space:nowrap}
+.live-time{font-size:9px;color:var(--text3);font-family:'Courier New',monospace;margin-left:auto;white-space:nowrap}
+.live-badge{font-size:8px;background:var(--cyan);color:#000;padding:0 4px;border-radius:2px;font-weight:800;animation:livePulse 1.5s infinite;white-space:nowrap}
+.live-title{font-size:11px;color:var(--text1);line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live-meta{font-size:9px;color:var(--text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live-tt{display:flex;align-items:center;gap:5px;color:var(--cyan);font-weight:700;font-size:12px}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);animation:livePulse 1.5s infinite}
+.live-count{margin-left:auto;font-size:9px;color:var(--green);font-weight:800}
+/* === 实时情报流面板：固定高度 + 内部滚动（不再无限下拉） === */
+.live-scroll{max-height:300px;overflow-y:auto;padding-right:5px;margin-top:2px}
+.live-scroll::-webkit-scrollbar{width:5px}
+.live-scroll::-webkit-scrollbar-thumb{background:rgba(0,212,255,0.3);border-radius:3px}
+.live-scroll::-webkit-scrollbar-track{background:transparent}
+/* 头条大卡（最新一条） */
+.live-head{position:relative;padding:10px 10px 9px 13px;margin-bottom:8px;border-radius:8px;cursor:pointer;overflow:hidden;background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(0,212,255,0.02));border:1px solid rgba(0,212,255,0.18);transition:.15s}
+.live-head:hover{background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,212,255,0.05))}
+.live-head-bar{position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:3px}
+.live-head-top{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.live-head-title{font-size:12.5px;font-weight:600;color:var(--text1);line-height:1.4;margin:2px 0 4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.live-head-meta{font-size:9px;color:var(--text3)}
+/* 紧凑条（其余） */
+.live-item.compact{padding:5px 6px 5px 4px;margin-bottom:3px}
+.live-item.compact .live-title{font-size:10.5px}
+@keyframes liveIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.live-in{animation:liveIn .35s ease both;animation-delay:calc(var(--i)*0.03s)}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 .tb-time{font-size:12px;color:var(--cyan);font-family:'Courier New',monospace;font-weight:600}
 .tb-user{display:flex;align-items:center;gap:8px;padding:4px 12px;background:var(--panel2);border-radius:6px;border:1px solid var(--border)}
 .tb-user .av{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--cyan),var(--purple));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#000}
@@ -329,7 +409,7 @@ select.intel-input{cursor:pointer}
 .cross-mode-bar{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
 
 /* ===== ALERT COMMAND CENTER ===== */
-.alert-cmd-layout{display:grid;grid-template-columns:300px 1fr 310px;gap:12px;min-height:520px;max-height:calc(100vh - 300px)}
+.alert-cmd-layout{display:grid;grid-template-columns:300px 1fr 310px;gap:12px;height:calc(100vh - 290px);min-height:520px;max-height:calc(100vh - 290px)}
 .alert-cmd-left,.alert-cmd-center,.alert-cmd-right{display:flex;flex-direction:column;overflow:hidden}
 .alert-cmd-left .card-tt,.alert-cmd-center .card-tt,.alert-cmd-right .card-tt{flex-shrink:0}
 .alert-cmd-filters{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;flex-shrink:0}
@@ -526,6 +606,90 @@ select.intel-input{cursor:pointer}
 @keyframes swuplPulse{0%,100%{opacity:0.8}50%{opacity:1}}
 .swupl-scan-line{animation:swuplScan 3s ease-in-out infinite}
 @keyframes swuplScan{0%,100%{opacity:0;transform:translateY(-8px)}50%{opacity:0.6;transform:translateY(8px)}}
+
+/* ===== 态势总览：风险等级面板（可拖拽/可收起） ===== */
+.sit-level-panel{min-width:190px;max-width:230px}
+.sit-level-panel .legend-tt{font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:grab;user-select:none}
+.sit-level-panel .legend-tt:active{cursor:grabbing}
+.sit-level-panel .legend-toggle{cursor:pointer;color:var(--text3);font-size:14px;padding:0 4px;border-radius:4px;line-height:1}
+.sit-level-panel .legend-toggle:hover{color:var(--cyan);background:rgba(0,212,255,0.12)}
+.sit-level-panel.collapsed #sit-level-content{display:none}
+.sit-level-panel.collapsed{padding-bottom:6px}
+
+/* ===== 态势总览：面板恢复 FAB ===== */
+.globe-panel-fab{position:absolute;bottom:12px;right:12px;z-index:20;background:rgba(10,21,37,0.92);border:1px solid rgba(0,212,255,0.35);color:var(--cyan);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 0 12px rgba(0,212,255,0.15)}
+.globe-panel-fab:hover{background:rgba(0,212,255,0.15);box-shadow:0 0 16px rgba(0,212,255,0.3)}
+
+/* ===== 自动预警 v7（指挥蓝/玫红/琥珀 克制配色） ===== */
+.aa-layout{display:flex;flex-direction:column;gap:12px}
+.aa-main{display:grid;grid-template-columns:290px 1fr 310px;gap:12px;align-items:start}
+.aa-center{display:flex;flex-direction:column;gap:12px;min-width:0}
+.aa-left,.aa-right{display:flex;flex-direction:column;gap:12px;min-width:0}
+.aa-commandband{display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;padding:12px 14px;background:linear-gradient(135deg,rgba(91,155,255,0.10),rgba(16,22,38,0.9));border:1px solid rgba(91,155,255,0.28);border-radius:12px}
+.aa-glow-card{background:rgba(16,22,38,0.85);border:1px solid rgba(91,155,255,0.18);border-radius:10px;padding:12px 14px;backdrop-filter:blur(8px)}
+.aa-card-tt{font-size:13px;font-weight:700;color:#5b9bff;display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.aa-kpi-num{font-size:26px;font-weight:800;font-family:'Courier New',monospace;line-height:1.1}
+.aa-kpi-label{font-size:10px;color:var(--text3);margin-top:2px}
+.aa-filterbar{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;background:rgba(16,22,38,0.7);border:1px solid rgba(91,155,255,0.14);border-radius:10px}
+.aa-filter-chip{padding:4px 12px;border-radius:14px;border:1px solid rgba(91,155,255,0.25);background:rgba(91,155,255,0.06);color:var(--text2);font-size:11px;cursor:pointer;transition:.15s;user-select:none}
+.aa-filter-chip:hover{border-color:rgba(91,155,255,0.5);color:#5b9bff}
+.aa-filter-chip.on{background:rgba(91,155,255,0.22);border-color:#5b9bff;color:#fff;font-weight:600}
+.aa-situations{display:flex;flex-direction:column;gap:10px}
+.aa-dim-cell{border:1px solid rgba(91,155,255,0.16);border-radius:8px;padding:8px 10px;background:rgba(16,22,38,0.7);cursor:pointer;transition:.15s;font-size:11px;color:var(--text2)}
+.aa-dim-cell:hover{border-color:rgba(91,155,255,0.45)}
+.aa-dim-cell.on{border-color:#5b9bff;background:rgba(91,155,255,0.14);color:#fff}
+.aa-dim-pulse{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.aa-sit-card{background:rgba(16,22,38,0.88);border:1px solid rgba(91,155,255,0.2);border-left:3px solid #5b9bff;border-radius:10px;padding:12px 14px;transition:.2s}
+.aa-sit-card:hover{border-color:rgba(91,155,255,0.4)}
+.aa-sit-card.lv-red{border-left-color:#ff4d5e}
+.aa-sit-card.lv-orange{border-left-color:#ff9f1c}
+.aa-sit-card.lv-yellow{border-left-color:#ffd60a}
+.aa-sit-card.aa-new{animation:aaNewPulse 1.2s ease-out 3}
+@keyframes aaNewPulse{0%{box-shadow:0 0 0 0 rgba(255,77,94,0.55)}100%{box-shadow:0 0 0 14px rgba(255,77,94,0)}}
+.aa-sit-score{font-size:22px;font-weight:800;font-family:'Courier New',monospace}
+.aa-sit-trend{font-size:11px;font-weight:700}
+.aa-sit-narr{font-size:12px;color:var(--text2);line-height:1.6;margin-top:6px}
+.aa-sit-chain{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:10px;color:#5b9bff}
+.aa-sit-items{margin-top:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:8px;display:grid;gap:5px}
+.aa-lk-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;color:var(--text2)}
+.aa-lk-bar{flex:1;height:6px;border-radius:3px;background:var(--bg2);overflow:hidden}
+.aa-lk-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#5b9bff,#ff9f1c)}
+.aa-mini-tt{font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px}
+.aa-mini-row{display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding:3px 0}
+.aa-feed-item{padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;color:var(--text2);line-height:1.5;cursor:pointer}
+.aa-feed-item:hover{color:#5b9bff}
+.aa-live-card{border:1px solid rgba(255,77,94,0.3);background:rgba(255,77,94,0.06);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--text2)}
+.aa-toast{position:fixed;right:18px;bottom:18px;z-index:9999;background:rgba(16,22,38,0.95);border:1px solid rgba(91,155,255,0.4);border-radius:10px;padding:12px 16px;font-size:12px;color:var(--text);box-shadow:0 6px 24px rgba(0,0,0,0.5);animation:aaToastIn .25s ease-out}
+@keyframes aaToastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.aa-stream-empty{padding:22px;text-align:center;color:var(--text3);font-size:12px;border:1px dashed rgba(91,155,255,0.2);border-radius:8px}
+.aa-newtag{display:inline-block;padding:1px 6px;border-radius:4px;background:#ff4d5e;color:#fff;font-size:9px;font-weight:700;margin-left:6px;vertical-align:middle}
+.aa-red-pulse{animation:aaRedBlink 1.4s ease-in-out infinite}
+@keyframes aaRedBlink{0%,100%{opacity:1}50%{opacity:0.35}}
+.aa-deck-host{display:flex;flex-wrap:wrap;gap:10px}
+
+/* ===== 移动端：汉堡菜单 / 遮罩 / 顶栏瘦身 ===== */
+.mobile-menu-toggle{display:none;background:none;border:1px solid rgba(0,212,255,0.3);border-radius:6px;color:var(--cyan);font-size:16px;padding:4px 10px;cursor:pointer;margin-right:8px}
+.sidebar-overlay{display:none}
+@media(max-width:768px){
+  .mobile-menu-toggle{display:block}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:1000;transform:translateX(-100%);transition:transform .25s ease;box-shadow:0 0 30px rgba(0,0,0,0.6)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay{display:block;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:999;opacity:0;pointer-events:none;transition:opacity .25s}
+  .sidebar.open ~ .main .sidebar-overlay,
+  body.sb-open .sidebar-overlay{opacity:1;pointer-events:auto}
+  .topbar{padding:6px 10px !important;gap:6px}
+  .tb-crumb{display:none}
+  .tb-stat{display:none}
+  #tb-pending-users{display:none !important}
+  .tb-title{font-size:14px}
+  .tb-user .text-sm{display:none}
+  .ticker-bar{font-size:11px}
+  .content{padding:10px !important}
+  .aa-main{grid-template-columns:1fr}
+  .globe-container{min-height:380px}
+  .globe-intel-panel{max-width:160px;font-size:10px}
+  .sit-level-panel{min-width:150px;max-width:180px}
+}
 </style>
 </head>
 <body>
@@ -609,28 +773,34 @@ select.intel-input{cursor:pointer}
 <div class="sb-brand"><img src="swupl-logo.png" alt="SWUPL"><div class="tt">海安情报预警平台<span>v6.0 INTELLIGENCE</span></div></div>
 <div class="sb-nav">
 <div class="sb-group">态势感知</div>
-<div class="sb-item active" data-view="situation"><span class="ic">🌍</span><span class="lb">态势总览</span></div>
+<div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">态势总览</span></div>
+<div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
 <div class="sb-group">监测中心</div>
-<div class="sb-item" data-view="monitor"><span class="ic">📡</span><span class="lb">风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
-<div class="sb-item" data-view="threatorgs"><span class="ic">🎯</span><span class="lb">威胁组织</span><span class="badge zero" id="sb-threat-count">0</span></div>
-<div class="sb-item" data-view="intel"><span class="ic">📸</span><span class="lb">情报影像中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
-<div class="sb-item" data-view="assets"><span class="ic">🏢</span><span class="lb">企业资产</span></div>
-<div class="sb-item" data-view="alerts"><span class="ic">🚨</span><span class="lb">预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
-<div class="sb-item" data-view="autoalert"><span class="ic">⚡</span><span class="lb">自动预警</span><span class="badge zero" id="sb-autoalert-count">0</span></div>
+<div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic">📡</span><span class="lb">风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
+<div class="sb-item" data-view="threatorgs" onclick="navigateTo('threatorgs')"><span class="ic">🎯</span><span class="lb">威胁组织</span><span class="badge zero" id="sb-threat-count">0</span></div>
+<div class="sb-item" data-view="intel" onclick="navigateTo('intel')"><span class="ic">📸</span><span class="lb">情报影像中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
+<div class="sb-item" data-view="assets" onclick="navigateTo('assets')"><span class="ic">🏢</span><span class="lb">企业资产</span></div>
+<div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
+<div class="sb-item" data-view="autoalert" onclick="navigateTo('autoalert')"><span class="ic">⚡</span><span class="lb">自动预警</span><span class="badge zero" id="sb-autoalert-count">0</span></div>
 <div class="sb-group">分析工具</div>
-<div class="sb-item" data-view="matrix"><span class="ic">📊</span><span class="lb">风险矩阵</span></div>
-<div class="sb-item" data-view="forecast"><span class="ic">📈</span><span class="lb">预测分析</span></div>
-<div class="sb-item" data-view="aireport"><span class="ic">🤖</span><span class="lb">AI情报分析报告</span><span class="badge zero" id="sb-aireport-count">0</span></div>
+<div class="sb-item" data-view="matrix" onclick="navigateTo('matrix')"><span class="ic">📊</span><span class="lb">风险矩阵</span></div>
+<div class="sb-item" data-view="forecast" onclick="navigateTo('forecast')"><span class="ic">📈</span><span class="lb">预测分析</span></div>
+<div class="sb-item" data-view="aireport" onclick="navigateTo('aireport')"><span class="ic">🤖</span><span class="lb">AI情报分析报告</span><span class="badge zero" id="sb-aireport-count">0</span></div>
+<div class="sb-item" data-view="analysis" onclick="navigateTo('analysis')"><span class="ic">📋</span><span class="lb">研判简报</span></div>
+<div class="sb-item" data-view="explain" onclick="navigateTo('explain')"><span class="ic">🔍</span><span class="lb">可解释审计</span></div>
 <div class="sb-group">数据管理</div>
-<div class="sb-item" data-view="datacenter"><span class="ic">🗄️</span><span class="lb">数据中心</span><span class="badge zero" id="sb-dc-count">0</span></div>
+<div class="sb-item" data-view="datasources" onclick="navigateTo('datasources')"><span class="ic">🛰️</span><span class="lb">数据源库</span><span class="badge zero" id="sb-ds-count">0</span></div>
+<div class="sb-item" data-view="datacenter" onclick="navigateTo('datacenter')"><span class="ic">🗄️</span><span class="lb">数据中心</span><span class="badge zero" id="sb-dc-count">0</span></div>
 <div class="sb-group">系统</div>
-<div class="sb-item" data-view="settings"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
+<div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
+<div class="sb-item" data-view="role" onclick="navigateTo('role')"><span class="ic">🛡️</span><span class="lb">角色分级</span></div>
 </div>
 </div>
 
 <!-- MAIN -->
 <div class="main">
 <div class="topbar">
+<button id="mobileMenuToggle" class="mobile-menu-toggle" aria-label="菜单" onclick="toggleMobileMenu()">☰</button>
 <div class="tb-title" id="pageTitle">态势总览</div>
 <div class="tb-crumb" id="pageCrumb">态势感知 / 态势总览</div>
 <div class="tb-spacer"></div>
@@ -644,6 +814,7 @@ select.intel-input{cursor:pointer}
 <div class="ticker-track" id="ticker-track"></div>
 </div>
 <div class="content" id="content">
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileMenu()"></div>
 
 <!-- VIEW: SITUATION (Globe + Stats) -->
 <div class="view active" id="view-situation">
@@ -676,6 +847,11 @@ select.intel-input{cursor:pointer}
 <div class="globe-ticker-track"><div class="globe-ticker-content" id="globe-ticker-content"></div></div>
 </div>
 <div class="globe-watermark"><img src="swupl-logo.png" alt="SWUPL"></div>
+<div class="globe-intel-panel sit-level-panel" id="sit-level-panel" style="bottom:52px;right:12px">
+<div class="legend-tt" id="sit-level-tt">📊 风险等级速览<span class="legend-toggle">−</span></div>
+<div id="sit-level-content"></div>
+</div>
+<button class="globe-panel-fab" id="globe-panel-fab" style="display:none" onclick="SITUATION.restoreAllPanels()" title="恢复全部面板">🗖 面板</button>
 </div>
 <div class="stat-grid" id="sit-stats"></div>
 <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
@@ -687,6 +863,9 @@ select.intel-input{cursor:pointer}
 <div class="card" id="card-sit-industry"><div class="card-tt"><span class="ic">🏭</span>行业风险雷达 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px;cursor:pointer" onclick="SITUATION.toggleIndustryDetail()">📊 点击查看详情</span></div><div style="height:200px;cursor:pointer" onclick="SITUATION.toggleIndustryDetail()"><canvas id="chart-sit-industry"></canvas></div><div id="sit-industry-detail" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:10px"></div></div>
 <div class="card"><div class="card-tt"><span class="ic">📈</span>预警类型分布</div><div style="display:flex;gap:16px;min-height:240px"><div style="width:180px;flex-shrink:0;position:relative"><canvas id="chart-sit-alert-type"></canvas><div id="sit-doughnut-center" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none"><div style="font-size:22px;font-weight:800;color:var(--cyan);line-height:1">-</div><div style="font-size:10px;color:var(--text3)">预警总数</div></div></div><div id="sit-alert-type-list" style="flex:1;min-width:0;overflow-y:auto;max-height:260px;font-size:11px;color:var(--text2)"></div></div></div>
 </div>
+<div class="grid mt-12" style="grid-template-columns:1fr">
+<div class="card"><div class="card-tt"><span class="ic">🛰️</span>GEOINT 卫星影像 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">实时图层统计 · 最近影像</span></div><div id="sit-geoint"></div></div>
+</div>
 </div>
 
 <!-- VIEW: INTEL IMAGE CENTER -->
@@ -695,7 +874,6 @@ select.intel-input{cursor:pointer}
 <div class="dc-tab active" onclick="INTELCENTER.switch('gallery')">🖼️ 影像图库</div>
 <div class="dc-tab" onclick="INTELCENTER.switch('osint')">📡 开源情报监测</div>
 <div class="dc-tab" onclick="INTELCENTER.switch('analysis')">🔍 影像分析</div>
-<div class="dc-tab" onclick="INTELCENTER.switch('aireport')">🤖 AI情报分析报告</div>
 <div class="dc-tab" onclick="INTELCENTER.switch('timeline')">📅 时序对比</div>
 <div class="dc-tab" onclick="INTELCENTER.switch('geoint')">🗺️ 地理空间情报</div>
 </div>
@@ -718,9 +896,20 @@ select.intel-input{cursor:pointer}
 <div id="threatorgs-content"></div>
 </div>
 
-<!-- VIEW: AUTO ALERT -->
+<!-- VIEW: AUTO ALERT (v7 六区骨架：JS 分区填充) -->
 <div class="view" id="view-autoalert">
-<div id="autoalert-content"></div>
+<div class="aa-layout">
+<div class="aa-commandband" id="aa-commandband"></div>
+<div class="aa-main">
+<div class="aa-left" id="aa-left"></div>
+<div class="aa-center">
+<div class="aa-filterbar" id="aa-filterbar"></div>
+<div class="aa-situations" id="aa-situations"></div>
+</div>
+<div class="aa-right" id="aa-right"></div>
+</div>
+<div class="aa-deck-host" id="aa-deck-host"></div>
+</div>
 </div>
 
 <!-- VIEW: ASSETS (Enterprises + Personnel) -->
@@ -734,7 +923,9 @@ select.intel-input{cursor:pointer}
 
 <!-- VIEW: ALERTS -->
 <div class="view" id="view-alerts">
+<div id="alert-posture-bar"></div>
 <div class="stat-grid" id="alert-stats"></div>
+<div id="alert-china-intel"></div>
 <div class="dc-tabs" id="alert-tabs"></div>
 
 <!-- Tab: Command Center -->
@@ -821,6 +1012,7 @@ select.intel-input{cursor:pointer}
 </div>
 
 <!-- VIEW: DATACENTER -->
+<div class="view" id="view-datasources"></div>
 <div class="view" id="view-datacenter">
 <div class="stat-grid" id="dc-stats"></div>
 
@@ -830,16 +1022,22 @@ select.intel-input{cursor:pointer}
 <div id="dc-scraper-panel"></div>
 </div>
 
-<div class="card mt-12"><div class="card-tt"><span class="ic">🗄️</span>数据库浏览 <span style="font-size:10px;color:var(--text3);font-weight:400"> — 采集库数据经审核后转入此数据库，再同步到态势感知</span></div>
+<!-- 实时数据采集流（自动审核）：所有采集/录入数据实时进入 → 自动审核通过 → 即时分发全系统 -->
+<div class="card mt-12" style="border:1px solid rgba(0,200,83,0.3)"><div class="card-tt"><span class="ic">📥</span>实时采集流 <span style="font-size:10px;color:var(--text3);font-weight:400"> — 所有采集/录入数据实时进入，✅自动审核通过 → 即时分发预警中心/态势感知/首页情报流</span></div>
+<div id="dc-collected-panel"></div>
+</div>
+
+<div class="card mt-12" style="border:1px solid rgba(0,200,83,0.2)"><div class="card-tt"><span class="ic">🗄️</span>数据中心（唯一真实源） <span style="font-size:10px;color:var(--text3);font-weight:400"> — 所有数据按12要素分类存储，审核通过时已自动分发到预警中心/态势感知/风险监测等全部功能区</span></div>
 <div class="flex gap-8 mb-12 wrap items-center">
 <div class="dc-tabs" id="dc-tabs" style="margin:0"></div>
-<input class="input" id="dc-search" placeholder="🔍 搜索..." style="width:180px;margin-left:auto" onkeyup="DATACENTER.search=this.value;DATACENTER.page=1;DATACENTER.renderTable()">
+<input class="input" id="dc-search" placeholder="🔍 搜索主库..." style="width:180px;margin-left:auto" onkeyup="DATACENTER.search=this.value;DATACENTER.page=1;DATACENTER.renderTable()">
 <button class="btn sm" onclick="DATACENTER.exportCSV()">📄 导出CSV</button>
 <button class="btn sm" onclick="DATACENTER.refresh()">🔄 刷新</button>
 </div>
 <div id="dc-audit-bar"></div>
 <div id="dc-filters" style="margin-bottom:10px"></div>
 <div class="table-wrap" style="max-height:450px;overflow-y:auto"><table><thead id="dc-thead"></thead><tbody id="dc-tbody"></tbody></table></div>
+<div id="dc-analysis-panel" style="display:none"></div>
 <div class="flex items-center justify-between mt-12" id="dc-pagination"></div>
 </div>
 
@@ -855,11 +1053,7 @@ select.intel-input{cursor:pointer}
 <div id="dc-fusion-panel"></div>
 </div>
 
-<!-- 采集库 (独立数据库) -->
-<div class="card mt-12" style="border:1px solid rgba(255,170,0,0.3)">
-<div class="card-tt"><span class="ic">📥</span>采集库 (独立数据库) <span style="font-size:10px;color:var(--text3);font-weight:400"> — 全网采集的数据独立存储在此，审核通过后转入上方主数据库</span></div>
-<div id="dc-collected-panel"></div>
-</div>
+<!-- 采集库已与"结构化情报数据库"合并：采集数据自动镜像入总库(待审核)，消除功能区重叠 -->
 
 <div class="card mt-12"><div class="card-tt"><span class="ic">✏️</span>手动数据录入</div>
 <div id="dc-manual-form"></div>
@@ -870,6 +1064,25 @@ select.intel-input{cursor:pointer}
 <div class="view" id="view-settings">
 <div id="settings-content"></div>
 </div>
+
+<!-- VIEW: COMMAND CENTER (command-center.js 整视图渲染) -->
+<div class="view" id="view-command"></div>
+
+<!-- VIEW: ANALYSIS (研判简报：周期研判 + 每日简报 合并视图) -->
+<div class="view" id="view-analysis">
+<div class="dc-tabs" id="ana-tabs">
+<div class="dc-tab active" onclick="switchAnalysisTab('periodic')">📊 周期研判</div>
+<div class="dc-tab" onclick="switchAnalysisTab('daily')">📰 每日简报</div>
+</div>
+<div id="ana-pane-periodic"><div id="analysis-body"></div></div>
+<div id="ana-pane-daily" style="display:none"><div id="dailyreport-content"></div></div>
+</div>
+
+<!-- VIEW: EXPLAINABILITY (explanability.js 整视图渲染) -->
+<div class="view" id="view-explain"></div>
+
+<!-- VIEW: ROLE (role-ui.js 整视图渲染) -->
+<div class="view" id="view-role"></div>
 
 </div><!-- content -->
 </div><!-- main -->
@@ -884,11 +1097,44 @@ select.intel-input{cursor:pointer}
 <!-- TOAST -->
 <div id="toast"></div>
 
-<script src="scraper.js?v=38"></script>
-<script src="app.js?v=51"></script>
-<script src="threats.js?v=3"></script>
-<script src="aireport.js?v=2"></script>
-<script src="autoalert.js?v=3"></script>
+<script>
+/* 移动端汉堡菜单：与 app.js navigateTo 的 sidebar.open 约定一致 */
+function toggleMobileMenu(){
+  var sb=document.getElementById('sidebar');if(!sb)return;
+  sb.classList.toggle('open');
+  document.body.classList.toggle('sb-open',sb.classList.contains('open'));
+}
+function closeMobileMenu(){
+  var sb=document.getElementById('sidebar');if(!sb)return;
+  sb.classList.remove('open');
+  document.body.classList.remove('sb-open');
+}
+</script>
+
+<script src="api-client.js?v=6"></script>
+<script src="gate.js?v=16"></script>
+<script src="entities.js?v=9"></script>
+<!-- 全球媒体注册表：必须在 scraper/datasources 之前加载 -->
+<script src="global-media-registry.js?v=1"></script>
+<!-- IndexedDB 持久层（同步外观）：必须在 app.js 之前加载 -->
+<script src="idb-store.js?v=1"></script>
+<script src="scraper.js?v=53"></script>
+<script src="app.js?v=211"></script>
+<script src="distribute.js?v=29"></script>
+<script src="datasources.js?v=23"></script>
+<script src="threats.js?v=7"></script>
+<script src="aireport.js?v=3"></script>
+<script src="autoalert.js?v=25"></script>
+<script src="geoint_live.js?v=5"></script>
+<script src="gate-admin.js?v=2"></script>
+<script src="deepsearch.js?v=2"></script>
+<script src="socmint.js?v=4"></script>
+<script src="command-center.js?v=3"></script>
+<script src="explanability.js?v=1"></script>
+<script src="role-ui.js?v=1"></script>
+<script src="dailyreport.js?v=1"></script>
+<!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
+<script src="linkgraph.js?v=5"></script>
 
 <!-- ===== 世界地图 + AI分析交互（新增，不修改原有逻辑） ===== -->
 <script>
@@ -986,7 +1232,7 @@ var WORLDMAP={
     this.g.append('path').attr('class','wm-sphere').attr('d',this.path({type:'Sphere'}));
     this.g.append('path').attr('class','wm-graticule').attr('d',this.path(d3.geoGraticule()()));
 
-    d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(function(world){
+    d3.json('countries-110m.json').then(function(world){
       var countries=topojson.feature(world,world.objects.countries);
       self.g.selectAll('.wm-country').data(countries.features).join('path')
         .attr('class','wm-country').attr('d',self.path);
@@ -1543,7 +1789,7 @@ var SUPERMAP={
     if(this.worldFeatures){
       loadAndRender({});
     } else {
-      d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(loadAndRender).catch(function(err){console.error('Map load failed',err)});
+      d3.json('countries-110m.json').then(loadAndRender).catch(function(err){console.error('Map load failed',err)});
     }
   },
 
@@ -1741,6 +1987,7 @@ var SUPERMAP={
 
   renderLegend:function(mode){
     var el=document.getElementById('supermap-legend');
+    if(!el)return;
     if(mode==='risk'){
       el.innerHTML='<div class="lt">风险等级图例</div>'+
         '<div class="li"><div class="d-dot" style="background:#ff3355"></div> 极高风险 (8-10)</div>'+
@@ -1766,6 +2013,7 @@ var SUPERMAP={
 
   renderStats:function(mode){
     var el=document.getElementById('supermap-stats');
+    if(!el)return;
     if(mode==='risk'){
       var redCount=SUPERMAP_DATA.risk.filter(function(r){return r.level==='red'}).length;
       var orangeCount=SUPERMAP_DATA.risk.filter(function(r){return r.level==='orange'}).length;

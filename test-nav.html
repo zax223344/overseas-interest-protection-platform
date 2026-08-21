@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>导航测试</title>
+<style>
+body{background:#0a1525;color:#fff;font-family:sans-serif;padding:20px}
+.sb-item{padding:10px 16px;cursor:pointer;background:#1a2540;margin:4px 0;border-radius:6px}
+.sb-item:hover{background:#2a3560}
+.view{display:none;padding:20px;background:#1a2540;margin-top:20px;border-radius:8px}
+.view.active{display:block}
+#result{position:fixed;top:10px;right:10px;background:#0f0;color:#000;padding:10px;border-radius:6px;font-weight:bold;display:none}
+</style>
+</head>
+<body>
+<h2>侧边栏导航测试</h2>
+<div class="sb-item" onclick="navigateTo('situation')">🌍 态势总览</div>
+<div class="sb-item" onclick="navigateTo('monitor')">📡 风险监测</div>
+<div class="sb-item" onclick="navigateTo('alerts')">🚨 预警中心</div>
+<div class="view active" id="view-situation">态势总览内容</div>
+<div class="view" id="view-monitor">风险监测内容</div>
+<div class="view" id="view-alerts">预警中心内容</div>
+<div id="result"></div>
+<script>
+function navigateTo(v){
+  document.querySelectorAll('.view').forEach(function(x){x.classList.remove('active')});
+  var tv=document.getElementById('view-'+v);
+  if(tv)tv.classList.add('active');
+  var r=document.getElementById('result');
+  r.style.display='block';
+  r.textContent='已切换到: '+v;
+}
+</script>
+</body>
+</html>

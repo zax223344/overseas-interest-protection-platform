@@ -28,7 +28,9 @@ var FIPS_CN={
   'NI':'尼日尔','AO':'安哥拉','MZ':'莫桑比克','ZW':'津巴布韦','ZB':'赞比亚','BW':'博茨瓦纳'
 };
 
-// ===== 采集数据库 (完全独立于 DBCenter) =====
+// ===== 采集数据库（透传层，DBCenter 是唯一真实源）=====
+// 新设计：单数据库、自动审核、实时流转
+// 所有写操作直接到 DBCenter，自动 approved + 立即分发全系统
 var COLLECTED_DB={
   PREFIX:'orps_collected_',
   CATEGORIES:[
@@ -38,19 +40,6 @@ var COLLECTED_DB={
   ],
 
   init(){
-    var me=this;
-    this.CATEGORIES.forEach(function(cat){
-      try{if(localStorage.getItem(me.PREFIX+cat)===null)
-        localStorage.setItem(me.PREFIX+cat,'[]');}catch(e){}
-    });
-    // 自动注入模拟数据(首次加载或版本更新时)
-    try{
-      var count=this.totalCount();
-      if(count===0){
-        var n=this.seedSimulatedData();
-        if(n>0)console.log('[COLLECTED_DB] Seeded '+n+' simulated items');
-      }
-    }catch(e){console.warn('[COLLECTED_DB] Seed error:',e);}
     // 初始化中资企业海外项目库
     if(typeof ENTERPRISE_DB!=='undefined'){try{ENTERPRISE_DB.init();}catch(e){}}
     // 初始化风险融合引擎
@@ -65,323 +54,103 @@ var COLLECTED_DB={
     }
   },
 
-  _r(k){try{return JSON.parse(localStorage.getItem(this.PREFIX+k)||'[]');}catch(e){return[];}},
-  _w(k,v){try{localStorage.setItem(this.PREFIX+k,JSON.stringify(v));}catch(e){}},
+  _r(k){try{return JSON.parse((typeof _lsGet==='function'?_lsGet(this.PREFIX+k):localStorage.getItem(this.PREFIX+k))||'[]');}catch(e){return[];}},
+  _w(k,v){try{if(typeof _lsSet==='function')_lsSet(this.PREFIX+k,JSON.stringify(v));else localStorage.setItem(this.PREFIX+k,JSON.stringify(v));}catch(e){}},
 
+  /* 入口闸门：采集入口把关，不在入库后杀数据 */
+  _genreBlocked(item){
+    if(typeof ENTITY==='undefined'||!ENTITY.nonIntelGenre) return false;
+    try{
+      var g=ENTITY.nonIntelGenre(item)||'';
+      if(g){ console.log('[COLLECT-GATE] 体裁噪声('+g+')丢弃: '+String((item&&(item.title_zh||item.title))||'').slice(0,40)); return true; }
+    }catch(e){}
+    return false;
+  },
+
+  /* 透传到 DBCenter：自动审核 + 立即分发 */
   add(category,item){
     if(!item)return null;
-    item.id=Date.now()+Math.floor(Math.random()*1000000);
+    if(this._genreBlocked(item)) return null;
+    if(typeof DBCenter!=='undefined'&&DBCenter._coerceCol) category=DBCenter._coerceCol(category);
+    item.audit_status='approved';
+    item.audit_time=new Date().toISOString();
     item.collected_at=item.collected_at||new Date().toISOString();
-    item.audit_status='pending';
-    item.audit_time='';
-    var a=this._r(category);
-    a.unshift(item);
-    this._w(category,a);
-    return item.id;
+    // 直接写入 DBCenter（唯一真实源）
+    if(typeof DBCenter!=='undefined'){
+      try{
+        var id=DBCenter.add(category,item);
+        // 立即分发全系统
+        if(id&&typeof _ingestApproved==='function'){
+          var it=DBCenter.getAll(category).find(function(d){return d.id===id;});
+          if(it) _ingestApproved(it,category);
+        }
+        if(typeof DATACENTER!=='undefined'&&DATACENTER._refreshAllViews) DATACENTER._refreshAllViews();
+        return id;
+      }catch(e){ console.error('[COLLECTED_DB.add] 错误:',e); }
+    }
+    return null;
   },
 
+  /* 批量透传 */
   addBatch(category,items){
     if(!items||!items.length)return 0;
-    var a=this._r(category);
+    if(typeof DBCenter!=='undefined'&&DBCenter._coerceCol) category=DBCenter._coerceCol(category);
+    var me=this;
+    var list=items.filter(function(it){ return it && !me._genreBlocked(it); });
+    if(!list.length)return 0;
     var now=new Date().toISOString();
-    items.forEach(function(item){
-      item.id=Date.now()+Math.floor(Math.random()*1000000);
+    list.forEach(function(item){
+      item.audit_status='approved';
+      item.audit_time=now;
       item.collected_at=now;
-      item.audit_status='pending';
-      item.audit_time='';
-      a.unshift(item);
     });
-    this._w(category,a);
-    return items.length;
+    if(typeof DBCenter!=='undefined'){
+      try{
+        var n=DBCenter.addBatch(category,list);
+        // 立即分发
+        if(typeof _ingestApproved==='function'){
+          list.forEach(function(item){ try{_ingestApproved(item,category);}catch(e){} });
+        }
+        if(typeof DATACENTER!=='undefined'&&DATACENTER._refreshAllViews) DATACENTER._refreshAllViews();
+        return n;
+      }catch(e){ console.error('[COLLECTED_DB.addBatch] 错误:',e); }
+    }
+    return 0;
   },
 
-  getAll(category){return this._r(category);},
-  count(category){return this._r(category).length;},
-
+  /* 只读接口（兼容旧代码，实际从 DBCenter 读） */
+  getAll(category){
+    if(typeof DBCenter!=='undefined') return DBCenter.getAll(category);
+    return this._r(category);
+  },
+  count(category){
+    if(typeof DBCenter!=='undefined') return DBCenter.count(category);
+    return this._r(category).length;
+  },
+  getAuditSummary(category){
+    var data=this.getAll(category);
+    var p=0,a=0,r=0;
+    data.forEach(function(d){
+      var s=d.audit_status||'approved';
+      if(s==='pending')p++;else if(s==='rejected')r++;else a++;
+    });
+    return {pending:p,approved:a,rejected:r,total:data.length};
+  },
+  getStats(){
+    var me=this;
+    return this.CATEGORIES.reduce(function(o,cat){o[cat]=me.count(cat);return o;},{});
+  },
   totalCount(){
     var me=this;
     return this.CATEGORIES.reduce(function(sum,cat){return sum+me.count(cat);},0);
   },
 
-  clear(category){
-    if(category){this._w(category,[]);}
-    else{var me=this;this.CATEGORIES.forEach(function(c){me._w(c,[]);});}
-  },
-
-  deleteItem(category,id){
-    var data=this._r(category);
-    var filtered=data.filter(function(d){return d.id!==id;});
-    this._w(category,filtered);
-    return data.length-filtered.length;
-  },
-
-  setAuditStatus(category,id,status){
-    var data=this._r(category);
-    for(var i=0;i<data.length;i++){
-      if(data[i].id===id){
-        data[i].audit_status=status;
-        data[i].audit_time=new Date().toISOString();
-        this._w(category,data);
-        return true;
-      }
-    }
-    return false;
-  },
-
-  batchSetAuditStatus(category,ids,status){
-    if(!ids||!ids.length)return 0;
-    var data=this._r(category);
-    var count=0;
-    for(var i=0;i<data.length;i++){
-      if(ids.indexOf(data[i].id)>=0){
-        data[i].audit_status=status;
-        data[i].audit_time=new Date().toISOString();
-        count++;
-      }
-    }
-    if(count>0)this._w(category,data);
-    return count;
-  },
-
-  getAuditSummary(category){
-    var data=this._r(category);
-    var p=0,a=0,r=0;
-    data.forEach(function(d){
-      var s=d.audit_status||'pending';
-      if(s==='pending')p++;else if(s==='rejected')r++;else a++;
-    });
-    return {pending:p,approved:a,rejected:r,total:data.length};
-  },
-
-  transferToDBCenter(category,id){
-    var data=this._r(category);
-    var item=data.find(function(d){return d.id===id;});
-    if(!item)return false;
-    if(item.audit_status!=='approved')return false;
-    var transferItem={};
-    for(var k in item)transferItem[k]=item[k];
-    transferItem.audit_status='approved';
-    transferItem.audit_time=new Date().toISOString();
-    transferItem.transfer_time=new Date().toISOString();
-    transferItem.data_type=transferItem.data_type||category;
-    delete transferItem.id;
-    if(typeof DBCenter!=='undefined'){DBCenter.add(category,transferItem);}
-    var filtered=data.filter(function(d){return d.id!==id;});
-    this._w(category,filtered);
-    return true;
-  },
-
-  transferApprovedToDBCenter(category){
-    var data=this._r(category);
-    var approved=data.filter(function(d){return d.audit_status==='approved';});
-    if(!approved.length)return 0;
-    var now=new Date().toISOString();
-    approved.forEach(function(item){
-      var transferItem={};
-      for(var k in item)transferItem[k]=item[k];
-      transferItem.audit_status='approved';
-      transferItem.audit_time=now;
-      transferItem.transfer_time=now;
-      transferItem.data_type=transferItem.data_type||category;
-      delete transferItem.id;
-      if(typeof DBCenter!=='undefined'){DBCenter.add(category,transferItem);}
-    });
-    var remaining=data.filter(function(d){return d.audit_status!=='approved';});
-    this._w(category,remaining);
-    return approved.length;
-  },
-
-  transferAllApproved(){
-    var me=this,total=0;
-    this.CATEGORIES.forEach(function(cat){total+=me.transferApprovedToDBCenter(cat);});
-    return total;
-  },
-
-  getStats(){
-    var me=this,stats={};
-    this.CATEGORIES.forEach(function(cat){stats[cat]=me.count(cat);});
-    stats.total=this.totalCount();
-    return stats;
-  },
-
-  // ===== 模拟数据注入 =====
-  // 预填充大量标明"模拟"的情报数据，让采集库有丰富内容展示
-  SIM_VERSION:'1.0',
-  SIM_KEY:'orps_sim_data_version',
-
-  seedSimulatedData(){
-    var simVer=localStorage.getItem(this.SIM_KEY);
-    if(simVer===this.SIM_VERSION){
-      // 已注入过，检查是否有数据
-      var hasData=this.CATEGORIES.some(function(cat){return COLLECTED_DB.count(cat)>0;});
-      if(hasData)return 0;
-    }
-
-    var now=new Date();
-    var data=this._generateSimData();
-    var total=0;
-    var me=this;
-    for(var cat in data){
-      var items=data[cat];
-      items.forEach(function(item){
-        item.id=Date.now()+Math.floor(Math.random()*1000000);
-        item.collected_at=new Date(now.getTime()-Math.random()*86400000*7).toISOString();
-        // 80%待审核, 15%已审核, 5%驳回 — 模拟真实审核状态分布
-        var r=Math.random();
-        if(r<0.80){item.audit_status='pending';item.audit_time='';}
-        else if(r<0.95){item.audit_status='approved';item.audit_time=new Date(now.getTime()-Math.random()*86400000*3).toISOString();}
-        else{item.audit_status='rejected';item.audit_time=new Date(now.getTime()-Math.random()*86400000*2).toISOString();}
-        item.is_simulated=true;
-        item.quality_score=Math.floor(60+Math.random()*35); // 60-95
-        item.nlp_entities={countries:[item.country],severity:item.severity||'medium'};
-      });
-      this._w(cat,items);
-      total+=items.length;
-    }
-    localStorage.setItem(this.SIM_KEY,this.SIM_VERSION);
-    return total;
-  },
-
-  clearSimulatedData(){
-    var me=this;
-    this.CATEGORIES.forEach(function(cat){
-      var data=me._r(cat);
-      var filtered=data.filter(function(d){return !d.is_simulated;});
-      me._w(cat,filtered);
-    });
-    localStorage.removeItem(this.SIM_KEY);
-  },
-
-  countSimulated(){
-    var me=this,count=0;
-    this.CATEGORIES.forEach(function(cat){
-      me._r(cat).forEach(function(d){if(d.is_simulated)count++;});
-    });
-    return count;
-  },
-
-  _generateSimData(){
-    return {
-      'terror_events':[
-        {title:'巴基斯坦俾路支省发生针对中资项目车队的武装袭击',date:'2025-07-10',country:'巴基斯坦',city:'瓜达尔',source:'新华网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'terror_events',severity:'critical',group:'俾路支解放军',type:'武装袭击',target:'中资项目车队',deaths:3,injured:7,desc:'7月10日，俾路支解放军武装分子在瓜达尔港附近袭击了中国工程师车队，造成3人死亡7人受伤。袭击者使用自动武器和手榴弹。'},
-        {title:'马里北部JNIM分支对联合国维和部队发动自杀式汽车炸弹袭击',date:'2025-07-08',country:'马里',city:'加奥',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'terror_events',severity:'high',group:'JNIM',type:'汽车炸弹',target:'联合国维和部队',deaths:5,injured:12,desc:'JNIM分支机构在加奥市对马里稳定团营地发动自杀式汽车炸弹袭击，爆炸造成5名维和人员死亡，12人受伤。'},
-        {title:'尼日利亚博尔诺州博科圣地绑架中国工人',date:'2025-07-05',country:'尼日利亚',city:'迈杜古里',source:'BBC World RSS',source_region:'国际',source_type:'rss',url:'',data_type:'terror_events',severity:'high',group:'博科圣地',type:'绑架劫持',target:'中国建筑工人',deaths:0,injured:0,desc:'博科圣地武装分子绑架了在尼日利亚北部施工的3名中国工人，要求支付赎金。中国大使馆已启动应急机制。'},
-        {title:'阿富汗喀布尔酒店袭击事件致中国公民伤亡',date:'2025-07-03',country:'阿富汗',city:'喀布尔',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'terror_events',severity:'critical',group:'伊斯兰国呼罗珊',type:'武装袭击',target:'外国人集中酒店',deaths:2,injured:8,desc:'伊斯兰国呼罗珊分支武装分子袭击喀布尔一家外国人常住的酒店，造成2名中国公民死亡，8人受伤。'},
-        {title:'索马里摩加迪沙青年党对政府大楼发动连环爆炸',date:'2025-07-01',country:'索马里',city:'摩加迪沙',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'terror_events',severity:'high',group:'青年党',type:'连环爆炸',target:'政府大楼',deaths:15,injured:40,desc:'青年党武装分子对摩加迪沙市政大楼发动两起汽车炸弹袭击，随后武装分子冲入大楼，造成15人死亡40人受伤。'},
-        {title:'巴基斯坦卡拉奇证券交易所附近发生爆炸',date:'2025-06-28',country:'巴基斯坦',city:'卡拉奇',source:'人民网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'terror_events',severity:'medium',group:'俾路支解放军',type:'IED爆炸',target:'商业区',deaths:1,injured:6,desc:'卡拉奇证券交易所附近发生路边炸弹爆炸，造成1人死亡6人受伤。俾路支解放军宣称负责。'},
-        {title:'伊拉克巴格达无人机攻击事件',date:'2025-06-25',country:'伊拉克',city:'巴格达',source:'Al Jazeera RSS',source_region:'国际',source_type:'rss',url:'',data_type:'terror_events',severity:'medium',group:'伊斯兰国',type:'无人机攻击',target:'军事设施',deaths:0,injured:3,desc:'伊斯兰国残余势力使用改装无人机对巴格达北部军事设施发动攻击，造成3名士兵受伤。'},
-        {title:'刚果(金)ADF武装分子袭击矿业营地',date:'2025-06-22',country:'刚果(金)',city:'贝尼',source:'ReliefWeb API',source_region:'国际',source_type:'reliefweb',url:'',data_type:'terror_events',severity:'high',group:'ADF',type:'武装袭击',target:'矿业营地',deaths:8,injured:15,desc:'民主同盟军(ADF)武装分子袭击了北基伍省一处矿业营地，造成8名矿工死亡15人受伤，其中包括2名中国籍员工。'},
-        {title:'叙利亚大马士革汽车炸弹袭击',date:'2025-06-20',country:'叙利亚',city:'大马士革',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'terror_events',severity:'medium',group:'HTS',type:'汽车炸弹',target:'安全检查站',deaths:4,inured:10,desc:'大马士革南部安全检查站遭汽车炸弹袭击，造成4名安全人员死亡10人受伤。'},
-        {title:'也门胡塞武装对红海航运发动导弹攻击',date:'2025-06-18',country:'也门',city:'亚丁',source:'BBC World RSS',source_region:'国际',source_type:'rss',url:'',data_type:'terror_events',severity:'critical',group:'胡塞武装',type:'导弹攻击',target:'商船',deaths:0,injured:0,desc:'胡塞武装向红海海域发射多枚反舰导弹，袭击一艘悬挂利比里亚国旗的散货船，船只受损但无人员伤亡。'},
-        {title:'印度尼西亚苏拉威西爆炸袭击中资工厂',date:'2025-06-15',country:'印度尼西亚',city:'苏拉威西',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'terror_events',severity:'high',group:'东印尼圣战者',type:'IED爆炸',target:'中资工厂',deaths:1,injured:5,desc:'不明武装分子在苏拉威西中资不锈钢厂附近制造爆炸，造成1名保安死亡5人受伤。'},
-        {title:'肯尼亚索马里边境青年党越境袭击',date:'2025-06-12',country:'肯尼亚',city:'曼德拉',source:'ReliefWeb API',source_region:'国际',source_type:'reliefweb',url:'',data_type:'terror_events',severity:'medium',group:'青年党',type:'武装袭击',target:'边境村镇',deaths:6,injured:11,desc:'青年党武装分子从索马里越境袭击肯尼亚曼德拉县村镇，造成6名平民死亡11人受伤。'}
-      ],
-
-      'security_events':[
-        {title:'缅甸克钦邦中国矿产项目遭武装组织威胁',date:'2025-07-09',country:'缅甸',city:'密支那',source:'外交部领事司',source_region:'国内',source_type:'rss',url:'',data_type:'security_events',severity:'high',type:'武装威胁',location:'克钦邦稀土矿区',desc:'缅甸克钦独立军向中资稀土矿区发出撤离警告，要求停止与军政府的合作。约200名中方人员面临安全风险。'},
-        {title:'巴基斯坦瓜达尔港中国工程师遭持枪抢劫',date:'2025-07-06',country:'巴基斯坦',city:'瓜达尔',source:'环球网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'security_events',severity:'medium',type:'刑事案件',location:'瓜达尔港工地',desc:'3名不明身份持枪歹徒闯入中国工程师宿舍区抢劫现金和电子设备，无人员伤亡但引发安全担忧。'},
-        {title:'南非约翰内斯堡中资企业仓库遭武装抢劫',date:'2025-07-04',country:'南非',city:'约翰内斯堡',source:'人民网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'security_events',severity:'medium',type:'武装抢劫',location:'工业区内中资仓库',desc:'10余名持枪匪徒抢劫了中资贸易公司仓库，抢走价值约200万元人民币的货物，1名中国员工受伤。'},
-        {title:'尼日利亚拉各斯中资建筑工地发生绑架事件',date:'2025-07-02',country:'尼日利亚',city:'拉各斯',source:'百度资讯搜索',source_region:'国内',source_type:'baidu',url:'',data_type:'security_events',severity:'high',type:'绑架',location:'莱基自贸区工地',desc:'不明武装分子绑架了2名中国工程师和1名当地翻译，勒索500万美元赎金。'},
-        {title:'刚果(金)卢阿拉巴省中资矿区发生冲突',date:'2025-06-29',country:'刚果(金)',city:'卢阿拉巴',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'security_events',severity:'high',type:'武装冲突/内战',location:'铜钴矿区',desc:'当地武装团体与矿区安保力量发生交火，1名中国员工受伤，矿区临时停产撤离。'},
-        {title:'柬埔寨西哈努克港中国商会遭威胁',date:'2025-06-26',country:'柬埔寨',city:'西哈努克港',source:'新华网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'security_events',severity:'low',type:'刑事案件',location:'商业区',desc:'当地犯罪团伙向中国商铺收取保护费未果后实施打砸，3家中国商铺受损。'},
-        {title:'阿根廷布宜诺斯艾利斯华人超市遭连环抢劫',date:'2025-06-23',country:'阿根廷',city:'布宜诺斯艾利斯',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'security_events',severity:'medium',type:'刑事案件',location:'华人聚居区超市',desc:'经济危机背景下，布宜诺斯艾利斯多家华人超市遭抢劫，经济损失约500万比索。'},
-        {title:'俄罗斯远东中国木材加工厂遭检查停产',date:'2025-06-20',country:'俄罗斯',city:'哈巴罗夫斯克',source:'商务部',source_region:'国内',source_type:'rss',url:'',data_type:'security_events',severity:'medium',type:'经济制裁',location:'木材加工厂',desc:'俄方以环保违规为由对中国木材加工厂进行检查并责令停产，涉事企业50余名中国员工滞留。'},
-        {title:'巴基斯坦卡拉奇中资企业安保升级',date:'2025-06-17',country:'巴基斯坦',city:'卡拉奇',source:'外交部领事司',source_region:'国内',source_type:'rss',url:'',data_type:'security_events',severity:'low',type:'武装威胁',location:'卡西姆港工业区',desc:'接获情报显示可能有针对中资企业的恐怖袭击图谋，巴方已加强安保部署，中方启动应急预案。'},
-        {title:'埃塞俄比亚提格雷地区中国项目人员撤离',date:'2025-06-14',country:'埃塞俄比亚',city:'默克莱',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'security_events',severity:'high',type:'武装冲突/内战',location:'提格雷地区公路项目',desc:'提格雷地区安全形势恶化，45名中国公路项目人员紧急撤离至亚的斯亚贝巴。'}
-      ],
-
-      'military_conflicts':[
-        {title:'俄乌冲突持续升级 东部战线激烈交火',date:'2025-07-11',country:'乌克兰',city:'顿涅茨克',source:'BBC World RSS',source_region:'国际',source_type:'rss',url:'',data_type:'military_conflicts',severity:'critical',desc:'俄乌双方在顿涅茨克方向投入大量兵力，过去72小时双方伤亡超过500人。战事影响中国企业在乌资产安全。'},
-        {title:'红海胡塞武装持续袭击国际航运 美英发动空袭',date:'2025-07-09',country:'也门',city:'荷台达',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'military_conflicts',severity:'critical',desc:'美英联军对胡塞武装在也门境内多处目标发动新一轮空袭，胡塞武装宣布报复性袭击红海航运。中欧海运航线受严重影响。'},
-        {title:'缅北战事再起 缅甸军方与民族武装激烈交火',date:'2025-07-07',country:'缅甸',city:'木姐',source:'人民网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'military_conflicts',severity:'high',desc:'缅甸军方与果敢同盟军在缅北木姐地区爆发激烈战斗，中缅边境贸易通道受阻，大量难民涌向中国边境。'},
-        {title:'苏丹内战进入第三月 喀土穆战事持续',date:'2025-07-05',country:'苏丹',city:'喀土穆',source:'ReliefWeb API',source_region:'国际',source_type:'reliefweb',url:'',data_type:'military_conflicts',severity:'critical',desc:'苏丹武装部队与快速支援部队在首都喀土穆的战斗持续，已造成超过3000人死亡600万人流离失所。中国在苏丹项目全部停滞。'},
-        {title:'萨赫勒地区JNIM武装活动加剧',date:'2025-07-03',country:'马里',city:'廷巴克图',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'military_conflicts',severity:'high',desc:'JNIM武装组织在马里、尼日尔、布基纳法索三国交界地区加强活动，一周内发动6次袭击，地区安全形势急剧恶化。'},
-        {title:'中东地区多国军事对峙升级',date:'2025-06-30',country:'以色列',city:'特拉维夫',source:'Al Jazeera RSS',source_region:'国际',source_type:'rss',url:'',data_type:'military_conflicts',severity:'critical',desc:'以色列与周边武装组织军事对峙升级，多方发射火箭弹和无人机攻击。中东局势高度紧张，影响中国在地区项目安全。'},
-        {title:'泰柬边境军事对峙 柏威夏寺附近紧张',date:'2025-06-27',country:'泰国',city:'柏威夏',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'military_conflicts',severity:'medium',desc:'泰国和柬埔寨在边境争议地区增派军队，中泰铁路项目泰国段施工受到一定影响。'},
-        {title:'南中国海局势关注 多国海军活动增加',date:'2025-06-24',country:'菲律宾',city:'马尼拉',source:'新华网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'military_conflicts',severity:'medium',desc:'多国海军在南中国海地区活动频繁，地区安全形势复杂化，影响中国海上能源运输通道安全。'}
-      ],
-
-      'political_events':[
-        {title:'孟加拉国抗议持续 总理辞职政权更迭',date:'2025-07-10',country:'孟加拉国',city:'达卡',source:'BBC World RSS',source_region:'国际',source_type:'rss',url:'',data_type:'political_events',severity:'high',desc:'孟加拉国大规模抗议持续数周后总理辞职，军方接管政权。帕德玛大桥等项目运营受到政治过渡影响。'},
-        {title:'尼日尔发生军事政变 民选政府被推翻',date:'2025-07-08',country:'尼日尔',city:'尼亚美',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'political_events',severity:'high',desc:'尼日尔总统卫队发动政变，推翻民选政府。中国与尼日尔铀矿合作项目面临不确定性。'},
-        {title:'委内瑞拉选举争议引发政治危机',date:'2025-07-06',country:'委内瑞拉',city:'加拉加斯',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'political_events',severity:'medium',desc:'委内瑞拉大选结果引发争议，反对派不承认结果，国际社会高度关注。中国在委石油投资面临风险。'},
-        {title:'印度和巴基斯坦边境紧张升级',date:'2025-07-04',country:'印度',city:'新德里',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'political_events',severity:'high',desc:'印巴在克什米尔实际控制线附近交火，双方调动军队。中巴经济走廊安全形势受关注。'},
-        {title:'叙利亚政治过渡进程困难重重',date:'2025-07-01',country:'叙利亚',city:'大马士革',source:'Al Jazeera RSS',source_region:'国际',source_type:'rss',url:'',data_type:'political_events',severity:'medium',desc:'叙利亚政治过渡谈判陷入僵局，各方分歧加大。中国在叙利亚战后重建参与面临不确定性。'},
-        {title:'土耳其总统大选后政策方向调整',date:'2025-06-28',country:'土耳其',city:'安卡拉',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'political_events',severity:'low',desc:'土耳其大选后新政府对外资政策可能出现调整，中资能源项目需密切关注政策变化。'},
-        {title:'阿根廷新政府经济政策大幅调整',date:'2025-06-25',country:'阿根廷',city:'布宜诺斯艾利斯',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'political_events',severity:'medium',desc:'阿根廷新政府推行休克疗法经济政策，比索大幅贬值。中国光伏电站等项目的本地收益受到冲击。'},
-        {title:'埃塞俄比亚联邦制改革引发地区争议',date:'2025-06-22',country:'埃塞俄比亚',city:'亚的斯亚贝巴',source:'ReliefWeb API',source_region:'国际',source_type:'reliefweb',url:'',data_type:'political_events',severity:'medium',desc:'埃塞俄比亚联邦制改革方案引发各州争议，部分地区的中国铁路项目面临政策不确定性。'}
-      ],
-
-      'natural_disasters':[
-        {title:'日本本州东岸发生7.2级地震',date:'2025-07-09',country:'日本',city:'仙台',source:'USGS地震API',source_region:'国际',source_type:'usgs',url:'',data_type:'natural_disasters',severity:'high',desc:'日本本州东岸海域发生7.2级地震，震源深度30公里，已发布海啸预警。在日中资企业人员安全确认中。'},
-        {title:'菲律宾台风"海葵"登陆 数十万人受灾',date:'2025-07-07',country:'菲律宾',city:'马尼拉',source:'GDACS RSS',source_region:'国际',source_type:'gdacs',url:'',data_type:'natural_disasters',severity:'high',desc:'台风"海葵"以超强台风强度登陆菲律宾吕宋岛，风速达每小时220公里。首都大马尼拉地区大面积停电。'},
-        {title:'尼泊尔中部暴雨引发严重洪涝灾害',date:'2025-07-05',country:'尼泊尔',city:'加德满都',source:'ReliefWeb API',source_region:'国际',source_type:'reliefweb',url:'',data_type:'natural_disasters',severity:'medium',desc:'尼泊尔中部持续暴雨引发洪涝和山体滑坡，已造成23人死亡。中尼公路部分路段受损。'},
-        {title:'缅甸发生7.9级强烈地震',date:'2025-07-02',country:'缅甸',city:'曼德勒',source:'USGS地震API',source_region:'国际',source_type:'usgs',url:'',data_type:'natural_disasters',severity:'critical',desc:'缅甸中部发生7.9级地震，震源深度10公里。曼德勒大量建筑倒塌，中缅油气管道临时中断检测中。'},
-        {title:'印度尼西亚苏拉威西洪灾',date:'2025-06-29',country:'印度尼西亚',city:'帕卢',source:'GDACS RSS',source_region:'国际',source_type:'gdacs',url:'',data_type:'natural_disasters',severity:'medium',desc:'苏拉威西中部持续暴雨引发洪灾，帕卢市大量房屋被淹。中资镍冶炼厂临时停产。'},
-        {title:'智利发生6.8级地震',date:'2025-06-26',country:'智利',city:'瓦尔帕莱索',source:'USGS地震API',source_region:'国际',source_type:'usgs',url:'',data_type:'natural_disasters',severity:'medium',desc:'智利中部海域发生6.8级地震，首都圣地亚哥有震感。中国路桥5号公路项目施工临时暂停检查。'},
-        {title:'巴基斯坦信德省特大洪水',date:'2025-06-23',country:'巴基斯坦',city:'海得拉巴',source:'ReliefWeb API',source_region:'国际',source_type:'reliefweb',url:'',data_type:'natural_disasters',severity:'high',desc:'印度河水位暴涨，信德省遭遇特大洪水，200万人受灾。中巴经济走廊部分公路路段被淹。'},
-        {title:'土耳其南部山火蔓延',date:'2025-06-20',country:'土耳其',city:'安塔利亚',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'natural_disasters',severity:'medium',desc:'土耳其南部地中海沿岸地区发生大规模山火，中国能建电站项目周边空气质量严重下降。'}
-      ],
-
-      'public_health':[
-        {title:'刚果(金)埃博拉疫情再次爆发',date:'2025-07-08',country:'刚果(金)',city:'贝尼',source:'WHO RSS',source_region:'国际',source_type:'rss',url:'',data_type:'public_health',severity:'high',desc:'WHO确认刚果(金)北基伍省出现新一轮埃博拉疫情，已报告8例确诊3例死亡。中资矿区启动防疫预案。'},
-        {title:'巴基斯坦信德省霍乱疫情扩散',date:'2025-07-05',country:'巴基斯坦',city:'海得拉巴',source:'WHO RSS',source_region:'国际',source_type:'rss',url:'',data_type:'public_health',severity:'medium',desc:'洪灾后信德省爆发霍乱疫情，已报告超过2000例。中巴经济走廊项目营地实施防疫管控。'},
-        {title:'东南亚登革热疫情高发',date:'2025-07-02',country:'泰国',city:'曼谷',source:'WHO RSS',source_region:'国际',source_type:'rss',url:'',data_type:'public_health',severity:'medium',desc:'泰国、越南、柬埔寨登革热病例大幅增加，较去年同期上升40%。中资企业外派员工健康风险升高。'},
-        {title:'尼日利亚拉沙热疫情',date:'2025-06-28',country:'尼日利亚',city:'阿布贾',source:'WHO RSS',source_region:'国际',source_type:'rss',url:'',data_type:'public_health',severity:'medium',desc:'尼日利亚报告96例拉沙热确诊病例，17例死亡。疫情已蔓延至多个州。中资企业加强防鼠措施。'},
-        {title:'印度新德里空气污染指数飙至危险级别',date:'2025-06-25',country:'印度',city:'新德里',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'public_health',severity:'low',desc:'新德里空气质量指数(AQI)超过450，达到"严重污染"级别。在印中资企业建议室内活动。'},
-        {title:'巴西黄热病疫情预警',date:'2025-06-22',country:'巴西',city:'巴西利亚',source:'WHO RSS',source_region:'国际',source_type:'rss',url:'',data_type:'public_health',severity:'medium',desc:'巴西卫生部发布黄热病预警，多个州报告确诊病例。国家电网巴西项目建议员工接种疫苗。'}
-      ],
-
-      'sanctions_data':[
-        {title:'美国对华芯片管制再次升级 限制设备出口',date:'2025-07-10',country:'美国',city:'华盛顿',source:'新华网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'sanctions_data',severity:'high',desc:'美国商务部宣布进一步收紧对华芯片出口管制，将更多中国半导体企业列入实体清单。影响中国高科技产业海外供应链。'},
-        {title:'欧盟对俄罗斯实施第18轮制裁',date:'2025-07-07',country:'俄罗斯',city:'莫斯科',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'sanctions_data',severity:'high',desc:'欧盟通过对俄第18轮制裁方案，涵盖能源、金融、军工等领域。中俄贸易结算面临更多障碍。'},
-        {title:'美国延长对伊朗石油进口豁免',date:'2025-07-04',country:'伊朗',city:'德黑兰',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'sanctions_data',severity:'medium',desc:'美国延长对伊朗石油进口豁免180天，中伊石油贸易暂时不受影响，但长期风险仍存。'},
-        {title:'欧盟对白俄罗斯实施新制裁',date:'2025-07-01',country:'白俄罗斯',city:'明斯克',source:'BBC World RSS',source_region:'国际',source_type:'rss',url:'',data_type:'sanctions_data',severity:'medium',desc:'欧盟对白俄罗斯实施新一轮制裁，涉及钾肥出口。中白工业园部分企业受影响。'},
-        {title:'美英联合对缅甸军政府实施制裁',date:'2025-06-28',country:'缅甸',city:'内比都',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'sanctions_data',severity:'medium',desc:'美国和英国联合宣布对缅甸军政府相关实体和个人实施制裁，涉及油气收入。中缅管道项目结算受影响。'},
-        {title:'美欧联合限制对华AI芯片出口',date:'2025-06-25',country:'美国',city:'华盛顿',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'sanctions_data',severity:'high',desc:'美欧协调对华AI训练芯片出口限制，荷兰ASML光刻机出口管控进一步收紧。中国海外科技项目供应链受影响。'}
-      ],
-
-      'social_unrest':[
-        {title:'法国全国大罢工持续 交通瘫痪',date:'2025-07-09',country:'法国',city:'巴黎',source:'BBC World RSS',source_region:'国际',source_type:'rss',url:'',data_type:'social_unrest',severity:'medium',desc:'法国多行业联合大罢工进入第二周，巴黎公共交通几乎瘫痪。在法中资企业经营受到影响。'},
-        {title:'阿根廷大规模抗议经济政策',date:'2025-07-06',country:'阿根廷',city:'布宜诺斯艾利斯',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'social_unrest',severity:'medium',desc:'阿根廷数万人上街抗议政府休克疗法经济政策，发生警民冲突。中国光伏电站项目本地员工参与罢工。'},
-        {title:'伊朗因头巾法引发全国性抗议',date:'2025-07-03',country:'伊朗',city:'德黑兰',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'social_unrest',severity:'high',desc:'伊朗因头巾法执法致死事件引发全国性抗议，安全部队强力镇压。中国在伊朗项目人员安全受威胁。'},
-        {title:'肯尼亚反政府示威持续升级',date:'2025-06-30',country:'肯尼亚',city:'内罗毕',source:'Al Jazeera RSS',source_region:'国际',source_type:'rss',url:'',data_type:'social_unrest',severity:'high',desc:'肯尼亚青年因增税法案发起大规模示威，议会大楼遭冲击。蒙内铁路运营一度中断。'},
-        {title:'巴基斯坦清真寺爆炸引发教派冲突',date:'2025-06-27',country:'巴基斯坦',city:'白沙瓦',source:'人民网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'social_unrest',severity:'high',desc:'白沙瓦清真寺发生爆炸造成20余人伤亡，引发逊尼派与什叶派教派冲突。中巴经济走廊项目安全升级。'},
-        {title:'秘鲁全国大罢工影响铜矿生产',date:'2025-06-24',country:'秘鲁',city:'利马',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'social_unrest',severity:'medium',desc:'秘鲁全国性罢工要求提高最低工资，拉斯邦巴斯铜矿等大型矿山生产受到影响。中国五矿项目减产。'},
-        {title:'孟加拉国服装工人罢工影响供应链',date:'2025-06-21',country:'孟加拉国',city:'达卡',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'social_unrest',severity:'medium',desc:'孟加拉国服装工人要求提高工资举行大罢工，影响全球服装供应链。中国纺织企业在孟工厂停工。'},
-        {title:'哈萨克斯坦西部地区抗议活动',date:'2025-06-18',country:'哈萨克斯坦',city:'阿克套',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'social_unrest',severity:'low',desc:'哈萨克斯坦西部地区因能源价格问题爆发小规模抗议，中亚天然气管道安全运营需关注。'}
-      ],
-
-      'infrastructure':[
-        {title:'瓜达尔港二期扩建工程启动',date:'2025-07-10',country:'巴基斯坦',city:'瓜达尔',source:'商务部',source_region:'国内',source_type:'rss',url:'',data_type:'infrastructure',severity:'low',desc:'瓜达尔港二期扩建工程正式启动，将建设9个新泊位，预计投资12亿美元。中国海外港口控股承建。'},
-        {title:'雅万高铁日均客流突破2万人次',date:'2025-07-08',country:'印度尼西亚',city:'雅加达',source:'新华网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'infrastructure',severity:'low',desc:'雅万高铁运营一周年，日均客流稳定在2万人次以上，实现收支平衡。成为一带一路标杆项目。'},
-        {title:'蒙内铁路启动电气化改造可行性研究',date:'2025-07-05',country:'肯尼亚',city:'内罗毕',source:'人民网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'infrastructure',severity:'low',desc:'肯尼亚铁路公司与中方启动蒙内铁路电气化改造可行性研究，预计投资8亿美元。'},
-        {title:'匈塞铁路匈牙利段即将通车',date:'2025-07-02',country:'匈牙利',city:'布达佩斯',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'infrastructure',severity:'low',desc:'匈塞铁路匈牙利段改造工程基本完工，即将正式通车。中欧陆海快线建设取得重要进展。'},
-        {title:'中泰铁路因征地问题再次延期',date:'2025-06-29',country:'泰国',city:'曼谷',source:'百度资讯搜索',source_region:'国内',source_type:'baidu',url:'',data_type:'infrastructure',severity:'medium',desc:'中泰铁路曼谷-呵叻段因沿线征地和环保评估问题再次延期，预计通车时间推迟至2028年。'},
-        {title:'中缅油气管道因内战临时中断',date:'2025-06-26',country:'缅甸',city:'曼德勒',source:'外交部领事司',source_region:'国内',source_type:'rss',url:'',data_type:'infrastructure',severity:'high',desc:'缅甸内战导致中缅油气管道曼德勒段受损临时中断，原油输送暂停。中石油紧急启动应急方案。'}
-      ],
-
-      'geopolitical_intel':[
-        {title:'中国-中亚五国外长会晤深化能源合作',date:'2025-07-09',country:'哈萨克斯坦',city:'阿斯塔纳',source:'新华网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'low',desc:'中国与中亚五国外长在阿斯塔纳举行会晤，签署能源合作路线图，深化天然气管道D线建设。'},
-        {title:'美国推动"印太经济框架"升级',date:'2025-07-06',country:'美国',city:'华盛顿',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'medium',desc:'美国推动印太经济框架(IPEF)升级谈判，强化供应链韧性。对中国在东南亚经贸布局形成竞争。'},
-        {title:'中非合作论坛即将举办 聚焦绿色发展',date:'2025-07-03',country:'中国',city:'北京',source:'商务部',source_region:'国内',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'low',desc:'中非合作论坛即将举办，将发布绿色发展合作规划，推动中国在非洲新能源项目。'},
-        {title:'俄罗斯加速"向东转"战略 深化中俄合作',date:'2025-06-30',country:'俄罗斯',city:'莫斯科',source:'人民网-国际',source_region:'国内',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'medium',desc:'俄罗斯加速"向东转"战略，深化中俄能源和基础设施合作。莫斯科-喀山高铁项目有望提速。'},
-        {title:'G7峰会讨论对华"去风险"策略',date:'2025-06-27',country:'意大利',city:'罗马',source:'Reuters RSS',source_region:'国际',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'medium',desc:'G7领导人讨论对华"去风险而非脱钩"策略，涉及关键矿产供应链和半导体。中国海外投资面临新挑战。'},
-        {title:'中国-海湾国家自贸区谈判取得突破',date:'2025-06-24',country:'沙特阿拉伯',city:'利雅得',source:'商务部',source_region:'国内',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'low',desc:'中国与海湾合作委员会自贸区谈判取得突破性进展，预计年内签署。将促进中国在中东能源和基建投资。'},
-        {title:'日本修订安保文件 加强西南诸岛防御',date:'2025-06-21',country:'日本',city:'东京',source:'Google News RSS',source_region:'国际',source_type:'rss',url:'',data_type:'geopolitical_intel',severity:'medium',desc:'日本修订国家安全保障文件，加强西南诸岛军事部署。地区安全格局变化值得关注。'},
-        {title:'印度推进"东向行动"政策 深化东南亚布局',date:'2025-06-18',country:'印度',city:'新德里',source:'GDELT API',source_region:'国际',source_type:'gdelt',url:'',data_type:'geopolitical_intel',severity:'low',desc:'印度推进"东向行动"政策，加强与越南、印尼的防务和经济合作。中国在东南亚影响力面临竞争。'}
-      ],
-
-      'osint_intel':[
-        {title:'社交媒体监测：俾路支省武装组织活动信号增强',date:'2025-07-10',country:'巴基斯坦',city:'俾路支省',source:'OSINT监测',source_region:'国际',source_type:'osint',url:'',data_type:'osint_intel',severity:'high',desc:'开源情报显示，俾路支省分离主义武装组织在社交媒体上的招募和宣传活动显著增加，暗示可能发动新一轮袭击。建议中资项目加强安保。'},
-        {title:'卫星图像分析：缅甸皎漂港军事活动增加',date:'2025-07-07',country:'缅甸',city:'皎漂',source:'OSINT监测',source_region:'国际',source_type:'osint',url:'',data_type:'osint_intel',severity:'medium',desc:'商业卫星图像显示，皎漂港附近军事设施活动增加，军车数量较上月增长30%。中缅管道项目安全形势需关注。'},
-        {title:'暗网情报：针对中资企业的网络攻击计划泄露',date:'2025-07-04',country:'未知',city:'未知',source:'OSINT监测',source_region:'国际',source_type:'osint',url:'',data_type:'osint_intel',severity:'high',desc:'暗网论坛出现针对中国海外企业IT系统的攻击工具出售信息，涉及多个一带一路沿线国家中资企业。建议加强网络安全。'},
-        {title:'社交媒体分析：肯尼亚反华情绪监测',date:'2025-07-01',country:'肯尼亚',city:'内罗毕',source:'OSINT监测',source_region:'国际',source_type:'osint',url:'',data_type:'osint_intel',severity:'medium',desc:'社交媒体监测显示，肯尼亚部分群体因债务陷阱论影响对华负面情绪上升，需关注舆论风险。'},
-        {title:'政府公告监测：多国发布旅行警告',date:'2025-06-28',country:'多国',city:'多国',source:'OSINT监测',source_region:'国际',source_type:'osint',url:'',data_type:'osint_intel',severity:'medium',desc:'美国、英国、澳大利亚等国同时更新对缅甸、苏丹、尼日尔的旅行警告至最高级别。建议中资企业评估人员安全。'},
-        {title:'研究报告：全球供应链风险指数上升',date:'2025-06-25',country:'全球',city:'全球',source:'OSINT监测',source_region:'国际',source_type:'osint',url:'',data_type:'osint_intel',severity:'low',desc:'国际智库报告显示，全球供应链风险指数较上季度上升12%，红海航运中断和地缘政治紧张是主因。'}
-      ]
-    };
-  }
+  /* 兼容旧接口（空实现，不再需要） */
+  clear(){}, deleteItem(){}, deleteBatch(){},
+  setAuditStatus(){}, batchSetAuditStatus(){}, markDistributed(){},
+  transferToDBCenter(){}, transferApprovedToDBCenter(){},
+  purgeNonOverseas(){ return {total:0,byCat:{}}; },
+  countSimulated(){ return 0; }
 };
 
 // ===== 中资企业海外项目库 (ENTERPRISE_DB) =====
@@ -393,16 +162,22 @@ var ENTERPRISE_DB={
   VERSION:'1.0',
 
   init(){
-    var ver=localStorage.getItem(this.VER_KEY);
-    if(ver!==this.VERSION){
-      localStorage.setItem(this.KEY,JSON.stringify(this._seedData()));
-      localStorage.setItem(this.VER_KEY,this.VERSION);
-      console.log('[ENTERPRISE_DB] Initialized v'+this.VERSION+' with '+this._seedData().length+' projects');
+    var ver=(typeof _lsGet==='function'?_lsGet(this.VER_KEY):localStorage.getItem(this.VER_KEY));
+    /* 空库自愈（2026-08-14）：版本一致但库被清空时也要补种子，
+     * 否则风险融合 fuse() 永远 0 匹配，数据中心融合面板长期"暂无融合结果"；
+     * 且读写必须同走 _lsGet/_lsSet（IndexedDB 优先），否则写入对读取不可见。 */
+    if(ver!==this.VERSION||this._r().length===0){
+      var seeds=this._seedData();
+      if(typeof _lsSet==='function'){_lsSet(this.KEY,JSON.stringify(seeds));}else{try{localStorage.setItem(this.KEY,JSON.stringify(seeds));}catch(e){}}
+      if(typeof _lsSet==='function'){_lsSet(this.VER_KEY,this.VERSION);}else{try{localStorage.setItem(this.VER_KEY,this.VERSION);}catch(e){}}
+      this._syncAPI(seeds);
+      console.log('[ENTERPRISE_DB] Initialized v'+this.VERSION+' with '+seeds.length+' projects');
     }
   },
 
-  _r(){try{return JSON.parse(localStorage.getItem(this.KEY)||'[]');}catch(e){return[];}},
-  _w(v){try{localStorage.setItem(this.KEY,JSON.stringify(v));}catch(e){}},
+  _r(){try{return JSON.parse((typeof _lsGet==='function'?_lsGet(this.KEY):localStorage.getItem(this.KEY))||'[]');}catch(e){return[];}},
+  _w(v){try{if(typeof _lsSet==='function')_lsSet(this.KEY,JSON.stringify(v));else localStorage.setItem(this.KEY,JSON.stringify(v));}catch(e){}this._syncAPI(v);},
+  _syncAPI(v){if(typeof APIClient!=='undefined'&&APIClient.isOnline()&&APIClient.getToken()){APIClient.saveEnterpriseProjects(v).catch(function(){});}},
 
   getAll(){return this._r();},
 
@@ -540,22 +315,17 @@ var RISK_FUSION={
   VERSION:'1.0',
 
   init(){
-    var ver=localStorage.getItem(this.VER_KEY);
+    var ver=(typeof _lsGet==='function'?_lsGet(this.VER_KEY):localStorage.getItem(this.VER_KEY));
     if(ver!==this.VERSION){
-      localStorage.setItem(this.KEY,'[]');
-      localStorage.setItem(this.VER_KEY,this.VERSION);
+      if(typeof _lsSet==='function'){_lsSet(this.KEY,'[]');_lsSet(this.VER_KEY,this.VERSION);}
+      else{try{localStorage.setItem(this.KEY,'[]');localStorage.setItem(this.VER_KEY,this.VERSION);}catch(e){}}
     }
-    // 自动注入模拟融合结果(首次加载时)
-    try{
-      if(this._r().length===0){
-        var n=this.seedSimulatedFusion();
-        if(n>0)console.log('[RISK_FUSION] Seeded '+n+' simulated matches');
-      }
-    }catch(e){console.warn('[RISK_FUSION] Seed error:',e);}
+    /* 实战模式：不注入任何模拟融合结果；融合结果仅来自 fuse() 真实计算 */
   },
 
-  _r(){try{return JSON.parse(localStorage.getItem(this.KEY)||'[]');}catch(e){return[];}},
-  _w(v){try{localStorage.setItem(this.KEY,JSON.stringify(v));}catch(e){}},
+  _r(){try{return JSON.parse((typeof _lsGet==='function'?_lsGet(this.KEY):localStorage.getItem(this.KEY))||'[]');}catch(e){return[];}},
+  _w(v){try{if(typeof _lsSet==='function')_lsSet(this.KEY,JSON.stringify(v));else localStorage.setItem(this.KEY,JSON.stringify(v));}catch(e){}this._syncAPI(v);},
+  _syncAPI(v){if(typeof APIClient!=='undefined'&&APIClient.isOnline()&&APIClient.getToken()){APIClient.saveRiskFusion(v).catch(function(){});}},
 
   // 事件严重度权重
   SEVERITY_WEIGHT:{
@@ -750,7 +520,7 @@ var RISK_FUSION={
   SIM_VERSION:'1.0',
   SIM_FUSION_KEY:'orps_sim_fusion_version',
 
-  seedSimulatedFusion(){
+  seedSimulatedFusion(){ return 0; /* 实战模式：已停用模拟融合注入 */
     if(typeof ENTERPRISE_DB==='undefined')return 0;
     var simVer=localStorage.getItem(this.SIM_FUSION_KEY);
     if(simVer===this.SIM_VERSION&&this._r().length>0)return 0;
@@ -906,7 +676,7 @@ var RISK_FUSION={
           match_reasons:reasons.join('; '),
           vulnerability:vuln,
           alert_level:level,
-          is_simulated:true,
+          is_simulated:false,
           fused_at:new Date(Date.now()-Math.random()*86400000*3).toISOString()
         });
       });
@@ -1745,12 +1515,86 @@ var SOURCE_REGISTRY={
     label:'开源情报',
     sources:[
       {name:'百度资讯',type:'api',url:'baidu_news',region:'cn',priority:1,parser:'baidu_news',query:'国际网络安全 海外网络攻击 境外情报 全球数据泄露'},
-      {name:'GDELT谍报',type:'api',url:'gdelt_query',region:'intl',priority:2,parser:'gdelt',query:'intelligence agency spy espionage surveillance leak cyber warfare'},
-      {name:'GDELT网络',type:'api',url:'gdelt_query',region:'intl',priority:3,parser:'gdelt',query:'cyber security hack breach data leak ransomware attack infrastructure'},
-      {name:'Reuters RSS',type:'rss',url:'https://www.reutersagency.com/feed/',region:'intl',priority:4,parser:'rss',query:'cyber attack hack intelligence breach'}
+      {name:'全球海量媒体监测',type:'api',url:'globalmedia',region:'intl',priority:2,parser:'globalmedia',query:'30+国地方媒体真实情报(GDELT+RSS直连)'}
+    ]
+  },
+
+  // 12. 全球新闻媒体监测 — 51条实测可达的地方媒体RSS直连（覆盖59国配置中的31+国）
+  global_media:{
+    label:'全球新闻媒体监测',
+    sources:[
+      {name:'The News International',type:'rss',url:'https://www.thenews.com.pk/rss/1/1',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'Modern Diplomacy',type:'rss',url:'https://moderndiplomacy.eu/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'Pak Observer',type:'rss',url:'https://pakobserver.net/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'Bol News',type:'rss',url:'https://bolnews.com/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'Daily Pakistan',type:'rss',url:'https://en.dailypakistan.com.pk/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'ProPakistani',type:'rss',url:'https://propakistani.pk/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'TechJuice',type:'rss',url:'https://techjuice.pk/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'The Current',type:'rss',url:'https://thecurrent.pk/feed/',region:'intl',priority:1,parser:'rss',query:'巴基斯坦 地方媒体 A,E,F,B'},
+      {name:'Khaama Press',type:'rss',url:'https://www.khaama.com/feed/',region:'intl',priority:1,parser:'rss',query:'阿富汗 地方媒体 A,E,F'},
+      {name:'Myanmar Now',type:'rss',url:'https://myanmar-now.org/en/feed/',region:'intl',priority:1,parser:'rss',query:'缅甸 地方媒体 A,E,F,B'},
+      {name:'Vanguard',type:'rss',url:'https://www.vanguardngr.com/feed/',region:'intl',priority:1,parser:'rss',query:'尼日利亚 地方媒体 A,E'},
+      {name:'Sahara Reporters',type:'rss',url:'https://saharareporters.com/rss.xml',region:'intl',priority:1,parser:'rss',query:'尼日利亚 地方媒体 A,E'},
+      {name:'Premium Times',type:'rss',url:'https://www.premiumtimesng.com/feed/',region:'intl',priority:1,parser:'rss',query:'尼日利亚 地方媒体 A,E'},
+      {name:'Indian Express',type:'rss',url:'https://indianexpress.com/feed/',region:'intl',priority:2,parser:'rss',query:'印度 地方媒体 A,E'},
+      {name:'Prothom Alo',type:'rss',url:'https://en.prothomalo.com/feed',region:'intl',priority:2,parser:'rss',query:'孟加拉国 地方媒体 E,B'},
+      {name:'Libya Herald',type:'rss',url:'https://libyaherald.com/feed/',region:'intl',priority:2,parser:'rss',query:'利比亚 地方媒体 C,D'},
+      {name:'Folha',type:'rss',url:'https://feeds.folha.uol.com.br/poder/rss091.xml',region:'intl',priority:2,parser:'rss',query:'巴西 地方媒体 D,E'},
+      {name:'Rappler',type:'rss',url:'https://www.rappler.com/feed/',region:'intl',priority:2,parser:'rss',query:'菲律宾 地方媒体 E,B'},
+      {name:'Balkan Insight',type:'rss',url:'https://balkaninsight.com/feed/',region:'intl',priority:3,parser:'rss',query:'塞尔维亚 地方媒体 F'},
+      {name:'Notes from Poland',type:'rss',url:'https://notesfrompoland.com/feed/',region:'intl',priority:3,parser:'rss',query:'波兰 地方媒体 G'},
+      {name:'SBS News',type:'rss',url:'https://www.sbs.com.au/news/feed',region:'intl',priority:3,parser:'rss',query:'澳大利亚 地方媒体 G,F'},
+      {name:'Iran International',type:'rss',url:'https://www.iranintl.com/en/feed',region:'intl',priority:2,parser:'rss',query:'伊朗 地方媒体 C,D,F'},
+      {name:'Daily Nation',type:'rss',url:'https://nation.africa/kenya/rss.xml',region:'intl',priority:2,parser:'rss',query:'肯尼亚 地方媒体 E'},
+      {name:'The Standard',type:'rss',url:'https://www.standardmedia.co.ke/rss/kenya.php',region:'intl',priority:2,parser:'rss',query:'肯尼亚 地方媒体 E'},
+      {name:'Ethiopia Observer',type:'rss',url:'https://www.ethiopiaobserver.com/feed',region:'intl',priority:2,parser:'rss',query:'埃塞俄比亚 地方媒体 E'},
+      {name:'News24 Top Stories',type:'rss',url:'https://feeds.capi24.com/v1/Search/articles/news24/TopStories/rss',region:'intl',priority:2,parser:'rss',query:'南非 地方媒体 D,E'},
+      {name:'VNExpress International',type:'rss',url:'https://e.vnexpress.net/rss/world.rss',region:'intl',priority:2,parser:'rss',query:'越南 地方媒体 E,B'},
+      {name:'The Cambodia Daily',type:'rss',url:'https://english.cambodiadaily.com/feed/',region:'intl',priority:3,parser:'rss',query:'柬埔寨 地方媒体 E,B'},
+      {name:'Antara News',type:'rss',url:'https://www.antaranews.com/en/rss',region:'intl',priority:2,parser:'rss',query:'印度尼西亚 地方媒体 E,B'},
+      {name:'Mexico News Daily',type:'rss',url:'https://mexiconewsdaily.com/feed/',region:'intl',priority:2,parser:'rss',query:'墨西哥 地方媒体 E'},
+      {name:'El Financiero',type:'rss',url:'https://www.elfinanciero.com.mx/arc/outboundfeeds/rss/',region:'intl',priority:2,parser:'rss',query:'墨西哥 地方媒体 E'},
+      {name:'Colombia Reports',type:'rss',url:'https://colombiareports.com/feed/',region:'intl',priority:2,parser:'rss',query:'哥伦比亚 地方媒体 E'},
+      {name:'Peru Reports',type:'rss',url:'https://perureports.com/feed/',region:'intl',priority:2,parser:'rss',query:'秘鲁 地方媒体 D,E'},
+      {name:'El Comercio',type:'rss',url:'https://elcomercio.pe/feed/',region:'intl',priority:2,parser:'rss',query:'秘鲁 地方媒体 D,E'},
+      {name:'Buenos Aires Times',type:'rss',url:'https://www.batimes.com.ar/feed/',region:'intl',priority:3,parser:'rss',query:'阿根廷 地方媒体 D,E'},
+      {name:'NewsDay Zimbabwe',type:'rss',url:'https://www.newsday.co.zw/feed/',region:'intl',priority:3,parser:'rss',query:'津巴布韦 地方媒体 D,E'},
+      {name:'Caracas Chronicles',type:'rss',url:'https://www.caracaschronicles.com/feed/',region:'intl',priority:3,parser:'rss',query:'委内瑞拉 地方媒体 D'},
+      {name:'Ecuador Times',type:'rss',url:'https://www.ecuadortimes.net/feed/',region:'intl',priority:3,parser:'rss',query:'厄瓜多尔 地方媒体 D,E'},
+      {name:'Astana Times',type:'rss',url:'https://astanatimes.com/feed/',region:'intl',priority:2,parser:'rss',query:'哈萨克斯坦 地方媒体 D,B'},
+      {name:'Premium Times (v4)',type:'rss',url:'https://www.premiumtimesng.com/feed/',region:'intl',priority:1,parser:'rss',query:'尼日利亚 地方媒体 A,E'},
+      {name:'Hungary Today',type:'rss',url:'https://hungarytoday.hu/feed/',region:'intl',priority:3,parser:'rss',query:'匈牙利 地方媒体 G,F'},
+      {name:'Prague Morning',type:'rss',url:'https://praguemorning.cz/feed/',region:'intl',priority:3,parser:'rss',query:'捷克 地方媒体 G,F'},
+      {name:'The Moscow Times',type:'rss',url:'https://www.themoscowtimes.com/rss/news',region:'intl',priority:2,parser:'rss',query:'俄罗斯 地方媒体 C,D,F'},
+      {name:'Euromaidan Press',type:'rss',url:'https://euromaidanpress.com/feed/',region:'intl',priority:1,parser:'rss',query:'乌克兰 地方媒体 F'},
+      {name:'Kyiv Post',type:'rss',url:'https://www.kyivpost.com/feed/',region:'intl',priority:1,parser:'rss',query:'乌克兰 地方媒体 F'},
+      {name:'Syria Direct',type:'rss',url:'https://syriadirect.org/feed/',region:'intl',priority:2,parser:'rss',query:'叙利亚 地方媒体 F'},
+      {name:'Yemen Times',type:'rss',url:'https://yementimes.com/feed/',region:'intl',priority:2,parser:'rss',query:'也门 地方媒体 F,C'},
+      {name:'Al-Monitor',type:'rss',url:'https://www.al-monitor.com/rss',region:'intl',priority:2,parser:'rss',query:'伊拉克 地方媒体 D,E'},
+      {name:'The EastAfrican',type:'rss',url:'https://www.theeastafrican.co.ke/rss.xml',region:'intl',priority:2,parser:'rss',query:'肯尼亚 地方媒体 E'},
+      {name:'Lusaka Times',type:'rss',url:'https://www.lusakatimes.com/feed/',region:'intl',priority:3,parser:'rss',query:'赞比亚 地方媒体 D'},
+      {name:'Civil Georgia',type:'rss',url:'https://civil.ge/feed/',region:'intl',priority:2,parser:'rss',query:'格鲁吉亚 地方媒体 '}
     ]
   }
 };
+
+// ===== 合并大规模全球新闻媒体注册表（2286 条通道）=====
+(function(){
+  if(typeof window!=='undefined' && window.GLOBAL_MEDIA_REGISTRY && Array.isArray(window.GLOBAL_MEDIA_REGISTRY)){
+    // 用注册表完全替换原有 global_media 数据源，确保统计精确为 2286 条
+    SOURCE_REGISTRY.global_media = {
+      label:'全球新闻媒体监测',
+      sources: window.GLOBAL_MEDIA_REGISTRY.map(function(src){
+        return {
+          name: src.name, type: src.type || 'rss', url: src.url,
+          region: src.region || 'intl', priority: src.priority || 2,
+          parser: src.parser || 'rss', query: src.query || src.name
+        };
+      })
+    };
+    console.log('[GLOBAL_MEDIA] loaded ' + SOURCE_REGISTRY.global_media.sources.length + ' sources');
+  }
+})();
 
 // ===== 扩展数据源: Google News聚合 + 国际主流媒体 (v5.0增强) =====
 // Google News RSS 聚合数千个新闻源，是最强大的单一数据入口
@@ -1861,7 +1705,7 @@ var THREAT_ORGS_DB={
       attacks:data.attacks||[],
       anti_china_events:data.anti_china_events||[],
       statements:data.statements||[],
-      is_simulated:true,
+      is_simulated:false,
       created_at:data.created_at||new Date().toISOString()
     };
   },
@@ -1888,11 +1732,14 @@ var THREAT_ORGS_DB={
     return this.getAll().filter(function(o){return o.threat_level===level;});
   },
 
+  _save(all){localStorage.setItem(this.KEY,JSON.stringify(all));this._syncAPI(all);},
+  _syncAPI(all){if(typeof APIClient!=='undefined'&&APIClient.isOnline()&&APIClient.getToken()){APIClient.saveThreatOrgs(all).catch(function(){});}},
+
   add(orgData){
     var all=this.getAll();
     var org=this._toOrg(orgData);
     all.push(org);
-    localStorage.setItem(this.KEY,JSON.stringify(all));
+    this._save(all);
     return org;
   },
 
@@ -1901,7 +1748,7 @@ var THREAT_ORGS_DB={
     var idx=all.findIndex(function(o){return o.id===id;});
     if(idx>=0){
       Object.assign(all[idx],updates);
-      localStorage.setItem(this.KEY,JSON.stringify(all));
+      this._save(all);
       return all[idx];
     }
     return null;
@@ -1910,7 +1757,7 @@ var THREAT_ORGS_DB={
   delete(id){
     var all=this.getAll();
     all=all.filter(function(o){return o.id!==id;});
-    localStorage.setItem(this.KEY,JSON.stringify(all));
+    this._save(all);
   },
 
   count(){return this.getAll().length;},
@@ -1955,19 +1802,20 @@ var THREAT_ORGS_DB={
   },
 
   // 注入模拟威胁组织数据
-  seedSimulatedData(){
+  seedSimulatedData(){ return 0; /* 实战模式：已停用模拟数据注入 */
     var orgs=this._generateSeedData();
     var all=this.getAll();
     orgs.forEach(function(o){
       var exists=all.find(function(e){return e.name===o.name;});
       if(!exists){all.push(this._toOrg(o));}
     }.bind(this));
-    localStorage.setItem(this.KEY,JSON.stringify(all));
+    this._save(all);
     return orgs.length;
   },
 
   clearSimulated(){
     localStorage.setItem(this.KEY,'[]');
+    this._syncAPI([]);
   },
 
   _generateSeedData(){
@@ -4556,39 +4404,55 @@ var SCRAPER={
     this.qualityStats={A:0,B:0,C:0,D:0,F:0};
 
     var categories=options.categories||COLLECTED_DB.CATEGORIES;
-    var orderedCategories=[];
-    var priorityCats=['security_events','terror_events','military_conflicts','political_events'];
-    var otherCats=categories.filter(function(c){return priorityCats.indexOf(c)<0;});
-    orderedCategories=priorityCats.concat(otherCats);
-
     var totalCount=0;
     var totalRaw=0;
     var me=this;
-    for(var i=0;i<orderedCategories.length;i++){
-      var cat=orderedCategories[i];
-      try{
-        if(typeof DATACENTER!=='undefined'){
-          DATACENTER._updateScraperProgress(cat,'collecting');
-        }
-        var result=await this.collectCategoryMultiSource(cat);
-        this.collectResults[cat]=result.total;
-        totalCount+=result.total;
-        totalRaw+=result.rawCount||0;
-        this.collectSourceStats[cat]=result.details||[];
-        this.pipelineStats[cat]=result.pipelineStats||null;
-        if(typeof DATACENTER!=='undefined'){
-          DATACENTER._updateScraperProgress(cat,'done',result.total);
-        }
-      }catch(e){
-        console.error('[SCRAPER v5.0] '+cat+' failed:',e);
-        this.collectResults[cat]=0;
-        this.collectErrors[cat]=e.message||'Unknown error';
-        if(typeof DATACENTER!=='undefined'){
-          DATACENTER._updateScraperProgress(cat,'error',0,e.message);
-        }
-      }
-      await new Promise(function(r){setTimeout(r,400);});
+
+    /* ===== 改为后端引擎采集（2026-08-04 修复）=====
+     * 原实现：逐源直连 + 公共CORS代理(allorigins/corsproxy) —— 国内全部失效(HTTP 000/403)，采不到数据。
+     * 现统一走同源后端 /api/scrape?all=1：服务端抓取、无CORS、自带12要素分类与中文翻译。
+     * 入库经 入口闸门(chinaOverseasGate) + COLLECTED_DB.add(体裁闸门+自动审核+_ingestApproved实时分发)。 */
+    var base=(typeof APIClient!=='undefined'&&APIClient._baseUrl&&/^https?:/.test(APIClient._baseUrl))?APIClient._baseUrl
+            :((typeof window!=='undefined'&&window.location&&/^https?:/.test(window.location.origin||''))?window.location.origin:'http://localhost:3000');
+    var data={};
+    try{
+      categories.forEach(function(cat){ if(typeof DATACENTER!=='undefined'&&DATACENTER._updateScraperProgress) DATACENTER._updateScraperProgress(cat,'collecting'); });
+      var r=await fetch(base+'/api/scrape?all=1',{signal:AbortSignal.timeout(120000)});
+      if(!r.ok) throw new Error('后端采集接口 HTTP '+r.status);
+      var j=await r.json();
+      data=j.data||{};
+    }catch(e){
+      console.error('[SCRAPER v5.0] 后端采集失败:',e);
+      categories.forEach(function(cat){ me.collectResults[cat]=0; me.collectErrors[cat]=String(e&&e.message||e); if(typeof DATACENTER!=='undefined'&&DATACENTER._updateScraperProgress) DATACENTER._updateScraperProgress(cat,'error',0,e.message); });
+      this.isCollecting=false;
+      if(typeof showToast==='function') showToast('⚠️ 采集失败：'+e.message+'（请确认后端服务已启动）');
+      return { total:0, rawTotal:0, results:this.collectResults, errors:this.collectErrors, sourceStats:this.collectSourceStats, pipelineStats:this.pipelineStats, nlpStats:this.nlpStats, qualityStats:this.qualityStats };
     }
+
+    categories.forEach(function(cat){
+      var items=(data[cat]||[]).filter(function(it){return it&&it.title;});
+      totalRaw+=items.length;
+      var added=0;
+      items.forEach(function(it){
+        try{
+          /* 入口把关①：相关性闸门（涉我海外利益安全），剔除纯国内/无关外讯 */
+          var pass=(typeof GATE!=='undefined'&&GATE.chinaOverseasGate)?GATE.chinaOverseasGate((it.title||'')+' '+(it.content||'')).pass:true;
+          if(!pass) return;
+          var _ttl=(it.source?it.source+'：':'')+it.title;
+          /* 去重（按标题） */
+          var dup=(typeof COLLECTED_DB!=='undefined'&&COLLECTED_DB.getAll)?COLLECTED_DB.getAll(cat).some(function(d){return (d.title||'')===_ttl;}):false;
+          if(dup) return;
+          /* 入库：体裁闸门 + 自动审核 + 实时分发 全在 COLLECTED_DB.add 内完成 */
+          if(typeof COLLECTED_DB!=='undefined'&&COLLECTED_DB.add){
+            var id=COLLECTED_DB.add(cat,{ title:_ttl, title_zh:it.title_zh||'', content:it.content||it.title, content_zh:it.content_zh||'', country:it.country||'', source:it.source||'实时采集', severity:it.severity||'中', category:it.category||it.source||'安全风险', data_type:cat, url:it.url||'', pubDate:it.pubDate||'', publishedAt:it.pubDate||'', tags:[it.country].filter(Boolean), _fromSource:'WEB_SCRAPE', _real:true });
+            if(id) added++;
+          }
+        }catch(e){}
+      });
+      me.collectResults[cat]=added;
+      totalCount+=added;
+      if(typeof DATACENTER!=='undefined'&&DATACENTER._updateScraperProgress) DATACENTER._updateScraperProgress(cat,'done',added);
+    });
 
     this.isCollecting=false;
     this.lastCollectTime=new Date().toISOString();

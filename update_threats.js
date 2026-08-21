@@ -1,0 +1,10 @@
+const fs = require('fs');
+const path = require('path');
+
+const filePath = path.join(__dirname, 'threats.js');
+let content = fs.readFileSync(filePath, 'utf8');
+
+// 新组织数据
+const newOrgs = [
+{
+  id: 'etim', name: '东突厥斯坦伊斯兰运动/突厥斯坦伊斯兰党', aliases: ['ETIM','TIP','东伊运','突厥斯坦伊斯兰党'], type: '恐怖组织', category: '宗教极端', subcategory: '逊尼派萨拉菲圣战（分裂主义）', founded: '1993', foundedLocation: '中国新疆/巴基斯坦瓦济里斯坦', status: '潜伏活跃', threatLevel: 8.0, threatTrend: '稳定', leader: '阿卜杜勒·哈克（已击毙）/现任不详', formerLeaders: ['艾山·买合苏木（2003击毙）','阿卜杜勒·哈克（2010击毙）'], members: '约200-300名骨干，外围同情者不定', operatingRegions: ['中国新疆','阿富汗','巴基斯坦','叙利亚','土耳其','中亚'], ideology: '以"圣战"方式在中国新疆建立所谓"东突厥斯坦伊斯兰国"，分裂中国领土', funding: '境外捐赠、犯罪活动、毒品与武器走私、绑架勒索', fundingEstimate: '规模较小，依赖外部资助', designation: ['联合国安理会1267委员会制裁','美国指定外国恐怖组织','中国公安部认定恐怖组织','欧盟指定恐怖组织'], weaponLevel: '轻武器+IED+简易爆炸装置', cyberCapability: '低——有网络宣传和招募视频', description: '东突厥斯坦伊斯兰运动（ETIM）是中国政府和国际社会认定的恐怖组织，后被部分成员改组为"突厥斯坦伊斯兰党"（TIP）。该组织以新疆分裂为目标，多次在中国境内策划实施恐怖袭击，并与基地组织、塔利班、"乌伊运"等国际恐怖势力勾连。其骨干长期藏匿于阿富汗和巴基斯坦边境地区，部分成员在叙利亚内战期间前往参战。该组织被联合国、美国、欧盟和中国列入制裁名单，是中国海外利益安全和新疆稳定面临的重要威胁。', structure: [{role:'埃米尔',current:'不详',desc:'最高宗教与军事领袖'},{role:'军事委员会',current:'—',desc:'策划袭击与训练'},{role:'宣传部门',current:'—',desc:'制作维语和阿拉伯语宣传视频'},{role:'海外分支',current:'—',desc:'叙利亚、阿富汗、土耳其等地活动'},{role:'资金来源',current:'—',desc:'境外捐助与犯罪所得'}], events: [{date:'1997',title:'伊宁事件',desc:'组织参与新疆伊宁暴力事件，造成重大人员伤亡',casualties:'约7人死亡，数十人受伤',impact:'高'},{date:'2002-09-11',title:'联合国列名制裁',desc:'联合国安理会1267委员会将ETIM列入制裁名单',casualties:'—',impact:'高'},{date:'2003-10-02',title:'艾山·买合苏木被击毙',desc:'巴基斯坦军方在巴阿边境军事行动中击毙其头目',casualties:'—',impact:'高'},{date:'2010-02-15',title:'阿卜杜勒·哈克被击毙',desc:'巴基斯坦安全部队在 North Waziristan 击毙该组织军事指挥官',casualties:'—',impact:'高'},{date:'2011',title:'TIP发布首个视频',desc:'以"突厥斯坦伊斯兰党"名义发布阿拉伯语宣传视频',casualties:'—',impact:'中'},{date:'2012-2019',title:'成员赴叙利亚参战',desc:'部分成员加入叙利亚反对派武装，与努斯拉阵线等合作',casualties:'—',impact:'高'},{date:'2020-2024',title:'阿富汗局势动荡',desc:'塔利班重掌政权后，国际社会担忧ETIM/TIP在阿境内活动空间变化',casualties:'—',impact:'高'}], statements: [{date:'1993',source:'ETIM成立宣言',content:'号召以"圣战"方式在新疆建立"伊斯兰国家"。'},{date:'2008',source:'TIP视频声明',content:'威胁对北京奥运会发动袭击，将新疆问题国际化。'},{date

@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>海外利益保护情报预警平台系统介绍报告</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "SimSun","宋体",serif;
+    font-size: 12pt;
+    line-height: 2.0;
+    color: #1a1a1a;
+  }
+  h1.chapter {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 20pt;
+    color: #1a3a6b;
+    text-align: center;
+    margin: 18pt 0 6pt 0;
+    page-break-before: always;
+  }
+  .chapter-sub {
+    text-align: center;
+    color: #8a8a8a;
+    font-size: 10.5pt;
+    margin-bottom: 18pt;
+    font-family: "SimHei","黑体",sans-serif;
+    letter-spacing: 2px;
+  }
+  h2 {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 15pt;
+    color: #1a3a6b;
+    margin: 16pt 0 8pt 0;
+  }
+  h3 {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 13pt;
+    color: #2c2c2c;
+    margin: 12pt 0 6pt 0;
+  }
+  p { text-indent: 2em; margin: 6pt 0; text-align: justify; }
+  p.noindent { text-indent: 0; }
+  .fig { page-break-inside: avoid; margin: 14pt auto; text-align: center; }
+  .fig svg { width: 100%; height: auto; }
+  .fig-cap {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 10.5pt;
+    color: #333;
+    margin-top: 6pt;
+    text-align: center;
+  }
+  .callout {
+    border: 1.2pt solid #1a3a6b;
+    background: #f4f7fc;
+    padding: 10pt 14pt;
+    margin: 10pt 0;
+    font-size: 11pt;
+    line-height: 1.9;
+    page-break-inside: avoid;
+  }
+  .callout b { color: #1a3a6b; }
+  table.doc {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10pt 0;
+    font-size: 10.5pt;
+    page-break-inside: avoid;
+  }
+  table.doc th {
+    background: #1a3a6b;
+    color: #fff;
+    font-family: "SimHei","黑体",sans-serif;
+    font-weight: normal;
+    padding: 6pt 8pt;
+    border: 0.8pt solid #1a3a6b;
+  }
+  table.doc td {
+    border: 0.8pt solid #9db1cc;
+    padding: 5pt 8pt;
+    line-height: 1.7;
+    vertical-align: top;
+  }
+  table.doc tr:nth-child(even) td { background: #f4f7fc; }
+  /* ===== 封面 ===== */
+  .cover {
+    height: 245mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    text-align: center;
+    page-break-after: always;
+  }
+  .cover-top { padding-top: 30mm; }
+  .cover-org {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 13pt;
+    color: #555;
+    letter-spacing: 6px;
+    margin-bottom: 26mm;
+  }
+  .cover-title {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 30pt;
+    color: #1a3a6b;
+    line-height: 1.6;
+    letter-spacing: 3px;
+  }
+  .cover-sub {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 17pt;
+    color: #b02a30;
+    margin-top: 10mm;
+    letter-spacing: 8px;
+  }
+  .cover-rule {
+    width: 60%;
+    margin: 12mm auto 0 auto;
+    border: none;
+    border-top: 1.6pt solid #1a3a6b;
+  }
+  .cover-bottom { padding-bottom: 18mm; font-size: 13pt; color: #444; line-height: 2.4; }
+  /* ===== 目录 ===== */
+  .toc { page-break-after: always; }
+  .toc h1 {
+    font-family: "SimHei","黑体",sans-serif;
+    font-size: 20pt;
+    color: #1a3a6b;
+    text-align: center;
+    margin: 10pt 0 20pt 0;
+  }
+  .toc-item {
+    display: flex;
+    align-items: baseline;
+    font-size: 12pt;
+    margin: 7pt 0;
+  }
+  .toc-item.l2 { padding-left: 2em; font-size: 11pt; color: #444; margin: 4pt 0; }
+  .toc-item .t { white-space: nowrap; }
+  .toc-item .dots {
+    flex: 1;
+    border-bottom: 1pt dotted #999;
+    margin: 0 6pt;
+    transform: translateY(-3pt);
+  }
+  .abstract { page-break-after: always; }
+  ul.gov { margin: 6pt 0 6pt 2.5em; }
+  ul.gov li { margin: 4pt 0; text-align: justify; }
+</style>
+</head>
+<body>
+
+<!-- ==================== 封面 ==================== -->
+<div class="cover">
+  <div class="cover-top">
+    <div class="cover-org">内部资料　仅供领导决策参考</div>
+    <div class="cover-title">海外利益保护<br>情报预警平台</div>
+    <div class="cover-sub">系 统 介 绍 报 告</div>
+    <hr class="cover-rule">
+  </div>
+  <div class="cover-bottom">
+    平台建设工作组<br>
+    二〇二六年七月
+  </div>
+</div>
+
+<!-- ==================== 内容摘要 ==================== -->
+<div class="abstract">
+  <h1 class="chapter" style="page-break-before:avoid">内 容 摘 要</h1>
+  <p>随着我国对外开放不断深化，海外投资、工程承包、能源合作与人员往来规模持续扩大，海外利益已经成为国家利益的重要组成部分。与此同时，国际安全形势复杂多变，地区冲突、恐怖袭击、社会动荡、公共卫生事件、自然灾害以及针对我海外机构和人员的各类风险明显上升，海外利益保护工作面临前所未有的压力与挑战。</p>
+  <p>海外利益保护情报预警平台（以下简称"平台"或"系统"），是为适应新形势下海外利益安全保护需要而建设的一体化情报预警信息系统。平台以"及早发现、准确研判、快速预警、有效处置"为总体目标，围绕海外安全风险的监测、采集、审核、研判、预警、处置全链条，建成了覆盖全球重点国家和地区的情报感知网络，形成了"数据采集—数据中心—人工审核—预警分发—态势呈现—辅助决策"的完整业务闭环。</p>
+  <p>平台的核心能力包括：一是全球开源情报的自动化采集能力，通过"常规采集＋深度采集"双引擎，持续获取境内外权威渠道的真实公开信息；二是十二类要素齐全的情报数据资源体系，将各类风险信息按恐怖袭击、涉华安全、武装冲突、政治风险、自然灾害等十二个类别统一归集管理；三是严格的人工审核把关机制，所有采集数据必须先入数据中心、经审核确认后方可进入预警发布环节，确保对上报送的每一条信息真实可靠；四是覆盖预警发布、态势感知、威胁评估、企业资产管理、风险融合研判、趋势预测、智能报告等环节的综合应用能力；五是各功能模块之间通过"情报总线"实现联动贯通，一条情报可自动关联到相关国家、企业、威胁组织与历史事件，形成情报合力。</p>
+  <p>平台坚持"真实数据"铁律，系统内不保留、不生成任何模拟数据和推测数据，所有信息均来自真实采集与人工审核，从制度和技术两个层面保证了情报产品的严肃性和可信度。</p>
+  <p>本报告面向上级部门，从建设背景、系统定位、总体架构、运行机制、核心功能、特色创新、应用场景、应用成效和发展前景等方面，对平台作全面介绍，供领导同志和有关部门了解掌握。</p>
+</div>
+
+<!-- ==================== 目录 ==================== -->
+<div class="toc">
+  <h1>目　　录</h1>
+  <div class="toc-item"><span class="t">内容摘要</span><span class="dots"></span><span>02</span></div>
+  <div class="toc-item"><span class="t">第一章　建设背景</span><span class="dots"></span><span>04</span></div>
+  <div class="toc-item l2"><span class="t">1.1　海外利益格局发生深刻变化</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">1.2　海外安全风险日益复杂严峻</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">1.3　传统工作方式面临的突出困难</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">1.4　建设信息化预警平台势在必行</span><span class="dots"></span><span></span></div>
+  <div class="toc-item"><span class="t">第二章　系统定位与建设意义</span><span class="dots"></span><span>08</span></div>
+  <div class="toc-item l2"><span class="t">2.1　系统定位</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">2.2　建设目标</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">2.3　建设意义</span><span class="dots"></span><span></span></div>
+  <div class="toc-item"><span class="t">第三章　总体架构</span><span class="dots"></span><span>11</span></div>
+  <div class="toc-item l2"><span class="t">3.1　总体架构设计思路</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">3.2　五层一线的总体架构</span><span class="dots"></span><span></span></div>
+  <div class="toc-item"><span class="t">第四章　运行机制</span><span class="dots"></span><span>14</span></div>
+  <div class="toc-item l2"><span class="t">4.1　全链条业务运行流程</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">4.2　"先审核、后发布"的把关机制</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">4.3　全天候自动运转机制</span><span class="dots"></span><span></span></div>
+  <div class="toc-item"><span class="t">第五章　核心功能</span><span class="dots"></span><span>18</span></div>
+  <div class="toc-item l2"><span class="t">5.1　功能体系总览</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.2　全球情报采集（双引擎）</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.3　数据中心（十二类情报资源库）</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.4　预警中心与自动预警</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.5　全球态势感知</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.6　威胁评估与威胁组织库</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.7　企业与资产安全管理</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.8　风险融合研判与趋势预测</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.9　智能报告与辅助决策</span><span class="dots"></span><span></span></div>
+  <div class="toc-item l2"><span class="t">5.10　多语种情报翻译</span><span class="dots"></span><span></span></div>
+  <div class="toc-item"><span class="t">第六章　系统特色与创新</span><span class="dots"></span><span>27</span></div>
+  <div class="toc-item"><span class="t">第七章　发挥的作用与应用场景</span><span class="dots"></span><span>30</span></div>
+  <div class="toc-item"><span class="t">第八章　应用成效</span><span class="dots"></span><span>34</span></div>
+  <div class="toc-item"><span class="t">第九章　发展前景与建设规划</span><span class="dots"></span><span>36</span></div>
+  <div class="toc-item"><span class="t">第十章　结束语</span><span class="dots"></span><span>39</span></div>
+</div>
+
+<!-- ==================== 第一章 ==================== -->
+<h1 class="chapter">第一章　建设背景</h1>
+<div class="chapter-sub">—— 为什么要建设这个系统 ——</div>
+
+<h2>1.1　海外利益格局发生深刻变化</h2>
+<p>改革开放特别是共建"一带一路"倡议提出以来，我国对外经济合作实现了历史性跨越。我国已连续多年保持世界第一货物贸易大国地位，对外直接投资存量位居世界前列，对外承包工程业务遍及一百九十多个国家和地区，能源、矿产、粮食等重要战略物资的进口通道横跨全球主要海域和陆路走廊。数以万计的中资企业在海外投资兴业，数以百万计的中国公民常年在海外工作、学习和生活，每年出境人员规模更为庞大。</p>
+<p>海外利益的内涵也在不断拓展。从早期以货物贸易为主，发展到今天涵盖境外投资权益、海外工程项目、能源资源通道、海外机构与人员安全、海外公民合法权益、数据与知识产权、金融资产安全等多个层面。可以说，海外利益已经深度融入国家发展大局，海外利益安全已经成为国家安全体系的重要组成部分。保护好海外利益，就是保护国家发展的成果，就是保障"走出去"战略和高水平对外开放的行稳致远。</p>
+<p>海外利益格局的深刻变化，对海外安全保障工作提出了全新要求。过去"点状、零散、临时性"的保护方式，已经难以适应今天"全球分布、常年在外、高度暴露"的利益格局。迫切需要建立一套覆盖全球、运转常态、反应灵敏的海外利益安全风险监测预警体系，把风险发现在早、处置在小。</p>
+
+<h2>1.2　海外安全风险日益复杂严峻</h2>
+<p>当前，世界百年未有之大变局加速演进，国际安全环境中的不稳定、不确定因素显著增多，我海外利益面临的风险呈现出多样化、复合化、常态化的突出特点。</p>
+<h3>一是地缘政治风险持续高企。</h3>
+<p>地区热点冲突此起彼伏，大国博弈加剧，部分国家政局动荡、政权更迭频繁，个别国家对我企业采取歧视性审查、制裁限制等措施，我海外项目和投资面临的政治风险明显上升。一些项目所在国因政局变化导致合同中止、资产受损的案例时有发生。</p>
+<h3>二是暴恐活动威胁不容忽视。</h3>
+<p>国际恐怖主义活动在部分地区仍然活跃，针对基础设施、公共场所和外国人员的恐怖袭击时有发生。我在有关地区的项目营地、施工现场和人员驻地，客观上处于暴恐风险的辐射范围之内，个别针对我人员和机构的袭击事件造成了人员伤亡和财产损失，教训十分深刻。</p>
+<h3>三是社会安全风险易发多发。</h3>
+<p>部分国家经济困难、民生问题突出，罢工、游行、骚乱等社会动荡事件频发，治安形势恶化，绑架勒索、抢劫盗窃等针对外国人的犯罪活动增多，直接威胁我海外人员的人身和财产安全。</p>
+<h3>四是自然灾害与公共卫生风险叠加。</h3>
+<p>全球气候变化背景下，地震、海啸、飓风、洪涝等重大自然灾害多发频发；重大传染病疫情跨境传播的风险始终存在。这些非传统安全风险往往突发性强、波及面广，对海外人员安全和项目连续运营构成严重威胁。</p>
+<h3>五是各类风险相互交织、传导放大。</h3>
+<p>值得高度重视的是，上述风险并非孤立存在，而是相互关联、相互传导。一场自然灾害可能诱发社会动荡，一次政局变动可能引发针对外资的排斥浪潮，一起恐袭事件可能造成整个地区安全形势的连锁恶化。风险的复合化特征，要求我们必须具备对多类风险进行统一监测、关联分析、综合研判的能力。</p>
+
+<h2>1.3　传统工作方式面临的突出困难</h2>
+<p>长期以来，海外安全信息工作主要依靠人工浏览新闻、逐级层报信息、分散掌握情况的传统方式开展。在风险总量不大、节奏较缓的时期，这种方式基本可以应付。但在当前形势下，传统方式的局限性日益凸显，突出表现为"四难"：</p>
+<p><b>一是信息发现难。</b>全球每天产生的公开信息浩如烟海，且大量以英语、俄语、阿拉伯语等外文形式分散于各国媒体和网络平台。依靠人工浏览，覆盖面十分有限，大量与我海外利益密切相关的风险信号被淹没在信息海洋之中，难以及时发现。</p>
+<p><b>二是真伪甄别难。</b>网络信息鱼龙混杂，谣言、夸大、失实信息大量存在。缺乏统一的审核把关机制，容易出现误报、错报，既可能引发不必要的恐慌，也可能损害信息工作的严肃性和公信力。</p>
+<p><b>三是关联研判难。</b>安全信息、企业信息、项目信息、人员信息分散在不同部门、不同台账之中，彼此割裂。一条风险信息出现后，很难迅速回答"影响哪些国家、涉及哪些企业、威胁哪些项目和人员"这一决策最关心的问题。</p>
+<p><b>四是快速反应难。</b>信息从发现、核实、层报到通知相关企业和人员，环节多、耗时长，等预警送达时往往时过境迁。突发事件面前，"信息跑不过风险"的问题比较突出。</p>
+
+<h2>1.4　建设信息化预警平台势在必行</h2>
+<p>习近平总书记多次强调，要加强海外利益保护能力建设，健全海外安全保障体系。党的二十大报告明确提出，完善参与全球安全治理机制，健全反制裁、反干涉、反"长臂管辖"机制，维护海外利益安全。《国家安全战略》和有关规划文件均对加强海外利益安全风险预警监测提出了明确要求。</p>
+<p>从工作实践看，海外利益保护的关键在预防，预防的关键在预警，预警的关键在情报。只有把全球范围内涉我安全风险的"耳目"网络建起来，把信息采集、审核把关、关联研判、快速预警的"中枢"系统立起来，才能变被动应对为主动防范，变事后处置为事前预警。</p>
+<p>正是在这样的背景下，我们启动建设了海外利益保护情报预警平台，运用信息化、自动化手段，对海外安全风险实施全天候监测、全要素归集、全流程审核、全系统联动，努力为各级领导和有关部门提供及时、准确、可靠的情报预警支持。</p>
+<div class="callout">
+  <b>小结：</b>海外利益规模之大、分布之广前所未有，安全风险之多、变化之快前所未有，传统人工方式之难以为继前所未有。建设一套统一、可靠、灵敏的情报预警平台，是形势所迫、职责所系、工作所需，势在必行、刻不容缓。
+</div>
+
+<!-- ==================== 第二章 ==================== -->
+<h1 class="chapter">第二章　系统定位与建设意义</h1>
+<div class="chapter-sub">—— 这个系统是什么 ——</div>
+
+<h2>2.1　系统定位</h2>
+<p>海外利益保护情报预警平台，定位为服务海外利益安全保护工作的<b>一体化情报预警信息系统</b>，是海外安全风险信息的"总枢纽"、预警发布的"总闸门"、研判决策的"总参谋"。具体而言，平台承担四个方面的角色：</p>
+<p><b>——全球风险的"瞭望哨"。</b>平台面向全球重点国家和地区，全天候自动监测境内外权威公开渠道，第一时间捕捉恐怖袭击、武装冲突、政治动荡、自然灾害、公共卫生等各类风险信号，特别是涉及我国机构、企业、公民的安全动态，充当海外安全风险的"前哨"和"耳目"。</p>
+<p><b>——情报资源的"总数据库"。</b>平台建有统一的数据中心，将采集获取的各类风险信息按照十二个要素类别规范归集、集中管理，形成持续积累、结构完整、可查可用的海外安全情报资源库，改变了以往信息散落各处、用时找不到的局面。</p>
+<p><b>——预警发布的"总闸门"。</b>平台实行"先入库、再审核、后发布"的严格流程，所有预警信息必须经过人工审核确认后方可发布分发，确保发出的每一条预警都真实、准确、可靠，坚决防止误报错报。</p>
+<p><b>——研判决策的"辅助参谋"。</b>平台提供态势感知、威胁评估、风险融合、趋势预测、智能报告等分析工具，帮助工作人员从海量信息中理出头绪、看清态势、把握趋势，为领导决策提供有分量、有依据的情报支撑。</p>
+
+<h2>2.2　建设目标</h2>
+<p>平台建设围绕"及早发现、准确研判、快速预警、有效处置"的总要求，确立了以下建设目标：</p>
+<ul class="gov">
+  <li><b>看得到：</b>建成覆盖全球重点区域的开源情报采集网络，重点国家和地区安全动态基本做到当天发现、当天入库；</li>
+  <li><b>理得清：</b>建成十二类要素齐全的情报数据资源体系，各类风险信息分类清晰、要素完整、检索便捷；</li>
+  <li><b>把得准：</b>建成严格的人工审核把关机制，预警信息发布准确率有充分保障，杜绝虚假信息、模拟信息进入工作链条；</li>
+  <li><b>联得动：</b>建成贯通各功能模块的情报总线，实现情报与国家、企业、组织、事件的自动关联，一点触发、全网联动；</li>
+  <li><b>用得上：</b>面向领导决策、部门协同、企业服务等不同层面，提供预警通报、态势展示、评估报告等多样化情报产品。</li>
+</ul>
+
+<h2>2.3　建设意义</h2>
+<h3>一是落实上级决策部署的具体行动。</h3>
+<p>建设本平台，是贯彻落实党中央关于加强海外利益保护能力建设决策部署的具体举措，是健全海外安全保障体系、完善风险预警监测机制的基础性工程，具有鲜明的政治意义和现实针对性。</p>
+<h3>二是提升海外安全治理能力的重要抓手。</h3>
+<p>平台把分散的信息资源集中起来、把人工的作业流程规范起来、把割裂的业务环节贯通起来，推动海外安全信息工作从"经验型、粗放型"向"数据型、精准型"转变，是海外安全治理体系和治理能力现代化建设的重要抓手。</p>
+<h3>三是保护海外人员生命财产安全的现实需要。</h3>
+<p>每一条及时的预警，背后都可能是若干海外同胞的人身安全和企业的重大资产。平台的建成运行，使风险信息能够更早被发现、更快被核实、更准地送达可能受影响的对象，直接服务于"人民至上、生命至上"理念在海外利益保护领域的落实。</p>
+<h3>四是服务企业"走出去"行稳致远的有力支撑。</h3>
+<p>平台将安全风险信息与海外企业、项目资产信息关联管理，能够为企业投资决策、项目选址、安保布防、应急撤离等提供风险参考，帮助企业趋利避害，降低海外经营的安全成本，为高质量共建"一带一路"提供安全保障支撑。</p>
+<div class="callout">
+  <b>一句话概括：</b>这是一套让海外风险"看得到、理得清、把得准、联得动、用得上"的情报预警系统，是海外利益保护工作的信息中枢和预警中枢。
+</div>
+
+
+
+<!-- ==================== 第三章 ==================== -->
+<h1 class="chapter">第三章　总体架构</h1>
+<div class="chapter-sub">—— 系统是怎样构成的 ——</div>
+
+<h2>3.1　总体架构设计思路</h2>
+<p>平台总体架构的设计，遵循了三条基本思路：</p>
+<p><b>一是"一个总库"统数据。</b>无论信息从哪个渠道采集而来，一律先汇入统一的数据中心，按十二个要素类别规范存放，从源头上解决数据分散、口径不一的问题。数据中心就是全系统的"总账本"，各功能模块都从这本"总账"上取数用数。</p>
+<p><b>二是"一道闸门"保真实。</b>在数据中心与预警发布之间设置人工审核闸门，未经审核确认的信息只能在数据中心待审存放，不得进入预警和对外应用环节。同时，系统从制度和技术上彻底杜绝模拟数据、虚构数据，确保"库里存的、屏上见的、报出去的"都是经得起核查的真实信息。</p>
+<p><b>三是"一条总线"联全局。</b>各功能模块不搞各自为战，而是通过统一的情报总线互联互通。一条情报经审核确认后，自动推送至预警中心、态势感知、威胁评估、企业管理等相关模块，并与国家、企业、威胁组织建立关联索引，实现"一点入库、全网可用、多维关联"。</p>
+
+<h2>3.2　五层一线的总体架构</h2>
+<p>按照上述思路，平台形成了"五层一线"的总体架构：自下而上依次为数据采集层、审核把关层、数据资源层、分析研判层、应用服务层，一条情报总线纵向贯通各层（见图1）。</p>
+<p><b>数据采集层</b>负责"收"。通过常规采集引擎和深度采集引擎，全天候从国际权威机构、境外主流媒体、国内权威媒体等公开渠道获取原始信息，并完成相关性筛选和多语种预处理。</p>
+<p><b>审核把关层</b>负责"审"。采集信息统一进入数据中心待审区，由工作人员逐条审核，把住信息真实性、准确性、相关性的关口，审核全程留痕。</p>
+<p><b>数据资源层</b>负责"存"。以数据中心为主体，将审核入库的信息按恐袭事件、涉华安全、武装冲突等十二个类别归集管理，形成全系统统一的情报资源总库。</p>
+<p><b>分析研判层</b>负责"研"。依托数据资源开展威胁评估、风险融合、趋势预测、关联分析，生成研判产品。</p>
+<p><b>应用服务层</b>负责"用"。面向领导决策、业务工作和企业服务，提供预警通报、态势展示、情报检索、评估报告等应用。</p>
+<p><b>情报总线</b>纵向贯通五层，承担情报事件的统一分发和跨模块关联，是全系统联动运转的"神经中枢"。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 758" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="756" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <!-- ===== 应用服务层 ===== -->
+  <rect x="30" y="22" width="830" height="92" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+  <rect x="30" y="22" width="122" height="92" fill="#1a3a6b"/>
+  <text x="91" y="58" fill="#ffffff" font-size="19" text-anchor="middle">应用服务层</text>
+  <text x="91" y="86" fill="#c9d6ea" font-size="13" text-anchor="middle">（用）</text>
+  <g font-size="14" text-anchor="middle" fill="#12335f">
+    <rect x="166" y="40" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="229" y="63">领导决策</text><text x="229" y="84">支持</text>
+    <rect x="304" y="40" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="367" y="63">预警通报</text><text x="367" y="84">发布</text>
+    <rect x="442" y="40" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="505" y="63">态势可视</text><text x="505" y="84">展示</text>
+    <rect x="580" y="40" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="643" y="63">情报检索</text><text x="643" y="84">服务</text>
+    <rect x="718" y="40" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="781" y="63">企业风险</text><text x="781" y="84">提示</text>
+  </g>
+  <!-- arrow up -->
+  <g stroke="#1a3a6b" stroke-width="2" fill="#1a3a6b">
+    <line x1="445" y1="140" x2="445" y2="120"/><polygon points="445,116 440,126 450,126"/>
+  </g>
+  <!-- ===== 分析研判层 ===== -->
+  <rect x="30" y="144" width="830" height="92" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+  <rect x="30" y="144" width="122" height="92" fill="#2a4f86"/>
+  <text x="91" y="180" fill="#ffffff" font-size="19" text-anchor="middle">分析研判层</text>
+  <text x="91" y="208" fill="#c9d6ea" font-size="13" text-anchor="middle">（研）</text>
+  <g font-size="14" text-anchor="middle" fill="#12335f">
+    <rect x="166" y="162" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="229" y="185">威胁评估</text><text x="229" y="206">分级</text>
+    <rect x="304" y="162" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="367" y="185">风险融合</text><text x="367" y="206">研判</text>
+    <rect x="442" y="162" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="505" y="185">趋势预测</text><text x="505" y="206">分析</text>
+    <rect x="580" y="162" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="643" y="185">智能报告</text><text x="643" y="206">生成</text>
+    <rect x="718" y="162" width="126" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="781" y="185">多维关联</text><text x="781" y="206">分析</text>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2" fill="#1a3a6b">
+    <line x1="445" y1="262" x2="445" y2="242"/><polygon points="445,238 440,248 450,248"/>
+  </g>
+  <!-- ===== 数据资源层 ===== -->
+  <rect x="30" y="266" width="830" height="150" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+  <rect x="30" y="266" width="122" height="150" fill="#3a5f96"/>
+  <text x="91" y="322" fill="#ffffff" font-size="19" text-anchor="middle">数据资源层</text>
+  <text x="91" y="350" fill="#c9d6ea" font-size="13" text-anchor="middle">（存）</text>
+  <text x="91" y="374" fill="#c9d6ea" font-size="12" text-anchor="middle">数据中心</text>
+  <g font-size="13.5" text-anchor="middle" fill="#12335f">
+    <rect x="166" y="282" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="218.5" y="313">恐袭事件</text>
+    <rect x="281" y="282" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="333.5" y="313">涉华安全</text>
+    <rect x="396" y="282" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="448.5" y="313">武装冲突</text>
+    <rect x="511" y="282" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="563.5" y="313">政治风险</text>
+    <rect x="626" y="282" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="678.5" y="313">自然灾害</text>
+    <rect x="741" y="282" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="793.5" y="313">公共卫生</text>
+    <rect x="166" y="346" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="218.5" y="377">制裁合规</text>
+    <rect x="281" y="346" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="333.5" y="377">社会动荡</text>
+    <rect x="396" y="346" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="448.5" y="377">基础设施</text>
+    <rect x="511" y="346" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="563.5" y="377">地缘情报</text>
+    <rect x="626" y="346" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="678.5" y="377">开源情报</text>
+    <rect x="741" y="346" width="105" height="52" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="793.5" y="377">采集日志</text>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2" fill="#1a3a6b">
+    <line x1="445" y1="442" x2="445" y2="422"/><polygon points="445,418 440,428 450,428"/>
+  </g>
+  <!-- ===== 审核把关层 ===== -->
+  <rect x="30" y="446" width="830" height="92" fill="#fdf4f0" stroke="#b02a30" stroke-width="1.5"/>
+  <rect x="30" y="446" width="122" height="92" fill="#b02a30"/>
+  <text x="91" y="482" fill="#ffffff" font-size="19" text-anchor="middle">审核把关层</text>
+  <text x="91" y="510" fill="#f3d2d3" font-size="13" text-anchor="middle">（审）</text>
+  <g font-size="14" text-anchor="middle" fill="#7a1c20">
+    <rect x="166" y="464" width="158" height="56" fill="#ffffff" stroke="#b02a30" stroke-width="1.2"/>
+    <text x="245" y="487">采集信息统一</text><text x="245" y="508">入库待审</text>
+    <rect x="338" y="464" width="158" height="56" fill="#ffffff" stroke="#b02a30" stroke-width="1.2"/>
+    <text x="417" y="487">人工逐条</text><text x="417" y="508">审核确认</text>
+    <rect x="510" y="464" width="158" height="56" fill="#ffffff" stroke="#b02a30" stroke-width="1.2"/>
+    <text x="589" y="487">通过后方可</text><text x="589" y="508">分发应用</text>
+    <rect x="682" y="464" width="162" height="56" fill="#ffffff" stroke="#b02a30" stroke-width="1.2"/>
+    <text x="763" y="487">审核全程</text><text x="763" y="508">留痕可溯</text>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2" fill="#1a3a6b">
+    <line x1="445" y1="564" x2="445" y2="544"/><polygon points="445,540 440,550 450,550"/>
+  </g>
+  <!-- ===== 数据采集层 ===== -->
+  <rect x="30" y="568" width="830" height="92" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+  <rect x="30" y="568" width="122" height="92" fill="#4a6fa6"/>
+  <text x="91" y="604" fill="#ffffff" font-size="19" text-anchor="middle">数据采集层</text>
+  <text x="91" y="632" fill="#dbe4f2" font-size="13" text-anchor="middle">（收）</text>
+  <g font-size="14" text-anchor="middle" fill="#12335f">
+    <rect x="166" y="586" width="158" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="245" y="609">常规采集引擎</text><text x="245" y="630">（注册信息源）</text>
+    <rect x="338" y="586" width="158" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="417" y="609">深度采集引擎</text><text x="417" y="630">（全网检索）</text>
+    <rect x="510" y="586" width="158" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="589" y="609">涉我相关性</text><text x="589" y="630">智能筛选</text>
+    <rect x="682" y="586" width="162" height="56" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="763" y="609">多语种情报</text><text x="763" y="630">翻译处理</text>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2" fill="#1a3a6b">
+    <line x1="445" y1="686" x2="445" y2="666"/><polygon points="445,662 440,672 450,672"/>
+  </g>
+  <!-- ===== 信息来源 ===== -->
+  <rect x="30" y="690" width="830" height="52" fill="#f2f2f2" stroke="#777777" stroke-width="1.2"/>
+  <text x="91" y="722" fill="#444444" font-size="16" text-anchor="middle">信息来源</text>
+  <g font-size="14" text-anchor="middle" fill="#333333">
+    <text x="270" y="722">国际权威机构</text>
+    <text x="450" y="722">境外主流媒体</text>
+    <text x="630" y="722">国内权威媒体</text>
+    <text x="790" y="722">其他公开渠道</text>
+  </g>
+  <!-- ===== 情报总线（右侧纵贯） ===== -->
+  <rect x="884" y="22" width="88" height="638" fill="#1a3a6b" stroke="#12294d" stroke-width="1.5"/>
+  <g fill="#ffffff" font-size="22" text-anchor="middle">
+    <text x="928" y="130">情</text><text x="928" y="172">报</text>
+    <text x="928" y="214">总</text><text x="928" y="256">线</text>
+  </g>
+  <g fill="#c9d6ea" font-size="14" text-anchor="middle">
+    <text x="928" y="330">纵</text><text x="928" y="356">向</text>
+    <text x="928" y="382">贯</text><text x="928" y="408">通</text>
+    <text x="928" y="446">联</text><text x="928" y="472">动</text>
+    <text x="928" y="498">分</text><text x="928" y="524">发</text>
+    <text x="928" y="562">关</text><text x="928" y="588">联</text>
+    <text x="928" y="614">索</text><text x="928" y="640">引</text>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2" fill="none">
+    <line x1="860" y1="68" x2="884" y2="68"/>
+    <line x1="860" y1="190" x2="884" y2="190"/>
+    <line x1="860" y1="341" x2="884" y2="341"/>
+    <line x1="860" y1="492" x2="884" y2="492"/>
+    <line x1="860" y1="614" x2="884" y2="614"/>
+  </g>
+  <!-- 说明条 -->
+  <rect x="884" y="690" width="88" height="52" fill="#f2f2f2" stroke="#777777" stroke-width="1.2"/>
+  <text x="928" y="712" fill="#444444" font-size="12" text-anchor="middle">全球公开</text>
+  <text x="928" y="730" fill="#444444" font-size="12" text-anchor="middle">信息渠道</text>
+</svg>
+<div class="fig-cap">图 1　平台"五层一线"总体架构图</div>
+</div>
+
+<p>五层之间层层递进、环环相扣："收"为基础，"审"为关口，"存"为中枢，"研"为深化，"用"为归宿；情报总线则确保任何一条经审核的情报都能自动到达需要它的每一个环节。这一架构既保证了数据的统一性和权威性，又保证了业务的完整性和联动性。</p>
+
+<!-- ==================== 第四章 ==================== -->
+<h1 class="chapter">第四章　运行机制</h1>
+<div class="chapter-sub">—— 系统是怎样运转的 ——</div>
+
+<h2>4.1　全链条业务运行流程</h2>
+<p>平台的日常运行，遵循"采集—归集—审核—分发—应用—反馈"六个环节构成的业务闭环（见图2）。</p>
+<p><b>第一步，全球信息采集。</b>常规采集引擎按既定周期自动巡查各注册信息源；深度采集引擎可由工作人员一键启动，对全网公开信息进行专项深度检索。两个引擎获取的信息均经过涉我相关性筛选，无关信息一律拦截在系统之外。</p>
+<p><b>第二步，数据中心归集。</b>通过筛选的信息自动进入数据中心，按十二个要素类别自动归类，状态标记为"待审核"。此时信息已在数据中心可查可看，但尚不具备预警发布资格。</p>
+<p><b>第三步，人工审核把关。</b>工作人员对待审信息逐条核看，确认真实、准确、相关的予以"审核通过"；存疑或无关的不予通过，留库备查。这一环节是全系统唯一的发布闸门。</p>
+<p><b>第四步，预警自动分发。</b>审核通过的信息由系统自动分发：进入预警中心生成预警信息，推送态势感知界面更新全球风险态势，同时经情报总线关联至相关国家档案、企业资产、威胁组织等模块。</p>
+<p><b>第五步，综合应用支撑。</b>分发后的情报支撑预警通报、风险评估、趋势研判、报告生成等各项应用，服务领导决策和业务工作。</p>
+<p><b>第六步，处置反馈完善。</b>预警发出后的确认、处置情况回填系统，形成工作闭环，并沉淀为历史数据，反哺后续研判。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="558" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <!-- Row 1 : 1 -> 2 -> 3 -->
+  <g>
+    <rect x="45" y="50" width="260" height="170" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+    <rect x="45" y="50" width="260" height="44" fill="#1a3a6b"/>
+    <text x="175" y="80" fill="#ffffff" font-size="19" text-anchor="middle">① 全球信息采集</text>
+    <g font-size="14" fill="#12335f" text-anchor="middle">
+      <text x="175" y="126">常规引擎：定时自动巡查</text>
+      <text x="175" y="153">深度引擎：一键全网检索</text>
+      <text x="175" y="180">相关性筛选：无关信息拦截</text>
+      <text x="175" y="207">多语种信息统一处理</text>
+    </g>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="305" y1="135" x2="360" y2="135"/><polygon points="366,135 354,129 354,141"/>
+  </g>
+  <g>
+    <rect x="370" y="50" width="260" height="170" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+    <rect x="370" y="50" width="260" height="44" fill="#2a4f86"/>
+    <text x="500" y="80" fill="#ffffff" font-size="19" text-anchor="middle">② 数据中心归集</text>
+    <g font-size="14" fill="#12335f" text-anchor="middle">
+      <text x="500" y="126">统一汇入系统总库</text>
+      <text x="500" y="153">按十二类要素自动归类</text>
+      <text x="500" y="180">状态标记："待审核"</text>
+      <text x="500" y="207">入库即可查、可管、可溯</text>
+    </g>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="630" y1="135" x2="685" y2="135"/><polygon points="691,135 679,129 679,141"/>
+  </g>
+  <g>
+    <rect x="695" y="50" width="260" height="170" fill="#fdf4f0" stroke="#b02a30" stroke-width="1.8"/>
+    <rect x="695" y="50" width="260" height="44" fill="#b02a30"/>
+    <text x="825" y="80" fill="#ffffff" font-size="19" text-anchor="middle">③ 人工审核把关</text>
+    <g font-size="14" fill="#7a1c20" text-anchor="middle">
+      <text x="825" y="126">逐条核看、鉴别真伪</text>
+      <text x="825" y="153">通过：取得发布资格</text>
+      <text x="825" y="180">不通过：留库备查不发布</text>
+      <text x="825" y="207">全系统唯一发布闸门</text>
+    </g>
+  </g>
+  <!-- Down arrow from 3 to 4 -->
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="825" y1="220" x2="825" y2="280"/><polygon points="825,286 819,274 831,274"/>
+  </g>
+  <!-- Row 2 : 6 <- 5 <- 4 -->
+  <g>
+    <rect x="695" y="290" width="260" height="170" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+    <rect x="695" y="290" width="260" height="44" fill="#2a4f86"/>
+    <text x="825" y="320" fill="#ffffff" font-size="19" text-anchor="middle">④ 预警自动分发</text>
+    <g font-size="14" fill="#12335f" text-anchor="middle">
+      <text x="825" y="366">进入预警中心生成预警</text>
+      <text x="825" y="393">推送态势感知实时更新</text>
+      <text x="825" y="420">情报总线关联国家、企业</text>
+      <text x="825" y="447">与威胁组织等模块</text>
+    </g>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="695" y1="375" x2="640" y2="375"/><polygon points="634,375 646,369 646,381"/>
+  </g>
+  <g>
+    <rect x="370" y="290" width="260" height="170" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+    <rect x="370" y="290" width="260" height="44" fill="#2a4f86"/>
+    <text x="500" y="320" fill="#ffffff" font-size="19" text-anchor="middle">⑤ 综合应用支撑</text>
+    <g font-size="14" fill="#12335f" text-anchor="middle">
+      <text x="500" y="366">预警通报、态势展示</text>
+      <text x="500" y="393">威胁评估、风险融合</text>
+      <text x="500" y="420">趋势预测、智能报告</text>
+      <text x="500" y="447">服务领导决策与业务工作</text>
+    </g>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="370" y1="375" x2="315" y2="375"/><polygon points="309,375 321,369 321,381"/>
+  </g>
+  <g>
+    <rect x="45" y="290" width="260" height="170" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+    <rect x="45" y="290" width="260" height="44" fill="#2a4f86"/>
+    <text x="175" y="320" fill="#ffffff" font-size="19" text-anchor="middle">⑥ 处置反馈完善</text>
+    <g font-size="14" fill="#12335f" text-anchor="middle">
+      <text x="175" y="366">预警确认与处置回填</text>
+      <text x="175" y="393">形成完整工作闭环</text>
+      <text x="175" y="420">沉淀历史数据资源</text>
+      <text x="175" y="447">反哺后续分析研判</text>
+    </g>
+  </g>
+  <!-- Feedback arrow 6 back to 1 -->
+  <g stroke="#3a5f96" stroke-width="2" fill="none" stroke-dasharray="7,5">
+    <line x1="175" y1="290" x2="175" y2="220"/>
+  </g>
+  <g fill="#3a5f96"><polygon points="175,214 169,226 181,226"/></g>
+  <rect x="45" y="492" width="910" height="44" fill="#f4f7fc" stroke="#3a5f96" stroke-width="1.2"/>
+  <text x="500" y="520" fill="#12335f" font-size="15" text-anchor="middle">六个环节循环运转、闭环管理，虚线表示处置反馈结果回流至采集研判环节，持续改进</text>
+</svg>
+<div class="fig-cap">图 2　平台业务运行总流程图</div>
+</div>
+
+<h2>4.2　"先审核、后发布"的把关机制</h2>
+<p>信息工作，真实是生命线。平台在流程设计上专门构建了"先入库、再审核、后发布"的三段式把关机制（见图3），核心要点有三条：</p>
+<p><b>一是"应入尽入"。</b>凡采集获取的信息，无论来源、无论类别，一律先进入数据中心，做到底数清、来源明，任何信息都不允许绕过数据中心直接进入预警环节。</p>
+<p><b>二是"未审不发"。</b>数据中心中处于"待审核"状态的信息，仅供工作人员查阅核实，不进入预警中心、不推送态势界面、不参与对外通报。只有经人工审核确认"通过"的信息，才由系统自动分发到各应用环节。</p>
+<p><b>三是"真实唯一"。</b>平台从制度和技术两个层面确立"真实数据"铁律：系统不设任何模拟数据生成功能，不保留任何演示性、推测性数据；所有界面呈现的每一条信息，都可以回溯到真实的采集来源和审核记录。宁可界面暂时"空着"，也绝不用虚假信息"充数"。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="518" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <!-- 采集来源 -->
+  <rect x="40" y="40" width="215" height="130" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+  <rect x="40" y="40" width="215" height="40" fill="#4a6fa6"/>
+  <text x="147" y="67" fill="#ffffff" font-size="17" text-anchor="middle">采集获取信息</text>
+  <g font-size="13.5" fill="#12335f" text-anchor="middle">
+    <text x="147" y="106">常规引擎采集信息</text>
+    <text x="147" y="130">深度引擎采集信息</text>
+    <text x="147" y="154">均经相关性筛选</text>
+  </g>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="255" y1="105" x2="308" y2="105"/><polygon points="314,105 302,99 302,111"/>
+  </g>
+  <text x="283" y="92" fill="#1a3a6b" font-size="12" text-anchor="middle">全部入库</text>
+  <!-- 数据中心 -->
+  <rect x="318" y="40" width="300" height="200" fill="#eef3fb" stroke="#1a3a6b" stroke-width="2"/>
+  <rect x="318" y="40" width="300" height="40" fill="#1a3a6b"/>
+  <text x="468" y="67" fill="#ffffff" font-size="17" text-anchor="middle">数据中心（系统总库）</text>
+  <rect x="338" y="96" width="260" height="58" fill="#fff8e8" stroke="#c8922a" stroke-width="1.4"/>
+  <text x="468" y="120" fill="#8a5f14" font-size="14.5" text-anchor="middle">待审核区</text>
+  <text x="468" y="142" fill="#8a5f14" font-size="12.5" text-anchor="middle">可查看、可核实，不得发布</text>
+  <rect x="338" y="166" width="260" height="58" fill="#eefaf0" stroke="#2f8a4a" stroke-width="1.4"/>
+  <text x="468" y="190" fill="#1e5c31" font-size="14.5" text-anchor="middle">已审核区</text>
+  <text x="468" y="212" fill="#1e5c31" font-size="12.5" text-anchor="middle">取得发布资格，自动分发</text>
+  <!-- 审核闸门 -->
+  <g stroke="#b02a30" stroke-width="2.5" fill="#b02a30">
+    <line x1="618" y1="125" x2="672" y2="125"/><polygon points="678,125 666,119 666,131"/>
+  </g>
+  <rect x="682" y="66" width="150" height="120" fill="#fdf4f0" stroke="#b02a30" stroke-width="2"/>
+  <rect x="682" y="66" width="150" height="38" fill="#b02a30"/>
+  <text x="757" y="92" fill="#ffffff" font-size="16" text-anchor="middle">人工审核</text>
+  <g font-size="13" fill="#7a1c20" text-anchor="middle">
+    <text x="757" y="128">核真伪、核要素</text>
+    <text x="757" y="151">核相关、核表述</text>
+    <text x="757" y="174">全程留痕可追溯</text>
+  </g>
+  <!-- 通过 -->
+  <g stroke="#2f8a4a" stroke-width="2.5" fill="#2f8a4a">
+    <line x1="757" y1="186" x2="757" y2="240"/><line x1="757" y1="240" x2="640" y2="240"/>
+    <line x1="640" y1="240" x2="640" y2="200"/><polygon points="634,196 634,208 646,202"/>
+  </g>
+  <text x="800" y="222" fill="#2f8a4a" font-size="13" text-anchor="middle">审核通过</text>
+  <!-- 不通过 -->
+  <g stroke="#c8922a" stroke-width="2" fill="none" stroke-dasharray="6,5">
+    <line x1="832" y1="125" x2="905" y2="125"/><line x1="905" y1="125" x2="905" y2="300"/>
+    <line x1="905" y1="300" x2="560" y2="300"/><line x1="560" y1="300" x2="560" y2="248"/>
+  </g>
+  <g fill="#c8922a"><polygon points="560,242 554,254 566,254"/></g>
+  <text x="905" y="112" fill="#c8922a" font-size="12" text-anchor="middle">不通过</text>
+  <text x="760" y="290" fill="#c8922a" font-size="12" text-anchor="middle">退回待审区留存备查、不进入任何发布环节</text>
+  <!-- 分发 -->
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="468" y1="240" x2="468" y2="330"/><polygon points="468,336 462,324 474,324"/>
+  </g>
+  <text x="530" y="316" fill="#1a3a6b" font-size="13" text-anchor="middle">系统自动分发</text>
+  <!-- 应用 -->
+  <rect x="40" y="340" width="920" height="102" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+  <text x="500" y="368" fill="#1a3a6b" font-size="16" text-anchor="middle">审核通过后进入的应用环节</text>
+  <g font-size="14" text-anchor="middle" fill="#12335f">
+    <rect x="66" y="382" width="160" height="44" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="146" y="409">预警中心</text>
+    <rect x="246" y="382" width="160" height="44" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="326" y="409">全球态势感知</text>
+    <rect x="426" y="382" width="160" height="44" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="506" y="409">威胁评估研判</text>
+    <rect x="606" y="382" width="160" height="44" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="686" y="409">企业资产关联</text>
+    <rect x="786" y="382" width="150" height="44" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="861" y="409">报告与通报</text>
+  </g>
+  <rect x="40" y="458" width="920" height="42" fill="#fdf4f0" stroke="#b02a30" stroke-width="1.2"/>
+  <text x="500" y="485" fill="#7a1c20" font-size="14.5" text-anchor="middle">铁律：应入尽入 · 未审不发 · 真实唯一 —— 系统不含任何模拟数据，所有信息可溯源</text>
+</svg>
+<div class="fig-cap">图 3　"先入库、再审核、后发布"把关机制图</div>
+</div>
+
+<h2>4.3　全天候自动运转机制</h2>
+<p>平台按照"人机结合、以机为主、以人把关"的原则组织日常运转：</p>
+<p><b>采集环节自动化。</b>常规采集引擎按分钟级周期自动巡查各注册信息源，无需人工值守；发现新信息即自动完成筛选、翻译预处理和入库归类，做到"信息不过夜、入库不间断"。</p>
+<p><b>分发环节自动化。</b>审核通过的信息，系统每隔十余秒自动扫描分发一次，确保"审核一条、分发一条、联动一片"，最大限度压缩从审核到预警的时间。</p>
+<p><b>把关环节人工化。</b>唯一保留人工介入的环节就是审核把关，确保机器的效率与人的判断相结合，速度服从于准确。</p>
+<p>这一机制使平台具备了7×24小时不间断运行能力。工作人员的精力从繁重的信息搜集中解放出来，集中投向审核研判等关键环节，人均信息处理效能大幅提升。</p>
+<!-- ==================== 第五章 ==================== -->
+<h1 class="chapter">第五章　核心功能</h1>
+<div class="chapter-sub">—— 系统能做什么 ——</div>
+
+<h2>5.1　功能体系总览</h2>
+<p>平台围绕"采、存、审、研、判、报"业务全链条，建成了十大功能板块（见图4）。各板块既相对独立、各司其职，又通过情报总线互联互通、协同联动，共同构成完整的海外利益保护情报预警功能体系。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 610" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="608" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <rect x="40" y="30" width="920" height="64" fill="#1a3a6b"/>
+  <text x="500" y="70" fill="#ffffff" font-size="22" text-anchor="middle">海外利益保护情报预警平台 · 十大功能板块</text>
+  <!-- Row 1 -->
+  <g>
+    <rect x="40" y="124" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="40" y="124" width="288" height="38" fill="#2a4f86"/>
+    <text x="184" y="150" fill="#ffffff" font-size="16.5" text-anchor="middle">一、全球情报采集</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="184" y="186">常规＋深度双引擎采集</text>
+      <text x="184" y="211">覆盖全球重点国家地区</text>
+      <text x="184" y="236">多语种公开信息获取</text>
+    </g>
+  </g>
+  <g>
+    <rect x="356" y="124" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="356" y="124" width="288" height="38" fill="#2a4f86"/>
+    <text x="500" y="150" fill="#ffffff" font-size="16.5" text-anchor="middle">二、数据中心</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="500" y="186">全系统统一情报总库</text>
+      <text x="500" y="211">十二类要素规范归集</text>
+      <text x="500" y="236">全要素结构化管理</text>
+    </g>
+  </g>
+  <g>
+    <rect x="672" y="124" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="672" y="124" width="288" height="38" fill="#2a4f86"/>
+    <text x="816" y="150" fill="#ffffff" font-size="16.5" text-anchor="middle">三、审核管理</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="816" y="186">人工逐条审核确认</text>
+      <text x="816" y="211">发布资格统一把关</text>
+      <text x="816" y="236">审核记录全程留痕</text>
+    </g>
+  </g>
+  <!-- Row 2 -->
+  <g>
+    <rect x="40" y="276" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="40" y="276" width="288" height="38" fill="#2a4f86"/>
+    <text x="184" y="302" fill="#ffffff" font-size="16.5" text-anchor="middle">四、预警中心</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="184" y="338">分级预警信息发布</text>
+      <text x="184" y="363">自动预警规则触发</text>
+      <text x="184" y="388">实时情报滚动播报</text>
+    </g>
+  </g>
+  <g>
+    <rect x="356" y="276" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="356" y="276" width="288" height="38" fill="#2a4f86"/>
+    <text x="500" y="302" fill="#ffffff" font-size="16.5" text-anchor="middle">五、全球态势感知</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="500" y="338">世界地图态势总览</text>
+      <text x="500" y="363">国家风险分级呈现</text>
+      <text x="500" y="388">事件动态实时更新</text>
+    </g>
+  </g>
+  <g>
+    <rect x="672" y="276" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="672" y="276" width="288" height="38" fill="#2a4f86"/>
+    <text x="816" y="302" fill="#ffffff" font-size="16.5" text-anchor="middle">六、威胁评估</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="816" y="338">国家风险综合评估</text>
+      <text x="816" y="363">威胁组织档案管理</text>
+      <text x="816" y="388">定制化评估模型</text>
+    </g>
+  </g>
+  <!-- Row 3 -->
+  <g>
+    <rect x="40" y="428" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="40" y="428" width="288" height="38" fill="#2a4f86"/>
+    <text x="184" y="454" fill="#ffffff" font-size="16.5" text-anchor="middle">七、企业资产管理</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="184" y="490">海外企业项目台账</text>
+      <text x="184" y="515">风险与资产自动关联</text>
+      <text x="184" y="540">受影响对象快速定位</text>
+    </g>
+  </g>
+  <g>
+    <rect x="356" y="428" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="356" y="428" width="288" height="38" fill="#2a4f86"/>
+    <text x="500" y="454" fill="#ffffff" font-size="16.5" text-anchor="middle">八、风险融合与预测</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="500" y="490">多源风险融合研判</text>
+      <text x="500" y="515">风险矩阵综合呈现</text>
+      <text x="500" y="540">趋势预测辅助分析</text>
+    </g>
+  </g>
+  <g>
+    <rect x="672" y="428" width="288" height="128" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.6"/>
+    <rect x="672" y="428" width="288" height="38" fill="#2a4f86"/>
+    <text x="816" y="454" fill="#ffffff" font-size="16.5" text-anchor="middle">九、智能报告　十、翻译</text>
+    <g font-size="13.5" fill="#12335f" text-anchor="middle">
+      <text x="816" y="490">情报素材一键成稿</text>
+      <text x="816" y="515">多类报告模板生成</text>
+      <text x="816" y="540">外文情报即点即译</text>
+    </g>
+  </g>
+  <rect x="40" y="572" width="920" height="26" fill="#f4f7fc" stroke="#3a5f96" stroke-width="1"/>
+  <text x="500" y="590" fill="#12335f" font-size="13" text-anchor="middle">十大板块通过情报总线互联互通，任何一条审核通过的情报可自动到达相关板块</text>
+</svg>
+<div class="fig-cap">图 4　平台功能体系总览图</div>
+</div>
+
+<h2>5.2　全球情报采集（双引擎）</h2>
+<p>情报采集是平台的"源头活水"。平台创新采用"常规引擎＋深度引擎"双引擎体制（见图5），兼顾了监测的持续性与检索的深入性。</p>
+<p><b>常规采集引擎</b>好比"常备哨兵"。系统预先注册了一批权威、稳定的信息源，包括国际地震、灾害监测机构的权威发布渠道，境外主流媒体，以及国内权威媒体等。引擎按固定周期自动轮巡这些信息源，昼夜不停，确保重点渠道的重要信息第一时间进入系统。</p>
+<p><b>深度采集引擎</b>好比"特种分队"。当发生突发事件或需要就特定专题摸清情况时，工作人员可一键启动深度引擎，围绕涉我安全关键词对全网公开信息进行快速深度检索，数秒内即可返回批量结果，适合应急状态下的集中搜索和专题排查。</p>
+<p>两个引擎采集的信息都要经过<b>涉我相关性智能筛选</b>：只有涉及我国海外利益安全、或对我海外机构人员有潜在影响的信息才被留存，与我无关的一般性外国新闻一律拦截，从源头上保证了入库信息的针对性。同时，系统对外文信息自动进行语种识别和翻译预处理，工作人员无需外语基础也能顺畅使用。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 540" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="538" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <!-- 常规引擎 -->
+  <rect x="45" y="35" width="430" height="230" fill="#eef3fb" stroke="#1a3a6b" stroke-width="2"/>
+  <rect x="45" y="35" width="430" height="48" fill="#2a4f86"/>
+  <text x="260" y="67" fill="#ffffff" font-size="19" text-anchor="middle">常规采集引擎（常备哨兵）</text>
+  <g font-size="14" fill="#12335f" text-anchor="middle">
+    <rect x="70" y="100" width="180" height="64" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="160" y="127">注册权威信息源</text>
+    <text x="160" y="150">稳定可靠、长期跟踪</text>
+    <rect x="270" y="100" width="180" height="64" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="360" y="127">定时自动轮巡</text>
+    <text x="360" y="150">分钟级周期不间断</text>
+    <rect x="70" y="180" width="180" height="64" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="160" y="207">国际监测机构</text>
+    <text x="160" y="230">灾害地震权威发布</text>
+    <rect x="270" y="180" width="180" height="64" fill="#ffffff" stroke="#3a5f96" stroke-width="1.2"/>
+    <text x="360" y="207">境内外主流媒体</text>
+    <text x="360" y="230">重要动态持续监测</text>
+  </g>
+  <!-- 深度引擎 -->
+  <rect x="525" y="35" width="430" height="230" fill="#fdf7ee" stroke="#c8922a" stroke-width="2"/>
+  <rect x="525" y="35" width="430" height="48" fill="#c8922a"/>
+  <text x="740" y="67" fill="#ffffff" font-size="19" text-anchor="middle">深度采集引擎（特种分队）</text>
+  <g font-size="14" fill="#7a5510" text-anchor="middle">
+    <rect x="550" y="100" width="180" height="64" fill="#ffffff" stroke="#c8922a" stroke-width="1.2"/>
+    <text x="640" y="127">一键应急启动</text>
+    <text x="640" y="150">突发事件快速响应</text>
+    <rect x="750" y="100" width="180" height="64" fill="#ffffff" stroke="#c8922a" stroke-width="1.2"/>
+    <text x="840" y="127">全网深度检索</text>
+    <text x="840" y="150">数秒返回批量结果</text>
+    <rect x="550" y="180" width="180" height="64" fill="#ffffff" stroke="#c8922a" stroke-width="1.2"/>
+    <text x="640" y="207">专题定向排查</text>
+    <text x="640" y="230">重点国别集中搜索</text>
+    <rect x="750" y="180" width="180" height="64" fill="#ffffff" stroke="#c8922a" stroke-width="1.2"/>
+    <text x="840" y="207">要素自动分类</text>
+    <text x="840" y="230">按十二类自动归口</text>
+  </g>
+  <!-- 汇聚箭头 -->
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="260" y1="265" x2="260" y2="310"/><line x1="260" y1="310" x2="470" y2="310"/>
+    <line x1="740" y1="265" x2="740" y2="310"/><line x1="740" y1="310" x2="530" y2="310"/>
+    <line x1="500" y1="310" x2="500" y2="336"/><polygon points="500,342 494,330 506,330"/>
+    <line x1="470" y1="310" x2="530" y2="310"/>
+  </g>
+  <!-- 筛选 -->
+  <rect x="250" y="346" width="500" height="70" fill="#fdf4f0" stroke="#b02a30" stroke-width="2"/>
+  <text x="500" y="375" fill="#7a1c20" font-size="17" text-anchor="middle">涉我相关性智能筛选 ＋ 多语种翻译预处理</text>
+  <text x="500" y="400" fill="#7a1c20" font-size="13.5" text-anchor="middle">仅留存涉我海外利益安全信息，无关信息一律拦截在系统之外</text>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="500" y1="416" x2="500" y2="448"/><polygon points="500,454 494,442 506,442"/>
+  </g>
+  <!-- 数据中心 -->
+  <rect x="250" y="458" width="500" height="58" fill="#1a3a6b"/>
+  <text x="500" y="484" fill="#ffffff" font-size="17" text-anchor="middle">数据中心（待审核区）</text>
+  <text x="500" y="506" fill="#c9d6ea" font-size="12.5" text-anchor="middle">统一入库、自动归类，等待人工审核</text>
+</svg>
+<div class="fig-cap">图 5　"常规＋深度"双引擎情报采集体系图</div>
+</div>
+
+<h2>5.3　数据中心（十二类情报资源库）</h2>
+<p>数据中心是全系统的"总账本"和"总仓库"，所有情报数据统一在此归集、管理和调用。数据中心按照海外安全风险的实际形态，将信息划分为十二个要素类别（见图6），每一类信息均按统一的结构化要素登记，包括发生时间、国家地区、具体地点、事件类型、严重程度、伤亡情况、涉事组织、袭击目标、涉及企业、信息来源、可靠性等级、采集时间等，做到"一条信息、要素齐全、一目了然"。</p>
+<p>对外文信息，数据中心提供"即点即译"功能，点击即可将标题和内容翻译为中文并保存，方便快速研读。数据中心还提供分类浏览、条件检索、详情查看、审核操作等管理功能，是工作人员日常使用最频繁的功能区之一。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="598" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <rect x="330" y="30" width="340" height="70" fill="#1a3a6b"/>
+  <text x="500" y="60" fill="#ffffff" font-size="20" text-anchor="middle">数据中心</text>
+  <text x="500" y="86" fill="#c9d6ea" font-size="13.5" text-anchor="middle">十二类情报资源 · 全要素结构化管理</text>
+  <!-- connector trunk -->
+  <g stroke="#1a3a6b" stroke-width="2">
+    <line x1="500" y1="100" x2="500" y2="128"/>
+    <line x1="118" y1="128" x2="882" y2="128"/>
+    <line x1="118" y1="128" x2="118" y2="150"/>
+    <line x1="373" y1="128" x2="373" y2="150"/>
+    <line x1="627" y1="128" x2="627" y2="150"/>
+    <line x1="882" y1="128" x2="882" y2="150"/>
+  </g>
+  <!-- 12 category boxes: 4 cols x 3 rows -->
+  <g font-size="15" text-anchor="middle">
+    <!-- row1 -->
+    <rect x="36" y="150" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="118" y="186" fill="#12335f">恐袭事件</text>
+    <text x="118" y="216" fill="#5a7299" font-size="12">恐怖袭击活动信息</text>
+    <rect x="291" y="150" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="373" y="186" fill="#12335f">涉华安全</text>
+    <text x="373" y="216" fill="#5a7299" font-size="12">涉我机构人员安全</text>
+    <rect x="545" y="150" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="627" y="186" fill="#12335f">武装冲突</text>
+    <text x="627" y="216" fill="#5a7299" font-size="12">战乱与军事冲突</text>
+    <rect x="800" y="150" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="882" y="186" fill="#12335f">政治风险</text>
+    <text x="882" y="216" fill="#5a7299" font-size="12">政局变动政策风险</text>
+    <!-- row2 -->
+    <rect x="36" y="264" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="118" y="300" fill="#12335f">自然灾害</text>
+    <text x="118" y="330" fill="#5a7299" font-size="12">地震洪涝风暴等</text>
+    <rect x="291" y="264" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="373" y="300" fill="#12335f">公共卫生</text>
+    <text x="373" y="330" fill="#5a7299" font-size="12">疫情与卫生事件</text>
+    <rect x="545" y="264" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="627" y="300" fill="#12335f">制裁合规</text>
+    <text x="627" y="330" fill="#5a7299" font-size="12">制裁措施合规风险</text>
+    <rect x="800" y="264" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="882" y="300" fill="#12335f">社会动荡</text>
+    <text x="882" y="330" fill="#5a7299" font-size="12">罢工骚乱游行等</text>
+    <!-- row3 -->
+    <rect x="36" y="378" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="118" y="414" fill="#12335f">基础设施</text>
+    <text x="118" y="444" fill="#5a7299" font-size="12">设施安全与破坏</text>
+    <rect x="291" y="378" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="373" y="414" fill="#12335f">地缘情报</text>
+    <text x="373" y="444" fill="#5a7299" font-size="12">地缘博弈动态</text>
+    <rect x="545" y="378" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="627" y="414" fill="#12335f">开源情报</text>
+    <text x="627" y="444" fill="#5a7299" font-size="12">其他开源信息</text>
+    <rect x="800" y="378" width="164" height="94" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <text x="882" y="414" fill="#12335f">采集日志</text>
+    <text x="882" y="444" fill="#5a7299" font-size="12">采集过程全记录</text>
+  </g>
+  <!-- 全要素条 -->
+  <rect x="36" y="496" width="928" height="80" fill="#f4f7fc" stroke="#3a5f96" stroke-width="1.4"/>
+  <text x="500" y="526" fill="#1a3a6b" font-size="15.5" text-anchor="middle">每条信息统一登记十二项结构化要素</text>
+  <text x="500" y="556" fill="#12335f" font-size="13" text-anchor="middle">时间 · 国家 · 地点 · 类型 · 严重程度 · 伤亡 · 涉事组织 · 目标 · 涉及企业 · 来源 · 可靠性 · 采集时间</text>
+</svg>
+<div class="fig-cap">图 6　数据中心十二类情报资源分类体系图</div>
+</div>
+
+<h2>5.4　预警中心与自动预警</h2>
+<p>预警中心是平台面向工作应用的"出口"，承担预警信息的生成、分级、展示和管理。</p>
+<p><b>分级预警管理。</b>预警信息按严重程度实行分级管理，以不同颜色醒目区分，高等级预警置顶突出显示，确保最紧要的信息最先被看到。每条预警均可展开查看结构化详情，包括事件全要素、影响评估、应对建议、关联国家风险状况、涉及企业情况、相关历史事件等，为快速处置提供完整参考。</p>
+<p><b>实时情报滚动。</b>预警中心设有实时情报流窗口，审核通过的最新情报滚动播报，标注等级、国家、类型、来源等关键信息，值班人员一屏尽览最新动态。</p>
+<p><b>自动预警规则。</b>系统支持设置自动预警规则，如"某国发生高等级安全事件即预警""涉我企业所在地区出现风险即提示"等。规则触发后自动生成预警条目，由人员确认或解除，实现"机器盯梢、人来定夺"。</p>
+
+<h2>5.5　全球态势感知</h2>
+<p>态势感知功能以世界地图为载体，将全球安全风险态势直观呈现在一张图上。各国按风险高低以不同颜色标注，最新安全事件在对应位置动态提示；点击任一国家，即可查看该国风险评分、近期事件、涉我企业分布和相关预警等综合情况。领导同志和工作人员通过一张图，即可总览全球、聚焦热点、下钻细节，实现"一图观天下"。</p>
+
+<h2>5.6　威胁评估与威胁组织库</h2>
+<p><b>国家风险评估。</b>平台对重点国家建立风险评估档案，综合安全事件频度、烈度、涉我程度等因素给出风险评分和等级，并随新入库情报动态调整，使评估结果始终反映最新形势。</p>
+<p><b>威胁组织档案。</b>平台建有威胁组织资料库，对相关地区活跃的威胁组织建立档案，记录其活动区域、活动特点、近期动向和威胁等级。当新入库情报与某一组织相关时，系统自动更新该组织档案，实现"事件—组织"双向印证。</p>
+<p><b>定制化评估。</b>针对特定国家、特定项目或特定出行任务，可使用定制评估工具生成专项风险评估，为具体决策提供针对性参考。</p>
+
+<h2>5.7　企业与资产安全管理</h2>
+<p>平台建立海外企业与项目资产台账，登记企业名称、所在国别、项目类型、人员规模等基本信息。台账与情报数据自动关联：当某国发生安全事件，系统即时定位该国涉我企业和项目，自动提升相关项目的风险等级并记录风险事件。以往"出了事再逐家排查"的被动局面，转变为"事件一出、受影响对象秒级可知"的主动态势，为精准通知、精准防护赢得宝贵时间。</p>
+
+<h2>5.8　风险融合研判与趋势预测</h2>
+<p><b>风险融合研判。</b>针对风险要素多、来源杂的特点，平台提供风险融合功能，将同一国家、同一地区的多类风险信息汇聚融合，生成综合风险矩阵，直观展示"哪个国家、哪类风险、何种程度"，帮助研判人员从纷繁信息中把握主要矛盾。</p>
+<p><b>趋势预测分析。</b>基于持续积累的真实历史数据，平台对重点国家风险走势进行趋势分析，提示风险上升或缓和的方向性变化。需要说明的是，平台的预测严格基于真实数据的统计规律，数据不足时如实显示"暂无实时预测数据"，绝不凭空生成预测结论，确保研判产品的严肃性。</p>
+
+<h2>5.9　智能报告与辅助决策</h2>
+<p>平台内置智能报告功能，工作人员在浏览情报时可将重要素材一键加入"素材篮"，随后选择报告类型（如综合形势报告、专项风险报告、事件专报等），系统自动围绕所选素材组织成稿，生成结构完整的报告初稿，人工润色后即可上报使用。以往需要数小时的资料汇集与初稿起草工作，现在几分钟即可完成，大幅提高了报送时效。</p>
+
+<h2>5.10　多语种情报翻译</h2>
+<p>针对境外情报以外文为主的实际，平台配备多语种翻译工具，支持英语、俄语、阿拉伯语、日语、韩语等主要语种。工作人员在任何界面遇到外文情报，点击"翻译为中文"即可获得译文并自动保存，同时系统内置安全领域专业词典作为兜底，保证专业术语翻译的准确性。翻译能力的嵌入，使不具备外语背景的工作人员也能无障碍使用全球情报资源。</p>
+
+<h2>5.11　情报总线：让全系统联动起来</h2>
+<p>如果说各功能板块是平台的"器官"，情报总线就是贯通全身的"神经网络"（见图7）。每一条审核通过的情报，都会被规范化为统一格式的情报事件，经总线发布给各相关模块：预警中心生成预警、态势界面更新标注、涉事国家档案记入事件、涉及企业提升风险等级、相关威胁组织更新动向，同时建立"国家—企业—组织"关联索引。此后在任何一个详情页面，都能看到与之关联的其他情报，实现"查一条、见一片"。情报总线使平台从"功能的集合"升级为"有机的整体"，情报的价值在流动和关联中成倍放大。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="618" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <!-- 顶部：情报事件入口 -->
+  <rect x="330" y="30" width="340" height="76" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+  <text x="500" y="62" fill="#1a3a6b" font-size="17" text-anchor="middle">审核通过的情报事件</text>
+  <text x="500" y="90" fill="#5a7299" font-size="13" text-anchor="middle">规范化为统一格式（时间/等级/类型/国家/企业/组织）</text>
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="500" y1="106" x2="500" y2="142"/><polygon points="500,148 494,136 506,136"/>
+  </g>
+  <!-- 总线 -->
+  <rect x="80" y="152" width="840" height="86" fill="#1a3a6b"/>
+  <text x="500" y="188" fill="#ffffff" font-size="21" text-anchor="middle">情 报 总 线（发布 / 订阅 / 关联索引）</text>
+  <text x="500" y="218" fill="#c9d6ea" font-size="13.5" text-anchor="middle">统一接收情报事件 → 同步分发各订阅模块 → 建立国家·企业·组织倒排索引</text>
+  <!-- 分发箭头 x5 -->
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="140" y1="238" x2="140" y2="282"/><polygon points="140,288 134,276 146,276"/>
+    <line x1="320" y1="238" x2="320" y2="282"/><polygon points="320,288 314,276 326,276"/>
+    <line x1="500" y1="238" x2="500" y2="282"/><polygon points="500,288 494,276 506,276"/>
+    <line x1="680" y1="238" x2="680" y2="282"/><polygon points="680,288 674,276 686,276"/>
+    <line x1="860" y1="238" x2="860" y2="282"/><polygon points="860,288 854,276 866,276"/>
+  </g>
+  <!-- 5 consumers -->
+  <g font-size="14" text-anchor="middle">
+    <rect x="56" y="292" width="168" height="130" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <rect x="56" y="292" width="168" height="36" fill="#2a4f86"/>
+    <text x="140" y="317" fill="#ffffff" font-size="15">预警中心</text>
+    <text x="140" y="352" fill="#12335f" font-size="12.5">生成分级预警</text>
+    <text x="140" y="376" fill="#12335f" font-size="12.5">实时流滚动播报</text>
+    <text x="140" y="400" fill="#12335f" font-size="12.5">自动预警规则触发</text>
+    <rect x="236" y="292" width="168" height="130" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <rect x="236" y="292" width="168" height="36" fill="#2a4f86"/>
+    <text x="320" y="317" fill="#ffffff" font-size="15">态势感知</text>
+    <text x="320" y="352" fill="#12335f" font-size="12.5">地图标注更新</text>
+    <text x="320" y="376" fill="#12335f" font-size="12.5">国家风险分值调整</text>
+    <text x="320" y="400" fill="#12335f" font-size="12.5">事件动态提示</text>
+    <rect x="416" y="292" width="168" height="130" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <rect x="416" y="292" width="168" height="36" fill="#2a4f86"/>
+    <text x="500" y="317" fill="#ffffff" font-size="15">企业资产</text>
+    <text x="500" y="352" fill="#12335f" font-size="12.5">定位涉事国企业</text>
+    <text x="500" y="376" fill="#12335f" font-size="12.5">项目风险等级提升</text>
+    <text x="500" y="400" fill="#12335f" font-size="12.5">风险事件记入台账</text>
+    <rect x="596" y="292" width="168" height="130" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <rect x="596" y="292" width="168" height="36" fill="#2a4f86"/>
+    <text x="680" y="317" fill="#ffffff" font-size="15">威胁组织库</text>
+    <text x="680" y="352" fill="#12335f" font-size="12.5">组织动向更新</text>
+    <text x="680" y="376" fill="#12335f" font-size="12.5">威胁等级调整</text>
+    <text x="680" y="400" fill="#12335f" font-size="12.5">事件与组织印证</text>
+    <rect x="776" y="292" width="168" height="130" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.5"/>
+    <rect x="776" y="292" width="168" height="36" fill="#2a4f86"/>
+    <text x="860" y="317" fill="#ffffff" font-size="15">融合与影像</text>
+    <text x="860" y="352" fill="#12335f" font-size="12.5">风险矩阵重融合</text>
+    <text x="860" y="376" fill="#12335f" font-size="12.5">情报影像中心联动</text>
+    <text x="860" y="400" fill="#12335f" font-size="12.5">研判素材同步</text>
+  </g>
+  <!-- 关联索引 -->
+  <g stroke="#3a5f96" stroke-width="2" fill="none">
+    <line x1="140" y1="422" x2="140" y2="462"/>
+    <line x1="320" y1="422" x2="320" y2="462"/>
+    <line x1="500" y1="422" x2="500" y2="462"/>
+    <line x1="680" y1="422" x2="680" y2="462"/>
+    <line x1="860" y1="422" x2="860" y2="462"/>
+    <line x1="140" y1="462" x2="860" y2="462"/>
+    <line x1="500" y1="462" x2="500" y2="478"/>
+  </g>
+  <g fill="#3a5f96"><polygon points="500,484 494,472 506,472"/></g>
+  <rect x="180" y="488" width="640" height="106" fill="#f4f7fc" stroke="#3a5f96" stroke-width="1.5"/>
+  <text x="500" y="520" fill="#1a3a6b" font-size="16" text-anchor="middle">关联索引（国家 · 企业 · 威胁组织）</text>
+  <text x="500" y="548" fill="#12335f" font-size="13" text-anchor="middle">任一国家、企业、组织的详情页自动展示与其关联的全部情报</text>
+  <text x="500" y="574" fill="#12335f" font-size="13" text-anchor="middle">实现"查一条、见一片"，情报价值在关联中成倍放大</text>
+</svg>
+<div class="fig-cap">图 7　情报总线跨模块联动示意图</div>
+</div>
+
+<!-- ==================== 第六章 ==================== -->
+<h1 class="chapter">第六章　系统特色与创新</h1>
+<div class="chapter-sub">—— 这个系统有什么不一样 ——</div>
+
+<h2>6.1　坚守"真实数据"铁律，情报产品经得起核查</h2>
+<p>平台最鲜明的特色，是把"真实"作为不可逾越的底线。系统建设过程中，我们对一切可能产生虚假信息的功能进行了彻底清理：不设模拟数据生成功能，不保留演示性样例数据，不进行任何形式的数据"美化"和"填充"。系统中每一条信息都来自真实采集，都经过人工审核，都可以回溯到原始来源。对暂无数据的功能区域，界面如实显示"暂无实时数据，请先采集并审核"，宁可"留白"也不"造景"。对无法获得授权数据的官方渠道，系统如实标注"通道预留"，绝不以权威渠道名义编造信息。这一铁律确保了平台产出的每一份预警、每一份报告都经得起核查、担得起责任，从根本上维护了情报工作的严肃性和公信力。</p>
+
+<h2>6.2　构建"先审后发"闸门，把住信息发布关口</h2>
+<p>平台将人工审核确立为全系统唯一的发布闸门，机器负责"多、快"，人负责"真、准"。所有采集信息一律先入数据中心待审，审核通过方能进入预警和应用环节。这种"人机结合、以人把关"的机制设计，既发挥了自动化手段覆盖广、速度快的优势，又保留了专业人员对信息真伪和敏感性的最终判断权，在效率与稳妥之间取得了平衡。</p>
+
+<h2>6.3　首创"情报总线"联动，打破功能孤岛</h2>
+<p>针对同类系统普遍存在的"模块割裂、数据孤岛"问题，平台创新构建情报总线机制，使各功能板块由"物理拼装"变为"化学融合"。一条情报入库审核后，相关的国家档案、企业台账、威胁组织、风险矩阵、态势地图同步更新，无需人工在各模块间重复录入、来回比对。这种全系统联动能力，是平台区别于一般信息汇集系统的重要标志。</p>
+
+<h2>6.4　实行"双引擎"采集，兼顾常态监测与应急搜索</h2>
+<p>常规引擎保证了对权威信息源的持续稳定监测，深度引擎提供了应急状态下的快速深度检索能力。平时靠常规引擎"守"，急时靠深度引擎"攻"，两者结合，使平台既能满足日常值守的持续性要求，又能满足突发事件下的时效性要求。</p>
+
+<h2>6.5　贯通"多语种"障碍，全球情报为我所用</h2>
+<p>平台将多语种翻译能力深度嵌入各业务环节，从采集预处理到界面即点即译，配合内置专业词典，基本消除了语言障碍对情报利用的制约，显著拓展了可用情报的来源范围。</p>
+
+<div class="callout">
+  <b>五大特色概括：</b>真实铁律立信、审核闸门把关、情报总线联动、双擎采集增效、多语翻译破障。这五个方面共同构成了平台的核心竞争力，也是平台能够担当海外利益保护情报预警重任的底气所在。
+</div>
+<!-- ==================== 第七章 ==================== -->
+<h1 class="chapter">第七章　发挥的作用与应用场景</h1>
+<div class="chapter-sub">—— 系统有什么用 ——</div>
+
+<h2>7.1　平台发挥的四大作用</h2>
+<p><b>一是"耳目"作用：让风险早发现。</b>平台全天候监测全球公开信息渠道，重点国家和地区的重大安全动态基本做到当天发现、当天入库、当天可查。相比人工浏览方式，信息发现的覆盖面和时效性实现了数量级的提升，为后续处置争取了宝贵的时间窗口。</p>
+<p><b>二是"闸门"作用：让信息可信赖。</b>所有对外输出的预警和报告都经过人工审核把关，且可溯源到原始出处。这使得平台产出的情报产品具有明确的责任链条和可靠性标注，上级部门可以放心引用、放心决策。</p>
+<p><b>三是"纽带"作用：让各方联得上。</b>平台把安全事件与国家、企业、项目、组织自动关联，一旦风险出现，"影响谁、通知谁、保护谁"立即清晰。信息部门、业务部门和海外企业围绕同一平台协同工作，改变了以往各管一段、信息不通的状况。</p>
+<p><b>四是"参谋"作用：让决策有依据。</b>平台的态势总览、风险评估、趋势分析和智能报告，为各级领导研判形势、部署工作提供了系统化的数据支撑，推动海外安全决策从"凭经验、凭感觉"向"看数据、看态势"转变。</p>
+
+<h2>7.2　典型应用场景</h2>
+<h3>场景一：突发事件应急响应</h3>
+<p>某国突发恐怖袭击事件。平台常规引擎第一时间从权威渠道捕获信息并入库告警；值班人员立即启动深度引擎，对事发地区开展全网深度检索，快速补充事件细节；审核确认后，预警信息即刻生成，态势地图同步标注；系统自动列出该国全部涉我企业和项目清单，明确需要紧急通知的对象；智能报告功能快速汇集素材生成事件专报，供领导第一时间掌握情况、部署应对。整个过程从信息发现到形成专报，可在极短时间内完成。</p>
+<h3>场景二：重点国家常态监测</h3>
+<p>对安全形势复杂的重点国家，平台实施常态化盯守。该国相关的每一条安全信息都持续归集入库，国家风险评分随事态动态调整；一旦风险评分显著上升或触发自动预警规则，系统立即提示，工作人员据此加强研判、提前部署，防止风险由小变大、由缓变急。</p>
+<h3>场景三：企业出海安全服务</h3>
+<p>企业拟赴某国投资新项目，可依托平台查询该国风险档案、历史事件记录、活跃威胁组织情况和风险趋势，形成投资安全参考；项目落地后纳入企业资产台账，此后该国任何风险动态都会自动关联提示，为企业安保部署、人员管理和应急预案提供持续的情报支持。</p>
+<h3>场景四：定期形势综合研判</h3>
+<p>依托数据中心积累的历史数据，工作人员定期开展全球和分区域安全形势综合研判，利用风险融合矩阵把握各国各类风险的分布与变化，利用趋势分析研判走势，利用智能报告快速成稿，形成周报、月报和专题报告，为上级决策提供常态化情报产品。</p>
+<h3>场景五：重大活动与出访保障</h3>
+<p>重大活动或重要出访前，可利用定制化评估工具，对目的地国家开展专项风险评估，全面梳理当地安全形势、威胁因素和历史事件，形成专项安全评估报告，为行程安排和安保方案提供依据。</p>
+
+<h2>7.3　服务对象</h2>
+<table class="doc">
+  <tr><th style="width:22%">服务对象</th><th style="width:38%">主要需求</th><th>平台提供的服务</th></tr>
+  <tr><td><b>上级领导机关</b></td><td>掌握全球涉我安全总体态势，重大风险及时知晓</td><td>态势总览、分级预警、事件专报、定期综合研判报告</td></tr>
+  <tr><td><b>业务主管部门</b></td><td>及时获取分管领域、分管区域风险信息，组织应对处置</td><td>分类情报检索、自动预警提示、专项评估、处置反馈跟踪</td></tr>
+  <tr><td><b>驻外机构</b></td><td>掌握驻在国及周边安全动态，保障机构人员安全</td><td>国别风险档案、实时预警推送、威胁组织动向</td></tr>
+  <tr><td><b>海外中资企业</b></td><td>项目所在地风险预警，投资决策安全参考</td><td>企业关联预警、国别评估、出海安全咨询支持</td></tr>
+  <tr><td><b>研判分析人员</b></td><td>情报素材完整、检索便捷、成稿高效</td><td>十二类资源库、关联索引、翻译工具、智能报告</td></tr>
+</table>
+
+<!-- ==================== 第八章 ==================== -->
+<h1 class="chapter">第八章　应用成效</h1>
+<div class="chapter-sub">—— 系统带来了什么变化 ——</div>
+
+<h2>8.1　信息获取实现"人工零散"向"系统常态"转变</h2>
+<p>平台建成前，海外安全信息主要靠人工浏览搜集，覆盖渠道有限、随机性大、易有遗漏。平台建成后，注册信息源全天候自动巡查，深度检索随时可用，信息获取从"偶然看到"变为"必然抓到"，从"上班时段"延伸到"全天候不间断"，信息底数明显做实。</p>
+
+<h2>8.2　信息质量实现"良莠混杂"向"审核可信"转变</h2>
+<p>通过"相关性筛选＋人工审核"双重把关，进入应用环节的信息全部经过确认，来源明确、要素齐全、真实可靠。特别是"真实数据"铁律的确立，从根本上杜绝了虚假信息、演示数据混入工作链条的风险，情报产品的公信力显著增强。</p>
+
+<h2>8.3　业务协同实现"各自为战"向"全网联动"转变</h2>
+<p>情报总线的建成，使预警、态势、评估、企业管理等环节由割裂走向贯通。一条情报入库，全系统相关模块自动更新，避免了重复录入和信息不同步问题；"事件—国家—企业—组织"的自动关联，使影响范围研判从以往的逐一排查缩短为即时可得。</p>
+
+<h2>8.4　工作效率实现"事倍功半"向"提质增效"转变</h2>
+<p>多语种翻译工具消除了语言障碍，外文情报即点即译；智能报告功能使资料汇集、初稿起草时间大幅压缩；结构化的资源库和便捷检索，使"用时找得到、找到用得上"成为常态。工作人员从繁重的事务性劳动中解放出来，把更多精力投入审核研判等核心业务。</p>
+
+<h2>8.5　决策支撑实现"情况模糊"向"数据说话"转变</h2>
+<p>一张态势图总览全球，一套评分体系衡量各国风险，一个资源库支撑追根溯源，一键报告服务快速上报。领导决策所需的"现状怎么样、趋势怎么走、影响有多大"等基本问题，都能在平台上找到有数据支撑的回答，决策的科学性和及时性得到有效提升。</p>
+
+<div class="callout">
+  <b>总体评价：</b>平台的建成运行，初步实现了海外安全风险"看得到、理得清、把得准、联得动、用得上"的建设目标，海外利益保护工作的信息化、体系化水平迈上了一个新台阶。
+</div>
+
+<!-- ==================== 第九章 ==================== -->
+<h1 class="chapter">第九章　发展前景与建设规划</h1>
+<div class="chapter-sub">—— 系统未来怎么发展 ——</div>
+
+<h2>9.1　发展前景总体判断</h2>
+<p>从形势看，海外利益保护的任务将长期存在并日益繁重，情报预警作为其中最基础、最先导的环节，需求刚性且持续增长。从基础看，平台已经打通"采集—审核—分发—应用"全链条，确立了统一数据底座和联动机制，具备了持续扩展的良好架构条件。从方向看，情报来源的拓展、智能水平的提升、服务范围的延伸，都有清晰的路径可循。总体判断：平台前景广阔、大有可为，完全有条件建设成为海外利益保护领域的骨干信息系统。</p>
+
+<h2>9.2　三个阶段的建设规划</h2>
+<p>按照"夯实基础、深化应用、拓展赋能"的思路，平台后续建设分三个阶段推进（见图8）。</p>
+<h3>近期（一年内）：夯实基础，扩面提质。</h3>
+<p>重点是扩充信息来源、做实数据积累。持续扩大注册信息源数量，增加语种和区域覆盖；积极争取与有关部门权威数据渠道的授权对接，让"通道预留"变为"数据接入"；完善审核规范和值班值守制度，形成稳定的运行秩序；持续积累真实历史数据，为深度分析打好数据基础。</p>
+<h3>中期（一至三年）：深化应用，提升智能。</h3>
+<p>重点是提升分析研判的智能化水平。深化风险评估模型，细化到城市和重点设施级别；增强多语种处理能力，扩大小语种覆盖；发展基于历史数据的量化趋势分析，提升预测的精细度；建设移动端应用，实现预警信息向相关人员的直达推送；探索与企业安保体系的对接，延伸服务链条。</p>
+<h3>远期（三至五年）：拓展赋能，体系集成。</h3>
+<p>重点是融入更大的安全保障体系。推动平台与相关部门业务系统的互联互通，实现跨部门情报共享与协同处置；建设面向重点区域的分中心节点，形成"总平台＋分节点"的布局；发展辅助决策的推演分析能力，为重大行动提供体系化情报支撑；最终建成覆盖全球、贯通上下、联通内外的海外利益保护情报预警体系。</p>
+
+<div class="fig">
+<svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" font-family="SimHei,Microsoft YaHei,sans-serif">
+  <rect x="1" y="1" width="998" height="558" fill="#ffffff" stroke="#1a3a6b" stroke-width="2"/>
+  <text x="500" y="52" fill="#1a3a6b" font-size="20" text-anchor="middle">平台三阶段建设发展路线</text>
+  <!-- 阶梯 -->
+  <!-- Stage 1 -->
+  <rect x="52" y="330" width="280" height="180" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+  <rect x="52" y="330" width="280" height="46" fill="#4a6fa6"/>
+  <text x="192" y="360" fill="#ffffff" font-size="17" text-anchor="middle">近期（一年内）</text>
+  <text x="192" y="404" fill="#1a3a6b" font-size="15.5" text-anchor="middle">夯实基础 · 扩面提质</text>
+  <g font-size="13" fill="#12335f" text-anchor="middle">
+    <text x="192" y="432">扩充信息源与语种覆盖</text>
+    <text x="192" y="456">争取权威渠道授权接入</text>
+    <text x="192" y="480">完善审核值守制度</text>
+    <text x="192" y="502">持续积累真实历史数据</text>
+  </g>
+  <!-- Stage 2 -->
+  <rect x="360" y="215" width="280" height="295" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+  <rect x="360" y="215" width="280" height="46" fill="#2a4f86"/>
+  <text x="500" y="245" fill="#ffffff" font-size="17" text-anchor="middle">中期（一至三年）</text>
+  <text x="500" y="289" fill="#1a3a6b" font-size="15.5" text-anchor="middle">深化应用 · 提升智能</text>
+  <g font-size="13" fill="#12335f" text-anchor="middle">
+    <text x="500" y="317">评估细化至城市与设施</text>
+    <text x="500" y="341">小语种处理能力增强</text>
+    <text x="500" y="365">量化趋势分析发展</text>
+    <text x="500" y="389">移动端预警直达推送</text>
+    <text x="500" y="413">对接企业安保体系</text>
+  </g>
+  <!-- Stage 3 -->
+  <rect x="668" y="100" width="280" height="410" fill="#eef3fb" stroke="#1a3a6b" stroke-width="1.8"/>
+  <rect x="668" y="100" width="280" height="46" fill="#1a3a6b"/>
+  <text x="808" y="130" fill="#ffffff" font-size="17" text-anchor="middle">远期（三至五年）</text>
+  <text x="808" y="174" fill="#1a3a6b" font-size="15.5" text-anchor="middle">拓展赋能 · 体系集成</text>
+  <g font-size="13" fill="#12335f" text-anchor="middle">
+    <text x="808" y="202">跨部门系统互联互通</text>
+    <text x="808" y="226">情报共享与协同处置</text>
+    <text x="808" y="250">重点区域分中心布局</text>
+    <text x="808" y="274">"总平台＋分节点"体系</text>
+    <text x="808" y="298">辅助决策推演分析</text>
+  </g>
+  <!-- 阶梯箭头 -->
+  <g stroke="#b02a30" stroke-width="3" fill="none">
+    <line x1="332" y1="392" x2="360" y2="392"/>
+    <line x1="640" y1="278" x2="668" y2="278"/>
+  </g>
+  <g fill="#b02a30">
+    <polygon points="366,392 354,386 354,398"/>
+    <polygon points="674,278 662,272 662,284"/>
+  </g>
+  <!-- 远期目标 -->
+  <rect x="694" y="322" width="228" height="160" fill="#fdf4f0" stroke="#b02a30" stroke-width="1.6"/>
+  <text x="808" y="352" fill="#b02a30" font-size="15" text-anchor="middle">建设总目标</text>
+  <g font-size="13" fill="#7a1c20" text-anchor="middle">
+    <text x="808" y="382">建成覆盖全球</text>
+    <text x="808" y="406">贯通上下、联通内外的</text>
+    <text x="808" y="430">海外利益保护</text>
+    <text x="808" y="454">情报预警体系</text>
+  </g>
+  <!-- 底部时间轴 -->
+  <g stroke="#1a3a6b" stroke-width="2.5" fill="#1a3a6b">
+    <line x1="52" y1="532" x2="920" y2="532"/><polygon points="930,532 916,525 916,539"/>
+  </g>
+  <text x="965" y="537" fill="#1a3a6b" font-size="13">时间</text>
+</svg>
+<div class="fig-cap">图 8　平台三阶段建设发展路线图</div>
+</div>
+
+<h2>9.3　需要的支持保障</h2>
+<p>为保证规划顺利实施，恳请上级部门在以下方面给予支持：</p>
+<p><b>一是数据渠道支持。</b>协调推动有关部门权威信息渠道对平台的授权接入，进一步提升情报来源的权威性和覆盖面。目前平台对无授权的官方渠道一律如实标注"通道预留"、不擅自接入，规范接入亟需上级协调推动。</p>
+<p><b>二是机制建设支持。</b>支持建立跨部门的情报共享和预警联动机制，明确平台预警信息的报送、流转和响应规程，使技术平台与工作机制相互配套。</p>
+<p><b>三是力量配备支持。</b>情报审核、研判分析对人员专业素质要求较高，建议加强专职力量配备和业务培训，保证平台全天候运转和高质量产出。</p>
+<p><b>四是经费投入支持。</b>信息源扩充、智能化升级、移动端建设和分中心布局均需持续投入，建议将平台后续建设纳入相关规划予以保障。</p>
+
+<!-- ==================== 第十章 ==================== -->
+<h1 class="chapter">第十章　结束语</h1>
+<p>海外利益保护，关系国家发展全局，关系亿万人民福祉，关系我国国际形象。情报预警是这项工作的第一道防线，防线牢不牢，直接决定着我们面对风险时是从容主动还是仓促被动。</p>
+<p>海外利益保护情报预警平台的建设，是我们运用信息化手段加强海外利益保护的一次扎实探索。平台坚持实战导向，建成了全球采集、统一归库、严格审核、快速预警、全网联动的完整体系；坚持真实至上，确立并严格执行"零虚假数据"铁律，确保每一条情报都经得起检验；坚持服务大局，面向领导决策、部门协同和企业服务提供多层次情报产品。实践证明，平台方向正确、架构合理、运行有效，具备了在更大范围发挥作用的基础和条件。</p>
+<p>我们也清醒认识到，平台建设仍处于起步阶段，信息来源的权威性、分析研判的智能化、服务体系的完备性都还有很大提升空间。我们将坚持一手抓运行、一手抓建设，按照既定规划分步实施、久久为功，努力把平台建设成为让上级放心、让部门好用、让企业受益的海外利益保护信息中枢。</p>
+<p>恳请上级部门对平台建设运行情况给予指导，对下一步发展规划给予支持。我们将以对党和人民高度负责的态度，把这项工作抓实抓好，为维护国家海外利益安全作出应有贡献。</p>
+<p class="noindent" style="text-align:right;margin-top:36pt">平台建设工作组<br>二〇二六年七月</p>
+
+</body>
+</html>
