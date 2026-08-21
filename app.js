@@ -10197,6 +10197,36 @@ const AVIEW={
       if(idx>-1){
         var deletedAlert=ALERTS[idx];
         ALERTS.splice(idx,1);
+        /* 2026-08-22 用户铁律（删了就有是事故）：删除必须是终局。
+         * 旧版只切前端数组——服务器行还在（同步复活）、采集器还会再抓同一条（重新入库复活）、
+         * DBCenter 本地库存还有（重启复活）。现三路径全堵：
+         * ① 通知服务器立墓碑（标题指纹+URL，所有入库闸永久拒收）并清服务器现存行；
+         * ② 若 id 是服务器行号，走 DELETE 接口一并删除；
+         * ③ 清 DBCenter 全分类本地库存的同标题/同链接条目。 */
+        try{
+          var _dt=String(deletedAlert.title||''),_dtz=String(deletedAlert.title_zh||'');
+          var _du=String(deletedAlert.url||deletedAlert.link||'');
+          if(typeof APIClient!=='undefined'&&APIClient._fetch){
+            APIClient._fetch('POST','/api/intel-tombstone',{title:_dt,title_zh:_dtz,url:_du}).catch(function(){});
+            var _dbid=(deletedAlert._dbId||deletedAlert.dbId||(/^\d+$/.test(String(deletedAlert.id||''))?deletedAlert.id:0));
+            if(_dbid)APIClient.deleteIntel(_dbid).catch(function(){});
+          }
+          if(typeof DBCenter!=='undefined'&&DBCenter._r){
+            ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(c){
+              try{
+                var arr=DBCenter._r(c),before=arr.length;
+                arr=arr.filter(function(x){
+                  if(_du&&String(x.url||x.link||'')===_du)return false;
+                  var xt=String(x.title||''),xtz=String(x.title_zh||'');
+                  if(_dt&&(xt===_dt||xtz===_dt))return false;
+                  if(_dtz&&(xt===_dtz||xtz===_dtz))return false;
+                  return true;
+                });
+                if(arr.length!==before)DBCenter._w(c,arr);
+              }catch(e){}
+            });
+          }
+        }catch(e){}
         /* 同步删除实时情报流中的对应条目 */
         if(typeof LIVE_ALERTS!=='undefined'){
           var liveIdx=LIVE_ALERTS.findIndex(function(x){return String(x.id)===String(id)||String(x.alert_no)===String(deletedAlert.alert_no);});

@@ -467,13 +467,22 @@ async function apSearch(query, opts) {
                    seg.match(/>([^<>{}]{18,180})<\/a>/);
         if (tm) title = _stripTags(tm[1]).replace(/\s+/g, ' ').trim();
       }
-      /* 从结果页就近抽取发布日期（2026-08-13：AP 条目原本无日期，时效闸门无法校验 → 旧闻漏洞） */
+      /* 从结果页就近抽取发布日期（2026-08-13：AP 条目原本无日期，时效闸门无法校验 → 旧闻漏洞）
+       * 2026-08-22 修正张冠李戴：旧版 ±1500 窗口从头扫，第一个命中的往往是**上一条卡片**的日期，
+       * 旧文借此拿到新鲜日期混过时效闸反复入库（喀布尔中餐馆爆炸旧闻删了又来）。
+       * 现优先取链接**之后**同卡片内的日期；取不到再取之前窗口里**最后一个**（离本卡片最近）日期。 */
       let apDate = '';
       if (idx > 0) {
-        const seg2 = html.slice(Math.max(0, idx - 1500), idx + 1500);
-        const dm = seg2.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},\s+\d{4})/) ||
-                   seg2.match(/(\d{4}-\d{2}-\d{2})/);
-        if (dm) { const pd = new Date(dm[1]); if (!isNaN(pd.getTime())) apDate = pd.toISOString(); }
+        const D1 = /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},\s+\d{4})/g;
+        const D2 = /(\d{4}-\d{2}-\d{2})/g;
+        const after = html.slice(idx, idx + 1200);
+        let dm = after.match(D1) || after.match(D2);
+        if (!dm) {
+          const before = html.slice(Math.max(0, idx - 1200), idx);
+          const all = before.match(D1) || before.match(D2);
+          if (all && all.length) dm = [all[all.length - 1]];
+        }
+        if (dm) { const pd = new Date(dm[0]); if (!isNaN(pd.getTime())) apDate = pd.toISOString(); }
       }
       out.push({ url: u, title: title, domain: 'apnews.com', language: 'English', seendate: '', publishedAt: apDate, _src: 'apnews' });
       added++;

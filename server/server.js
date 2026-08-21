@@ -1733,6 +1733,64 @@ function _normTitleKey(t) {
     .replace(/[^\w一-龥]+/g, '')
     .slice(0, 48);
 }
+
+/* ===== 删除墓碑（2026-08-22 用户铁律：删掉的数据永远不再进来）=====
+ * 病灶：用户前端删预警只是切了前端数组——服务器行还在（同步复活）、采集器还会再抓
+ * 同一旧闻（重新入库复活），旧的 _POST_BLOCK_RE 硬编码黑名单只能打地鼠。
+ * 机制：任何删除动作都把 标题指纹+译文指纹+URL 写进 intel_tombstones，
+ * 所有入库闸（定时采集 _preInsertGate / 前端 POST _postGate）先查墓碑，命中即拒。 */
+let _tombReady = false;
+async function _ensureTombstoneTable() {
+  if (_tombReady) return;
+  _tombReady = true;
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS intel_tombstones (
+      id SERIAL PRIMARY KEY, tkey TEXT, url TEXT, title TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW())`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_tomb_tkey ON intel_tombstones(tkey)`);
+  } catch (e) { _tombReady = false; console.warn('[TOMBSTONE] 建表失败:', e.message); }
+}
+let _tombCache = { t: 0, tkeys: new Set(), urls: new Set() };
+async function _getTombstones() {
+  if (Date.now() - _tombCache.t < 60 * 1000 && (_tombCache.tkeys.size || _tombCache.urls.size)) return _tombCache;
+  await _ensureTombstoneTable();
+  try {
+    const { rows } = await query(`SELECT tkey, url FROM intel_tombstones`);
+    _tombCache = {
+      t: Date.now(),
+      tkeys: new Set(rows.map(r => r.tkey).filter(Boolean)),
+      urls: new Set(rows.map(r => String(r.url || '').replace(/\/+$/, '').toLowerCase()).filter(Boolean))
+    };
+  } catch (e) {}
+  return _tombCache;
+}
+async function _addTombstone(title, titleZh, url) {
+  await _ensureTombstoneTable();
+  const keys = [];
+  const k1 = _normTitleKey(title), k2 = _normTitleKey(titleZh);
+  if (k1.length >= 6) keys.push(k1);
+  if (k2.length >= 6 && k2 !== k1) keys.push(k2);
+  if (!keys.length && !url) return;
+  try {
+    const rowsToInsert = keys.length ? keys : [''];
+    for (const k of rowsToInsert) {
+      await query(`INSERT INTO intel_tombstones (tkey, url, title) VALUES ($1, $2, $3)`,
+        [k || null, url || null, String(title || titleZh || '').slice(0, 200)]);
+    }
+    _tombCache.t = 0; /* 立即失效缓存，删除马上生效 */
+    console.log('[TOMBSTONE] 已立墓碑: ' + String(title || titleZh || url || '').slice(0, 60));
+  } catch (e) { console.warn('[TOMBSTONE] 写入失败:', e.message); }
+}
+async function _isTombstoned(it) {
+  const tb = await _getTombstones();
+  if (!tb.tkeys.size && !tb.urls.size) return false;
+  const u = String(it.url || '').replace(/\/+$/, '').toLowerCase();
+  if (u && tb.urls.has(u)) return true;
+  const k1 = _normTitleKey(it.title), k2 = _normTitleKey(it.title_zh);
+  if (k1.length >= 6 && tb.tkeys.has(k1)) return true;
+  if (k2.length >= 6 && tb.tkeys.has(k2)) return true;
+  return false;
+}
 function _coreEntityKey(t) {
   /* 提取标题中的国家、组织、数字、核心名词，用于识别"洗稿式重复" */
   const s = String(t || '').toLowerCase();
@@ -1901,6 +1959,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const u = it.url || it.title;
   if (!u) return { ok: false, code: ['no-url-title'] };
   if (existing.has(u)) return { ok: false, code: ['url-dup'] };
+  /* 删除墓碑：用户删过的数据永不再入（2026-08-22 铁律） */
+  if (await _isTombstoned(it)) { _gateAudit('入库闸', 'tombstoned', it.title); return { ok: false, code: ['tombstoned'] }; }
   /* 国内硬拦截：必须在所有通道生效 */
   if (globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
@@ -3249,84 +3309,84 @@ async function _runCnMedia() {
 }
 
 /* ===== 微信公众号采集通道（2026-08-21 用户指令：作为数据源部署进系统）=====
- * 链路：wechatoa.collect()(扫码会话+searchbiz+appmsg list_ex+正文+aid增量)
- *   → enrich(关联判定) → 与 CNMEDIA 相同的入库闸链(URL/标题/事件签名去重+国内过滤+新鲜度)
- *   → intel_data(approved) → 预警中心/态势总览实时分发。
+ * 双通道：有扫码会话走公众平台接口(searchbiz+appmsg)；无会话自动降级搜狗微信检索（免登录）。
+ * 链路：wechatoa.collect() → onItems 回调 → enrich(关联判定) → 与 CNMEDIA 相同的入库闸链
+ *   (URL/标题/事件签名去重+国内过滤+新鲜度) → intel_data(approved) → 预警中心/态势总览实时分发。
  * 零模拟：会话失效/风控冷却/无新文章一律如实记日志并返回，绝不造假。
- * 节奏：每 15 分钟一轮（公众号文章非秒级时效，低频既够用又不触风控）。 */
+ * 节奏：每 15 分钟一轮（公众号文章非秒级时效，低频既够用又不触风控）。
+ * onItems 设计：整轮可能超过 HTTP 友好的等待时长（礼貌间隔+网络抖动），
+ * 采集完成时由回调入库——即使 _runWechatOA 的等待竞速已超时返回，真实数据也不丢。 */
 let _wechatBusyUntil = 0;
 let _wechatLastRun = null;   // 状态面板展示用
+let _wechatLastIngest = null;
+async function _wechatIngest(items) {
+  if (!items || !items.length) return 0;
+  /* 中文内容为主，翻译管线自动跳过中文；保留调用以兜底个别外文号 */
+  try { await _translateListToZhParallel(items, 4); } catch (e) {}
+  items.forEach(it => {
+    try {
+      const before = it.interestLinked;
+      ENTITY.enrich(it);
+      if (before === true) it.interestLinked = true;
+    } catch (e) {}
+  });
+  const linked = items.filter(it => it.interestLinked === true);
+  let inserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedNoUrl = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0;
+  if (linked.length) {
+    const urls = linked.map(it => it.url).filter(Boolean);
+    const existing = new Set();
+    if (urls.length) {
+      const batch = urls.map((_, i) => '$' + (i + 1)).join(',');
+      const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+      dup.rows.forEach(x => { if (x.url) existing.add(x.url); });
+    }
+    const titleKeys = await _getRecentTitleKeys();
+    const eventSigs = await _getRecentEventSigs();
+    for (const it of linked) {
+      const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
+      if (!gate.ok) {
+        gate.code.forEach(c => {
+          if (c === 'no-url-title') skippedNoUrl++;
+          else if (c === 'url-dup') skippedDup++;
+          else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
+          else if (c === 'event-sig-dup') skippedEventSig++;
+          else if (c === 'domestic-china') skippedDomestic++;
+          else if (c === 'bad-title') skippedBadTitle++;
+        });
+        continue;
+      }
+      if (!_isFreshEnough(it)) { skippedStale++; continue; }
+      try {
+        _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        const _ins = await query(
+          `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '公众号监测', JSON.stringify(it), 'approved']
+        );
+        if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+        inserted++;
+      } catch (e) { /* URL 唯一索引冲突等 */ }
+    }
+  }
+  if (inserted) { _bumpDailyStats(inserted, linked.length, 0, 0); }
+  _wechatLastIngest = { at: new Date().toISOString(), items: items.length, inserted };
+  console.log('[WECHAT] 入库完成: 候选' + items.length + ' 关联' + linked.length + ' 入库' + inserted + ' | URL重复' + skippedDup + ' 标题/实体重复' + skippedDupTitle + ' 事件签名重复' + skippedEventSig + ' 国内数据' + skippedDomestic + ' 低质标题' + skippedBadTitle + ' 旧闻' + skippedStale);
+  return inserted;
+}
 async function _runWechatOA() {
   if (Date.now() < _wechatBusyUntil) return;
   _wechatBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   const t0 = Date.now();
   try {
     const r = await Promise.race([
-      wechatoa.collect(),
-      new Promise(resolve => setTimeout(() => resolve({ items: [], stats: {}, session: { logged: false, needLogin: false, message: '采集超时(90s)' } }), 90000))
+      wechatoa.collect({ onItems: (items) => _wechatIngest(items).catch(e => console.warn('[WECHAT] 入库异常:', e.message)) }),
+      /* 整轮正常 60~120s；超时仅放弃等待，采集器在后台继续，完成时经 onItems 入库。 */
+      new Promise(resolve => setTimeout(() => resolve({ items: [], stats: {}, session: { logged: false, needLogin: false, message: '本轮等待超时(240s)，采集器仍在后台运行' } }), 240000))
     ]);
     _wechatLastRun = { at: new Date().toISOString(), stats: r.stats || {}, session: r.session || {} };
-    if (r.session && r.session.needLogin) {
-      console.log('[WECHAT] 跳过：' + (r.session.message || '需要扫码登录'));
-      return;
-    }
-    const items = r.items || [];
-    if (!items.length) {
-      const st = r.stats || {};
-      console.log('[WECHAT] 本轮无新文章（账号' + (st.accounts || 0) + ' 可通' + (st.accountsOk || 0) + '，增量去重跳过' + (st.skippedOld || 0) + '）' + (r.session && r.session.message !== 'ok' ? ' ' + r.session.message : ''));
-      return;
-    }
-    /* 中文内容为主，翻译管线自动跳过中文；保留调用以兜底个别外文号 */
-    try { await _translateListToZhParallel(items, 4); } catch (e) {}
-    items.forEach(it => {
-      try {
-        const before = it.interestLinked;
-        ENTITY.enrich(it);
-        if (before === true) it.interestLinked = true;
-      } catch (e) {}
-    });
-    const linked = items.filter(it => it.interestLinked === true);
-    let inserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedNoUrl = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0;
-    if (linked.length) {
-      const urls = linked.map(it => it.url).filter(Boolean);
-      const existing = new Set();
-      if (urls.length) {
-        const batch = urls.map((_, i) => '$' + (i + 1)).join(',');
-        const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
-        dup.rows.forEach(x => { if (x.url) existing.add(x.url); });
-      }
-      const titleKeys = await _getRecentTitleKeys();
-      const eventSigs = await _getRecentEventSigs();
-      for (const it of linked) {
-        const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
-        if (!gate.ok) {
-          gate.code.forEach(c => {
-            if (c === 'no-url-title') skippedNoUrl++;
-            else if (c === 'url-dup') skippedDup++;
-            else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
-            else if (c === 'event-sig-dup') skippedEventSig++;
-            else if (c === 'domestic-china') skippedDomestic++;
-            else if (c === 'bad-title') skippedBadTitle++;
-          });
-          continue;
-        }
-        if (!_isFreshEnough(it)) { skippedStale++; continue; }
-        try {
-          _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
-          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
-          const _ins = await query(
-            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '公众号监测', JSON.stringify(it), 'approved']
-          );
-          if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
-          inserted++;
-        } catch (e) { /* URL 唯一索引冲突等 */ }
-      }
-    }
-    if (inserted) { _bumpDailyStats(inserted, linked.length, 0, 0); }
     const st = r.stats || {};
     const sec = ((Date.now() - t0) / 1000).toFixed(1);
-    console.log('[WECHAT] 本轮(' + sec + 's): 账号' + (st.accountsOk || 0) + '/' + (st.accounts || 0) + ' 新文章' + (st.fresh || 0) + ' 正文' + (st.bodyOk || 0) + ' / 入库 ' + inserted + ' | URL重复' + skippedDup + ' 标题/实体重复' + skippedDupTitle + ' 事件签名重复' + skippedEventSig + ' 国内数据' + skippedDomestic + ' 低质标题' + skippedBadTitle + ' 旧闻' + skippedStale + (st.errors && st.errors.length ? ' | 异常: ' + st.errors.slice(0, 3).join('; ') : ''));
+    console.log('[WECHAT] 本轮(' + sec + 's): 账号' + (st.accountsOk || 0) + '/' + (st.accounts || 0) + ' 新文章' + (st.fresh || 0) + ' 正文' + (st.bodyOk || 0) + ' 旧文跳过' + (st.skippedOld || 0) + (st.errors && st.errors.length ? ' | 异常: ' + st.errors.slice(0, 3).join('; ') : '') + (r.session && r.session.message && r.session.message !== 'ok' ? ' | ' + r.session.message : ''));
   } catch (e) { console.warn('[WECHAT] 采集失败:', e.message); }
   finally { _wechatBusyUntil = 0; }
 }
@@ -4875,6 +4935,8 @@ async function _postGate(item) {
     if (!item.url && !_meaningful) return 'shell';
   }
   if (_POST_BLOCK_RE.test(String(item.title || '') + ' ' + String(item.title_zh || ''))) { _gateAudit('入库闸', 'blocked-blacklist', item.title); return 'blocked'; }
+  /* 删除墓碑：用户删过的数据永不再入（2026-08-22 铁律） */
+  if (await _isTombstoned(item)) { _gateAudit('入库闸', 'tombstoned', item.title); return 'tombstoned'; }
   /* 精确标题去重（2026-08-16 用户铁律）：30 天内同标题（含译文标题）一律拒收——
    * 24h 窗口对"每天回灌一次"的旧缓存失效，精确同标题重发永远不可能是新事件 */
   try {
@@ -4958,8 +5020,35 @@ app.put('/api/intel/:id/audit', authMiddleware, adminOnly, async (req, res) => {
 });
 
 app.delete('/api/intel/:id', authMiddleware, async (req, res) => {
-  try { await query('DELETE FROM intel_data WHERE id = $1', [parseInt(req.params.id, 10)]); res.json({ success: true }); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const id = parseInt(req.params.id, 10);
+    /* 删除即墓碑（2026-08-22 铁律）：先立碑再删行，采集器再抓到同标题/同链接一律拒收 */
+    try {
+      const { rows } = await query('SELECT title, data_json FROM intel_data WHERE id = $1', [id]);
+      if (rows.length) {
+        const dj = rows[0].data_json || {};
+        await _addTombstone(rows[0].title, dj.title_zh || '', dj.url || '');
+      }
+    } catch (e) { console.warn('[TOMBSTONE] 删除前立碑失败:', e.message); }
+    await query('DELETE FROM intel_data WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* 前端删除落碑接口（2026-08-22）：前端预警的 id 未必是服务器行 id，
+ * 前端删除时把 标题+译文标题+链接 POST 过来——立碑 + 顺手清掉库里现存的同标题/同链接行。 */
+app.post('/api/intel-tombstone', authMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const t = String(b.title || '').trim(), tz = String(b.title_zh || '').trim(), u = String(b.url || '').trim();
+    if (!t && !tz && !u) return res.status(400).json({ error: 'title/title_zh/url 至少给一个' });
+    await _addTombstone(t, tz, u);
+    const d = await query(
+      `DELETE FROM intel_data WHERE ($1 <> '' AND title = $1) OR ($2 <> '' AND data_json->>'title_zh' = $2) OR ($2 <> '' AND title = $2) OR ($3 <> '' AND data_json->>'url' = $3)`,
+      [t, tz, u]
+    );
+    res.json({ ok: true, removed: d.rowCount || 0 });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/intel/:type/all', authMiddleware, adminOnly, async (req, res) => {
