@@ -7148,7 +7148,7 @@ _panelDrag.restore=function(panel){
 };
 /* 面板位置重置：清除所有保存的位置，恢复默认 */
 _panelDrag.resetAll=function(){
-  ['globe-intel-live','globe-intel-alerts','globe-intel-hotspots','sit-level-panel'].forEach(function(id){
+  ['globe-intel-live','sit-level-panel'].forEach(function(id){
     localStorage.removeItem('orps_dh_panel_'+id);
     var panel=document.getElementById(id);
     if(panel){
@@ -8192,8 +8192,9 @@ const SITUATION={
     this._wrapPanelBody('globe-intel-hotspots');
   },
   /* ===== 六面板管理器（2026-08-12）：居中聚集 + 自由拖动 + ✕关闭 + 一键恢复 ===== */
-  _PANEL_IDS:['globe-intel-live','globe-intel-alerts','globe-intel-hotspots','globe-stats','globe-hud','sit-level-panel'],
-  _PANEL_TITLES:{'globe-intel-live':'📡 实时情报流','globe-intel-alerts':'🚨 活跃预警','globe-intel-hotspots':'🏢 热点','globe-stats':'📈 全球概览','globe-hud':'🧭 坐标/时间','sit-level-panel':'📊 风险等级速览'},
+  /* ===== 面板管理器（2026-08-21 用户指令：圆球区只保留 全球态势焦点 + 风险等级速览，其余 5 面板删除） ===== */
+  _PANEL_IDS:['globe-intel-live','sit-level-panel'],
+  _PANEL_TITLES:{'globe-intel-live':'🎯 全球态势焦点','sit-level-panel':'📊 风险等级速览'},
   _panelClosedGet(){
     try{return JSON.parse(localStorage.getItem('orps_panel_closed')||'{}');}catch(e){return{};}
   },
@@ -8300,8 +8301,6 @@ const SITUATION={
   },
   _ensurePanelToggles(){
     this._wrapPanelBody('globe-intel-live');
-    this._wrapPanelBody('globe-intel-alerts');
-    this._wrapPanelBody('globe-intel-hotspots');
   }
 };
 
