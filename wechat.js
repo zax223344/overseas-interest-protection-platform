@@ -35,7 +35,7 @@ var WECHAT = (function () {
     if (!el) return;
     el.innerHTML =
       '<div class="card" style="border:1px solid rgba(91,155,255,0.3)">' +
-        '<div class="card-tt"><span class="ic">📮</span>微信公众号实时采集 <span style="font-size:10px;color:var(--text3);font-weight:400"> — 扫码登录微信公众平台后，系统每 15 分钟自动拉取监测账号最新文章，经入口闸门过滤后实时入库并分发预警中心/态势总览</span></div>' +
+        '<div class="card-tt"><span class="ic">📮</span>微信公众号实时采集 <span style="font-size:10px;color:var(--text3);font-weight:400"> — 每 15 分钟自动拉取监测账号最新文章，经入口闸门过滤后实时入库并分发预警中心/态势总览。双通道：免登录（搜狗微信检索，开箱即用）/ 扫码登录（公众平台接口，功能更全）</span></div>' +
         '<div id="wx-status"></div>' +
       '</div>' +
       '<div class="grid mt-12" style="grid-template-columns:1fr 1fr;gap:12px">' +
@@ -69,17 +69,18 @@ var WECHAT = (function () {
       el.innerHTML = '<div style="padding:14px;color:var(--red);font-size:13px">⚠️ 后端未响应——请确认 server 已启动（localhost:3000）</div>';
       return;
     }
-    var dot = st.logged && !st.needLogin ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">●</span>';
+    var ok = st.channel ? true : (st.logged && !st.needLogin);
+    var dot = ok ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">●</span>';
     var lr = st.lastRun || {};
     var s = lr.stats || {};
     el.innerHTML =
       '<div class="flex gap-12 wrap items-center" style="padding:6px 0 2px">' +
-        '<span style="font-size:13px">' + dot + ' 会话状态：<b>' + (st.logged && !st.needLogin ? '已登录' : '未登录/已失效') + '</b></span>' +
+        '<span style="font-size:13px">' + dot + ' 采集通道：<b>' + _esc(st.channel || (st.logged ? '公众平台接口' : '未启动')) + '</b></span>' +
         (st.savedAt ? '<span class="text-xs text-muted">会话保存于 ' + _esc(new Date(st.savedAt).toLocaleString('zh-CN')) + '</span>' : '') +
         '<span class="text-xs text-muted">已解析账号 ' + (st.resolved || 0) + '/' + (st.accounts || []).length + '</span>' +
-        (st.freqCooldownUntil ? '<span style="font-size:11px;color:var(--orange)">⏸ 微信风控冷却至 ' + _esc(new Date(st.freqCooldownUntil).toLocaleTimeString('zh-CN')) + '</span>' : '') +
+        (st.freqCooldownUntil ? '<span style="font-size:11px;color:var(--orange)">⏸ 接口风控冷却至 ' + _esc(new Date(st.freqCooldownUntil).toLocaleTimeString('zh-CN')) + '</span>' : '') +
       '</div>' +
-      (st.message ? '<div class="text-xs" style="color:' + (st.needLogin ? 'var(--orange)' : 'var(--text2)') + ';margin-top:4px">' + _esc(st.message) + '</div>' : '') +
+      (st.message ? '<div class="text-xs" style="color:var(--text2);margin-top:4px">' + _esc(st.message) + '</div>' : '') +
       (lr.at ? '<div class="text-xs text-muted" style="margin-top:6px">最近一轮：' + _esc(new Date(lr.at).toLocaleString('zh-CN')) +
         ' ｜ 账号 ' + (s.accountsOk || 0) + '/' + (s.accounts || 0) +
         ' ｜ 新文章 ' + (s.fresh || 0) + '（正文 ' + (s.bodyOk || 0) + '）' +
@@ -103,9 +104,9 @@ var WECHAT = (function () {
       html = '<div style="padding:14px;color:var(--green);font-size:13px">✅ ' + _esc(message || '登录成功') + '</div>';
     } else {
       html =
-        '<div class="text-xs text-muted" style="margin-bottom:8px">首次使用或会话失效时，点击按钮发起登录，用手机微信扫码即可（二维码直接显示在这里，手机上也能操作）。</div>' +
+        '<div class="text-xs text-muted" style="margin-bottom:8px">（可选升级）当前免登录通道已可正常采集。如需「全功能接口通道」（按号精准拉取、列表更全），需先用该微信<b>免费注册一个订阅号</b>（mp.weixin.qq.com → 立即注册 → 订阅号 → 个人，约10分钟），再回来扫码。</div>' +
         (message && (state === 'timeout' || state === 'error') ? '<div style="color:var(--orange);font-size:12px;margin-bottom:8px">⚠️ ' + _esc(message) + '</div>' : '') +
-        '<button class="btn primary sm" onclick="WECHAT.startLogin()">📱 发起扫码登录</button>';
+        '<button class="btn sm" onclick="WECHAT.startLogin()">📱 发起扫码登录（需已注册公众号的微信）</button>';
     }
     el.innerHTML = html;
   }
@@ -137,7 +138,7 @@ var WECHAT = (function () {
     var el = document.getElementById('wx-accounts');
     if (!el) return;
     el.innerHTML =
-      '<div class="flex gap-8 mb-12"><input class="input" id="wx-add-name" placeholder="输入公众号名称，如：领事直通车" style="flex:1">' +
+      '<div class="flex gap-8 mb-12"><input class="input" id="wx-add-name" placeholder="输入公众号名称，如：刺猬安全出海" style="flex:1">' +
       '<button class="btn primary sm" onclick="WECHAT.addAccount()">➕ 添加</button></div>' +
       '<div style="max-height:260px;overflow-y:auto">' +
       (accounts.length ? accounts.map(function (a) {
@@ -146,7 +147,7 @@ var WECHAT = (function () {
           '<button class="btn sm" style="margin-left:auto;color:var(--red)" onclick="WECHAT.removeAccount(\'' + _esc(a).replace(/'/g, "\\'") + '\')">删除</button></div>';
       }).join('') : '<div class="text-muted" style="padding:12px">清单为空</div>') +
       '</div>' +
-      '<div class="text-xs text-muted" style="margin-top:8px">建议监测：领事直通车、外交部发言人办公室、参考消息、海外网、中国一带一路网等涉海外利益安全账号。上限 50 个。</div>';
+      '<div class="text-xs text-muted" style="margin-top:8px">核心清单 20 个开源情报/安全公众号，每轮采 10 个、轮巡循环。上限 50 个。</div>';
   }
 
   function addAccount() {

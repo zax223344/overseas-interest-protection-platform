@@ -62,10 +62,19 @@ function _saveIncr(st) {
   } catch (e) {}
 }
 
-/* ---------- 监测账号清单（server/wechat-accounts.json，可在系统面板里增删）---------- */
+/* ---------- 监测账号清单（server/wechat-accounts.json，可在系统面板里增删）----------
+ * 2026-08-22 用户指定：删除原 10 个官方号，换成 20 个开源情报/安全核心号。
+ * 顺序即优先级：每轮只采前 BATCH_SIZE 个，下轮从偏移处续采，以此循环轮巡。
+ * 只采清单内账号，清单外的一律不采。 */
+const BATCH_SIZE = 10;          // 每轮采集账号数（用户铁律：先采前10，再采其他，循环）
 const DEFAULT_ACCOUNTS = [
-  '领事直通车', '外交部发言人办公室', '参考消息', '海外网', '环球网',
-  '新华网', '人民网', '中国一带一路网', '走出去服务港', '国际商报社'
+  /* —— 第一批（用户指定优先级顺序；Cyber猎人笔记原单重复，按 20 清单顺序补 GMEE）—— */
+  'AITD蚂蚁啃骨头', '鼎泰安元安全风险管理专家', '龙兴智策经纬', 'Cyber猎人笔记',
+  '反恐态势感知', '刺猬安全出海', '中安华盾订阅号', '全球开源情报共享',
+  '哈勃纵横', 'GMEE大中东之眼',
+  /* —— 第二批 —— */
+  '安库APP', '百灵猫开源情报分析师', '海事无盗', '尼日利亚华人网', '缅甸中文网',
+  '华语安全简讯', '国际安保瞭望', '郑和号', '蜜都小天使', '四海巡者'
 ];
 function listAccounts() {
   try {
@@ -421,7 +430,25 @@ async function collect(opts) {
 }
 async function _collectInner(opts, items, stats) {
   const session = loadSession();
-  const accounts = (opts.accounts && opts.accounts.length ? opts.accounts : listAccounts());
+  let accounts;
+  if (opts.accounts && opts.accounts.length) {
+    accounts = opts.accounts;   // 手动指定账号（调试用），不占用轮巡偏移
+  } else {
+    /* 轮巡分批（2026-08-22 用户铁律）：每轮只采 BATCH_SIZE 个账号，
+     * 偏移存在增量状态文件里，下轮续采下一批，循环往复。 */
+    const full = listAccounts();
+    if (full.length <= BATCH_SIZE) {
+      accounts = full;
+    } else {
+      const st0 = _loadIncr();
+      const off = (st0._rotOffset | 0) % full.length;
+      accounts = [];
+      for (let i = 0; i < BATCH_SIZE; i++) accounts.push(full[(off + i) % full.length]);
+      st0._rotOffset = (off + BATCH_SIZE) % full.length;
+      _saveIncr(st0);
+      stats.batch = '第' + (off + 1) + '-' + (off + accounts.length) + '号/共' + full.length + '号';
+    }
+  }
   if (!session) {
     /* 免登录降级通道（2026-08-22）：微信号未注册公众号时扫码登录不可用，
      * 自动改走搜狗微信公开检索——真实文章、真实时间、真实正文，一样入库。 */
