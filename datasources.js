@@ -29,6 +29,7 @@ var DATASOURCES = (function(){
     {id:'DS-ME-03',name:'路透社',cat:'media',icon:'📰',desc:'突发事件快讯',coverage:['全球'],cycle:60,rel:'B1',feeds:['news_intel','态势总览']},
     {id:'DS-ME-04',name:'半岛电视台',cat:'media',icon:'📰',desc:'中东北非地区深度报道',coverage:['中东','非洲'],cycle:60,rel:'B2',feeds:['news_intel','风险监测']},
     /* 社交监测 */
+    {id:'DS-SO-00',name:'微信公众号监测',cat:'social',icon:'📮',desc:'领事直通车/参考消息等公众号文章实时采集(扫码登录)',coverage:['全球'],cycle:15,rel:'A1',feeds:['osint_intel','预警中心'],realKey:'wechat_oa'},
     {id:'DS-SO-01',name:'X平台热点监测',cat:'social',icon:'💬',desc:'涉华涉企话题/突发目击信息',coverage:['全球'],cycle:60,rel:'C2',feeds:['social_monitor','自动预警']},
     {id:'DS-SO-02',name:'Telegram频道监测',cat:'social',icon:'💬',desc:'武装组织宣示/地区频道',coverage:['中东','东欧','南亚'],cycle:60,rel:'C1',feeds:['social_monitor','威胁组织']},
     {id:'DS-SO-03',name:'当地社区论坛',cat:'social',icon:'💬',desc:'驻在国治安舆情',coverage:['非洲','东南亚','拉美'],cycle:60,rel:'C3',feeds:['social_monitor','风险监测']},

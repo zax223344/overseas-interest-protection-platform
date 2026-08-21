@@ -3848,6 +3848,7 @@ var AUDIT={
 const VIEW_MAP={
   situation:{t:'态势总览',b:'态势感知 / 态势总览'},
   datasources:{t:'数据源库',b:'数据中枢 / 数据源库'},
+  wechat:{t:'公众号采集',b:'数据管理 / 公众号采集'},
   intel:{t:'情报影像中心',b:'监测中心 / 情报影像中心'},
   monitor:{t:'风险监测',b:'监测中心 / 风险监测'},
   assets:{t:'企业资产',b:'监测中心 / 企业资产'},
@@ -14123,6 +14124,7 @@ function navigateTo(v){
     if(v==='aireport'){setTimeout(function(){try{if(typeof AIREPORT!=='undefined')AIREPORT.init();}catch(e){console.error('AIREPORT.init错误:',e);}},0);}
     if(v==='dailyreport'){setTimeout(function(){try{if(typeof DAILY_REPORT!=='undefined')DAILY_REPORT.init();}catch(e){console.error('DAILY_REPORT.init错误:',e);}},0);}
     if(v==='datasources'){setTimeout(function(){try{if(typeof DATASOURCES!=='undefined')DATASOURCES.init();}catch(e){console.error('DATASOURCES.init错误:',e);}},0);}
+    if(v==='wechat'){setTimeout(function(){try{if(typeof WECHAT!=='undefined')WECHAT.init();}catch(e){console.error('WECHAT.init错误:',e);}},0);}
     if(v!=='datasources'){setTimeout(function(){try{if(typeof DATASOURCES!=='undefined')DATASOURCES.hide();}catch(e){}},0);}
     if(v==='command'){setTimeout(function(){try{if(typeof COMMAND!=='undefined'){if(!COMMAND._incidents)COMMAND.init();else COMMAND.render();}}catch(e){console.error('COMMAND.render错误:',e);}},0);}
     if(v==='analysis'){setTimeout(function(){try{if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body');}catch(e){console.error('ANALYSIS.render错误:',e);}},0);}

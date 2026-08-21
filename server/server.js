@@ -24,6 +24,8 @@ const ENTITY = require('../entities.js');
 const globalmedia = require('./globalmedia');
 const socialmedia = require('./socialmedia');
 const negtool = require('./negtool'); /* 社交媒体采集通道（TG+Reddit，2026-08-13 并入） */
+const wechatoa = require('./wechat-oa'); /* 微信公众号实时采集通道（2026-08-21 用户指令：扫码登录+appmsg列表+正文+增量入库） */
+const { spawn } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1569,6 +1571,64 @@ app.get('/api/scrape', async (req, res) => {
     }
     return res.json({ ok: true, sources: Object.keys(scrapers.SCRAPE_SOURCES) });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ===== 微信公众号采集通道 API（2026-08-21）=====
+ *  /api/wechat/status        会话/账号/最近一轮状态
+ *  /api/wechat/login         POST 发起扫码登录（spawn 独立进程，二维码经 state 文件回传）
+ *  /api/wechat/login/state   登录进度轮询（含二维码 dataURL）
+ *  /api/wechat/accounts      GET/POST/DELETE 监测账号清单管理
+ *  /api/wechat/collect       POST 手动触发一轮采集（异步执行）
+ */
+app.get('/api/wechat/status', (req, res) => {
+  try {
+    const st = wechatoa.status();
+    st.lastRun = _wechatLastRun;
+    res.json({ ok: true, status: st });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+app.post('/api/wechat/login', (req, res) => {
+  try {
+    const stateFile = path.join(CACHE_DIR, 'wechat-login-state.json');
+    /* 防并发：已有进行中的登录流程（6分钟内有心跳）则直接复用 */
+    try {
+      const cur = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      if (['starting', 'waiting', 'scanned'].includes(cur.state) && Date.now() - Date.parse(cur.updated || 0) < 6 * 60 * 1000) {
+        return res.json({ ok: true, reused: true, state: cur.state });
+      }
+    } catch (e) {}
+    fs.writeFileSync(stateFile, JSON.stringify({ state: 'starting', qr: '', message: '正在启动登录浏览器…', updated: new Date().toISOString() }));
+    const child = spawn(process.execPath, [path.join(__dirname, 'wechat-login.js')], {
+      cwd: __dirname, detached: true, stdio: 'ignore',
+      env: Object.assign({}, process.env, { HTTP_PROXY: '', HTTPS_PROXY: '', http_proxy: '', https_proxy: '', NODE_OPTIONS: '' })
+    });
+    child.unref();
+    res.json({ ok: true, reused: false });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+app.get('/api/wechat/login/state', (req, res) => {
+  try {
+    const f = path.join(CACHE_DIR, 'wechat-login-state.json');
+    if (!fs.existsSync(f)) return res.json({ ok: true, state: 'idle', qr: '', message: '尚未发起登录' });
+    const cur = JSON.parse(fs.readFileSync(f, 'utf8'));
+    res.json({ ok: true, state: cur.state || 'idle', qr: cur.qr || '', message: cur.message || '', updated: cur.updated || '' });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+app.get('/api/wechat/accounts', (req, res) => {
+  res.json({ ok: true, accounts: wechatoa.listAccounts() });
+});
+app.post('/api/wechat/accounts', express.json(), (req, res) => {
+  const r = wechatoa.addAccount(req.body && req.body.name);
+  res.status(r.ok ? 200 : 400).json(r);
+});
+app.delete('/api/wechat/accounts', (req, res) => {
+  res.json(wechatoa.removeAccount(String(req.query.name || '')));
+});
+app.post('/api/wechat/collect', (req, res) => {
+  /* 手动触发：异步跑，前端轮询 /api/wechat/status 看 lastRun */
+  if (Date.now() < _wechatBusyUntil) return res.json({ ok: false, error: '上一轮采集尚未结束，请稍候' });
+  setTimeout(() => { _runWechatOA(); }, 50);
+  res.json({ ok: true });
 });
 
 /* ===== 特种兵爬虫（一键全网深抓：涉华负面 + 各国媒体 + 社交平台） =====
@@ -3188,6 +3248,89 @@ async function _runCnMedia() {
   finally { _cnMediaBusyUntil = 0; }
 }
 
+/* ===== 微信公众号采集通道（2026-08-21 用户指令：作为数据源部署进系统）=====
+ * 链路：wechatoa.collect()(扫码会话+searchbiz+appmsg list_ex+正文+aid增量)
+ *   → enrich(关联判定) → 与 CNMEDIA 相同的入库闸链(URL/标题/事件签名去重+国内过滤+新鲜度)
+ *   → intel_data(approved) → 预警中心/态势总览实时分发。
+ * 零模拟：会话失效/风控冷却/无新文章一律如实记日志并返回，绝不造假。
+ * 节奏：每 15 分钟一轮（公众号文章非秒级时效，低频既够用又不触风控）。 */
+let _wechatBusyUntil = 0;
+let _wechatLastRun = null;   // 状态面板展示用
+async function _runWechatOA() {
+  if (Date.now() < _wechatBusyUntil) return;
+  _wechatBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  const t0 = Date.now();
+  try {
+    const r = await Promise.race([
+      wechatoa.collect(),
+      new Promise(resolve => setTimeout(() => resolve({ items: [], stats: {}, session: { logged: false, needLogin: false, message: '采集超时(90s)' } }), 90000))
+    ]);
+    _wechatLastRun = { at: new Date().toISOString(), stats: r.stats || {}, session: r.session || {} };
+    if (r.session && r.session.needLogin) {
+      console.log('[WECHAT] 跳过：' + (r.session.message || '需要扫码登录'));
+      return;
+    }
+    const items = r.items || [];
+    if (!items.length) {
+      const st = r.stats || {};
+      console.log('[WECHAT] 本轮无新文章（账号' + (st.accounts || 0) + ' 可通' + (st.accountsOk || 0) + '，增量去重跳过' + (st.skippedOld || 0) + '）' + (r.session && r.session.message !== 'ok' ? ' ' + r.session.message : ''));
+      return;
+    }
+    /* 中文内容为主，翻译管线自动跳过中文；保留调用以兜底个别外文号 */
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      try {
+        const before = it.interestLinked;
+        ENTITY.enrich(it);
+        if (before === true) it.interestLinked = true;
+      } catch (e) {}
+    });
+    const linked = items.filter(it => it.interestLinked === true);
+    let inserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedNoUrl = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0;
+    if (linked.length) {
+      const urls = linked.map(it => it.url).filter(Boolean);
+      const existing = new Set();
+      if (urls.length) {
+        const batch = urls.map((_, i) => '$' + (i + 1)).join(',');
+        const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+        dup.rows.forEach(x => { if (x.url) existing.add(x.url); });
+      }
+      const titleKeys = await _getRecentTitleKeys();
+      const eventSigs = await _getRecentEventSigs();
+      for (const it of linked) {
+        const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
+        if (!gate.ok) {
+          gate.code.forEach(c => {
+            if (c === 'no-url-title') skippedNoUrl++;
+            else if (c === 'url-dup') skippedDup++;
+            else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
+            else if (c === 'event-sig-dup') skippedEventSig++;
+            else if (c === 'domestic-china') skippedDomestic++;
+            else if (c === 'bad-title') skippedBadTitle++;
+          });
+          continue;
+        }
+        if (!_isFreshEnough(it)) { skippedStale++; continue; }
+        try {
+          _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          const _ins = await query(
+            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '公众号监测', JSON.stringify(it), 'approved']
+          );
+          if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+          inserted++;
+        } catch (e) { /* URL 唯一索引冲突等 */ }
+      }
+    }
+    if (inserted) { _bumpDailyStats(inserted, linked.length, 0, 0); }
+    const st = r.stats || {};
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[WECHAT] 本轮(' + sec + 's): 账号' + (st.accountsOk || 0) + '/' + (st.accounts || 0) + ' 新文章' + (st.fresh || 0) + ' 正文' + (st.bodyOk || 0) + ' / 入库 ' + inserted + ' | URL重复' + skippedDup + ' 标题/实体重复' + skippedDupTitle + ' 事件签名重复' + skippedEventSig + ' 国内数据' + skippedDomestic + ' 低质标题' + skippedBadTitle + ' 旧闻' + skippedStale + (st.errors && st.errors.length ? ' | 异常: ' + st.errors.slice(0, 3).join('; ') : ''));
+  } catch (e) { console.warn('[WECHAT] 采集失败:', e.message); }
+  finally { _wechatBusyUntil = 0; }
+}
+
 /* ===== 区域均衡采集器（2026-08-17 用户指令：采集不能全是美/伊/俄乌，要全球均衡+高质量）=====
  * 每 30 分钟：统计今日各区域入库量，挑最薄弱的 2 个区域，用 GDELT sourcecountry 定向采集
  * （拉美/非洲/中亚/中东非伊以/欧洲五区轮换）。葡语/西语/俄语内容由 pivot 翻译管线处理。 */
@@ -3396,6 +3539,9 @@ function startGlobalMediaCron() {
   // 区域均衡采集器：每30分钟挑最薄弱2区域定向采集（2026-08-17 用户指令：采集全球均衡）
   setTimeout(_runRegionBalance, 90000);
   setInterval(_runRegionBalance, 30 * 60 * 1000);
+  // 微信公众号采集器：每15分钟一轮（扫码登录后生效；低频防风控，2026-08-21 用户指令）
+  setTimeout(_runWechatOA, 120000);
+  setInterval(_runWechatOA, 15 * 60 * 1000);
 }
 
 /* ===== 全球恐怖袭击/武装袭击专项采集 ===== */
