@@ -2,7 +2,7 @@
 
 ## 一句话：先打开这个网址
 
-> ## 👉 https://eiwye.github.io/overseas-interest-protection-platform/
+> ## 👉 https://zax223344.github.io/overseas-interest-protection-platform/
 
 **用手机或电脑浏览器打开上面这个网址，照着页面点就行。** 这个地址固定不变，建议收藏或加到手机桌面。
 

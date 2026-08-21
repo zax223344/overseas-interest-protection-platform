@@ -28,7 +28,7 @@ public class MainActivity extends Activity {
 
     private static final String PREFS = "orps_prefs";
     private static final String KEY_URL = "server_url";
-    private static final String DEFAULT_URL = "https://eiwye.github.io/overseas-interest-protection-platform/";
+    private static final String DEFAULT_URL = "https://zax223344.github.io/overseas-interest-protection-platform/";
 
     private WebView webView;
 
