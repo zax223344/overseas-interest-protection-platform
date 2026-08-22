@@ -1,4 +1,5 @@
 'use strict';
+const netx = require('./netx');
 /* ============================================================================
  * server/fulltext.js —— 情报正文深度抽取引擎（Full-Text & Fact Extraction）
  * ----------------------------------------------------------------------------
@@ -23,9 +24,8 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 async function _fetchHtml(url, timeout) {
   if (!url || !/^https?:\/\//i.test(url)) return null;
   try {
-    const r = await fetch(url, {
-      signal: AbortSignal.timeout(timeout || 9000),
-      redirect: 'follow',
+    const r = await netx.smartFetch(url, {
+      timeout: timeout || 9000,
       headers: {
         'User-Agent': UA,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

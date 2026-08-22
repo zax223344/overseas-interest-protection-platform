@@ -11,6 +11,7 @@
  * 暴露：scrapeSource(key) / scrapeCategory(cat) / scrapeAll() / proxyFetchText(url)
  */
 'use strict';
+const netx = require('./netx');
 
 /* ===== 主机白名单（SSRF 防护） ===== */
 const ALLOWED_HOSTS = [
@@ -289,9 +290,8 @@ function _fetchText(url, timeout) {
   timeout = timeout || 15000;
   const u = (() => { try { return new URL(url); } catch (e) { return null; } })();
   if (!u || !_hostAllowed(u.hostname)) return Promise.resolve(null);
-  return fetch(url, {
-    signal: AbortSignal.timeout(timeout),
-    redirect: 'follow',
+  return netx.smartFetch(url, {
+    timeout,
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

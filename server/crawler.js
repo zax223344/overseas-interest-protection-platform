@@ -12,6 +12,7 @@
  *
  * 暴露：crawlAll()  /  crawlQuery(q)  /  chinaNegative(text)
  */
+const netx = require('./netx');
 const scrapers = require('./scrapers');
 /* 实体识别与预警规则引擎（前后端同源，全平台唯一关联中枢） */
 const ENTITY = require('../entities.js');
@@ -312,9 +313,8 @@ async function fetchPublic(url, timeout) {
   let u; try { u = new URL(url); } catch (e) { return null; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
   if (!(await isPublicHost(u.hostname))) return null;
-  return fetch(url, {
-    signal: AbortSignal.timeout(timeout),
-    redirect: 'follow',
+  return netx.smartFetch(url, {
+    timeout,
     headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
   }).then(r => (r.ok ? r.text() : null)).catch(() => null);
@@ -446,7 +446,7 @@ async function apSearch(query, opts) {
                 '&s=0' + (pg > 1 ? '&p=' + pg : '');
     let html = null;
     try {
-      const r = await fetch(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(18000) });
+      const r = await netx.smartFetch(url, { headers, timeout: 18000 });
       if (r.status === 429) { _apCooldownUntil = Date.now() + 5 * 60 * 1000; break; }
       if (!r.ok) break;
       html = await r.text();
@@ -525,7 +525,7 @@ async function gdeltSearch(query, opts) {
   for (let attempt = 0; attempt < 3; attempt++) {
     await _gdeltThrottle();
     try {
-      const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(20000) });
+      const r = await netx.smartFetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, timeout: 20000 });
       if (r.status === 429) { await _sleep(6000 + attempt * 4000); continue; }   // 递增退避
       if (!r.ok) continue;
       const txt = await r.text();

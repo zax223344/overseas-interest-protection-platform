@@ -17,6 +17,7 @@
  */
 'use strict';
 const crawler = require('./crawler');
+const netx = require('./netx');
 const mediaFeeds = require('./media_feeds');
 const scrapers = require('./scrapers');
 
@@ -446,17 +447,14 @@ async function scrapeGlobalMedia(opts){
 const UA_REAL = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 async function _fetchRss(url, timeout) {
   timeout = timeout || 10000;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeout);
   try {
-    const r = await fetch(url, {
-      headers: { 'User-Agent': UA_REAL, 'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' },
-      redirect: 'follow', signal: ctrl.signal
+    const r = await netx.smartFetch(url, {
+      timeout,
+      headers: { 'User-Agent': UA_REAL, 'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' }
     });
     if (r.status !== 200) return '';
     return await r.text();
   } catch (e) { return ''; }
-  finally { clearTimeout(t); }
 }
 function _parseRss(xml) {
   const items = [];

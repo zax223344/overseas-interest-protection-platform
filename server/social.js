@@ -25,6 +25,7 @@
 const scrapers = require('./scrapers');
 const crawler = require('./crawler');
 const ENTITY = require('../entities.js');
+const netx = require('./netx');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -189,7 +190,7 @@ async function fetchLemmy(q, limit, opts) {
                 '&type_=Posts&sort=New&limit=' + Math.min(40, want);
     try {
       const tmo = opts.timeout || 18000;
-      const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(tmo) });
+      const r = await netx.smartFetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, timeout: tmo });
       if (!r.ok) { lastErr = inst.host + ' HTTP ' + r.status; continue; }
       const j = await r.json();
       (j.posts || []).forEach(pv => {
@@ -227,7 +228,7 @@ async function fetchLemmy(q, limit, opts) {
 async function fetchTelegram(ch, limit) {
   const url = 'https://tg.i-c-a.su/json/' + encodeURIComponent(ch.user) + '?limit=' + (limit || 20);
   try {
-    const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(15000) });
+    const r = await netx.smartFetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, timeout: 15000 });
     const txt = await r.text();
     let j;
     try { j = JSON.parse(txt); } catch (e) { return { items: [], error: '响应非 JSON' }; }
@@ -267,7 +268,7 @@ async function fetchHackerNews(q, limit) {
   const url = 'https://hn.algolia.com/api/v1/search_by_date?query=' + encodeURIComponent(q) +
               '&tags=story&hitsPerPage=' + (limit || 20);
   try {
-    const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(15000) });
+    const r = await netx.smartFetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, timeout: 15000 });
     if (!r.ok) return { items: [], error: 'HTTP ' + r.status };
     const j = await r.json();
     const out = [];

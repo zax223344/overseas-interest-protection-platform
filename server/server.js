@@ -1029,11 +1029,11 @@ async function _sendDingTalk(webhook, secret, text) {
   const timestamp = Date.now();
   const sign = crypto.createHmac('sha256', secret || '').update(timestamp + '\n' + (secret || '')).digest('base64');
   const url = webhook + (webhook.indexOf('?') >= 0 ? '&' : '?') + 'timestamp=' + timestamp + '&sign=' + encodeURIComponent(sign);
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msgtype: 'text', text: { content: text } }) });
+  const r = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(8000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msgtype: 'text', text: { content: text } }) });
   return { ok: r.ok, status: r.status };
 }
 async function _sendWeCom(webhook, text) {
-  const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msgtype: 'text', text: { content: text } }) });
+  const r = await fetch(webhook, { method: 'POST', signal: AbortSignal.timeout(8000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msgtype: 'text', text: { content: text } }) });
   return { ok: r.ok, status: r.status };
 }
 async function _sendEmail(cfg, subject, text) {
@@ -4306,6 +4306,7 @@ async function _tryTranSmart(text, from, to) {
   from = from || 'auto'; to = to || 'zh';
   const res = await fetch('https://transmart.qq.com/api/imt', {
     method: 'POST',
+    signal: AbortSignal.timeout(8000),
     headers: {
       'Content-Type': 'application/json',
       'User-Agent': _TRANS_UA,
