@@ -114,23 +114,29 @@ async function smartFetch(url, opts) {
   let lastErr = null;
   for (const leg of order) {
     if (leg === 'proxy' && (!proxyAlive)) continue;
-    try {
-      if (leg === 'direct') {
-        /* 直连腿超时封顶 12s：被墙源的典型症状就是挂满整个 timeout */
-        const r = await fetch(url, {
-          headers, redirect: 'follow',
-          signal: AbortSignal.timeout(Math.min(timeout, 12000)),
-        });
-        _remember(host, 'direct');
+    /* 每条腿最多 2 次尝试：本地小代理（Clash）在批量并发下常瞬时断流，
+     * "socket disconnected" 类错误隔 1.2s 重试一次可救回大半 */
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (leg === 'direct') {
+          /* 直连腿超时封顶 12s：被墙源的典型症状就是挂满整个 timeout */
+          const r = await fetch(url, {
+            headers, redirect: 'follow',
+            signal: AbortSignal.timeout(Math.min(timeout, 12000)),
+          });
+          _remember(host, 'direct');
+          return r;
+        }
+        const r = await _proxyGet(url, headers, timeout, 0);
+        _remember(host, 'proxy');
         return r;
-      }
-      const r = await _proxyGet(url, headers, timeout, 0);
-      _remember(host, 'proxy');
-      return r;
-    } catch (e) {
-      lastErr = e;
-      if (leg === 'proxy' && e && /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|proxy timeout|socket disconnected/i.test(String(e.message))) {
-        _proxyDownUntil = Date.now() + PROXY_DOWN_TTL;
+      } catch (e) {
+        lastErr = e;
+        if (leg === 'proxy' && e && /ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(String(e.message))) {
+          _proxyDownUntil = Date.now() + PROXY_DOWN_TTL;
+          break;                                   // 代理本体死了，重试无意义
+        }
+        if (attempt === 0) await new Promise(s => setTimeout(s, 1200));
       }
     }
   }
