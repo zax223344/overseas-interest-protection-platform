@@ -2623,6 +2623,96 @@ async function _runGlobalMedia() {
   finally { _globalMediaBusyUntil = 0; }
 }
 
+/* ===== Neon 云采集同步（2026-08-24 方案二：GitHub Actions 关机也采） =====
+ * Actions 每小时在美国机房采集原始条目写入 Neon action_raw_items（只采不译不过闸）；
+ * 本地每 10 分钟拉取游标之后的新行，走与 _runGlobalMedia 完全同一套
+ * enrich + _preInsertGate + 翻译 + 入库链路（质量逻辑单源化）。
+ * 处理完即从 Neon 删除并推进游标，保住免费层 0.5GB 额度。 */
+const NEON_CURSOR_FILE = path.join(CACHE_DIR, 'neon-sync.json');
+let _neonPool = null;
+let _neonBusyUntil = 0;
+function _readNeonCursor() { try { return JSON.parse(fs.readFileSync(NEON_CURSOR_FILE, 'utf8')).lastId || 0; } catch (e) { return 0; } }
+function _writeNeonCursor(id) { try { fs.writeFileSync(NEON_CURSOR_FILE, JSON.stringify({ lastId: id, at: new Date().toISOString() })); } catch (e) {} }
+
+async function _runNeonSync() {
+  if (!process.env.NEON_DATABASE_URL) return;   // 未配置云采集连接串：静默跳过，不影响本地采集
+  if (Date.now() < _neonBusyUntil) return;
+  _neonBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  const t0 = Date.now();
+  try {
+    if (!_neonPool) {
+      _neonPool = new (require('pg').Pool)({ connectionString: process.env.NEON_DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 2, connectionTimeoutMillis: 15000 });
+      _neonPool.on('error', () => {});
+    }
+    const cursor = _readNeonCursor();
+    const { rows } = await _neonPool.query('SELECT id, payload FROM action_raw_items WHERE id > $1 ORDER BY id ASC LIMIT 500', [cursor]);
+    if (!rows.length) return;
+    const items = [];
+    let maxId = cursor;
+    rows.forEach(r => {
+      if (r.id > maxId) maxId = r.id;
+      const it = r.payload || {};
+      if (!it.url || !it.title) return;
+      it._neonId = r.id;
+      items.push(it);
+    });
+    console.log('[NEON] 拉到云采集原始条目 ' + items.length + ' 条（游标 ' + cursor + ' → ' + maxId + '）');
+
+    try { await _translateListToZhParallel(items, 6); } catch (e) { console.warn('[NEON] 翻译异常:', e.message); }
+
+    /* enrich + 保留采集期闸门判定（与 _runGlobalMedia 同一套逻辑） */
+    items.forEach(it => {
+      try {
+        const before = it.interestLinked;
+        ENTITY.enrich(it);
+        if (before === true) it.interestLinked = true;
+      } catch (e) {}
+    });
+    const linked = items.filter(it => it.interestLinked === true);
+
+    let inserted = 0, skipped = 0;
+    if (linked.length) {
+      const urls = linked.map(it => it.url).filter(Boolean);
+      const existing = new Set();
+      if (urls.length) {
+        const batch = urls.map((_, i) => '$' + (i + 1)).join(',');
+        const dup = await query(`SELECT data_json->>'url' as url FROM intel_data WHERE data_json->>'url' IN (${batch})`, urls);
+        dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
+      }
+      const titleKeys = await _getRecentTitleKeys();
+      const eventSigs = await _getRecentEventSigs();
+      for (const it of linked) {
+        const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
+        if (!gate.ok) { skipped++; continue; }
+        if (!_isFreshEnough(it)) { skipped++; continue; }
+        if (!_ruUaQuotaOk(it)) { skipped++; continue; }
+        if (!_dominantQuotaOk(it)) { skipped++; continue; }
+        try {
+          _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          it.source = it.source || '云端采集';
+          const _ins = await query(
+            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source, JSON.stringify(it), 'approved']
+          );
+          if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
+          inserted++;
+        } catch (e) { skipped++; console.warn('[NEON] INSERT ERR:', e.message); }
+      }
+    }
+
+    /* 推进游标 + 从 Neon 删除已处理行（免费层额度保护） */
+    _writeNeonCursor(maxId);
+    await _neonPool.query('DELETE FROM action_raw_items WHERE id <= $1', [maxId]).catch(e => console.warn('[NEON] 云端清理失败:', e.message));
+
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[NEON] 同步完成(' + sec + 's): 入库 ' + inserted + ' / 闸门跳过 ' + skipped + ' / 云端已清理至 ' + maxId);
+  } catch (e) {
+    console.warn('[NEON] 同步失败:', e.message);
+    if (_neonPool) { try { await _neonPool.end(); } catch (_) {} _neonPool = null; }
+  } finally { _neonBusyUntil = 0; }
+}
+
 /* ===== 涉华专项采集：每轮单独抓取高命中中文媒体/涉华外媒，确保日涉华80-100条 ===== */
 async function _runChinaFocus() {
   if (Date.now() < _chinaFocusBusyUntil) return;
@@ -3602,6 +3692,9 @@ function startGlobalMediaCron() {
   // 微信公众号采集器：每15分钟一轮（扫码登录后生效；低频防风控，2026-08-21 用户指令）
   setTimeout(_runWechatOA, 120000);
   setInterval(_runWechatOA, 15 * 60 * 1000);
+  // Neon 云采集同步：每10分钟拉取 GitHub Actions 采集的原始条目（2026-08-24 方案二；未配置 NEON_DATABASE_URL 时静默跳过）
+  setTimeout(_runNeonSync, 90000);
+  setInterval(_runNeonSync, 10 * 60 * 1000);
 }
 
 /* ===== 全球恐怖袭击/武装袭击专项采集 ===== */
