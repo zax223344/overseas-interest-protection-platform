@@ -70,8 +70,8 @@ function _r(cn, iso, region, name, url, lang, focus) {
    ============================================================ */
 const DIRECT_RSS = [
   /* ---------------- 全球/国际通用通讯社与英语媒体 ---------------- */
-  _m('国际', 'INT', REGIONS.EUROPE, 'Reuters World', 'https://www.reutersagency.com/feed/?taxonomy=markets&post_type=reuters-best', 'en', '全球财经、地缘'),
-  _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Associated Press World', 'https://apnews.com/hub/world-news/rss', 'en', '全球新闻'),
+  _m('国际', 'INT', REGIONS.EUROPE, 'Reuters World', 'https://news.google.com/rss/search?q=site:reuters.com+world&hl=en-US&gl=US&ceid=US:en', 'en', '全球财经、地缘'),
+  _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Associated Press World', 'https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en', 'en', '全球新闻'),
   _m('国际', 'INT', REGIONS.EUROPE, 'BBC World', 'https://feeds.bbci.co.uk/news/world/rss.xml', 'en', '全球新闻'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'CNN World', 'https://rss.cnn.com/rss/edition_world.rss', 'en', '全球新闻'),
   _m('国际', 'INT', REGIONS.EUROPE, 'Al Jazeera', 'https://www.aljazeera.com/xml/rss/all.xml', 'en', '中东、全球南方'),
@@ -121,10 +121,9 @@ const DIRECT_RSS = [
   _m('德国', 'DEU', REGIONS.EUROPE, 'DW News Asia', 'https://rss.dw.com/rdf/rss-en-asia', 'en', '亚洲'),
   _m('德国', 'DEU', REGIONS.EUROPE, 'DW News Africa', 'https://rss.dw.com/rdf/rss-en-africa', 'en', '非洲'),
   _m('德国', 'DEU', REGIONS.EUROPE, 'DW News Middle East', 'https://rss.dw.com/rdf/rss-en-middle-east', 'en', '中东'),
-  _m('意大利', 'ITA', REGIONS.EUROPE, 'ANSA English', 'https://www.ansa.it/english/news/english.xml', 'en', '国际'),
   _m('意大利', 'ITA', REGIONS.EUROPE, 'La Repubblica Mondo', 'https://www.repubblica.it/rss/esteri/rss2.0.xml', 'it', '国际'),
   _m('西班牙', 'ESP', REGIONS.EUROPE, 'El País English', 'https://english.elpais.com/rss/', 'en', '国际'),
-  _m('西班牙', 'ESP', REGIONS.EUROPE, 'El Mundo', 'https://www.elmundo.es/rss/union_europea.xml', 'es', '欧洲'),
+  _m('西班牙', 'ESP', REGIONS.EUROPE, 'El Mundo', 'https://www.elmundo.es/rss/internacional.xml', 'es', '欧洲'),
   _m('荷兰', 'NLD', REGIONS.EUROPE, 'Dutch News', 'https://dutchnews.nl/feed/', 'en', '荷兰'),
   _m('比利时', 'BEL', REGIONS.EUROPE, 'Brussels Times', 'https://www.brusselstimes.com/feed/', 'en', '比利时/欧盟'),
   _m('瑞士', 'CHE', REGIONS.EUROPE, 'Swissinfo', 'https://www.swissinfo.ch/eng/feed.html', 'en', '瑞士国际'),
@@ -476,7 +475,6 @@ const THINK_TANK_FEEDS = [
   _t('印度', 'IND', REGIONS.SOUTH_ASIA, 'IDSA', 'https://idsa.in/rss', 'en', '国防研究与分析所'),
   _t('印度', 'IND', REGIONS.SOUTH_ASIA, 'CSDS', 'https://www.csds.in/feed', 'en', '社会研究中心'),
   _t('印度', 'IND', REGIONS.SOUTH_ASIA, 'CPR', 'https://cprindia.org/feed/', 'en', '政策研究'),
-  _t('印度', 'IND', REGIONS.SOUTH_ASIA, 'Takshashila', 'https://takshashila.org.in/feed/', 'en', '战略研究'),
 
   /* ---------------- 巴基斯坦/南亚 ---------------- */
   _t('巴基斯坦', 'PAK', REGIONS.SOUTH_ASIA, 'ISSI', 'https://issi.org.pk/feed/', 'en', '战略研究'),
@@ -485,14 +483,12 @@ const THINK_TANK_FEEDS = [
   /* ---------------- 东南亚 ---------------- */
   _t('新加坡', 'SGP', REGIONS.SOUTHEAST_ASIA, 'ISEAS', 'https://www.iseas.edu.sg/feed/', 'en', '东南亚研究'),
   _t('新加坡', 'SGP', REGIONS.SOUTHEAST_ASIA, 'RSIS', 'https://www.rsis.edu.sg/feed/', 'en', '战略研究'),
-  _t('印度尼西亚', 'IDN', REGIONS.SOUTHEAST_ASIA, 'CSIS Jakarta', 'https://csis.or.id/feed', 'en', '战略与国际研究'),
   _t('泰国', 'THA', REGIONS.SOUTHEAST_ASIA, 'ISEAS Thailand', 'https://www.iseas.edu.sg/feed/', 'en', '泰国研究'),
   _t('越南', 'VNM', REGIONS.SOUTHEAST_ASIA, 'Vietnam Institute for Economics', 'https://vepr.org.vn/en/rss', 'en', '经济'),
   _t('菲律宾', 'PHL', REGIONS.SOUTHEAST_ASIA, 'Stratbase ADR', 'https://stratbaseadr.org/feed/', 'en', '战略'),
   _t('马来西亚', 'MYS', REGIONS.SOUTHEAST_ASIA, 'IDEAS Malaysia', 'https://ideas.org.my/feed/', 'en', '公共政策'),
 
   /* ---------------- 中亚 ---------------- */
-  _t('哈萨克斯坦', 'KAZ', REGIONS.CENTRAL_ASIA, 'KazISS', 'https://kaziss.kz/en/rss', 'en', '战略研究'),
 
   /* ---------------- 澳大利亚/大洋洲 ---------------- */
   _t('澳大利亚', 'AUS', REGIONS.OCEANIA, 'Lowy Institute', 'https://www.lowyinstitute.org/the-interpreter/feed', 'en', '国际关系'),
@@ -548,7 +544,7 @@ const CHINA_FOCUS_SOURCES = [
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'The Diplomat', 'https://thediplomat.com/feed/', 'en', '亚太外交涉华'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Al Jazeera', 'https://www.aljazeera.com/xml/rss/all.xml', 'en', '中国相关'),
   _m('国际', 'INT', REGIONS.EUROPE, 'BBC China', 'https://feeds.bbci.co.uk/news/world/asia/china/rss.xml', 'en', 'BBC中国'),
-  _m('国际', 'INT', REGIONS.EUROPE, 'Reuters China', 'https://www.reutersagency.com/feed/?taxonomy=china&post_type=reuters-best', 'en', '路透中国'),
+  _m('国际', 'INT', REGIONS.EUROPE, 'Reuters China', 'https://news.google.com/rss/search?q=site:reuters.com+china&hl=en-US&gl=US&ceid=US:en', 'en', '路透中国'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'VOA News', 'https://www.voanews.com/api/zt$gteitim', 'en', '美国之音'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'RFA Chinese', 'https://www.rfa.org/mandarin/rss2.xml', 'zh', '自由亚洲中文'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Radio Free Asia', 'https://www.rfa.org/english/rss2.xml', 'en', '自由亚洲英文'),
@@ -627,7 +623,7 @@ const CHINA_NEGATIVE_SOURCES = [
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'RFA English', 'https://www.rfa.org/english/rss2.xml', 'en', '境外涉华'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'VOA News', 'https://www.voanews.com/api/zt$gteitim', 'en', '境外涉华'),
   _m('国际', 'INT', REGIONS.EUROPE, 'BBC China', 'https://feeds.bbci.co.uk/news/world/asia/china/rss.xml', 'en', 'BBC中国'),
-  _m('国际', 'INT', REGIONS.EUROPE, 'Reuters China', 'https://www.reutersagency.com/feed/?taxonomy=china&post_type=reuters-best', 'en', '路透中国'),
+  _m('国际', 'INT', REGIONS.EUROPE, 'Reuters China', 'https://news.google.com/rss/search?q=site:reuters.com+china&hl=en-US&gl=US&ceid=US:en', 'en', '路透中国'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'The Diplomat', 'https://thediplomat.com/feed/', 'en', '亚太外交涉华'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Foreign Policy', 'https://foreignpolicy.com/feed/', 'en', '外交安全涉华'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'War on the Rocks', 'https://warontherocks.com/feed/', 'en', '安全防务涉华'),
@@ -635,7 +631,7 @@ const CHINA_NEGATIVE_SOURCES = [
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Brookings', 'https://www.brookings.edu/feed/', 'en', '美国布鲁金斯'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Carnegie Endowment', 'https://carnegieendowment.org/rss/solr/all', 'en', '卡内基国际和平基金会'),
   _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'Axios World', 'https://api.axios.com/feed/world/', 'en', '全球简报'),
-  _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'AP World', 'https://apnews.com/hub/world-news/rss', 'en', '全球新闻'),
+  _m('国际', 'INT', REGIONS.NORTH_AMERICA, 'AP World', 'https://news.google.com/rss/search?q=site:apnews.com+world&hl=en-US&gl=US&ceid=US:en', 'en', '全球新闻'),
   _m('国际', 'INT', REGIONS.EUROPE, 'The Guardian World', 'https://www.theguardian.com/world/rss', 'en', '全球新闻'),
   _m('国际', 'INT', REGIONS.EUROPE, 'DW News', 'https://rss.dw.com/rdf/rss-en-all', 'en', '欧洲全球'),
   _m('国际', 'INT', REGIONS.EUROPE, 'Al Jazeera', 'https://www.aljazeera.com/xml/rss/all.xml', 'en', '中东全球南方'),
