@@ -4440,17 +4440,8 @@ async function _translateListToZh(list) {
     await new Promise(r => setTimeout(r, 250)); // TranSmart 无日配额，250ms 轻节流即可
   }
   if (done || failed) console.log('[TRANSLATE] 采集即译完成：成功 ' + done + ' 条，失败 ' + failed + ' 条');
-  /* 收尾：国名/媒体专名本地化 + 要素抽取（与并行版保持一致，覆盖 socmint/缓存合并路径） */
-  list.forEach(function (it) {
-    if (!it || typeof it !== 'object') return;
-    const t1 = _localizeCountryNames(it.title);
-    if (t1 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t1; it.title_zh = t1; }
-    const t2 = _localizeMedia(it.title);
-    if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; }
-    const t3 = _localizeCities(it.title);
-    if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; }
-    _extractElements(it);
-  });
+  /* 收尾：国名/媒体专名本地化 + 要素抽取（外文主体不再拼接半成品，详见 _localizeTitleTail） */
+  list.forEach(function (it) { _localizeTitleTail(it); });
 }
 
 /* ===== 并行采集即译（2026-08-05 新增，修复"全量采集数据是外文原文"） =====
@@ -4724,6 +4715,34 @@ function _localizeMedia(s) {
   });
   return t;
 }
+/* 采集收尾：标题本地化 + 要素抽取（2026-08-24 修复"半中半英标题"，串行/并行两条即译链路共用）。
+ * 背景：翻译通道失败的条目仍是外文主体，旧收尾无条件拼接国名/城市/媒体本地化，
+ *      产出 "巴基斯坦 power crisis: 卡拉奇 residents riot..." 这类半吊子标题（用户投诉），
+ *      且把半成品写进 title_zh，后续闸门误判"已有译文"永不重译。
+ * 规则：外文主体 → 保留原文 + 打 _untranslated 标记（等回填重译），
+ *      location/city/date 抽取改用本地化探针副本，不污染 title/title_zh；
+ *      已是中文主体 → 维持原本地化行为（结构化 HDX 标题等场景需要）。 */
+function _localizeTitleTail(it) {
+  if (!it || typeof it !== 'object') return { loc: 0, media: 0, city: 0 };
+  if (_looksForeign(it.title)) {
+    it._untranslated = true;
+    const probe = { title: _localizeCities(_localizeMedia(_localizeCountryNames(it.title))), content: it.content, content_zh: it.content_zh };
+    _extractElements(probe);
+    if (!it.location && probe.location) it.location = probe.location;
+    if (!it.city && probe.city) it.city = probe.city;
+    if (!it.date && probe.date) it.date = probe.date;
+    return { loc: 0, media: 0, city: 0 };
+  }
+  const r = { loc: 0, media: 0, city: 0 };
+  const t1 = _localizeCountryNames(it.title);
+  if (t1 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t1; it.title_zh = t1; r.loc = 1; }
+  const t2 = _localizeMedia(it.title);
+  if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; r.media = 1; }
+  const t3 = _localizeCities(it.title);
+  if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; r.city = 1; }
+  _extractElements(it);
+  return r;
+}
 async function _translateListToZhParallel(list, concurrency) {
   concurrency = concurrency || 3;
   if (concurrency > 3) concurrency = 3; // 限制翻译并发，缓解系统内存压力
@@ -4793,17 +4812,12 @@ async function _translateListToZhParallel(list, concurrency) {
     if (bDone) console.log('[TRANSLATE] 正文补抓：' + bDone + '/' + bodyQueue.length + ' 条获得正文');
   }
   /* 收尾：① 国名本地化 ② 媒体专名本地化 ③ 城市本地化 ④ 要素抽取（location/event_date）
-   * 顺序保证长词优先：媒体 > 城市，避免 "The Washington Post" 被城市表先切成 "The 华盛顿 Post"。 */
+   * 顺序保证长词优先：媒体 > 城市，避免 "The Washington Post" 被城市表先切成 "The 华盛顿 Post"。
+   * 外文主体（翻译失败）条目不拼接半成品，由 _localizeTitleTail 打 _untranslated 标记待回填。 */
   let locN = 0, mediaN = 0, cityN = 0;
   list.forEach(function (it) {
-    if (!it || typeof it !== 'object') return;
-    const t1 = _localizeCountryNames(it.title);
-    if (t1 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t1; it.title_zh = t1; locN++; }
-    const t2 = _localizeMedia(it.title);
-    if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; mediaN++; }
-    const t3 = _localizeCities(it.title);
-    if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; cityN++; }
-    _extractElements(it);
+    const r = _localizeTitleTail(it);
+    locN += r.loc; mediaN += r.media; cityN += r.city;
   });
   console.log('[TRANSLATE] 并行采集即译：' + done + '/' + tasks.length + ' 个字段译成中文'
     + (locN ? '，本地化国家名 ' + locN + ' 条' : '')
