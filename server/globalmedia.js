@@ -699,7 +699,16 @@ const GDELT_THEME_QUERIES = [
   { q: '(mining OR minerals) (Africa OR African) (policy OR law OR regulation OR license OR local content OR beneficiation)', cn: '非洲', iso: 'AF', focus: '非洲矿业政策' },
   /* 非洲恐袭专项（补强） */
   { q: '(ISWAP OR "Islamic State" OR jihadist) (Nigeria OR "West Africa" OR Sahel) (attack OR killed OR ambush)', cn: '尼日利亚', iso: 'NG', focus: '西非圣战动态' },
-  { q: '(Cabo Delgado OR Mozambique) (insurgent OR attack OR beheaded OR village)', cn: '莫桑比克', iso: 'MZ', focus: '德尔加杜角叛乱' }
+  { q: '(Cabo Delgado OR Mozambique) (insurgent OR attack OR beheaded OR village)', cn: '莫桑比克', iso: 'MZ', focus: '德尔加杜角叛乱' },
+  /* 涉华负面专项（2026-08-25 用户指令：涉华负面采集量太少——反华抗议/项目受阻/债务叙事/排华事件/抹黑指控 全链条） */
+  { q: '(China OR Chinese OR BRI OR "Belt and Road") (protest OR backlash OR opposition OR "anti-China" OR demonstration) (project OR mine OR port OR dam OR investment)', cn: '国际', iso: 'UN', focus: '涉华项目抗议/反对' },
+  { q: '("debt trap" OR "debt-trap" OR default OR "loan restructur") (China OR Chinese) (Africa OR Asia OR "Sri Lanka" OR Pakistan OR Zambia OR Laos)', cn: '国际', iso: 'UN', focus: '涉华债务陷阱叙事' },
+  { q: '(Chinese OR China) (mine OR mining OR company OR factory OR project) (suspend OR halt OR revoke OR cancel OR "shut down" OR block) (government OR court OR regulator)', cn: '国际', iso: 'UN', focus: '中资项目受阻/被停' },
+  { q: '(Chinese nationals OR Chinese workers OR Chinese community OR Chinatown) (attacked OR harassed OR targeted OR discriminat OR assault OR robbed OR killed)', cn: '国际', iso: 'UN', focus: '排华/针对华人事件' },
+  { q: '(China OR Chinese) (spy OR espionage OR "influence operation" OR interference OR "police station") (accused OR alleged OR charged OR arrested OR investigation)', cn: '国际', iso: 'UN', focus: '涉华间谍/渗透指控' },
+  { q: '(China OR Chinese OR Huawei OR TikTok OR "Chinese apps") (ban OR restrict OR "national security" OR probe OR investigation) (government OR parliament OR regulator)', cn: '国际', iso: 'UN', focus: '涉华科技封堵/国安审查' },
+  { q: '(Uyghur OR Xinjiang OR "forced labor" OR "forced labour") (sanction OR ban OR import OR report OR investigation)', cn: '国际', iso: 'UN', focus: '涉疆抹黑/强迫劳动叙事' },
+  { q: '("South China Sea" OR Taiwan OR "gray zone" OR "grey zone") (China OR Chinese) (aggression OR incursion OR provocation OR "dangerous" OR confront)', cn: '国际', iso: 'UN', focus: '南海台海涉华摩擦叙事' }
 ];
 
 /** GDELT 主题检索采集：2天窗口 + 轮换查询词，持续产出新文章 URL

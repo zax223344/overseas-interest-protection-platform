@@ -2542,9 +2542,10 @@ async function _runGlobalMedia() {
 
     /* 并行抓取：新闻媒体 RSS + 智库/研究机构 RSS + GDELT 主题检索通道（增量新URL来源） */
     const gnAll = globalmedia.GDELT_THEME_QUERIES || [];
-    /* 涉华专项 4 条每轮必抓；其余每轮轮换 THEME_ROTATE_COUNT 条（调速器动态调整） */
-    const gnChina = gnAll.slice(0, 4);
-    const gnRest = gnAll.slice(4);
+    /* 涉华专项 4 条 + 涉华负面 8 条每轮必抓（2026-08-25 用户指令：涉华负面采集量太少）；
+     * 其余每轮轮换 THEME_ROTATE_COUNT 条（调速器动态调整） */
+    const gnChina = gnAll.slice(0, 4).concat(gnAll.filter(s => /涉华项目抗议|债务陷阱|中资项目受阻|排华|渗透指控|科技封堵|涉疆|南海台海/.test(s.focus || '')));
+    const gnRest = gnAll.filter(s => gnChina.indexOf(s) < 0);
     const gnStart = gnRest.length ? ((_rssRoundIndex * THEME_ROTATE_COUNT) % gnRest.length) : 0;
     const gnRotated = gnRest.slice(gnStart, gnStart + THEME_ROTATE_COUNT).concat(gnRest.slice(0, Math.max(0, gnStart + THEME_ROTATE_COUNT - gnRest.length)));
     const [rss, tanks, gnews, social, channel] = await Promise.all([
@@ -2564,7 +2565,7 @@ async function _runGlobalMedia() {
      * 4. 智库源中的 CSIS China Power、Brookings China、MERICS、Asan Institute 等专门研究中国。
      * 因此无需在每轮都调用慢速 GDELT 涉华搜索，避免阻塞 30-60 秒。 */
     let items = (rss.items || []).concat(tanks.items || []).concat(gnews.items || []).concat(social.items || []).concat(channel.items || []);
-    console.log('[GLOBALMEDIA] 主题检索通道(AP主/GDELT兜底)本轮: ' + (gnews.count || 0) + ' 条（涉华专项6词+轮换' + gnRotated.length + '词）');
+    console.log('[GLOBALMEDIA] 主题检索通道(AP主/GDELT兜底)本轮: ' + (gnews.count || 0) + ' 条（涉华+涉华负面' + gnChina.length + '词+轮换' + gnRotated.length + '词）');
     if (!social.throttled) console.log('[GLOBALMEDIA] 社媒通道(TG+Reddit)本轮: ' + (social.count || 0) + ' 条');
     console.log('[GLOBALMEDIA] 航道走廊专项本轮: ' + (channel.count || 0) + ' 条');
     let byCountry = Object.assign({}, rss.byCountry || {});
@@ -2677,8 +2678,8 @@ async function _runGlobalMedia() {
 const NEON_CURSOR_FILE = path.join(CACHE_DIR, 'neon-sync.json');
 let _neonPool = null;
 let _neonBusyUntil = 0;
-function _readNeonCursor() { try { return JSON.parse(fs.readFileSync(NEON_CURSOR_FILE, 'utf8')).lastId || 0; } catch (e) { return 0; } }
-function _writeNeonCursor(id) { try { fs.writeFileSync(NEON_CURSOR_FILE, JSON.stringify({ lastId: id, at: new Date().toISOString() })); } catch (e) {} }
+function _readNeonCursor() { try { return parseInt(JSON.parse(fs.readFileSync(NEON_CURSOR_FILE, 'utf8')).lastId, 10) || 0; } catch (e) { return 0; } }
+function _writeNeonCursor(id) { try { fs.writeFileSync(NEON_CURSOR_FILE, JSON.stringify({ lastId: parseInt(id, 10) || 0, at: new Date().toISOString() })); } catch (e) {} }
 
 async function _runNeonSync() {
   if (!process.env.NEON_DATABASE_URL) return;   // 未配置云采集连接串：静默跳过，不影响本地采集
@@ -2696,7 +2697,8 @@ async function _runNeonSync() {
     const items = [];
     let maxId = cursor;
     rows.forEach(r => {
-      if (r.id > maxId) maxId = r.id;
+      const rid = parseInt(r.id, 10) || 0;   /* int8 经 pg 返回字符串，必须数值化否则字符串比较卡死游标（"100">"99"=false，2026-08-25 实测） */
+      if (rid > maxId) maxId = rid;
       const it = r.payload || {};
       if (!it.url || !it.title) return;
       it._neonId = r.id;
@@ -2715,6 +2717,25 @@ async function _runNeonSync() {
       } catch (e) {}
     });
     const linked = items.filter(it => it.interestLinked === true);
+
+    /* 2026-08-25：云管道 AP 主题条目大面积缺日期（实测 66/194，Runner 上 AP 检索页日期抽取失灵），
+     * 且 apnews URL 是 hash 无内嵌日期，时效闸三途径都救不了 → 好情报被误杀。
+     * 入库闸前对无日期条目限量回抓文章页 meta 发布时间（AP 页有 article:published_time），
+     * 抓不到的交给时效闸如实拦截。 */
+    const undated = linked.filter(it => !it.publish_time && !it.publishedAt && !it.pubDate && !it.event_date && !it.date && it.url).slice(0, 12);
+    if (undated.length) {
+      let rescued = 0;
+      await Promise.all(undated.map(async it => {
+        try {
+          const html = await crawler.fetchPublic(String(it.url), 8000);
+          if (!html) return;
+          const m = html.match(/article:published_time[^>]*content=["']([^"']+)["']/i) ||
+                    html.match(/"datePublished"\s*:\s*"([^"]+)"/i);
+          if (m) { const d = new Date(m[1]); if (!isNaN(d.getTime())) { it.publish_time = d.toISOString(); rescued++; } }
+        } catch (e) {}
+      }));
+      if (rescued) console.log('[NEON] 无日期条目回抓发布时间：救回 ' + rescued + '/' + undated.length + ' 条');
+    }
 
     let inserted = 0, skipped = 0;
     if (linked.length) {

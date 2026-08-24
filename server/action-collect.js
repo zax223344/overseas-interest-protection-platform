@@ -77,8 +77,9 @@ function pickSources() {
   const ttSources = _dedupByUrl(chinaTt.concat(ttRotated));
 
   const gnAll = globalmedia.GDELT_THEME_QUERIES || [];
-  const gnChina = gnAll.slice(0, 4);   // 涉华专项 4 条每小时必查
-  const gnRest = gnAll.slice(4);
+  /* 涉华专项 4 条 + 涉华负面 8 条每小时必查（2026-08-25 用户指令：涉华负面采集量太少） */
+  const gnChina = gnAll.slice(0, 4).concat(gnAll.filter(s => /涉华项目抗议|债务陷阱|中资项目受阻|排华|渗透指控|科技封堵|涉疆|南海台海/.test(s.focus || '')));
+  const gnRest = gnAll.filter(s => gnChina.indexOf(s) < 0);
   const gnStart = gnRest.length ? ((HOUR * THEME_ROTATE) % gnRest.length) : 0;
   const gnQueries = gnChina.concat(
     gnRest.slice(gnStart, gnStart + THEME_ROTATE)
