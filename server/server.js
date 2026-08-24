@@ -2282,12 +2282,23 @@ async function _markCorroboration(id, it) {
   } catch (e) {}
 }
 
+/* 2026-08-25 时效铁律补丁：从 URL 路径提取发布日期（/2026/08/23/、/2026-8-23_ 等，
+ * 半岛/BBC/路透/WP 站普遍内嵌）。返回 Date 或 null。 */
+function _urlDate(u) {
+  const m = String(u || '').match(/\/(20\d{2})[\/\-_](0?[1-9]|1[0-2])[\/\-_](0?[1-9]|[12]\d|3[01])(?=[\/\-_]|$)/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12, 0, 0));
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function _isFreshEnough(it) {
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
+  let dated = false;   /* 2026-08-25 铁律：新闻必须能验证 24h 时效，三种途径都拿不到日期 → 拦截 */
 
   /* 优先从标题+正文提取事件发生时间 */
   const evtDate = _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || new Date());
   if (evtDate && !isNaN(evtDate.getTime())) {
+    dated = true;
     it._extractedEventDate = evtDate.toISOString();
     it.event_date = it._extractedEventDate;           /* 入库时以事件发生时间为准 */
     if (!it.date) it.date = it._extractedEventDate;
@@ -2304,16 +2315,28 @@ function _isFreshEnough(it) {
     const d = new Date(v);
     const t = isNaN(d.getTime()) ? new Date(String(v).replace('T', ' ')) : d;
     if (!isNaN(t.getTime())) {
+      dated = true;
       const age = Date.now() - t.getTime();
       if (age > FRESH_WINDOW_MS) return false;
       if (age < -12 * 60 * 60 * 1000) return false;
     }
   }
-  /* AP 新闻必须带日期：主题检索已回抓文章页，若仍无日期则视为不可判定旧闻，直接拦截 */
-  const src = String(it.source || it.domain || '');
-  if (/apnews\.com|AP News|apnews/i.test(src) && !v) {
-    return false;
+
+  /* 2026-08-25：再兜底 URL 内嵌日期（云管道/全文抓取常丢 metadata 日期，但 URL 自带） */
+  if (!dated) {
+    const ud = _urlDate(it.url || it.link || '');
+    if (ud) {
+      dated = true;
+      const age = Date.now() - ud.getTime();
+      if (age > FRESH_WINDOW_MS) return false;
+      if (age < -12 * 60 * 60 * 1000) return false;
+      it.publish_time = it.publish_time || ud.toISOString();   /* 补回日期，下游展示/统计可用 */
+    }
   }
+
+  /* 铁律收尾：三种途径都拿不到日期的新闻，时效不可验证 → 一律拦截（原"放行"是旧闻漏网主通道，
+   * 2026-08-25 实测近 3 天 43% 入库条目无任何日期字段） */
+  if (!dated) return false;
   return true;
 }
 
@@ -4389,10 +4412,18 @@ function _isGenreNoise(it) {
 /* 百度翻译单条 + 54003 频率限制退避重试（免费版 QPS 严格，靠退避逐条推进，绝不批量拼接以免错位误译） */
 /* 百度全局串行节流（2026-08-24 修复 54003）：免费版限 1 QPS，而采集/回填/前端多路并发调用
  * 会同时打百度 → 必然撞 54003。此处串行队列 + 每次调用间隔 ≥1150ms，全进程生效。 */
-let _baiduChain = Promise.resolve(), _baiduLastCall = 0, _baiduDisabledUntil = 0;
+let _baiduChain = Promise.resolve(), _baiduLastCall = 0, _baiduDisabledUntil = 0, _baiduFuseSetAt = 0, _baiduProbeInFlight = false;
 function _baiduThrottle() {
   const run = _baiduChain.then(async () => {
-    if (Date.now() < _baiduDisabledUntil) throw new Error('baidu err 54004(余额耗尽，当日熔断)');
+    if (Date.now() < _baiduDisabledUntil) {
+      /* 熔断自愈探针（2026-08-25）：账户充值/切标准版后不等次日——熔断超过 30 分钟放一单试探，
+       * 试探成功即解除熔断（见 _baiduTranslateRetry 成功分支） */
+      if (!_baiduProbeInFlight && Date.now() - _baiduFuseSetAt > 30 * 60 * 1000) {
+        _baiduProbeInFlight = true;
+      } else {
+        throw new Error('baidu err 54004(余额耗尽，当日熔断)');
+      }
+    }
     const wait = 1150 - (Date.now() - _baiduLastCall);
     if (wait > 0) await new Promise(r => setTimeout(r, wait));
     _baiduLastCall = Date.now();
@@ -4405,13 +4436,19 @@ async function _baiduTranslateRetry(text, id, key, attempt) {
   try {
     await _baiduThrottle();
     const r = await _translateViaBaidu([String(text || '')], id, key);
+    if (_baiduProbeInFlight) {   /* 试探单成功：账户已恢复，解除熔断 */
+      _baiduProbeInFlight = false; _baiduDisabledUntil = 0;
+      console.warn('[TRANSLATE] 百度熔断自愈：试探成功，通道恢复');
+    }
     return (r && r[0]) ? r[0] : '';
   } catch (e) {
+    _baiduProbeInFlight = false;
     /* 54004 = 账户余额/月配额耗尽：退避重试无意义，熔断至次日 0 点（2026-08-24 实测） */
     if (/54004/.test(e.message)) {
       const tmr = new Date(); tmr.setHours(24, 0, 5, 0);
       if (_baiduDisabledUntil < tmr.getTime()) {
         _baiduDisabledUntil = tmr.getTime();
+        _baiduFuseSetAt = Date.now();
         console.warn('[TRANSLATE] 百度余额耗尽(54004)，熔断至次日0点，走免密钥通道');
       }
       throw e;
@@ -5081,6 +5118,10 @@ async function _getKnownUrls() {
   return _urlCache.set;
 }
 async function _postGate(item) {
+  /* 手工建案（无 URL、无任何日期字段）：事件时间默认当下，不受 24h 新闻时效闸约束 */
+  if (!item.url && !item.publish_time && !item.publishedAt && !item.pubDate && !item.event_date && !item.date) {
+    item.event_date = new Date().toISOString();
+  }
   if (!item || !item.title) { _gateAudit('入库闸', 'empty', ''); return 'empty'; }
   /* 空壳条目一票否决（2026-08-17：旧版前端模板生成器产出的"美国-委内瑞拉冲突"式无正文垃圾）：
    * 无链接 且 正文与标题几乎相同/为空（真正的情报必有正文或链接佐证） */
