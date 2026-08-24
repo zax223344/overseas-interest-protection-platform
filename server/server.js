@@ -1453,7 +1453,7 @@ app.get('/api/intel/public/:type', async (req, res) => {
         return 3;
       };
       const mapped = filtered.map(r => {
-        const it = { ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time };
+        const it = { ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time, collect_time: r.collect_time };
         if (!it.title && r.title) it.title = r.title;
         /* 补跑 enrich：旧数据/直接入库数据可能未打 interestLinked，前端铁律要求该标记才分发预警 */
         if (it.interestLinked === undefined || it.interestLinked === null) {
@@ -5139,7 +5139,10 @@ app.get('/api/intel/:type', async (req, res) => {
     const { type } = req.params;
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
     const result = await query('SELECT * FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC', [type]);
-    res.json(result.rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time })));
+    /* 2026-08-25 铁律修复：必须回传真实入库时间 collect_time——此前只铺 data_json，
+     * 历史条目 data_json 无时间字段时前端只能用 Date.now() 兜底，导致 5 月旧闻盖今日新戳
+     * 混入最新预警（id 11233 事件）。DB 列置后覆盖，防止 data_json 内同名字段造假。 */
+    res.json(result.rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time, collect_time: r.collect_time })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

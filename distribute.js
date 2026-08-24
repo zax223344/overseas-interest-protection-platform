@@ -243,10 +243,17 @@
      * 同时仍满足"旧闻绝不冒充新讯"：超过24h的一律不进。 */
     var _freshCut = Date.now() - 24 * 60 * 60 * 1000;
     if (!_origTs) {
-      /* 【铁律·2026-08-19 用户指令】所有采集数据必须进预警中心/预警指挥台。
-       * 无来源发布日期时不得整条丢弃——采集是实时的，"刚采到的"对新系统就是新讯，
-       * 用采集时间兜底放行；标记 _noSourceDate 供界面区分（有源日期的才显示发布时间）。 */
-      _origTs = _pts(item.collect_time) || _pts(item.time) || Date.now();
+      /* 【铁律·2026-08-25 用户指令】旧闻绝不盖新戳冒充今日预警。
+       * 无来源发布日期时，只认"真实采集时间"（collect_time，服务端/API 均已回填）兜底；
+       * 严禁 Date.now()——那会把 5 月的旧闻盖上当下时间戳混入最新预警（实测：id 11233
+       * 刚果村庄 5-08 旧闻无任何时间字段 → Date.now() → 显示为今日 00:39 预警，用户震怒）。
+       * 本轮新采数据必经 DBCenter.add（采集时写入 collect_time=当下），不受影响；
+       * 连采集时间都没有的 = 历史库中时效不可验证的存量 → 不进最新预警，数据中心留档可查。 */
+      _origTs = _pts(item.collect_time) || _pts(item.collected_at) || _pts(item.time) || 0;
+      if (!_origTs) {
+        console.log('[INGEST-GATE] 无任何时间字段（时效不可验证）不入最新预警: ' + String(item.title || '').slice(0, 40));
+        return;
+      }
       item._noSourceDate = true;
     }
     if (_origTs < _freshCut) {
