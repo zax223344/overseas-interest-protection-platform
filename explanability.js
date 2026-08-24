@@ -37,6 +37,10 @@
     },
 
     _save(){
+      /* 懒初始化防护（2026-08-24 修复：init 未先于 log/setExplain 调用时 _audit/_explain 为 null，
+       * push/slice 直接抛错，把 showAlertDetail 等主流程一并打死） */
+      if (!Array.isArray(this._audit)) this._audit = [];
+      if (!this._explain || typeof this._explain !== 'object') this._explain = {};
       try { localStorage.setItem(STORAGE_KEYS.audit, JSON.stringify(this._audit.slice(-500))); } catch(e){}
       try { localStorage.setItem(STORAGE_KEYS.explain, JSON.stringify(this._explain)); } catch(e){}
     },
@@ -60,6 +64,7 @@
 
     /* 通用审计日志 */
     log(action, targetType, targetId, detail){
+      if (!Array.isArray(this._audit)) this._audit = []; /* 懒初始化（同上防护） */
       this._audit.push({
         id: 'AUD-' + Date.now() + '-' + Math.floor(Math.random()*1000),
         time: new Date().toISOString(),
