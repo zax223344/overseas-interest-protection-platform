@@ -2299,8 +2299,10 @@ function _isFreshEnough(it) {
   /* 兜底：metadata 发布时间 */
   const v = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
   if (v) {
-    const d = new Date(String(v).replace('T', ' ').replace('Z', ''));
-    const t = isNaN(d.getTime()) ? new Date(v) : d;
+    /* 2026-08-24 修复：禁止 .replace('Z','') —— 带 Z 的 ISO-UTC 被剥 Z 后会按本地时区解析，
+     * 直接多出 8 小时年龄，新鲜单源数据被 stale-single-source/时效闸误杀（云采集管道全是 Z 时间戳） */
+    const d = new Date(v);
+    const t = isNaN(d.getTime()) ? new Date(String(v).replace('T', ' ')) : d;
     if (!isNaN(t.getTime())) {
       const age = Date.now() - t.getTime();
       if (age > FRESH_WINDOW_MS) return false;
@@ -2322,8 +2324,10 @@ function _getEventAgeMs(it) {
   if (evtDate && !isNaN(evtDate.getTime())) return Date.now() - evtDate.getTime();
   const v = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
   if (v) {
-    const d = new Date(String(v).replace('T', ' ').replace('Z', ''));
-    const t = isNaN(d.getTime()) ? new Date(v) : d;
+    /* 2026-08-24 修复：禁止 .replace('Z','') —— 带 Z 的 ISO-UTC 剥 Z 后按本地时区解析多出 8 小时，
+     * 新鲜单源数据被 stale-single-source 误杀（云采集管道全是 Z 时间戳） */
+    const d = new Date(v);
+    const t = isNaN(d.getTime()) ? new Date(String(v).replace('T', ' ')) : d;
     if (!isNaN(t.getTime())) return Date.now() - t.getTime();
   }
   return -1;
@@ -2683,8 +2687,8 @@ async function _runNeonSync() {
       const eventSigs = await _getRecentEventSigs();
       for (const it of linked) {
         const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
-        if (!gate.ok) { skipped++; continue; }
-        if (!_isFreshEnough(it)) { skipped++; continue; }
+        if (!gate.ok) { skipped++; if (skipped <= 5) console.log('[NEON] 闸门拦截(' + gate.code.join(',') + '): ' + String(it.title || '').slice(0, 70)); continue; }
+        if (!_isFreshEnough(it)) { skipped++; if (skipped <= 5) console.log('[NEON] 时效拦截: ' + String(it.title || '').slice(0, 70)); continue; }
         if (!_ruUaQuotaOk(it)) { skipped++; continue; }
         if (!_dominantQuotaOk(it)) { skipped++; continue; }
         try {
