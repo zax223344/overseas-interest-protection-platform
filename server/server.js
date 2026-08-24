@@ -2108,6 +2108,22 @@ function _tagAssets(it) {
   const hits = [];
   for (const a of ASSET_PROFILES) { if (a.re.test(t)) hits.push(a.name); }
   if (hits.length) it.asset_tags = hits;
+  /* 2026-08-25 要素补全（用户指令：数据要素不全——实测近3天入库条目 factSheet 缺失率 100%）。
+   * extractFacts 纯正则零网络，在 中文标题+中文正文+原文 上抽取伤亡/行为体/事件性质/中方主体/
+   * 金额/时间/处置并附原句佐证，写入 factSheet 供前端详情卡片、detailed 判定与风险分级使用。 */
+  try {
+    if (!it.factSheet && fulltext && typeof fulltext.extractFacts === 'function') {
+      const corpus = String(it.title_zh || '') + '。' + String(it.content_zh || '') + '。'
+                   + String(it.title || '') + '。' + String(it.content || it.description || it.desc || '');
+      const fs_ = fulltext.extractFacts(corpus);
+      if (fs_ && fs_.facts && fs_.facts.length) {
+        it.factSheet = fs_;
+        it.hasCasualty = fs_.hasCasualty;
+        if (fs_.incidentTypes && fs_.incidentTypes.length && !it.incidentTypes) it.incidentTypes = fs_.incidentTypes;
+        if (fs_.actors && fs_.actors.length && !it.threatActors) it.threatActors = fs_.actors;
+      }
+    }
+  } catch (e) {}
   /* 2026-08-18 注：曾尝试用正则从事发标题自动纠正 country（来源国→事发国），但正则无法可靠区分
    * 行为主体国与事发地（如"美国制裁北极LNG"事发在俄而非美；且"索马里"含"马里"子串误判）。
    * 故不在入库时改 country（保留来源国），事发国由前端 distribute._extractCountryFromText 在显示时提取。 */
@@ -2319,6 +2335,8 @@ function _isFreshEnough(it) {
       const age = Date.now() - t.getTime();
       if (age > FRESH_WINDOW_MS) return false;
       if (age < -12 * 60 * 60 * 1000) return false;
+      /* 2026-08-25 要素补全：metadata 日期也可靠时回填 event_date（此前 94% 条目 event_date 为空） */
+      if (!it.event_date) { it.event_date = t.toISOString(); if (!it.date) it.date = it.event_date; }
     }
   }
 
@@ -2331,6 +2349,7 @@ function _isFreshEnough(it) {
       if (age > FRESH_WINDOW_MS) return false;
       if (age < -12 * 60 * 60 * 1000) return false;
       it.publish_time = it.publish_time || ud.toISOString();   /* 补回日期，下游展示/统计可用 */
+      if (!it.event_date) { it.event_date = ud.toISOString(); if (!it.date) it.date = it.event_date; }
     }
   }
 
