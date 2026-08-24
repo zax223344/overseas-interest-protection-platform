@@ -3447,9 +3447,11 @@ async function _wechatIngest(items) {
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
         });
+        if ((skippedNoUrl + skippedDup + skippedDupTitle + skippedEventSig + skippedDomestic + skippedBadTitle) <= 5)
+          console.log('[WECHAT] 闸门拦截(' + gate.code.join(',') + '): ' + String(it.title || '').slice(0, 50));
         continue;
       }
-      if (!_isFreshEnough(it)) { skippedStale++; continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; if (skippedStale <= 3) console.log('[WECHAT] 时效拦截: ' + String(it.title || '').slice(0, 50)); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
         _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
@@ -3459,7 +3461,7 @@ async function _wechatIngest(items) {
         );
         if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
         inserted++;
-      } catch (e) { /* URL 唯一索引冲突等 */ }
+      } catch (e) { console.warn('[WECHAT] INSERT 失败: ' + e.message + ' | ' + String(it.title || '').slice(0, 40)); }
     }
   }
   if (inserted) { _bumpDailyStats(inserted, linked.length, 0, 0); }
