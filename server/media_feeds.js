@@ -796,9 +796,22 @@ function statsByType(items) {
   return out;
 }
 
+/* ===== 区域重点扩充（2026-08-24：阿富汗/中亚/印度/非洲/拉美/日韩/东南亚/欧美，直采+GoogleNews查询+AllAfrica+ReliefWeb）===== */
+const regional = require('./regional_feeds');
+const DIRECT_RSS_ALL = (() => {
+  const seen = new Set(), out = [];
+  for (const s of DIRECT_RSS.concat(regional.REGIONAL_ALL || [])) {
+    const k = String(s.url || '').replace(/\/+$/, '').toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k); out.push(s);
+  }
+  return out;
+})();
+
 module.exports = {
   REGIONS, REGION_GROUP,
-  DIRECT_RSS, THINK_TANK_FEEDS, CHINA_FOCUS_SOURCES, CHINA_FOCUS_QUERIES,
+  DIRECT_RSS: DIRECT_RSS_ALL, THINK_TANK_FEEDS, CHINA_FOCUS_SOURCES, CHINA_FOCUS_QUERIES,
   CHINA_NEGATIVE_SOURCES, CHINA_NEGATIVE_QUERIES,
+  REGIONAL_STATS: regional.REGIONAL_STATS,
   statsByRegion, statsByCountry, statsByType
 };

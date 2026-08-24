@@ -30,7 +30,9 @@ const ACCOUNTS_FILE = path.join(__dirname, 'wechat-accounts.json');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const PER_ACCOUNT = 5;          // 每轮每号拉取条数（与材料一致：count=5）
 const BODY_BUDGET = 8;          // 每轮正文抓取预算（正文页是风控重灾区，省着用）
-const FREQ_COOLDOWN_MS = 30 * 60 * 1000;
+/* 2026-08-24：搜狗跳转解析是本机 IP 风控重灾区，30min 冷却解除不了封禁（实测连续两天每轮首发即触发），
+ * 拉长到 90min 给 IP 解封机会；解析失败不再丢条目（快照摘要入库，见 collectViaSearch）。 */
+const FREQ_COOLDOWN_MS = 90 * 60 * 1000;
 const SESSION_MAX_AGE_MS = 7 * 864e5;   // 会话超过 7 天视为可疑，强制重新扫码
 
 let _freqCoolUntil = 0;         // 模块级风控冷却（微信 200013 / 搜狗 antispider 共用）
@@ -317,7 +319,7 @@ async function collectViaSearch(accounts, opts) {
   const items = [];
   const incr = _loadIncr();
   let bodyBudget = opts.bodyBudget || BODY_BUDGET;
-  let resolveBudget = 5;   /* 跳转解析最敏感：限 5 次/轮、4~8s 间隔（2026-08-22 实测 10 次/轮会触发 antispider） */
+  let resolveBudget = 3;   /* 跳转解析最敏感：限 3 次/轮、8~15s 间隔（2026-08-24 实测首发即触发 antispider，预算收紧+失败条目改快照入库保底） */
   for (const name of accounts) {
     stats.accounts++;
     if (Date.now() < _freqCoolUntil) { stats.errors.push('搜狗风控冷却中'); break; }
@@ -327,7 +329,7 @@ async function collectViaSearch(accounts, opts) {
       if (sr.antispider) {
         _freqCoolUntil = Date.now() + FREQ_COOLDOWN_MS;
         _sogou.cookies = '';   /* 旧 cookie 已被盯上，下轮换新 */
-        stats.errors.push('搜狗反爬触发，冷却30分钟');
+        stats.errors.push('搜狗反爬触发，冷却90分钟');
         break;
       }
       if (sr.error) { stats.errors.push(name + ': ' + sr.error); continue; }
@@ -342,21 +344,30 @@ async function collectViaSearch(accounts, opts) {
       /* 最新优先：跳转解析是风控敏感步，有限的预算先给最新的文章 */
       news.sort((a, b) => (b.ts || 0) - (a.ts || 0));
       stats.fresh += news.length;
+      /* 2026-08-24 修复"看得见采不到"：此前跳转解析一失败/触发反爬就 continue/break，
+       * 导致每轮搜到 2~4 篇新文章却 0 入库（8-23 起连续两天）。现改为：
+       * 解析成功 → 抓正文+规范链接（原逻辑）；解析失败/反爬/预算尽 → 条目照样入库，
+       * URL 用搜狗快照跳转链（真实存在、短期有效），content 用搜狗真实摘要，标 _unresolved。
+       * 零模拟不破：标题/摘要/时间/来源号全部来自搜狗结果页真实数据。 */
+      let resolveDead = false;
       for (const it of news) {
-        if (resolveBudget <= 0) break;
-        await _sleep(_jitter(4000, 8000));   /* 跳转解析是搜狗风控重灾区，放慢 */
-        const rv = await _sogouResolve(it.href);
-        resolveBudget--;
-        if (rv.antispider) {
-          _freqCoolUntil = Date.now() + FREQ_COOLDOWN_MS;
-          _sogou.cookies = '';
-          stats.errors.push('搜狗反爬触发(跳转)，冷却30分钟');
-          break;
+        let rv = null;
+        if (!resolveDead && resolveBudget > 0) {
+          await _sleep(_jitter(8000, 15000));   /* 跳转解析是搜狗风控重灾区，再放慢 */
+          const r0 = await _sogouResolve(it.href);
+          resolveBudget--;
+          if (r0.antispider) {
+            _freqCoolUntil = Date.now() + FREQ_COOLDOWN_MS;
+            _sogou.cookies = '';
+            stats.errors.push('搜狗反爬触发(跳转)，冷却90分钟；本轮剩余新文以快照摘要入库');
+            resolveDead = true;
+          } else if (!r0.error) {
+            rv = r0;
+          }
         }
-        if (rv.error) continue;
-        /* 正文 + 规范链接（预算内才抓页面；预算外用搜狗摘要+签名链接，均为真实数据） */
+        /* 正文 + 规范链接（仅解析成功且预算内才抓页面；否则用搜狗摘要+快照链接，均为真实数据） */
         let body = '', ct = 0, nickname = '', canonical = '';
-        if (bodyBudget > 0) {
+        if (rv && bodyBudget > 0) {
           await _sleep(_jitter(1000, 3000));
           const full = await _fetchArticleFull(rv.url);
           bodyBudget--;
@@ -371,7 +382,7 @@ async function collectViaSearch(accounts, opts) {
         const ts = ct || it.ts || 0;
         items.push({
           title: it.title,
-          url: canonical || rv.url,
+          url: canonical || (rv && rv.url) || (it.href.startsWith('http') ? it.href : 'https://weixin.sogou.com' + it.href),
           content: body || it.digest,
           digest: it.digest,
           source: '公众号·' + (nickname || it.account || name),
@@ -387,6 +398,7 @@ async function collectViaSearch(accounts, opts) {
           _sourceType: 'wechat_oa',
           _viaSearch: true,
           _signedUrl: !canonical,
+          _unresolved: !rv,   /* 跳转未解析：链接为搜狗快照链，短期有效，正文为摘要 */
           _wechatAccount: nickname || it.account || name
         });
         seenT.push(_titleKey(it.title));
