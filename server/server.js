@@ -4090,8 +4090,8 @@ async function _tryEdge(texts) {
       });
     } catch (err) {
       if (attempt < 1) { _edgeJwt = null; continue; } // 重试时强制换新 token，规避偶发失效 JWT
-      _edgeOk = false; _edgeBlockedUntil = Date.now() + 30 * 1000; // 连续失败才短暂熔断 30s，避免单次沙箱抽风长期阻断可用的 Edge 兜底
-      console.warn('[TRANSLATE] Edge通道不可用，熔断3分钟:', err.message);
+      _edgeOk = false; _edgeBlockedUntil = Date.now() + 30 * 60 * 1000; // edge.microsoft.com 国内被 GFW 阻断属常态（2026-08-24 实测 fetch failed）：长熔断 30 分钟，避免每条翻译白等 3×4s 超时
+      console.warn('[TRANSLATE] Edge通道不可达(GFW)，熔断30分钟:', err.message);
       return null;
     }
   }
@@ -4193,13 +4193,18 @@ function _baiduSign(q, appid, key, salt) {
   return crypto.createHash('md5').update(appid + q + salt + key).digest('hex');
 }
 async function _translateViaBaidu(texts, appid, key) {
-  return await Promise.all(texts.map(async (t) => {
+  /* 2026-08-24 修复 54003：Promise.all 并行撞百度免费版 1 QPS 上限。
+   * 改为逐条串行 + 全局节流（_baiduThrottle 串行队列 + ≥1150ms 间隔）。 */
+  const results = [];
+  for (let t of texts) {
+    await _baiduThrottle();
     t = String(t || '');
-    if (!t.trim()) return '';
+    if (!t.trim()) { results.push(''); continue; }
     /* 长文分块（百度单条上限 6000 字符，分块后拼接可翻译任意长度详细正文） */
     const chunks = _chunkText(t, 5000);
     const parts = [];
     for (const ch of chunks) {
+      if (parts.length) await _baiduThrottle(); // 多块之间同样守 1 QPS
       const q = ch;
       const salt = Date.now() + '' + Math.floor(Math.random() * 10000);
       const sign = _baiduSign(q, appid, key, salt);
@@ -4222,8 +4227,9 @@ async function _translateViaBaidu(texts, appid, key) {
     }
     const tr = parts.join('\n');
     _cacheSet(t, tr);
-    return tr;
-  }));
+    results.push(tr);
+  }
+  return results;
 }
 app.post('/api/translate', async (req, res) => {
   let texts = req.body && req.body.texts;
@@ -4381,12 +4387,35 @@ function _isGenreNoise(it) {
   return false;
 }
 /* 百度翻译单条 + 54003 频率限制退避重试（免费版 QPS 严格，靠退避逐条推进，绝不批量拼接以免错位误译） */
+/* 百度全局串行节流（2026-08-24 修复 54003）：免费版限 1 QPS，而采集/回填/前端多路并发调用
+ * 会同时打百度 → 必然撞 54003。此处串行队列 + 每次调用间隔 ≥1150ms，全进程生效。 */
+let _baiduChain = Promise.resolve(), _baiduLastCall = 0, _baiduDisabledUntil = 0;
+function _baiduThrottle() {
+  const run = _baiduChain.then(async () => {
+    if (Date.now() < _baiduDisabledUntil) throw new Error('baidu err 54004(余额耗尽，当日熔断)');
+    const wait = 1150 - (Date.now() - _baiduLastCall);
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    _baiduLastCall = Date.now();
+  });
+  _baiduChain = run.catch(() => {});
+  return run;
+}
 async function _baiduTranslateRetry(text, id, key, attempt) {
   attempt = attempt || 0;
   try {
+    await _baiduThrottle();
     const r = await _translateViaBaidu([String(text || '')], id, key);
     return (r && r[0]) ? r[0] : '';
   } catch (e) {
+    /* 54004 = 账户余额/月配额耗尽：退避重试无意义，熔断至次日 0 点（2026-08-24 实测） */
+    if (/54004/.test(e.message)) {
+      const tmr = new Date(); tmr.setHours(24, 0, 5, 0);
+      if (_baiduDisabledUntil < tmr.getTime()) {
+        _baiduDisabledUntil = tmr.getTime();
+        console.warn('[TRANSLATE] 百度余额耗尽(54004)，熔断至次日0点，走免密钥通道');
+      }
+      throw e;
+    }
     if (/54003/.test(e.message) && attempt < 5) {
       const wait = 1500 * Math.pow(2, attempt); // 1.5s,3s,6s,12s,24s
       console.warn('[BACKFILL] 54003 限速，退避 ' + wait + 'ms 后重试 (attempt ' + (attempt + 1) + ')');
@@ -4460,16 +4489,29 @@ async function _translateAny(text) {
   const baiduKey = process.env.BAIDU_TRANSLATE_KEY;
   const src = String(text || '');
   if (!src.trim()) return '';
-  /* 1) 腾讯 TranSmart（auto 源语言，2026-08-17 修：原来写死 en→小语种必出乱码） */
-  try {
-    const r = await _tryTranSmart(src);
-    if (_translationOk(src, r)) return r;
-  } catch (e) { console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message); }
-  /* 2) 有道（from=Auto 本就支持自动识别） */
-  try {
-    const r = await _tryYoudao(src);
-    if (_translationOk(src, r)) return r;
-  } catch (e) { console.warn('[TRANSLATE] 有道失败，试 Baidu:', e.message); }
+  /* 1) 腾讯 TranSmart（auto 源语言，2026-08-17 修：原来写死 en→小语种必出乱码；
+   *    2026-08-24 修：瞬时 429/网络抖动不再一次打死，800ms 退避重试一次） */
+  for (let att = 0; att < 2; att++) {
+    try {
+      const r = await _tryTranSmart(src);
+      if (_translationOk(src, r)) return r;
+      break; /* 返回了但质量不合格 → 换通道，不重试 */
+    } catch (e) {
+      if (att === 0) { await new Promise(rs => setTimeout(rs, 800)); continue; }
+      console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message);
+    }
+  }
+  /* 2) 有道（from=Auto 本就支持自动识别；2026-08-24 修：411 频率限制 1.5s 退避重试一次） */
+  for (let att = 0; att < 2; att++) {
+    try {
+      const r = await _tryYoudao(src);
+      if (_translationOk(src, r)) return r;
+      break;
+    } catch (e) {
+      if (att === 0) { await new Promise(rs => setTimeout(rs, 1500)); continue; }
+      console.warn('[TRANSLATE] 有道失败，试 Baidu:', e.message);
+    }
+  }
   /* 3) Baidu */
   if (baiduId && baiduKey) {
     try {

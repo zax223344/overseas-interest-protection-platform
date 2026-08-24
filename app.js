@@ -3083,10 +3083,12 @@ var DATACENTER={
     ];
     html+='<div style="font-size:11px;color:var(--text3);font-weight:700;margin:10px 0 6px">📊 事件全要素</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+    /* 来源网址（2026-08-24 用户指令：情报来源必须带来源网址，可点击溯源） */
+    if(row.url){ els.push({l:'🔗 来源网址', v:'<a href="'+esc(row.url)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(row.url)+'</a>', html:true}); }
     els.forEach(function(e){
-      html+='<div style="display:flex;gap:8px;padding:7px 10px;background:var(--bg2);border-radius:6px;border-left:2px solid '+(e.c||'var(--cyan)')+'">'+
+      html+='<div style="display:flex;gap:8px;padding:7px 10px;background:var(--bg2);border-radius:6px;border-left:2px solid '+(e.c||'var(--cyan)')+';'+(e.html?'grid-column:1/-1;':'')+'">'+
         '<div style="width:86px;font-size:10px;color:var(--text3);font-weight:600;flex-shrink:0">'+e.l+'</div>'+
-        '<div style="font-size:11px;color:'+(e.c||'var(--text)')+';flex:1;word-break:break-all;'+(e.c?'font-weight:700':'')+'">'+esc(e.v)+'</div></div>';
+        '<div style="font-size:11px;color:'+(e.c||'var(--text)')+';flex:1;word-break:break-all;'+(e.c?'font-weight:700':'')+'">'+(e.html?e.v:esc(e.v))+'</div></div>';
     });
     html+='</div>';
     /* ---- 详情内容 + 译文 ---- */
@@ -10886,6 +10888,7 @@ const AVIEW={
       (a.affectedA?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">影响资产</div><div class="alert-detail-info-val" style="color:var(--yellow)">'+a.affectedA+' 亿$</div></div>':'')+
       (a.publishedAt?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">原文发布</div><div class="alert-detail-info-val" style="font-size:11px">'+esc(String(a.publishedAt).replace('T',' ').slice(0,16))+'</div></div>':'')+
       ((a.siteName||a.source)?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">情报来源</div><div class="alert-detail-info-val" style="font-size:11px">'+esc(a.siteName||a.source)+'</div></div>':'')+
+      ((a.url||a.ext_url)?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">来源网址</div><div class="alert-detail-info-val" style="font-size:10px;word-break:break-all"><a href="'+esc(a.url||a.ext_url)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(a.url||a.ext_url)+'</a></div></div>':'')+
       '<div class="alert-detail-info-item"><div class="alert-detail-info-label">预警编号</div><div class="alert-detail-info-val" style="font-size:11px;font-family:Courier New;letter-spacing:.5px">'+esc(a.alert_no||_makeAlertNo(a)||a.id)+'</div></div>'+
       '</div>';
     /* ===== 情报要素卡（从原文正文中抽取的结构化事实，每条附原文佐证句） ===== */
@@ -12351,6 +12354,7 @@ const AVIEW={
       title:item.title_zh||item.title||'涉华情报',
       desc:item.content_zh||item.content||item.title||'',
       source:item.source||'涉华情报预警中心',
+      url:item.url||'', /* 来源网址透传（2026-08-24：情报来源必须带网址） */
       status:'active', _live:true, _approved:true,
       chinaRelated:true, _chinaNegative:this._isChinaNegativeStance(text)
     };
@@ -14602,6 +14606,8 @@ function showAlertDetail(id){
     '<div style="padding:8px 10px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">可靠度</div><div style="font-weight:700;font-size:12px;color:var(--cyan)">'+rel+'</div></div>',
     '<div style="padding:8px 10px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">采集时间</div><div style="font-weight:600;font-size:12px">'+ct+'</div></div>'
   ];
+  /* 来源网址（2026-08-24 用户指令：情报来源必须带来源网址，可点击溯源） */
+  if(a.url||a.ext_url){ metaBits.push('<div style="padding:8px 10px;background:var(--bg2);border-radius:6px;grid-column:1/-1"><div class="text-xs text-muted">来源网址</div><div style="font-size:11px;word-break:break-all"><a href="'+esc(a.url||a.ext_url)+'" target="_blank" rel="noopener" style="color:var(--cyan)">'+esc(a.url||a.ext_url)+'</a></div></div>'); }
   /* 预警价值卡（2026-08-16：为什么值得预警，一眼可见） */
   try{
     var _val=(typeof AVIEW!=='undefined'&&AVIEW._alertValue)?AVIEW._alertValue(a):null;
@@ -15504,6 +15510,7 @@ function normalizeLiveAlert(a){
     title:title,
     content:(a.desc||title||''),
     source:a._src||a.source||'实时监测',
+    url:a.url||a.link||a.ext_url||'', /* 来源网址透传（2026-08-24：预警中心情报来源必须带网址） */
     actors:_extractActors(title+' '+(a.desc||'')),
     verified:!a._seed
   };

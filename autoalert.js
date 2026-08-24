@@ -2381,6 +2381,16 @@
       html += '<span>' + (a.confirmed ? '✅ 已确认' : a.dismissed ? '❌ 已消除' : '⏳ 待处理') + '</span>';
       html += '</div>';
 
+      /* 情报来源 + 来源网址（2026-08-24 用户指令：带来源网址，可点击溯源） */
+      var _aSrc = a.source || (a.rawItem && a.rawItem.source) || '';
+      var _aUrl = a.url || (a.rawItem && a.rawItem.url) || a.ext_url || '';
+      if (_aSrc || _aUrl) {
+        html += '<div style="display:flex;gap:12px;font-size:10px;color:var(--text3);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap">';
+        if (_aSrc) html += '<span>📡 情报来源: ' + _aSrc + '</span>';
+        if (_aUrl) html += '<span style="word-break:break-all">🔗 来源网址: <a href="' + String(_aUrl).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="color:var(--cyan)">' + String(_aUrl).replace(/</g, '&lt;') + '</a></span>';
+        html += '</div>';
+      }
+
       /* 影响面评估 */
       html += '<div style="padding:10px;background:var(--bg2);border-radius:8px;margin-bottom:12px">';
       html += '<div style="font-size:11px;font-weight:700;color:var(--orange);margin-bottom:8px">🎯 智能研判：影响面评估</div>';
