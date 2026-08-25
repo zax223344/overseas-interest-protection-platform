@@ -269,12 +269,30 @@ async function _sogouSearch(name) {
   const cookies = await _sogouEnsureCookies();
   if (!cookies) return { error: 'sogou-cookie-fail' };
   /* 注意（2026-08-22 实测）：tsn 时间过滤参数会 302 回首页（需浏览器 JS 种 cookie），不可用；
-   * 基线检索按相关度排序会混入旧文——靠逐条 ts 时间戳 + 45 天新鲜度预过滤 + 标题增量去重控制。 */
-  const url = 'https://weixin.sogou.com/weixin?type=2&query=' + encodeURIComponent(name);
-  const r = await _httpGet(url, { timeout: 12000, headers: { 'Cookie': cookies, 'Referer': SOGOU_HOME } });
-  if (!r.body) return { error: 'sogou-unreachable' };
-  if (/antispider|请输入验证码|用户您好，我们的系统检测到您网络中存在异常访问请求/.test(r.body)) return { antispider: true };
-  return { list: _sogouParseList(r.body) };
+   * 基线检索按相关度排序会混入旧文——靠逐条 ts 时间戳 + 45 天新鲜度预过滤 + 标题增量去重控制。
+   * 2026-08-25 实测恶化：部分账号（刺猬安全等 12 个）page1 全是数月前旧文 → 0 新鲜、永远采不到。
+   * 对策：page1 零新鲜时自动补抓 page2（实测 page2 反而更新），仍无则放弃等下轮。 */
+  const fetchPage = async (page) => {
+    const url = 'https://weixin.sogou.com/weixin?type=2&query=' + encodeURIComponent(name) + (page > 1 ? '&page=' + page : '');
+    const r = await _httpGet(url, { timeout: 12000, headers: { 'Cookie': cookies, 'Referer': SOGOU_HOME } });
+    if (!r.body) return { error: 'sogou-unreachable' };
+    if (/antispider|请输入验证码|用户您好，我们的系统检测到您网络中存在异常访问请求/.test(r.body)) return { antispider: true };
+    return { list: _sogouParseList(r.body) };
+  };
+  const p1 = await fetchPage(1);
+  if (p1.error || p1.antispider) return p1;
+  const isFresh = x => !x.ts || (Date.now() - x.ts) <= 45 * 864e5;
+  let list = p1.list;
+  if (list.length && !list.some(isFresh)) {
+    await _sleep(_jitter(4000, 7000));
+    const p2 = await fetchPage(2);
+    if (p2.antispider) return p2;
+    if (!p2.error && p2.list && p2.list.length) {
+      const seen = new Set(list.map(x => x.title));
+      p2.list.forEach(x => { if (!seen.has(x.title)) list.push(x); });
+    }
+  }
+  return { list };
 }
 async function _sogouResolve(href) {
   const url = href.startsWith('http') ? href : 'https://weixin.sogou.com' + href;

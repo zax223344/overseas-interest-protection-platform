@@ -26,6 +26,7 @@ const socialmedia = require('./socialmedia');
 const cnsecWatch = require('./cn-security-watch'); /* 涉华人员安全专项哨兵（2026-08-25 用户铁指令：中国#袭击/中国#绑架/中国公民#绑架，30分钟一轮） */
 const negtool = require('./negtool'); /* 社交媒体采集通道（TG+Reddit，2026-08-13 并入） */
 const wechatoa = require('./wechat-oa'); /* 微信公众号实时采集通道（2026-08-21 用户指令：扫码登录+appmsg列表+正文+增量入库） */
+const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采（2026-08-25：搜狗检索拿不到新文的根治方案——鼎泰安元官网/郑和号观察者网号等运营方自有公开站点同步原文） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -2024,13 +2025,17 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const sig = _eventSignature(it);
   if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
 
-  /* 多源印证：事件发生超过 6 小时后仍未被其他独立信源报道，视为不可信旧闻/单一信源噪音，暂不入库 */
-  const age = _getEventAgeMs(it);
-  if (age > CORROBORATION_WINDOW_MS) {
-    const corroborated = await _hasCorroboration(sig, 48);
-    if (!corroborated) {
-      _gateAudit('入库闸', 'stale-single-source', it.title);
-      return { ok: false, code: ['stale-single-source'] };
+  /* 多源印证：事件发生超过 6 小时后仍未被其他独立信源报道，视为不可信旧闻/单一信源噪音，暂不入库
+   * 2026-08-25 豁免：白名单公众号（wechat_oa，含搜狗/profile_ext/镜像站三通道）是用户亲选的专业安全信源，
+   * 独家首发内容永远等不到"多源印证"——刚果金上加丹加案 24h 内全网仅 2 家报道。保留 24h 时效闸（_isFreshEnough 另处执行）。 */
+  if (it._sourceType !== 'wechat_oa') {
+    const age = _getEventAgeMs(it);
+    if (age > CORROBORATION_WINDOW_MS) {
+      const corroborated = await _hasCorroboration(sig, 48);
+      if (!corroborated) {
+        _gateAudit('入库闸', 'stale-single-source', it.title);
+        return { ok: false, code: ['stale-single-source'] };
+      }
     }
   }
 
@@ -2177,7 +2182,7 @@ function _normLevelForStore(it) {
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   const china = /中资|中企|中方|华人|华侨|华裔|中国公民|中国游客|留学生|一带一路|中国使领馆|中国驻|中国|chinese|china|beijing/i.test(t)
     || (it.asset_tags && it.asset_tags.length > 0);
-  const severe = /死亡|伤亡|遇害|遇难|绑架|人质|劫持|恐袭|爆炸|空袭|枪击|战争|政变|屠杀|撤侨|killed|deadly|bombing|blast|hostage|kidnap|airstrike|massacre|coup/i.test(t);
+  const severe = /死亡|伤亡|遇害|遇难|绑架|人质|劫持|带走|掳走|劫走|恐袭|爆炸|空袭|枪击|战争|政变|屠杀|撤侨|killed|deadly|bombing|blast|hostage|kidnap|airstrike|massacre|coup/i.test(t);
   /* 提级关注（2026-08-14 安全部实战视角）：非涉华但重大伤亡（死亡≥5人）或大规模袭击特征 → 提级红色 */
   const _cm = t.match(/(\d{1,4})\s*(?:名|人|个)?\s*(?:死亡|身亡|遇难|丧生|被打死|被击毙)/) ||
               t.match(/(\d{1,4})\s*(?:people\s+)?(?:killed|dead|deaths)/i) ||
@@ -2354,8 +2359,13 @@ function _isFreshEnough(it) {
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
   let dated = false;   /* 2026-08-25 铁律：新闻必须能验证 24h 时效，三种途径都拿不到日期 → 拦截 */
 
+  /* 2026-08-25 白名单公众号豁免：wechat_oa 通道（搜狗/profile_ext/镜像站）是用户亲选的专业安全信源，
+   * 正文常引用 24~48h 前的事件（如刚果金上加丹加案 8-24 事发、8-25 报道），正文事件日期提取会把
+   * 刚发布的报道误判为旧闻全杀（实测镜像首跑 5/5 误杀）。对这类信源以发布日期为时效准绳。 */
+  const trustPubDate = it._sourceType === 'wechat_oa';
+
   /* 优先从标题+正文提取事件发生时间 */
-  const evtDate = _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || new Date());
+  const evtDate = trustPubDate ? null : _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || new Date());
   if (evtDate && !isNaN(evtDate.getTime())) {
     dated = true;
     it._extractedEventDate = evtDate.toISOString();
@@ -3899,6 +3909,23 @@ async function _runCnSecurityWatch() {
   finally { _cnsecBusyUntil = 0; }
 }
 
+/* ===== 公众号镜像站直采调度（2026-08-25 用户铁指令：真正实现公众号实时采集） ===== */
+let _wxMirrorBusyUntil = 0;
+async function _runWechatMirrors() {
+  if (Date.now() < _wxMirrorBusyUntil) return;
+  _wxMirrorBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await wechatMirrors.collect({});
+    const items = r.items || [];
+    if (items.length) {
+      items.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} });
+      const res = await _ingestLinkedItems(items, 'WECHAT-MIRROR', '');
+      console.log('[WECHAT-MIRROR] 一轮: 镜像' + r.stats.mirrorsOk + '/' + r.stats.mirrors + ' 新文' + r.stats.fresh + ' 入库' + ((res && res.inserted) || 0) + (r.stats.errors.length ? ' 异常:' + r.stats.errors.join(';') : ''));
+    }
+  } catch (e) { console.warn('[WECHAT-MIRROR] 采集失败:', e.message); }
+  finally { _wxMirrorBusyUntil = 0; }
+}
+
 function startGlobalMediaCron() {
   setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); }); }, 5000);  // 启动后5s先同步统计再首跑
   setInterval(_runGlobalMedia, GLOBAL_MEDIA_INTERVAL_MS); // 每60秒刷新一轮
@@ -3908,6 +3935,9 @@ function startGlobalMediaCron() {
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 30 * 60 * 1000);
+  // 公众号镜像站直采：每15分钟一轮（2026-08-25；与搜狗/profile_ext 通道并行互补）
+  setTimeout(_runWechatMirrors, 150 * 1000);
+  setInterval(_runWechatMirrors, 15 * 60 * 1000);
   // 每5分钟再同步一次数据库，防止统计漂移
   setInterval(_syncDailyStatsFromDB, 5 * 60 * 1000);
   // 采集自动驾驶调速器：每10分钟自检，落后自动加码，达标自动降档
