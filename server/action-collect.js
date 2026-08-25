@@ -20,6 +20,7 @@ if (!process.env.OVERSEAS_PROXY) process.env.OVERSEAS_PROXY = 'direct';
 
 const { Pool } = require('pg');
 const globalmedia = require('./globalmedia');
+const cnsecWatch = require('./cn-security-watch'); /* 涉华人员安全专项哨兵（2026-08-25） */
 
 const CONN = process.env.NEON_DATABASE_URL;
 if (!CONN) { console.error('[ACTION] 缺少 NEON_DATABASE_URL，请在仓库 Secrets 配置'); process.exit(1); }
@@ -134,14 +135,16 @@ async function main() {
   const { rssSources, ttSources, gnQueries } = pickSources();
   console.log('[ACTION] 本轮源: 媒体 ' + rssSources.length + ' / 智库 ' + ttSources.length + ' / GDELT主题 ' + gnQueries.length);
 
-  const [rss, tanks, gnews] = await Promise.all([
+  const [rss, tanks, gnews, cnsec] = await Promise.all([
     globalmedia.scrapeDirectRss({ sources: rssSources, concurrency: 10, timeout: 12000 }).catch(e => { console.warn('[ACTION] RSS通道异常:', e.message); return { items: [], count: 0 }; }),
     globalmedia.scrapeThinkTanks({ sources: ttSources, concurrency: 10, timeout: 12000 }).catch(e => { console.warn('[ACTION] 智库通道异常:', e.message); return { items: [], count: 0 }; }),
-    globalmedia.scrapeGdeltThemes({ queries: gnQueries, maxPerQuery: 25 }).catch(e => { console.warn('[ACTION] GDELT通道异常:', e.message); return { items: [], count: 0 }; })
+    globalmedia.scrapeGdeltThemes({ queries: gnQueries, maxPerQuery: 25 }).catch(e => { console.warn('[ACTION] GDELT通道异常:', e.message); return { items: [], count: 0 }; }),
+    /* 涉华人员安全专项哨兵（2026-08-25 用户铁指令：中国#袭击/中国#绑架/中国公民#绑架）云端同跑，关机也照采 */
+    cnsecWatch.runCnSecurityWatch().catch(e => { console.warn('[ACTION] 涉华安全哨兵异常:', e.message); return { items: [], count: 0 }; })
   ]);
 
-  const all = sane((rss.items || []).concat(tanks.items || []).concat(gnews.items || []));
-  console.log('[ACTION] 抓取: 媒体' + (rss.count || 0) + ' / 智库' + (tanks.count || 0) + ' / GDELT' + (gnews.count || 0) + ' → 卫生过滤后 ' + all.length);
+  const all = sane((rss.items || []).concat(tanks.items || []).concat(gnews.items || []).concat(cnsec.items || []));
+  console.log('[ACTION] 抓取: 媒体' + (rss.count || 0) + ' / 智库' + (tanks.count || 0) + ' / GDELT' + (gnews.count || 0) + ' / 涉华哨兵' + (cnsec.count || 0) + ' → 卫生过滤后 ' + all.length);
 
   const inserted = await insertBatch(all);
   const pruned = await pool.query(`DELETE FROM action_raw_items WHERE created_at < now() - interval '7 days'`);

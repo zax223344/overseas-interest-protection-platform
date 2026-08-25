@@ -721,23 +721,22 @@ async function scrapeGdeltThemes(opts) {
   const seenUrl = new Set();
   for (const qs of queries) {
     let arts = [];
-    /* 主通道：AP 站内检索（快且稳定；AP 不支持 GDELT 括号语法，降解为关键词序列） */
-    try {
-      const plainQ = String(qs.q).replace(/\bOR\b/g, ' ').replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
-      arts = await Promise.race([
+    /* 2026-08-25 漏采根因修复：AP 与 GDELT 双通道并行合并（下游按 URL 去重）。
+     * 旧逻辑「AP 有结果则 GDELT 不开火」——AP 是美联社一家之声，对泛词组总能返回结果，
+     * 导致覆盖 65 语种机器翻译的 GDELT 实际闲置，非洲小源涉华安全事件系统性漏采
+     * （8-24 刚果金上加丹加中国公民遇袭绑架案，法语小站首发，AP 无报道）。 */
+    const plainQ = String(qs.q).replace(/\bOR\b/g, ' ').replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
+    const [apArts, gdArts] = await Promise.all([
+      Promise.race([
         crawler.apSearch(plainQ, { maxrecords: 25, pages: 2 }),
         new Promise(resolve => setTimeout(() => resolve([]), 20000))
-      ]) || [];
-    } catch (e) { arts = []; }
-    /* 兜底：GDELT 主题检索（全局 5.2s 节流，45s 超时） */
-    if (!arts.length) {
-      try {
-        arts = await Promise.race([
-          crawler.gdeltSearch(qs.q, { timespan: '2d', maxrecords: opts.maxPerQuery || 15 }),
-          new Promise(resolve => setTimeout(() => resolve([]), 45000))
-        ]) || [];
-      } catch (e) { arts = []; }
-    }
+      ]).catch(() => []),
+      Promise.race([
+        crawler.gdeltSearch(qs.q, { timespan: '2d', maxrecords: opts.maxPerQuery || 15 }),
+        new Promise(resolve => setTimeout(() => resolve([]), 45000))
+      ]).catch(() => [])
+    ]);
+    arts = (apArts || []).concat(gdArts || []);
     for (const a of arts) {
       if (!a.url || seenUrl.has(a.url)) continue;
       const txt = String(a.title || '');
