@@ -758,9 +758,14 @@ function _capAlertQueue(list) {
     if (!a) continue;
     const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
     if (t && now - t > 72 * 3600 * 1000) continue;
-    const c = String(a.country || '未知').trim() || '未知';
-    seen[c] = (seen[c] || 0) + 1;
-    if (seen[c] > ALERT_QUEUE_COUNTRY_CAP) continue;
+    /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
+     * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。 */
+    const isRed = a.risk_zone === 'red' || (a.risk_score != null && a.risk_score >= 61) || a.level === 'red';
+    if (!isRed) {
+      const c = String(a.country || '未知').trim() || '未知';
+      seen[c] = (seen[c] || 0) + 1;
+      if (seen[c] > ALERT_QUEUE_COUNTRY_CAP) continue;
+    }
     out.push(a);
   }
   return out;
@@ -5720,6 +5725,34 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
         return m ? m[1] === tk : false;
       });
       if (data.length !== before) console.log('[DATAHUB] alerts 写入过滤: ' + before + ' → ' + data.length + '（剔除非今日/盖戳回灌）');
+      /* 2026-08-25 赋分改革根因修复：客户端全量覆盖会把服务端权威红区预警冲掉
+       * （旧客户端 IndexedDB 里既没有新生成的红区条目、也没有 risk_zone 字段，一存全没）。
+       * 改为权威合并：客户端条目按 id 覆盖/新增；服务端现有但客户端未包含的条目，
+       * 72h 时效内一律保留（红区预警的存续不依赖任何客户端在线）；缺分区现场补算。 */
+      try {
+        const cur2 = await query('SELECT data_json FROM datahub_store WHERE collection = $1', [collection]);
+        const curArr = (cur2.rows.length && Array.isArray(cur2.rows[0].data_json)) ? cur2.rows[0].data_json : [];
+        const clientIds = new Set(data.map(a => String((a && a.id) || '')));
+        const now2 = Date.now();
+        const preserved = curArr.filter(a => {
+          if (!a) return false;
+          if (clientIds.has(String(a.id || ''))) return false; /* 客户端已带同 id 新副本 */
+          const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
+          if (t && now2 - t > 72 * 3600 * 1000) return false; /* 超 72h 不保留 */
+          return true;
+        });
+        for (const a of preserved.concat(data)) {
+          if (!a || a.risk_zone) continue;
+          try {
+            const s = _scoreRiskItem({ title: a.title || '', title_zh: a.title_zh || '', content: a.desc || a.content || '', country: a.country || '', source: a.source || '', publishedAt: a.publishedAt || a.time || '' });
+            a.risk_score = s.score; a.risk_zone = s.zone; a.risk_rationale = s.rationale; a.zone_action = s.action;
+            a.level = s.level;
+          } catch (e) {}
+        }
+        const clientKept = data.length;
+        data = _capAlertQueue(data.concat(preserved)).slice(0, 300);
+        console.log('[DATAHUB] alerts 权威合并: 客户端 ' + clientKept + ' 条 + 服务端保留 ' + preserved.length + ' 条 → ' + data.length + ' 条');
+      } catch (e) { console.warn('[DATAHUB] alerts 合并异常（回退全量覆盖）:', e.message); }
     }
     await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (collection) DO UPDATE SET data_json = $2, updated_at = NOW()', [collection, JSON.stringify(data)]);
     res.json({ success: true });

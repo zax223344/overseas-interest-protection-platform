@@ -3465,8 +3465,14 @@ var DataHub={
       }
     }
     // 异步从 API 加载（覆盖本地数据）
-    if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
+    /* 2026-08-25 根因修复：APIClient._probe 为异步，init 时 _online 常为 null，
+     * isOnline()=false 导致 _loadFromAPI 永远不执行，前端长期跑 IndexedDB 陈旧副本
+     * （红区预警/risk_zone 赋分字段全部不可见）。改为无条件尝试加载——每个集合自带 catch，
+     * 后端不可达只是几条 warn；10s 后（探测已落定）再补载一次，覆盖首轮可能的失败。 */
+    if(typeof APIClient!=='undefined'){
       this._loadFromAPI();
+      var self=this;
+      setTimeout(function(){ if(APIClient.isOnline()) self._loadFromAPI(); },10000);
     }
   },
   _loadFromAPI(){
@@ -8503,7 +8509,7 @@ const MONITOR={
     var totalAlerts=ALERTS.filter(function(a){return a.status!=='resolved';}).length;
     var activeEvents=EVENTS.filter(function(e){return e.status==='active';}).length;
     var redAlerts=ALERTS.filter(function(a){return a.level==='red'&&a.status!=='resolved';}).length;
-    this._mapLayers={risk:true,enterprise:true,event:true,chokepoint:true,corridor:true,flight:false,vessel:false};
+    this._mapLayers={risk:true,enterprise:true,event:true,chokepoint:true,corridor:true,project:true,flight:false,vessel:false};
     this._mapRegion='all';
     el.innerHTML='<div class="risk-map-layout">'+
       '<div class="risk-map-main">'+
@@ -8514,6 +8520,7 @@ const MONITOR={
       '<label class="risk-map-ck active" data-l="event"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'event\')">📋 事件标记</label>'+
       '<label class="risk-map-ck active" data-l="chokepoint"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'chokepoint\')">⚓ 战略咽喉</label>'+
       '<label class="risk-map-ck active" data-l="corridor"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'corridor\')">🛤️ 一带一路</label>'+
+      '<label class="risk-map-ck active" data-l="project"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'project\')">🏗️ 项目风险</label>'+
       '<label class="risk-map-ck" data-l="flight"><input type="checkbox" onchange="MONITOR.toggleLayer(\'flight\')">✈️ 实时航班</label>'+
       '<label class="risk-map-ck" data-l="vessel"><input type="checkbox" onchange="MONITOR.toggleLayer(\'vessel\')">🚢 船舶AIS</label>'+
       '</div>'+
@@ -8534,11 +8541,16 @@ const MONITOR={
       '<div class="risk-map-stat" style="cursor:pointer" onclick="MONITOR.showEventAnalysis()"><div class="lb">追踪事件</div><div class="vl" style="color:var(--yellow)">'+activeEvents+'</div><div class="delta">共'+EVENTS.length+'起</div></div>'+
       '<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px">📊 区域风险热力</div><div id="mon-map-region"></div></div>'+
       '<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px;display:flex;justify-content:space-between;align-items:center"><span>⚡ 最新事件</span><span style="font-size:9px;color:var(--red)">● LIVE</span></div><div class="risk-map-event-list" id="mon-map-events"></div></div>'+
-      '</div></div>';
+      '</div></div>'+
+      /* ===== 应急指南（2026-08-26 用户指令：监测中心最下方，覆盖所有中资项目国家）===== */
+      '<div class="card" style="margin-top:12px"><div class="card-tt"><span class="ic">🆘</span>应急指南 · 中资项目所在国撤离路线 / 避难所 / 使领馆'+
+      '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px">外交部全球领保热线 +86-10-12308（24小时）</span></div>'+
+      '<div id="mon-emg-guide"></div></div>';
     this._renderMapSVG();
     this._renderMapRegion();
     this._renderMapEvents();
     this._renderMapLegend();
+    this.renderEmergencyGuide();
   },
   /* 风险分析详情 */
   showRiskAnalysis(){
@@ -8760,6 +8772,31 @@ const MONITOR={
       g5.addTo(map); this._riskMapGroups.corridor=g5;
     }
 
+    /* ===== 中资项目实时风险标注（2026-08-26 用户指令：风险地图标注所有项目实时风险等级，点击查看详情）===== */
+    if(layers.project && typeof ENTITY!=='undefined' && ENTITY.PROJECTS && typeof EMERGENCY_GUIDE!=='undefined'){
+      var gp=L.layerGroup();
+      ENTITY.PROJECTS.forEach(function(p){
+        var geo=EMERGENCY_GUIDE.geoOf(p.id);
+        if(!geo || !_okLL(geo.lat,geo.lng)) return;
+        var pr=self._projectRiskOf(p);
+        var col=pr.zone==='red'?'#ff3355':pr.zone==='yellow'?'#ffcc00':'#00ff9f';
+        var zl=pr.zone==='red'?'红区':pr.zone==='yellow'?'黄区':'绿区';
+        /* 红区双圈脉冲感（外圈半透明放大约显） */
+        if(pr.zone==='red'){
+          L.circle([geo.lat,geo.lng],{radius:90000,color:col,weight:1.5,fillColor:col,fillOpacity:0.18,interactive:false}).addTo(gp);
+        }
+        var m=L.marker([geo.lat,geo.lng],{icon:L.divIcon({className:'',html:'<div style="width:13px;height:13px;background:'+col+';border:2px solid rgba(255,255,255,0.9);border-radius:50%;box-shadow:0 0 8px '+col+'"></div>',iconSize:[13,13],iconAnchor:[6,6]})});
+        m.bindTooltip('🏗️ '+p.name+' | '+p.country+' | 实时风险 '+pr.score+'分 '+zl+(pr.direct.length?' | 直接命中预警 '+pr.direct.length+' 条':''),{direction:'top'});
+        m.on('click',function(){ self.showProjectRisk(p.id); });
+        m.addTo(gp);
+        /* 旗舰项目或黄/红区项目显示名称标签 */
+        if(p.tier===1 || pr.zone!=='green'){
+          L.marker([geo.lat,geo.lng],{icon:L.divIcon({className:'',html:'<div style="color:'+col+';font-size:10px;font-weight:600;text-shadow:0 0 4px #000;white-space:nowrap">'+p.name+(pr.zone!=='green'?' '+pr.score:'')+'</div>',iconSize:[110,14],iconAnchor:[-10,7]}),interactive:false}).addTo(gp);
+        }
+      });
+      gp.addTo(map); this._riskMapGroups.project=gp;
+    }
+
     /* 实时航班 */
     if(layers.flight && typeof FLIGHT_AIS!=='undefined' && FLIGHT_AIS._flights && FLIGHT_AIS._flights.length){
       var g6=L.layerGroup();
@@ -8806,7 +8843,163 @@ const MONITOR={
       '</div>';
   },
 
-  /* 区域风险热力（侧栏）——此前缺失导致 renderMap 抛 TypeError，整个监测视图渲染中断 */
+  /* ===== 项目实时风险评估（2026-08-26）：直接命中预警全量继承，国别环境按 70% 折算 ===== */
+  _projectRiskOf(p){
+    var geo=(typeof EMERGENCY_GUIDE!=='undefined')?EMERGENCY_GUIDE.geoOf(p.id):null;
+    var aliases=[p.name,p.en].concat(p.alias||[]).filter(Boolean).map(function(x){return String(x).toLowerCase();});
+    var direct=[],countryN=0,cMax=0;
+    (typeof ALERTS!=='undefined'?ALERTS:[]).forEach(function(a){
+      if(!a||a.status==='resolved')return;
+      var t=(String(a.title||'')+' '+String(a.title_zh||'')+' '+String(a.desc||'')).toLowerCase();
+      var hit=aliases.some(function(al){return al && t.indexOf(al)>=0;});
+      if(hit){ direct.push(a); return; }
+      var cty=a.country||'';
+      if(cty===p.country || (p.country==='欧洲'&&/欧洲|德国|波兰/.test(cty))){
+        countryN++; cMax=Math.max(cMax,a.risk_score||0);
+      }
+    });
+    var dMax=direct.reduce(function(m,a){return Math.max(m,a.risk_score||0);},0);
+    var score=Math.max(dMax,Math.round(cMax*0.7));
+    var zone=score>=61?'red':score>=31?'yellow':'green';
+    direct.sort(function(a,b){return (b.risk_score||0)-(a.risk_score||0);});
+    return {score:score,zone:zone,direct:direct,countryN:countryN,countryMax:cMax,geo:geo};
+  },
+
+  /* ===== 项目风险详情弹窗（风险地图点击查看）===== */
+  showProjectRisk(pid){
+    if(typeof ENTITY==='undefined'||!ENTITY.PROJECTS)return;
+    var p=ENTITY.PROJECTS.find(function(x){return x.id===pid;});
+    if(!p)return;
+    var pr=this._projectRiskOf(p);
+    var geo=pr.geo||{};
+    var guide=(typeof EMERGENCY_GUIDE!=='undefined')?EMERGENCY_GUIDE.guideForProject(p.id,p.country):null;
+    var zc=pr.zone==='red'?'var(--red)':pr.zone==='yellow'?'var(--yellow)':'var(--green)';
+    var zl=pr.zone==='red'?'红区 · 立即启动应急预案，考虑人员撤离':pr.zone==='yellow'?'黄区 · 加强安保巡逻，限制人员外出':'绿区 · 正常运营，无需特殊防护';
+    var tierName=p.tier===1?'国家级旗舰':p.tier===2?'重点项目':'一般项目';
+    var html='';
+    html+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<span style="font-size:26px;font-weight:800;color:'+zc+'">'+pr.score+'<span style="font-size:11px;font-weight:400;color:var(--text3)"> /100</span></span>'
+      +'<span class="badge" style="background:'+zc+';color:#000;font-weight:700">'+zl+'</span></div>';
+    html+='<div class="grid mb-12" style="grid-template-columns:1fr 1fr;gap:8px">'
+      +'<div style="padding:10px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">项目</div><div style="font-weight:700">'+p.name+'（'+(p.en||'')+'）</div></div>'
+      +'<div style="padding:10px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">层级</div><div style="font-weight:700">'+tierName+'</div></div>'
+      +'<div style="padding:10px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">所在国 / 省州</div><div style="font-weight:700">'+p.country+(geo.province?' · '+geo.province:'')+'</div></div>'
+      +'<div style="padding:10px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">最近空港 / 海港</div><div style="font-weight:700;font-size:11px">'+(geo.airport?geo.airport.name+(geo.airport.iata?'（'+geo.airport.iata+'）':''):'—')+(geo.seaport?' / '+geo.seaport:'')+'</div></div>'
+      +'</div>';
+    /* 直接命中预警 */
+    html+='<div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:6px">🎯 直接命中预警（'+pr.direct.length+'条）'
+      +'<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px">国别环境预警 '+pr.countryN+' 条（最高 '+pr.countryMax+' 分，按 70% 折算计入）</span></div>';
+    if(pr.direct.length){
+      html+='<div style="max-height:180px;overflow-y:auto;margin-bottom:12px">'+pr.direct.slice(0,8).map(function(a){
+        var ac=(a.risk_score||0)>=61?'var(--red)':(a.risk_score||0)>=31?'var(--yellow)':'var(--green)';
+        return '<div style="padding:6px 8px;background:var(--bg2);border-left:3px solid '+ac+';border-radius:5px;margin-bottom:4px;cursor:pointer" onclick="document.getElementById(\'modal\').classList.remove(\'show\');showAlertDetail(\''+String(a.id||'').replace(/'/g,"\\'")+'\')">'
+          +'<span style="font-size:9px;font-weight:800;color:'+ac+'">'+(a.risk_score!=null?a.risk_score+'分':'—')+'</span> '
+          +'<span style="font-size:11px;color:var(--text1)">'+esc(a.title_zh||a.title||'')+'</span>'
+          +'<span style="font-size:9px;color:var(--text3);float:right">'+(a.time||'').substring(5,16)+'</span></div>';
+      }).join('')+'</div>';
+    }else{
+      html+='<div style="padding:10px;background:var(--bg2);border-radius:6px;font-size:11px;color:var(--text3);margin-bottom:12px">暂无直接命中预警；当前风险分主要由国别环境折算</div>';
+    }
+    /* 应急指南摘要 */
+    if(guide){
+      html+='<div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:6px">🆘 应急指南（'+p.country+'）</div>';
+      html+='<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--cyan);border-radius:6px;margin-bottom:8px;font-size:11px;line-height:1.7">'
+        +'<div><b>'+guide.embassy.name+'</b>（'+guide.embassy.city+'）　📞 '+esc(guide.embassy.phone)+'</div>'
+        +(guide.consulates||[]).map(function(c){return '<div>'+c.name+'（'+c.city+'）　📞 '+esc(c.phone)+'</div>';}).join('')
+        +'<div style="color:var(--cyan);font-weight:700">'+EMERGENCY_GUIDE.HOTLINE.name+'：'+EMERGENCY_GUIDE.HOTLINE.phone+'（'+EMERGENCY_GUIDE.HOTLINE.hours+'）</div></div>';
+      html+=(guide.routes||[]).map(function(r){
+        return '<div style="padding:8px 10px;background:var(--bg2);border-radius:6px;margin-bottom:6px;font-size:11px;line-height:1.7">'
+          +'<div style="font-weight:700;color:var(--orange)">▶ '+esc(r.scene)+'</div>'
+          +'<div>'+r.steps.map(function(s,i){return (i+1)+'. '+esc(s);}).join(' → ')+'</div>'
+          +'<div style="color:var(--text3)">第三国中转：'+esc(r.third||'—')+(r.note?'　备注：'+esc(r.note):'')+'</div></div>';
+      }).join('');
+      html+='<div style="font-size:11px;color:var(--text3);line-height:1.7;margin-bottom:6px"><b style="color:var(--text1)">避难所：</b>'+(guide.shelters||[]).map(function(s){return esc(s.name)+(s.note?'（'+esc(s.note)+'）':'');}).join('；')+'</div>';
+      html+='<div style="text-align:right"><button class="btn sm primary" onclick="document.getElementById(\'modal\').classList.remove(\'show\');MONITOR.showEmergencyGuideFor(\''+p.country+'\')">查看完整应急指南 →</button></div>';
+    }
+    showModal('🏗️ '+p.name+' · 实时风险详情',html);
+  },
+
+  /* ===== 应急指南区块（监测中心最下方）===== */
+  renderEmergencyGuide(country){
+    var el=document.getElementById('mon-emg-guide');if(!el)return;
+    if(typeof EMERGENCY_GUIDE==='undefined'){ el.innerHTML='<div style="padding:14px;font-size:11px;color:var(--text3)">应急指南数据未加载</div>'; return; }
+    var self=this;
+    var cs=EMERGENCY_GUIDE.countries();
+    /* 默认选中：当前活跃预警分数最高的项目国，否则第一个 */
+    if(!country){
+      var best='',bestS=-1;
+      (typeof ALERTS!=='undefined'?ALERTS:[]).forEach(function(a){
+        if(!a||a.status==='resolved')return;
+        if(cs.indexOf(a.country)>=0 && (a.risk_score||0)>bestS){ bestS=a.risk_score||0; best=a.country; }
+      });
+      country=best||cs[0];
+    }
+    this._emgCountry=country;
+    /* 国家活跃预警统计（实时联动） */
+    var cAlerts=(typeof ALERTS!=='undefined'?ALERTS:[]).filter(function(a){return a&&a.status!=='resolved'&&a.country===country;});
+    var cMax=cAlerts.reduce(function(m,a){return Math.max(m,a.risk_score||0);},0);
+    var cZone=cMax>=61?'red':cMax>=31?'yellow':'green';
+    var zc=cZone==='red'?'var(--red)':cZone==='yellow'?'var(--yellow)':'var(--green)';
+    var zl=cZone==='red'?'红区':cZone==='yellow'?'黄区':'绿区';
+    /* 该国项目清单 */
+    var projs=(typeof ENTITY!=='undefined'&&ENTITY.PROJECTS)?ENTITY.PROJECTS.filter(function(p){return p.country===country||(country==='德国'&&p.country==='欧洲');}):[];
+    var g=EMERGENCY_GUIDE.guideOf(country);
+    var html='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+      +'<select class="input" style="max-width:200px;font-size:12px" onchange="MONITOR.renderEmergencyGuide(this.value)">'
+      +cs.map(function(c){return '<option value="'+c+'"'+(c===country?' selected':'')+'>'+c+'</option>';}).join('')
+      +'</select>'
+      +'<span class="badge" style="background:'+zc+';color:#000;font-weight:700">当前'+zl+' '+cMax+'分</span>'
+      +'<span style="font-size:10px;color:var(--text3)">活跃预警 '+cAlerts.length+' 条 · 中资项目 '+projs.length+' 个</span>'
+      +'</div>';
+    if(!g){ el.innerHTML=html+'<div style="padding:10px;font-size:11px;color:var(--text3)">该国应急指南待补充</div>'; return; }
+    if(projs.length){
+      html+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">'+projs.map(function(p){
+        var pr=self._projectRiskOf(p);
+        var pc=pr.zone==='red'?'var(--red)':pr.zone==='yellow'?'var(--yellow)':'var(--green)';
+        return '<span style="cursor:pointer;font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid '+pc+';color:'+pc+'" onclick="MONITOR.showProjectRisk(\''+p.id+'\')" title="实时风险 '+pr.score+' 分">🏗️ '+p.name+' '+pr.score+'</span>';
+      }).join('')+'</div>';
+    }
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+    /* 左列：使领馆 + 口岸 */
+    html+='<div>';
+    html+='<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--cyan);border-radius:6px;margin-bottom:8px;font-size:11px;line-height:1.8">'
+      +'<div style="font-weight:700;color:var(--cyan);margin-bottom:4px">🏛️ 使领馆（真实）</div>'
+      +'<div><b>'+g.embassy.name+'</b>（'+g.embassy.city+(g.embassy.addr?' · '+g.embassy.addr:'')+'）</div>'
+      +'<div>📞 '+esc(g.embassy.phone)+'</div>'
+      +(g.consulates||[]).map(function(c){return '<div>'+c.name+'（'+c.city+'）📞 '+esc(c.phone)+'</div>';}).join('')
+      +'<div style="color:var(--red);font-weight:700;margin-top:4px">🆘 '+EMERGENCY_GUIDE.HOTLINE.name+'：'+EMERGENCY_GUIDE.HOTLINE.phone+' / '+EMERGENCY_GUIDE.HOTLINE.alt+'（'+EMERGENCY_GUIDE.HOTLINE.hours+'）</div></div>';
+    html+='<div style="padding:10px;background:var(--bg2);border-radius:6px;font-size:11px;line-height:1.8">'
+      +'<div style="font-weight:700;color:var(--text1);margin-bottom:4px">✈️ 空港 / ⚓ 海港</div>'
+      +(g.airports||[]).map(function(a){return '<div>✈️ '+a.name+(a.iata&&a.iata!=='—'?'（'+a.iata+'）':'')+'</div>';}).join('')
+      +(g.seaports&&g.seaports.length?g.seaports.map(function(s){return '<div>⚓ '+s.name+'</div>';}).join(''):'<div style="color:var(--text3)">内陆国，无海港</div>')
+      +'</div></div>';
+    /* 右列：避难所 + 第三国 */
+    html+='<div>';
+    html+='<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--green);border-radius:6px;margin-bottom:8px;font-size:11px;line-height:1.8">'
+      +'<div style="font-weight:700;color:var(--green);margin-bottom:4px">🛡️ 避难所（真实推定）</div>'
+      +(g.shelters||[]).map(function(s){return '<div>• <b>'+esc(s.name)+'</b>'+(s.note?'：'+esc(s.note):'')+'</div>';}).join('')+'</div>';
+    html+='<div style="padding:10px;background:var(--bg2);border-radius:6px;font-size:11px;line-height:1.8">'
+      +'<div style="font-weight:700;color:var(--text1);margin-bottom:4px">🌐 第三国中转</div>'
+      +'<div>'+(g.transit||[]).map(function(t){return '<span class="badge b-blue" style="margin:0 4px 4px 0">'+t+'</span>';}).join('')+'</div></div>';
+    html+='</div></div>';
+    /* 分场景撤离路线 */
+    html+='<div style="font-weight:700;color:var(--orange);font-size:12px;margin:8px 0 6px">🚨 分场景撤离路线（项目地 → 海港/空港 → 第三国）</div>';
+    html+=(g.routes||[]).map(function(r){
+      return '<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--orange);border-radius:6px;margin-bottom:6px;font-size:11px;line-height:1.8">'
+        +'<div style="font-weight:700;color:var(--orange)">▶ '+esc(r.scene)+'</div>'
+        +'<div>'+r.steps.map(function(s,i){return '<span style="color:var(--cyan);font-weight:700">'+(i+1)+'</span>. '+esc(s);}).join(' <span style="color:var(--text3)">→</span> ')+'</div>'
+        +'<div style="color:var(--text3)">第三国：'+esc(r.third||'—')+(r.note?'　｜　'+esc(r.note):'')+'</div></div>';
+    }).join('');
+    if(g.note) html+='<div style="font-size:10px;color:var(--text3);padding:8px;background:var(--bg2);border-radius:6px">⚠️ '+esc(g.note)+'</div>';
+    el.innerHTML=html;
+  },
+  /* 项目详情跳完整指南 */
+  showEmergencyGuideFor(country){
+    this.renderEmergencyGuide(country);
+    var el=document.getElementById('mon-emg-guide');
+    if(el&&el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});
+  },
+
   _renderMapRegion(){
     var el=document.getElementById('mon-map-region');if(!el)return;
     if(typeof COUNTRIES==='undefined'||!COUNTRIES.length){
