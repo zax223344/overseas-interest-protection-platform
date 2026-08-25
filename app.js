@@ -4848,17 +4848,6 @@ const GLOBE={
     // 5) Edge spectrum walls (mid-band left/right)
     this._drawSpectrumWall(ctx,6,cy,1,t);
     this._drawSpectrumWall(ctx,w-6,cy,-1,t);
-    // 6) Top-center sentinel status line
-    const msg='GLOBAL SENTINEL · 全球海外利益保护 · 全天候在线';
-    ctx.font='10px "Courier New",monospace';ctx.textAlign='center';
-    ctx.fillStyle='rgba(120,175,255,0.45)';
-    ctx.fillText(msg,cx,20);
-    if(Math.floor(t/30)%2===0){
-      const twd=ctx.measureText(msg).width;
-      ctx.fillStyle='rgba(255,200,60,0.65)';
-      ctx.fillText('●',cx-twd/2-14,20);
-    }
-    ctx.textAlign='left';
   },
   _drawSpectrumWall(ctx,x,cy,dir,t){
     const bars=30,gap=8;
@@ -4880,31 +4869,52 @@ const GLOBE={
     if(!this._wideOrbits)return;
     const t=this._time;
     ctx.save();ctx.translate(cx,cy);
-    this._wideOrbits.forEach((o,oi)=>{
+    this._wideOrbits.forEach(o=>{
       ctx.save();ctx.rotate(o.rot);
       const dirS=o.speed>=0?1:-1;
       for(let k=0;k<2;k++){
         const ang=t*o.speed+o.ph+k*Math.PI;
         const ex=Math.cos(ang)*o.rx,ey=Math.sin(ang)*o.ry;
         const front=ey>0;
-        // Trail (fades behind direction of motion)
-        for(let s=1;s<=8;s++){
-          const a2=ang-s*0.028*dirS;
+        // Faint contrail along orbit behind aircraft (line segments, very low alpha)
+        ctx.strokeStyle='rgba(140,195,255,'+(front?0.18:0.08)+')';
+        ctx.lineWidth=0.5;
+        ctx.beginPath();
+        let first=true;
+        for(let s=1;s<=10;s++){
+          const a2=ang-s*0.026*dirS;
           const tx2=Math.cos(a2)*o.rx,ty2=Math.sin(a2)*o.ry;
           if(ty2<=0)continue;
-          ctx.fillStyle='rgba(140,195,255,'+((1-s/9)*0.40)+')';
-          ctx.fillRect(tx2-0.75,ty2-0.75,1.5,1.5);
+          if(first){ctx.moveTo(tx2,ty2);first=false;}else ctx.lineTo(tx2,ty2);
         }
-        const al=front?0.9:0.22;
-        ctx.beginPath();ctx.arc(ex,ey,front?2.8:1.5,0,Math.PI*2);
-        ctx.fillStyle='rgba(140,195,255,'+al+')';ctx.fill();
-        if(front){
-          ctx.beginPath();ctx.arc(ex,ey,6,0,Math.PI*2);
-          ctx.strokeStyle='rgba(140,195,255,0.30)';ctx.lineWidth=0.8;ctx.stroke();
-          ctx.font='8px "Courier New",monospace';
-          ctx.fillStyle='rgba(140,195,255,0.50)';
-          ctx.fillText('ESCORT-'+(oi*2+k+1),ex+7,ey+2);
-        }
+        ctx.stroke();
+        // Tangent heading: derivative of (rx cos θ, ry sin θ) = (-rx sin θ, ry cos θ)
+        const tx=-o.rx*Math.sin(ang),ty=o.ry*Math.cos(ang);
+        const head=Math.atan2(ty,tx);
+        const al=front?0.62:0.18;
+        const sc=front?1.1:0.8;
+        ctx.save();
+        ctx.translate(ex,ey);
+        ctx.rotate(head);
+        // Soft glow under aircraft
+        const glow=ctx.createRadialGradient(0,0,1,0,0,7*sc);
+        glow.addColorStop(0,'rgba(140,195,255,'+(front?0.25:0.10)+')');
+        glow.addColorStop(1,'rgba(140,195,255,0)');
+        ctx.fillStyle=glow;ctx.beginPath();ctx.arc(0,0,7*sc,0,Math.PI*2);ctx.fill();
+        // Minimal aircraft silhouette (delta fighter, facing forward)
+        ctx.beginPath();
+        ctx.moveTo(0,5*sc);
+        ctx.lineTo(-4*sc,-2*sc);
+        ctx.lineTo(-1*sc,-3*sc);
+        ctx.lineTo(1*sc,-3*sc);
+        ctx.lineTo(4*sc,-2*sc);
+        ctx.closePath();
+        ctx.fillStyle='rgba(140,195,255,'+al+')';
+        ctx.fill();
+        ctx.strokeStyle='rgba(160,210,255,'+(al*0.8)+')';
+        ctx.lineWidth=0.5;
+        ctx.stroke();
+        ctx.restore();
       }
       ctx.restore();
     });
