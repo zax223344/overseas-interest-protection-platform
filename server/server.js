@@ -776,6 +776,18 @@ async function _serverAlertGen() {
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
     const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+    /* 2026-08-26 赋分改革回填：存量预警缺 risk_zone 的现场重算（分数驱动等级，红区硬约束同步生效） */
+    let backfilled = 0;
+    for (const a of alerts) {
+      if (!a || a.risk_zone) continue;
+      try {
+        const s = _scoreRiskItem({ title: a.title || '', title_zh: a.title_zh || '', content: a.desc || '', country: a.country || '', source: a.source || '', publishedAt: a.publishedAt || a.time || '' });
+        a.risk_score = s.score; a.risk_zone = s.zone; a.risk_rationale = s.rationale; a.zone_action = s.action;
+        a.level = s.level; /* 分数权威性最高：旧"涉华+严重即红"的等级一律以新分数为准 */
+        backfilled++;
+      } catch (e) {}
+    }
+    if (backfilled) console.log('[ALERT-GEN] 赋分改革回填 ' + backfilled + ' 条存量预警');
     const have = new Set(alerts.map(a => String(a.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40)));
     const haveIds = new Set(alerts.map(a => String(a.id || '')));
     const added = [];
@@ -785,7 +797,15 @@ async function _serverAlertGen() {
       const it = r.data_json || {};
       it.title = it.title || r.title || '';
       it.country = it.country || r.country || '';
-      const lv = it.level_norm || r.severity || 'yellow';
+      /* 2026-08-26 赋分改革：预警等级一律由 0-100 分数驱动；老数据无分数现场补算 */
+      if (it.risk_score == null || !it.risk_zone) {
+        try {
+          const s = _scoreRiskItem(it);
+          it.risk_score = s.score; it.risk_zone = s.zone; it.risk_rationale = s.rationale; it.zone_action = s.action;
+        } catch (e) {}
+      }
+      const lv = (it.risk_zone ? (it.risk_score >= 61 ? 'red' : it.risk_score >= 46 ? 'orange' : it.risk_score >= 31 ? 'yellow' : 'blue') : null)
+        || it.level_norm || r.severity || 'yellow';
       if (it.interestLinked === false) { _gateAudit('预警生成', 'not-linked', it.title); continue; }
       /* 2026-08-17 用户指令日产≥200：蓝色提示级凡利益关联分≥10 一并入队（队列内显示为提示级，不与高优预警混淆） */
       if (_isShellAlert(it)) { _gateAudit('预警生成', 'shell', it.title); continue; }
@@ -812,13 +832,18 @@ async function _serverAlertGen() {
         country: it.country || '', source: it.source || '实时监测引擎',
         url: it.url || '', status: 'active',
         interestLinked: it.interestLinked === true, chinaRelated: !!it.chinaRelated,
-        publishedAt: it.publishedAt || it.pubDate || ''
+        publishedAt: it.publishedAt || it.pubDate || '',
+        /* 赋分改革：分值/分区/依据/处置要求随预警下发，前端直接展示 */
+        risk_score: it.risk_score != null ? it.risk_score : null,
+        risk_zone: it.risk_zone || '',
+        risk_rationale: it.risk_rationale || '',
+        zone_action: it.zone_action || (it.risk_zone ? ZONE_ACTIONS[it.risk_zone] : '') || ''
       };
       added.unshift(alert);
       have.add(tkey);
       haveIds.add(genId);
     }
-    if (added.length) {
+    if (added.length || backfilled) {
       const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
       await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
       console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条，共享库现有 ' + merged.length + ' 条');
@@ -2189,22 +2214,77 @@ function _tagAssets(it) {
   return hits;
 }
 
+/* ===== 0-100 赋分分级预警（2026-08-26 用户指令：赋分改革，绿/黄/红三区，杜绝动辄红色）=====
+ * 模型：entities.js assessRisk 多因子引擎（威胁类型×资产权重×中资主体×项目层级×国别基线×时效×信源×涉华负面）
+ * 分区：绿区 0-30（正常运营）/ 黄区 31-60（加强安保）/ 红区 61-100（应急预案+考虑撤离）。
+ * 红区硬约束 R-Z01：61+ 必须直接命中中资主体/项目/核心资产，或中方人员伤亡/绑架（R-T01/R-T02），
+ * 或涉华重大伤亡（≥5死）；非涉华重大伤亡（≥10死）仅提级黄区上沿（态势关注），永不入红。
+ * 旧逻辑"涉华+严重词即红"已废弃——那是"动辄红色"的根因。 */
+const ZONE_ACTIONS = {
+  green: '绿区（0-30分）：正常运营，无需特殊防护，保持常态关注。',
+  yellow: '黄区（31-60分）：加强安保巡逻，限制人员外出，密切关注事态发展，做好应急准备。',
+  red: '红区（61-100分）：立即启动应急预案，视情考虑人员撤离，与驻外使领馆保持24小时通联。'
+};
+function _scoreRiskItem(it) {
+  const r = ENTITY.assessRisk({
+    title: String(it.title || '') + ' ' + String(it.title_zh || ''),
+    content: String(it.content_zh || '') + ' ' + String(it.content || it.desc || it.description || ''),
+    country: it.country || it.country_cn || '',
+    source: it.source || '', platform: it.platform || '',
+    publishedAt: it.publishedAt || it.pubDate || it.collect_time || '',
+    chinaNegative: it._chinaNegative === true || it.chinaNegative === true
+  });
+  let score = r.riskScore;
+  const hits = (r.ruleHits || []).slice();
+  const hitIds = hits.map(h => h.rule);
+  const ent = r.entities || { enterprises: [], projects: [], assets: [] };
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.desc || '').slice(0, 300);
+  const chinaSig = /中国|中资|中企|中方|华人|华侨|华裔|中国公民|留学生|一带一路|中国使领馆|中国驻|撤侨|Chinese|China|CPEC/i.test(t)
+    || ent.enterprises.length > 0 || ent.projects.length > 0 || (it.asset_tags && it.asset_tags.length > 0);
+  const cm = t.match(/(\d{1,4})\s*(?:名|人|个)?\s*(?:死亡|身亡|遇难|丧生|被打死|被击毙)/) ||
+             t.match(/(\d{1,4})\s*(?:people\s+)?(?:killed|dead|deaths)/i) ||
+             t.match(/(?:death toll|kills)\s*(\d{1,4})/i);
+  const deaths = cm ? parseInt(cm[1], 10) : 0;
+  const hardTarget = ent.enterprises.length > 0 || ent.projects.length > 0 || ent.assets.some(a => (a.weight || 0) >= 0.9);
+  const chineseVictim = hitIds.indexOf('R-T01') >= 0 || hitIds.indexOf('R-T02') >= 0;
+  /* 暴力/人身安全威胁：恐袭/枪击/战争/政变/撤离/海盗——非暴力威胁（抗议/制裁/舆论等）不得入红 */
+  const VIOLENT_RULES = ['R-T01', 'R-T02', 'R-T03', 'R-T04', 'R-T05', 'R-T07', 'R-T10', 'R-T11'];
+  const violentThreat = hitIds.some(id => VIOLENT_RULES.indexOf(id) >= 0);
+  if (score >= 61 && !(chineseVictim || (chinaSig && hardTarget && violentThreat) || (chinaSig && deaths >= 5))) {
+    hits.push({ rule: 'R-Z01', name: '红区硬约束：无暴力威胁且未直接命中中资主体/项目/核心资产或中方人员伤亡，压至黄区上沿', add: 60 - score });
+    score = 60;
+  }
+  /* 非涉华重大伤亡（≥10死）：态势关注，提至黄区上沿，但永不入红 */
+  if (!chinaSig && deaths >= 10 && score < 46) {
+    hits.push({ rule: 'R-Z02', name: '非涉华重大伤亡（' + deaths + '死），提级黄区态势关注', add: 46 - score });
+    score = 46;
+  }
+  /* 涉华实质非暴力威胁（征收/制裁/法律/用工）：未命中具体企业库时被弱关联约束压到蓝区，
+   * 但此类威胁对中资经营有实际影响，提至黄区下沿（40分）确保可见 */
+  const SUBSTANTIVE_NONVIOLENT = ['R-T08', 'R-T09', 'R-T15', 'R-T19'];
+  if (chinaSig && hitIds.some(id => SUBSTANTIVE_NONVIOLENT.indexOf(id) >= 0) && score < 40) {
+    hits.push({ rule: 'R-Z03', name: '涉华实质威胁（征收/制裁/法律/用工），提级黄区下沿', add: 40 - score });
+    score = 40;
+  }
+  const zone = score >= 61 ? 'red' : score >= 31 ? 'yellow' : 'green';
+  const level = score >= 61 ? 'red' : score >= 46 ? 'orange' : score >= 31 ? 'yellow' : 'blue';
+  return { score: score, zone: zone, level: level,
+    rationale: hits.map(h => h.name + '(' + (h.add > 0 ? '+' : '') + h.add + ')').join('；'),
+    action: ZONE_ACTIONS[zone] };
+}
 function _normLevelForStore(it) {
-  const t = String(it.title || '') + ' ' + String(it.title_zh || '');
-  const china = /中资|中企|中方|华人|华侨|华裔|中国公民|中国游客|留学生|一带一路|中国使领馆|中国驻|中国|chinese|china|beijing/i.test(t)
-    || (it.asset_tags && it.asset_tags.length > 0);
-  const severe = /死亡|伤亡|遇害|遇难|绑架|人质|劫持|带走|掳走|劫走|恐袭|爆炸|空袭|枪击|战争|政变|屠杀|撤侨|killed|deadly|bombing|blast|hostage|kidnap|airstrike|massacre|coup/i.test(t);
-  /* 提级关注（2026-08-14 安全部实战视角）：非涉华但重大伤亡（死亡≥5人）或大规模袭击特征 → 提级红色 */
-  const _cm = t.match(/(\d{1,4})\s*(?:名|人|个)?\s*(?:死亡|身亡|遇难|丧生|被打死|被击毙)/) ||
-              t.match(/(\d{1,4})\s*(?:people\s+)?(?:killed|dead|deaths)/i) ||
-              t.match(/(?:death toll|kills)\s*(\d{1,4})/i);
-  const _casN = _cm ? parseInt(_cm[1], 10) : 0;
-  const _mass = _casN >= 5 || /大屠杀|大规模袭击|自杀式|集体处决|灭门|massacre|mass shooting|suicide bomb/i.test(t);
-  if (china && severe) return 'red';
-  if (severe && _mass) { it._promoted = '重大伤亡提级'; return 'red'; }
-  if (severe) return 'orange';
-  if (/袭击|冲突|骚乱|抗议|制裁|封锁|限制|风险|威胁|紧张|摩擦|争端|审查|调查|批评|attack|clash|protest|sanction|risk|threat|tension|probe|review/i.test(t)) return 'yellow';
-  return 'blue';
+  try {
+    const s = _scoreRiskItem(it);
+    it.risk_score = s.score; it.risk_zone = s.zone; it.risk_rationale = s.rationale; it.zone_action = s.action;
+    return s.level;
+  } catch (e) {
+    /* 兜底：评分引擎异常时走保守默认，同样不再"涉华+严重即红" */
+    const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+    const severe = /死亡|伤亡|遇害|遇难|绑架|人质|劫持|带走|掳走|劫走|恐袭|爆炸|空袭|枪击|战争|政变|屠杀|撤侨|killed|deadly|bombing|blast|hostage|kidnap|airstrike|massacre|\bcoup\b/i.test(t);
+    if (severe) return 'orange';
+    if (/袭击|冲突|骚乱|抗议|制裁|封锁|限制|风险|威胁|紧张|摩擦|争端|审查|调查|批评|attack|clash|protest|sanction|risk|threat|tension|probe|review/i.test(t)) return 'yellow';
+    return 'blue';
+  }
 }
 
 function _ruUaQuotaOk(it) {

@@ -10646,7 +10646,9 @@ const AVIEW={
       var pulsing=a.level==='red'&&a.status==='active';
       var safeAid=aid.replace(/'/g,"\\'");
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
-        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+stripTags(a.title_zh||a.title)+'</div>'+
+        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
+        (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
+        stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
@@ -10796,7 +10798,9 @@ const AVIEW={
       var pulsing=a.level==='red'&&a.status==='active';
       var safeAid=aid.replace(/'/g,"\\'");
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
-        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+stripTags(a.title_zh||a.title)+'</div>'+
+        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
+        (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
+        stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
@@ -14674,6 +14678,18 @@ function showAlertDetail(id){
   }
   var html='';
   html+='<div class="flex gap-8 mb-12"><span class="badge '+lv.cls+'">'+lv.label+'</span><span class="badge b-blue">'+a.type+'</span><span class="badge b-purple">'+stLabel+'</span>'+(a._live?'<span class="badge" style="background:var(--cyan);color:#000">实时</span>':'')+'</div>';
+  /* ===== 赋分改革面板（2026-08-26）：0-100 分 + 绿/黄/红三区 + 赋分依据 + 处置要求 ===== */
+  if(a.risk_score!=null){
+    var _zc={red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)';
+    var _zl={red:'红区 · 启动应急预案',yellow:'黄区 · 加强安保巡逻',green:'绿区 · 正常运营'}[a.risk_zone]||'未分区';
+    html+='<div style="margin-bottom:12px;padding:10px 12px;background:var(--bg2);border-left:3px solid '+_zc+';border-radius:6px">'
+      +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      +'<span style="font-size:22px;font-weight:800;color:'+_zc+'">'+a.risk_score+'<span style="font-size:11px;font-weight:400;color:var(--text3)"> /100</span></span>'
+      +'<span class="badge" style="background:'+_zc+';color:#000;font-weight:700">'+_zl+'</span></div>'
+      +(a.risk_rationale?'<div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.7">赋分依据：'+esc(a.risk_rationale)+'</div>':'')
+      +(a.zone_action?'<div style="font-size:11px;margin-top:6px;line-height:1.7;color:'+_zc+'">处置要求：'+esc(a.zone_action)+'</div>':'')
+      +'</div>';
+  }
   if(a.title_zh) html+='<div style="font-size:13px;color:var(--cyan);margin-bottom:8px;line-height:1.5">译文：'+esc(a.title_zh)+'</div>';
   var isForeignAlert=TRANSLATOR.isForeign((a.title||'')+' '+(a.desc||a.detail||'')+(a.impact||'')+(a.response||''));
   if(isForeignAlert) html+='<div style="margin-bottom:10px"><button class="btn" id="alert-trans-btn" style="font-size:11px;padding:4px 14px;background:linear-gradient(90deg,#7c3aed,#2563eb);color:#fff;font-weight:700" onclick="translateAlert(\''+a.id+'\')">🌐 翻译为中文</button></div>';
@@ -16973,7 +16989,10 @@ function initLiveFeed(){
           status: 'active', _live: true,
           interestLinked: it.interestLinked === true,
           title_zh: it.title_zh||'', content_zh: it.content_zh||'',
-          chinaNegative: !!(it.chinaNegative || it._chinaNegative), chinaRelated: !!it.chinaRelated
+          chinaNegative: !!(it.chinaNegative || it._chinaNegative), chinaRelated: !!it.chinaRelated,
+          /* 赋分改革：分值/分区/依据/处置要求透传 */
+          risk_score: it.risk_score!=null?it.risk_score:null, risk_zone: it.risk_zone||'',
+          risk_rationale: it.risk_rationale||'', zone_action: it.zone_action||''
         });
         var _afterLen = (typeof LIVE_ALERTS!=='undefined') ? LIVE_ALERTS.length : -1;
         if(_afterLen > _beforeLen) newCount++;

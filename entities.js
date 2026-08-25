@@ -226,7 +226,7 @@
   var THREAT_RULES = [
     { id: 'R-T01', name: '中国人员伤亡', score: 38, re: /(中国|中方|华人|华侨|中资|Chinese)[^。.]{0,40}(死亡|遇难|身亡|遇害|丧生|kill(?:ed|ing|s)?|dead|death|fatalit|casualt)|(kill(?:ed|ing|s)?|dead|死亡|遇难|遇害)[^。.]{0,40}(Chinese|中国公民|中方人员|中国工人)/i },
     { id: 'R-T18', name: '中国人员受伤与人身侵害', score: 28, re: /(中国|中方|华人|华侨|中资|Chinese)[^。.]{0,40}(受伤|负伤|伤者|被打|被袭|遇袭|被殴|injur|wounded|hurt|attacked|assaulted|stabbed|beaten)|(injur(?:ed|y|ies)|wounded|assaulted|stabbed)[^。.]{0,40}(Chinese|中方人员|中国公民|中国工人)/i },
-    { id: 'R-T02', name: '绑架劫持中国人员', score: 36, re: /绑架|劫持|扣押|失踪|人质|kidnap|abduct|hostage|seiz(?:ed|ure) of|missing/i },
+    { id: 'R-T02', name: '绑架劫持中国人员', score: 36, re: /(中国|中方|华人|华侨|中资|中企|Chinese)[^。.]{0,40}(绑架|劫持|扣押|失踪|人质|带走|掳走|劫走|被掳|kidnap|abduct|hostage|seiz(?:ed|ure) of|missing)|(绑架|劫持|扣押|人质|带走|掳走|劫走|被掳|kidnap(?:ped|ping)?|abduct(?:ed|ion)?|hostage)[^。.]{0,40}(Chinese|中国公民|中方人员|中国工人|中国|华人|中资)/i },
     { id: 'R-T03', name: '恐怖袭击与爆炸', score: 34, re: /恐怖袭击|恐袭|自杀式|爆炸|炸弹|简易爆炸装置|terror(?:ist)? attack|suicide bomb|bomb(?:ing)?|IED|explosion|blast/i },
     { id: 'R-T04', name: '武装袭击与枪击', score: 30, re: /武装袭击|枪击|扫射|袭击车队|伏击|armed attack|gunmen|shooting|ambush|opened fire|militant attack/i },
     { id: 'R-T05', name: '战争与武装冲突', score: 28, re: /战争|交火|空袭|炮击|导弹袭击|无人机袭击|军事打击|军事冲突|叛军|内战|\bwar\b|\bwarfare\b|airstrike|shelling|armed conflict|insurgen|civil war|militia|missile (?:strike|attack)|drone (?:strike|attack)|rocket attack|artillery|strikes? (?:has |have )?hit|struck by/i },
