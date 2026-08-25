@@ -2831,6 +2831,51 @@ async function _runNeonSync() {
   } finally { _neonBusyUntil = 0; }
 }
 
+/* ===== Neon 云端容灾备份：本地 intel_data 增量上行（2026-08-25 用户铁指令"一次性解决数据库"） =====
+   定位：本地 PG 仍是主库（低延迟读写），云端 Neon 持有完整副本。
+   本地宕机/数据损坏时云端留存全部档案；GitHub Actions 云采集不依赖本机，关机也照采。
+   三层防线：① 开机自启链自动拉起 PG ② pg-keepalive 60s 看门狗 ③ 本云端副本兜底。 */
+const NEON_BACKUP_CURSOR_FILE = path.join(CACHE_DIR, 'neon-backup.json');
+let _neonBkPool = null;
+let _neonBackupBusyUntil = 0;
+function _readBackupCursor() { try { return parseInt(JSON.parse(fs.readFileSync(NEON_BACKUP_CURSOR_FILE, 'utf8')).lastId, 10) || 0; } catch (e) { return 0; } }
+function _writeBackupCursor(id) { try { fs.writeFileSync(NEON_BACKUP_CURSOR_FILE, JSON.stringify({ lastId: parseInt(id, 10) || 0, at: new Date().toISOString() })); } catch (e) {} }
+async function _runNeonBackup() {
+  if (!process.env.NEON_DATABASE_URL) return;   // 未配置云端连接串：静默跳过
+  if (Date.now() < _neonBackupBusyUntil) return;
+  _neonBackupBusyUntil = Date.now() + 10 * 60 * 1000;
+  try {
+    if (!_neonBkPool) {
+      _neonBkPool = new (require('pg').Pool)({ connectionString: process.env.NEON_DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 2, connectionTimeoutMillis: 15000 });
+      _neonBkPool.on('error', () => {});
+    }
+    await _neonBkPool.query('CREATE TABLE IF NOT EXISTS intel_backup (id BIGINT PRIMARY KEY, data_json JSONB, backed_at TIMESTAMPTZ DEFAULT now())');
+    const cursor = _readBackupCursor();
+    const { rows } = await query('SELECT id, data_json, collect_time FROM intel_data WHERE id > $1 ORDER BY id ASC LIMIT 1000', [cursor]);
+    if (!rows.length) return;
+    let ok = 0, maxId = cursor;
+    /* 50 行一批多值 INSERT：1000 行仅 20 个往返，免费层友好；失败断点保留下轮重试 */
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50);
+      const vals = [], params = [];
+      chunk.forEach((r, j) => {
+        vals.push('($' + (j * 2 + 1) + ', $' + (j * 2 + 2) + ')');
+        params.push(r.id, JSON.stringify(Object.assign({}, r.data_json || {}, { collect_time: r.collect_time })));
+      });
+      try {
+        await _neonBkPool.query('INSERT INTO intel_backup (id, data_json) VALUES ' + vals.join(',') + ' ON CONFLICT (id) DO NOTHING', params);
+        ok += chunk.length;
+        const lastId = parseInt(chunk[chunk.length - 1].id, 10);
+        if (lastId > maxId) { maxId = lastId; _writeBackupCursor(maxId); }
+      } catch (e) { console.warn('[NEON-BACKUP] 批量写入失败（断点 ' + maxId + ' 下轮续传）:', e.message); break; }
+    }
+    if (ok) console.log('[NEON-BACKUP] 云端容灾备份 +' + ok + ' 条（游标 ' + cursor + ' → ' + maxId + '）');
+  } catch (e) {
+    console.warn('[NEON-BACKUP] 备份失败:', e.message);
+    if (_neonBkPool) { try { await _neonBkPool.end(); } catch (_) {} _neonBkPool = null; }
+  } finally { _neonBackupBusyUntil = 0; }
+}
+
 /* ===== 涉华专项采集：每轮单独抓取高命中中文媒体/涉华外媒，确保日涉华80-100条 ===== */
 async function _runChinaFocus() {
   if (Date.now() < _chinaFocusBusyUntil) return;
@@ -3886,6 +3931,9 @@ function startGlobalMediaCron() {
   // Neon 云采集同步：每10分钟拉取 GitHub Actions 采集的原始条目（2026-08-24 方案二；未配置 NEON_DATABASE_URL 时静默跳过）
   setTimeout(_runNeonSync, 90000);
   setInterval(_runNeonSync, 10 * 60 * 1000);
+  // Neon 云端容灾备份：每30分钟把本地新入库数据增量上行到云端副本（2026-08-25 用户铁指令"一次性解决数据库"）
+  setTimeout(_runNeonBackup, 4 * 60 * 1000);
+  setInterval(_runNeonBackup, 30 * 60 * 1000);
 }
 
 /* ===== 全球恐怖袭击/武装袭击专项采集 ===== */
