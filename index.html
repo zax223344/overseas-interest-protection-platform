@@ -426,6 +426,9 @@ select.intel-input{cursor:pointer}
 .alert-q-item.pulsing{animation:alertPulse 1.5s infinite}
 @keyframes alertPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,51,85,0.4)}50%{box-shadow:0 0 0 6px rgba(255,51,85,0)}}
 .alert-q-tt{font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* 2026-08-25 铁律：数据侧 stripTags 已就位，此处兜底——万一仍有 <a> 漏进标题/摘要区，
+ * 一律按正文浅色渲染且不可点，绝不再出现"蓝色链接字体冲版式" */
+.alert-q-tt a,.alert-feed-item a,.sit-alert-row a,.alert-item-tt a,.live-title a,.ti a{color:inherit!important;text-decoration:none!important;pointer-events:none}
 .alert-q-meta{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text3);flex-wrap:wrap}
 
 .alert-cmd-detail{flex:1;overflow-y:auto;padding-right:4px;min-height:0}
@@ -1106,7 +1109,7 @@ function closeMobileMenu(){
 <!-- IndexedDB 持久层（同步外观）：必须在 app.js 之前加载 -->
 <script src="idb-store.js?v=1"></script>
 <script src="scraper.js?v=53"></script>
-<script src="app.js?v=215"></script>
+<script src="app.js?v=216"></script>
 <script src="distribute.js?v=30"></script>
 <script src="datasources.js?v=25"></script>
 <script src="threats.js?v=7"></script>

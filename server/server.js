@@ -1953,9 +1953,31 @@ function _isTitleQualityOk(it) {
 }
 /* 统一入库前置闸（2026-08-19）：所有 INSERT 通道必须调用，集中处理：
  * ① 国内硬拦截 ② 标题质量 ③ 核心实体去重 ④ 事件签名去重 */
+/* 2026-08-25 铁律：入库字段去 HTML 标签——翻译链会把原文的 <p>/<a href> 带进 desc/content_zh，
+ * 且前端 substring 常截成未闭合标签（<a href="x 无闭合引号），注入 innerHTML 后吞掉后续 DOM：
+ * 预警队列标题变默认蓝色链接+点不开、态势总览布局被冲乱（用户两次报障同源）。
+ * 完整标签与末尾残标都清；p/br/li 先转为换行保段落。 */
+function _stripHtmlFields(item) {
+  if (!item) return item;
+  ['title', 'title_zh', 'desc', 'content', 'content_zh', 'content_en', 'excerpt'].forEach(k => {
+    const v = item[k];
+    if (typeof v === 'string' && v.indexOf('<') >= 0) {
+      item[k] = v
+        .replace(/<\/(p|li|div|h[1-6])\s*>/gi, '\n')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]*>/g, '')
+        .replace(/<[^>]*$/g, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+  });
+  return item;
+}
 async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const code = [];
   if (!it) return { ok: false, code: ['no-item'] };
+  _stripHtmlFields(it); /* 2026-08-25：入库前去标签（见上） */
   const u = it.url || it.title;
   if (!u) return { ok: false, code: ['no-url-title'] };
   if (existing.has(u)) return { ok: false, code: ['url-dup'] };
@@ -5165,6 +5187,7 @@ async function _postGate(item) {
   if (!item.url && !item.publish_time && !item.publishedAt && !item.pubDate && !item.event_date && !item.date) {
     item.event_date = new Date().toISOString();
   }
+  _stripHtmlFields(item); /* 2026-08-25：入库前去标签（同 _preInsertGate） */
   if (!item || !item.title) { _gateAudit('入库闸', 'empty', ''); return 'empty'; }
   /* 空壳条目一票否决（2026-08-17：旧版前端模板生成器产出的"美国-委内瑞拉冲突"式无正文垃圾）：
    * 无链接 且 正文与标题几乎相同/为空（真正的情报必有正文或链接佐证） */

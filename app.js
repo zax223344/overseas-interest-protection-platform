@@ -104,6 +104,12 @@ var EVENTS=[
 ];
 /* 全局 HTML 转义（AVIEW/showAlertDetail 等跨模块使用） */
 function esc(s){return String(s==null?'':s).replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+/* 全局 HTML 去标签（2026-08-25 铁律修复）：采集/翻译链把正文 HTML（<p>/<a href> 等）带进了
+ * desc/content_zh 字段，且常被 substring 截成未闭合标签（如 <a href="x 截断无引号闭合）——
+ * 注入 innerHTML 后吞掉后续 DOM：预警队列标题变默认蓝色链接、点不开；态势总览布局被冲乱。
+ * 两处用法：① 完整标签 <[^>]*> 直接移除；② 末尾未闭合残标 <[^>]*$ 一并移除。
+ * 所有把 title/desc/content 注入 innerHTML 的位置必须先过本函数（先 strip 再 substring，顺序不可反）。 */
+function stripTags(s){return String(s==null?'':s).replace(/<[^>]*>/g,'').replace(/<[^>]*$/g,'');}
 var WARNING_RULES=[
 {id:'WR01',name:'国家综合风险红色阈值',desc:'国家综合风险评分≥8.0时自动触发红色预警',threshold:'≥8.0',level:'red',type:'综合风险',enabled:true,trigCount:6},
 {id:'WR02',name:'国家综合风险橙色阈值',desc:'国家综合风险评分≥6.0且＜8.0时触发橙色预警',threshold:'6.0-8.0',level:'orange',type:'综合风险',enabled:true,trigCount:14},
@@ -7239,9 +7245,9 @@ const SITUATION={
         '<div style="flex:1;min-width:0">'+
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'+
             '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 5px">'+lv.label+'</span>'+
-            '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1"> '+(a.title_zh||a.title)+'</span>'+
+            '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1"> '+stripTags(a.title_zh||a.title)+'</span>'+
           '</div>'+
-          '<div style="font-size:10px;color:var(--text2);line-height:1.4;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+(a.desc||'').substring(0,60)+'</div>'+
+          '<div style="font-size:10px;color:var(--text2);line-height:1.4;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+stripTags(a.desc||'').substring(0,60)+'</div>'+
           '<div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text3)">'+
             '<span class="badge b-blue" style="font-size:8px;padding:0 4px">'+a.type+'</span>'+
             '<span>🌍 '+a.country+'</span>'+
@@ -7423,7 +7429,7 @@ const SITUATION={
           '<div style="flex:1;min-width:0">'+
             '<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">'+
               '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 5px">'+lv.label+'</span>'+
-              '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+(a.title_zh||a.title)+'</span>'+
+              '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+stripTags(a.title_zh||a.title)+'</span>'+
               '<span style="color:'+(val.score>=70?'var(--red)':val.score>=45?'var(--orange)':'var(--text3)')+';font-weight:800;font-size:9px" title="预警价值分（为什么值得预警）">◆'+val.score+'</span>'+liveTag+
             '</div>'+
             tagHtml+factHtml+
@@ -7543,7 +7549,7 @@ const SITUATION={
         h+='<div style="padding:4px 2px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,"")+'\');},300)">'+
           '<div style="display:flex;gap:4px;align-items:center;font-size:10px">'+
           '<span class="badge '+lv.cls+'" style="font-size:8px;padding:0 3px">'+lv.label+'</span>'+
-          '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">'+String(a.title_zh||a.title||'').slice(0,22)+'</span>'+
+          '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">'+stripTags(a.title_zh||a.title||'').slice(0,22)+'</span>'+
           '<span style="color:'+(sc>=70?'var(--red)':sc>=45?'var(--orange)':'var(--text3)')+';font-weight:800;font-size:9px">◆'+sc+'</span></div>'+
           '<div style="font-size:9px;color:var(--text3);margin-top:1px">📍'+(a.country||'-')+' · 🕐'+String(a.time||'').slice(5,16)+'</div></div>';
       });
@@ -7558,7 +7564,7 @@ const SITUATION={
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
         h+='<div class="live-item" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,'')+'\');},300)">'+
           '<span class="live-lv '+lv.cls+'">'+lv.label+'</span>'+
-          '<span class="live-title">'+(a.title_zh||a.title||'').slice(0,24)+'</span>'+
+          '<span class="live-title">'+stripTags(a.title_zh||a.title||'').slice(0,24)+'</span>'+
           '<span class="live-time">'+(a.time||'').slice(5,16)+'</span></div>';
       });
     }else{
@@ -7596,11 +7602,11 @@ const SITUATION={
     }
     liveItems.sort(function(a,b){ try{ return new Date(b.time||0).getTime()-new Date(a.time||0).getTime(); }catch(e){ return 0; } }).filter(a=>a.level!=='blue').slice(0,8).forEach(a=>{
       const cls=a.level==="red"?"":a.level==="orange"?" orange":a.level==="yellow"?" yellow":" green";
-      items.push('<span class="ti'+cls+'">['+(ALERT_LV[a.level]?ALERT_LV[a.level].label:'预警')+']</span><b style="color:var(--cyan)">[实时]</b> '+(a.title_zh||a.title).replace('[实时] ','')+' ('+(a.time?a.time.substring(11,16):'')+')');
+      items.push('<span class="ti'+cls+'">['+(ALERT_LV[a.level]?ALERT_LV[a.level].label:'预警')+']</span><b style="color:var(--cyan)">[实时]</b> '+stripTags(a.title_zh||a.title).replace('[实时] ','')+' ('+(a.time?a.time.substring(11,16):'')+')');
     });
     [...ALERTS].filter(a=>!a._live && a.level!=='blue').sort((a,b)=>b.time.localeCompare(a.time)).slice(0,6).forEach(a=>{
       const cls=a.level==="red"?"":a.level==="orange"?" orange":a.level==="yellow"?" yellow":" green";
-      items.push('<span class="ti'+cls+'">['+ALERT_LV[a.level].label+']</span>'+(a.title_zh||a.title)+' - '+a.country+' ('+a.time.substring(5)+')');
+      items.push('<span class="ti'+cls+'">['+ALERT_LV[a.level].label+']</span>'+stripTags(a.title_zh||a.title)+' - '+a.country+' ('+a.time.substring(5)+')');
     });
     EVENTS.filter(e=>e.level!=='blue').slice(0,6).forEach(e=>{
       items.push('<span class="ti orange">[事件]</span>'+e.title+' - '+e.country+' ('+e.date+')');
@@ -7863,7 +7869,7 @@ const SITUATION={
       var sc=a.status==='active'?'#ff3355':a.status==='responding'?'#ff8800':a.status==='acknowledged'?'#ffcc00':a.status==='resolved'?'#00ff9f':'#888';
       var stLabel={active:'活跃',responding:'处置中',acknowledged:'已确认',resolved:'已解除'}[a.status]||a.status;
       html+='<div class="alert-item lv-'+a.level+'" onclick="showAlertDetail(\''+String(a.id||'').replace(/'/g,"\\'")+'\')" style="margin-bottom:0">'+
-        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+lv.cls+'">'+lv.label+'</span> '+(a.title_zh||a.title)+'</div></div>'+
+        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+lv.cls+'">'+lv.label+'</span> '+stripTags(a.title_zh||a.title)+'</div></div>'+
         '<div class="alert-item-meta"><span>🌍 '+a.country+'</span><span>🏢 '+a.enterprise+'</span><span>🕐 '+a.time+'</span><span style="color:'+sc+'">● '+stLabel+'</span></div></div>';
     });
     html+='</div>';
@@ -8012,7 +8018,7 @@ const SITUATION={
       var sc=a.status==='active'?'#ff3355':a.status==='responding'?'#ff8800':a.status==='acknowledged'?'#ffcc00':a.status==='resolved'?'#00ff9f':'#888';
       var stLabel={active:'待处理',responding:'处置中',acknowledged:'已确认',resolved:'已解除'}[a.status]||a.status;
       html+='<div class="alert-item lv-'+a.level+'" onclick="showAlertDetail(\''+String(a.id||'').replace(/'/g,"\\'")+'\')" style="margin-bottom:0">'+
-        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+(a.title_zh||a.title)+'</div></div>'+
+        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+stripTags(a.title_zh||a.title)+'</div></div>'+
         '<div class="alert-item-meta"><span>🌍 '+a.country+'</span><span>🏢 '+(a.enterprise||'—')+'</span><span>🕐 '+a.time+'</span><span style="color:'+sc+'">● '+stLabel+'</span></div></div>';
     });
     html+='</div>';
@@ -10490,7 +10496,7 @@ const AVIEW={
       var pulsing=a.level==='red'&&a.status==='active';
       var safeAid=aid.replace(/'/g,"\\'");
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
-        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+(a.title_zh||a.title)+'</div>'+
+        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
@@ -10502,7 +10508,7 @@ const AVIEW={
               (a._mergedN>1?'<span style="font-size:8px;padding:0 4px;border-radius:6px;border:1px solid var(--purple);color:var(--purple)" title="同事件进展已合并，仅显示最新">🔁×'+a._mergedN+'</span>':'')+'</div>';
           }
           if(facts.length){
-            h+='<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+facts.map(function(x){return x.k+x.v;}).join(' · ')+'</div>';
+            h+='<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(facts.map(function(x){return x.k+x.v;}).join(' · '))+'</div>';
           }
           return h;
         })()+
@@ -10640,7 +10646,7 @@ const AVIEW={
       var pulsing=a.level==='red'&&a.status==='active';
       var safeAid=aid.replace(/'/g,"\\'");
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
-        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+(a.title_zh||a.title)+'</div>'+
+        '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
@@ -10652,7 +10658,7 @@ const AVIEW={
               (a._mergedN>1?'<span style="font-size:8px;padding:0 4px;border-radius:6px;border:1px solid var(--purple);color:var(--purple)" title="同事件进展已合并，仅显示最新">🔁×'+a._mergedN+'</span>':'')+'</div>';
           }
           if(facts.length){
-            h+='<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+facts.map(function(x){return x.k+x.v;}).join(' · ')+'</div>';
+            h+='<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(facts.map(function(x){return x.k+x.v;}).join(' · '))+'</div>';
           }
           return h;
         })()+
@@ -10899,8 +10905,8 @@ const AVIEW={
       '<div class="alert-detail-hd">'+
         '<div style="flex:1">'+
         '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="badge '+lv.cls+'">'+lv.label+'</span><span style="color:'+(sc[a.status]||'#999')+';font-size:11px;font-weight:600">● '+(sl[a.status]||a.status)+'</span></div>'+
-        '<div style="font-size:14px;font-weight:700;line-height:1.4">'+(a.title_zh||a.title)+'</div>'+
-        (a.title_zh?'<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4">原文：'+esc(a.title)+'</div>':'')+
+        '<div style="font-size:14px;font-weight:700;line-height:1.4">'+stripTags(a.title_zh||a.title)+'</div>'+
+        (a.title_zh?'<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4">原文：'+esc(stripTags(a.title))+'</div>':'')+
         '<div class="alert-detail-id">⏱ '+(a.time||'')+'</div>'+
         '</div>'+
       '</div>'+
@@ -10915,12 +10921,12 @@ const AVIEW={
           '<span style="font-size:10px;color:var(--text3)">/100</span>'+
           val.tags.map(function(tg){return '<span style="font-size:9px;padding:1px 6px;border-radius:8px;border:1px solid '+tg.c+';color:'+tg.c+'">'+tg.t+'</span>';}).join('')+
           '</div>'+
-          (facts.length?'<div style="display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;font-size:10px;color:var(--text2)">'+facts.map(function(x){return '<span>'+x.k+' '+x.v+'</span>';}).join('')+'</div>':'')+
+          (facts.length?'<div style="display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;font-size:10px;color:var(--text2)">'+facts.map(function(x){return '<span>'+stripTags(x.k+' '+x.v)+'</span>';}).join('')+'</div>':'')+
           '</div>';
         return h;
       })()+
-      '<div class="alert-detail-desc">'+(a.desc_zh||a.desc)+'</div>'+
-      (a.desc_zh?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:10px;color:var(--text3);line-height:1.6">原文：'+esc(a.desc)+'</div>':'')+
+      '<div class="alert-detail-desc">'+stripTags(a.desc_zh||a.desc)+'</div>'+
+      (a.desc_zh?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:10px;color:var(--text3);line-height:1.6">原文：'+esc(stripTags(a.desc))+'</div>':'')+
       infoHtml+
       factHtml+
       bodyHtml+
@@ -11206,8 +11212,8 @@ const AVIEW={
         '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span>'+
         '<span class="badge b-blue" style="font-size:8px;padding:0 4px">'+a.type+'</span>'+
         '<span style="font-size:9px;color:var(--text3)">'+(a.time||'').substring(5,16)+'</span></div>'+
-        '<div style="font-size:11px;font-weight:600;line-height:1.3;margin-bottom:2px">'+a.title+'</div>'+
-        '<div style="font-size:9px;color:var(--text2);line-height:1.35;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+(a.desc||'').substring(0,50)+'</div>'+
+        '<div style="font-size:11px;font-weight:600;line-height:1.3;margin-bottom:2px">'+stripTags(a.title)+'</div>'+
+        '<div style="font-size:9px;color:var(--text2);line-height:1.35;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+stripTags(a.desc||'').substring(0,50)+'</div>'+
         '<div style="font-size:10px;color:var(--text3)">📍'+a.country+(a.enterprise?' | 🏢'+a.enterprise:'')+'</div>'+
         '</div>';
     });
@@ -14179,7 +14185,7 @@ function showCtyDetail(n){
   document.getElementById('modal-bd').innerHTML='<div class="grid mb-12" style="grid-template-columns:1fr 1fr;gap:10px"><div style="padding:12px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">综合风险</div><div style="font-size:24px;font-weight:800;color:'+lv.color+'">'+ov.toFixed(1)+'</div><span class="badge '+lv.cls+'">'+lv.label+'</span></div><div style="padding:12px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">首都/区域</div><div style="font-size:16px;font-weight:700;margin-top:4px">'+c.capital+' / '+c.region+'</div></div></div>'+
     '<div class="card-tt">📊 八维风险评分</div><div class="mb-12">'+DIMS.map(d=>{const v=c.scores[d.key]||0;const dl=getLevel(v);return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="width:80px;font-size:11px">'+d.ic+' '+d.name+'</span><div class="risk-bar" style="flex:1"><div class="risk-bar-fill" style="width:'+v*10+'%;background:'+dl.color+'"></div></div><span style="width:30px;text-align:right;font-size:11px;font-weight:700;color:'+dl.color+'">'+v.toFixed(1)+'</span></div>';}).join('')+'</div>'+
     '<div class="card-tt">🏢 中资企业 ('+ents.length+')</div><div class="mb-12">'+(ents.length?ents.map(e=>'<span class="badge b-blue" style="margin:2px;cursor:pointer" onclick="showEntDetail('+e.id+')">'+e.short+'</span>').join(''):'<span class="text-muted">无</span>')+'</div>'+
-    '<div class="card-tt">🚨 预警 ('+al.length+')</div><div class="mb-12">'+(al.length?al.map(a=>'<div class="alert-item lv-'+a.level+'"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+(a.title_zh||a.title)+'</div><div class="text-xs text-muted">'+a.time+'</div></div>').join(''):'<span class="text-muted">无</span>')+'</div>'+
+    '<div class="card-tt">🚨 预警 ('+al.length+')</div><div class="mb-12">'+(al.length?al.map(a=>'<div class="alert-item lv-'+a.level+'"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+stripTags(a.title_zh||a.title)+'</div><div class="text-xs text-muted">'+a.time+'</div></div>').join(''):'<span class="text-muted">无</span>')+'</div>'+
     '<div style="padding:12px;background:var(--bg2);border-radius:8px"><strong>📝 分析备注</strong><p style="margin:6px 0 0;font-size:12px;line-height:1.7;color:var(--text2)">'+c.notes+'</p></div>'+
     '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'+(PERM.isAdmin()?'<button class="btn primary sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');MONITOR.showCountryForm(\''+c.name+'\')">✏️ 编辑国家</button><button class="btn danger sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');MONITOR.deleteCountry(\''+c.name+'\')">🗑️ 删除国家</button>':'')+'</div>';
   if(typeof INTELBUS!=='undefined') INTELBUS._enrichModal({country:c.name, text:(c.name||'')+' '+(c.notes||''), self:{module:'country', key:c.name}});
