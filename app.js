@@ -16567,7 +16567,10 @@ function _loadPublicOsint(){
  * ALERTS 持久化于 IndexedDB/服务端共享库，旧预警会跨天复活；凡时间不在本地今日的一律剔除。
  * 数据中心/PostgreSQL 保留历史用于研判，预警中心只管今天。 */
 function _alertTsRaw(a){
-  var s=a.time||a.date||a.publishedAt||a.pubDate||a.collect_time||'';
+  /* 2026-08-26 修复：预警滚动窗必须使用预警本身的生成/更新时间（time），
+   * 而不能优先使用原始文章的 publishedAt（文章/事件发生时间可能早于 24h，
+   * 如刚果金 8-24 事发、8-25 报道、8-26 生成预警，publishedAt 会导致合法预警被误清）。 */
+  var s=a.time||a.date||a.collect_time||a.publishedAt||a.pubDate||'';
   var t=new Date(s).getTime();
   if(!t&&typeof _parseIntelTime==='function'){ try{ t=new Date(_parseIntelTime(a)).getTime(); }catch(e){} }
   return t||0;

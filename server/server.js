@@ -27,6 +27,7 @@ const cnsecWatch = require('./cn-security-watch'); /* 涉华人员安全专项�
 const negtool = require('./negtool'); /* 社交媒体采集通道（TG+Reddit，2026-08-13 并入） */
 const wechatoa = require('./wechat-oa'); /* 微信公众号实时采集通道（2026-08-21 用户指令：扫码登录+appmsg列表+正文+增量入库） */
 const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采（2026-08-25：搜狗检索拿不到新文的根治方案——鼎泰安元官网/郑和号观察者网号等运营方自有公开站点同步原文） */
+const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项采集（2026-08-26：组合词改排序+双信号过滤，专治涉华负面新文被埋） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -746,7 +747,6 @@ function _srvAlertScore(it) {
   if (_FOCUS_COUNTRIES_SRV.some(c => ctry.indexOf(c) >= 0)) sc += 20;
   return sc;
 }
-let _alertGenSeen = new Set();
 /* 预警队列国别均衡帽（2026-08-25 用户指令：预警指挥台不能全是美/伊/叙，国别必须有多样性）：
  * 列表为最新在前，每国最多保留 12 条最新，超出丢弃；同时清 >72h 陈条目（旧闻双保险）。 */
 const ALERT_QUEUE_COUNTRY_CAP = 12;
@@ -767,17 +767,21 @@ function _capAlertQueue(list) {
 }
 async function _serverAlertGen() {
   try {
+    /* 2026-08-26 修复：15 分钟窗口过窄，入库与生成器错车（或重启/风控延迟）导致高价值条目
+     * 漏生成预警。放宽到 24 小时。是否已生成以 datahub_store 中是否真实存在该预警 ID 为准，
+     * 不再依赖内存 _alertGenSeen——否则跨天被“今日化”清理后，内存记录会阻止重新生成。 */
     const { rows } = await query(
-      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '15 minutes' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 300"
+      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '24 hours' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 300"
     );
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
     const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
     const have = new Set(alerts.map(a => String(a.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40)));
+    const haveIds = new Set(alerts.map(a => String(a.id || '')));
     const added = [];
     for (const r of rows) {
-      if (_alertGenSeen.has(r.id)) continue;
-      _alertGenSeen.add(r.id);
+      const genId = 'SRV-' + r.id;
+      if (haveIds.has(genId)) continue; /* 预警中心已存在该条目，不重复生成 */
       const it = r.data_json || {};
       it.title = it.title || r.title || '';
       it.country = it.country || r.country || '';
@@ -812,6 +816,7 @@ async function _serverAlertGen() {
       };
       added.unshift(alert);
       have.add(tkey);
+      haveIds.add(genId);
     }
     if (added.length) {
       const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
@@ -820,7 +825,6 @@ async function _serverAlertGen() {
       /* 真实预警触发时自动调用推送通道 */
       added.forEach(function (a) { _dispatchAlertPushes(a, 'new').catch(function (e) { console.warn('[PUSH] new alert dispatch error:', e.message); }); });
     }
-    if (_alertGenSeen.size > 20000) _alertGenSeen = new Set([..._alertGenSeen].slice(-10000));
   } catch (e) { console.warn('[ALERT-GEN] 异常:', e.message); }
 }
 setInterval(_serverAlertGen, 3 * 60 * 1000);
@@ -1606,6 +1610,7 @@ app.get('/api/wechat/status', (req, res) => {
   try {
     const st = wechatoa.status();
     st.lastRun = _wechatLastRun;
+    st.negLastRun = _wechatNegLastRun;
     res.json({ ok: true, status: st });
   } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
 });
@@ -1650,6 +1655,12 @@ app.post('/api/wechat/collect', (req, res) => {
   /* 手动触发：异步跑，前端轮询 /api/wechat/status 看 lastRun */
   if (Date.now() < _wechatBusyUntil) return res.json({ ok: false, error: '上一轮采集尚未结束，请稍候' });
   setTimeout(() => { _runWechatOA(); }, 50);
+  res.json({ ok: true });
+});
+app.post('/api/wechat/negative-sweep', (req, res) => {
+  /* 手动触发公众号涉华负面专项（2026-08-26）：异步跑，前端轮询 /api/wechat/status 看 negLastRun */
+  if (Date.now() < _wxNegBusyUntil) return res.json({ ok: false, error: '上一轮涉华负面专项尚未结束，请稍候' });
+  setTimeout(() => { _runWechatNegative(); }, 50);
   res.json({ ok: true });
 });
 
@@ -3591,10 +3602,16 @@ async function _wechatIngest(items) {
       const before = it.interestLinked;
       ENTITY.enrich(it);
       if (before === true) it.interestLinked = true;
+      /* 2026-08-26：涉华负面双信号打标（统计独立计数+前端可展示"涉华负面"标签） */
+      if (wechatNeg.isChinaNegative(String(it.title || '') + ' ' + String(it.content || ''))) {
+        it._chinaNegative = true;
+        it.chinaRelated = true;
+      }
     } catch (e) {}
   });
   const linked = items.filter(it => it.interestLinked === true);
   let inserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedNoUrl = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0;
+  let chinaInserted = 0, chinaNegativeInserted = 0;
   if (linked.length) {
     const urls = linked.map(it => it.url).filter(Boolean);
     const existing = new Set();
@@ -3630,12 +3647,14 @@ async function _wechatIngest(items) {
         );
         if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
         inserted++;
+        if (_isChinaNegative(it)) chinaNegativeInserted++;
+        else if (_isChinaLinked(it)) chinaInserted++;
       } catch (e) { console.warn('[WECHAT] INSERT 失败: ' + e.message + ' | ' + String(it.title || '').slice(0, 40)); }
     }
   }
-  if (inserted) { _bumpDailyStats(inserted, linked.length, 0, 0); }
-  _wechatLastIngest = { at: new Date().toISOString(), items: items.length, inserted };
-  console.log('[WECHAT] 入库完成: 候选' + items.length + ' 关联' + linked.length + ' 入库' + inserted + ' | URL重复' + skippedDup + ' 标题/实体重复' + skippedDupTitle + ' 事件签名重复' + skippedEventSig + ' 国内数据' + skippedDomestic + ' 低质标题' + skippedBadTitle + ' 旧闻' + skippedStale);
+  if (inserted) { _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted); }
+  _wechatLastIngest = { at: new Date().toISOString(), items: items.length, inserted, china: chinaInserted, chinaNegative: chinaNegativeInserted };
+  console.log('[WECHAT] 入库完成: 候选' + items.length + ' 关联' + linked.length + ' 入库' + inserted + '（涉华' + chinaInserted + '/负面' + chinaNegativeInserted + '） | URL重复' + skippedDup + ' 标题/实体重复' + skippedDupTitle + ' 事件签名重复' + skippedEventSig + ' 国内数据' + skippedDomestic + ' 低质标题' + skippedBadTitle + ' 旧闻' + skippedStale);
   return inserted;
 }
 async function _runWechatOA() {
@@ -3926,6 +3945,26 @@ async function _runWechatMirrors() {
   finally { _wxMirrorBusyUntil = 0; }
 }
 
+/* ===== 公众号涉华负面专项调度（2026-08-26）：组合词检索把涉华负面新文顶到结果页前部 ===== */
+let _wxNegBusyUntil = 0;
+let _wechatNegLastRun = null;
+async function _runWechatNegative() {
+  if (Date.now() < _wxNegBusyUntil) return;
+  _wxNegBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await wechatNeg.collectNegative({});
+    _wechatNegLastRun = { at: new Date().toISOString(), stats: r.stats || {} };
+    const items = r.items || [];
+    if (items.length) {
+      const inserted = await _wechatIngest(items);
+      console.log('[WECHAT-NEG] 一轮: 账号' + (r.stats.accountsOk || 0) + '/' + (r.stats.accounts || 0) + ' 查询' + (r.stats.queries || 0) + ' 新文' + (r.stats.fresh || 0) + ' 入库' + (inserted || 0) + (r.stats.errors && r.stats.errors.length ? ' 异常:' + r.stats.errors.slice(0, 3).join(';') : ''));
+    } else if (r.stats && r.stats.errors && r.stats.errors.length) {
+      console.log('[WECHAT-NEG] 一轮无新文 | ' + r.stats.errors.slice(0, 3).join(';'));
+    }
+  } catch (e) { console.warn('[WECHAT-NEG] 采集失败:', e.message); }
+  finally { _wxNegBusyUntil = 0; }
+}
+
 function startGlobalMediaCron() {
   setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); }); }, 5000);  // 启动后5s先同步统计再首跑
   setInterval(_runGlobalMedia, GLOBAL_MEDIA_INTERVAL_MS); // 每60秒刷新一轮
@@ -3938,6 +3977,9 @@ function startGlobalMediaCron() {
   // 公众号镜像站直采：每15分钟一轮（2026-08-25；与搜狗/profile_ext 通道并行互补）
   setTimeout(_runWechatMirrors, 150 * 1000);
   setInterval(_runWechatMirrors, 15 * 60 * 1000);
+  // 公众号涉华负面专项：每2小时一轮（2026-08-26；组合词改排序，把涉华负面新文顶到结果页前部）
+  setTimeout(_runWechatNegative, 6 * 60 * 1000);
+  setInterval(_runWechatNegative, 2 * 60 * 60 * 1000);
   // 每5分钟再同步一次数据库，防止统计漂移
   setInterval(_syncDailyStatsFromDB, 5 * 60 * 1000);
   // 采集自动驾驶调速器：每10分钟自检，落后自动加码，达标自动降档

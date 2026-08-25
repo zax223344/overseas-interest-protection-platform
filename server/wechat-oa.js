@@ -265,15 +265,17 @@ function _sogouParseList(html) {
   }
   return out;
 }
-async function _sogouSearch(name) {
+async function _sogouSearch(name, queryOverride) {
   const cookies = await _sogouEnsureCookies();
   if (!cookies) return { error: 'sogou-cookie-fail' };
+  const q = String(queryOverride || name || '').trim() || name;
   /* 注意（2026-08-22 实测）：tsn 时间过滤参数会 302 回首页（需浏览器 JS 种 cookie），不可用；
    * 基线检索按相关度排序会混入旧文——靠逐条 ts 时间戳 + 45 天新鲜度预过滤 + 标题增量去重控制。
    * 2026-08-25 实测恶化：部分账号（刺猬安全等 12 个）page1 全是数月前旧文 → 0 新鲜、永远采不到。
-   * 对策：page1 零新鲜时自动补抓 page2（实测 page2 反而更新），仍无则放弃等下轮。 */
+   * 对策：page1 零新鲜时自动补抓 page2（实测 page2 反而更新），仍无则放弃等下轮。
+   * 2026-08-26：支持 queryOverride（涉华负面专项用「账号名 中国」等组合词改排序）。 */
   const fetchPage = async (page) => {
-    const url = 'https://weixin.sogou.com/weixin?type=2&query=' + encodeURIComponent(name) + (page > 1 ? '&page=' + page : '');
+    const url = 'https://weixin.sogou.com/weixin?type=2&query=' + encodeURIComponent(q) + (page > 1 ? '&page=' + page : '');
     const r = await _httpGet(url, { timeout: 12000, headers: { 'Cookie': cookies, 'Referer': SOGOU_HOME } });
     if (!r.body) return { error: 'sogou-unreachable' };
     if (/antispider|请输入验证码|用户您好，我们的系统检测到您网络中存在异常访问请求/.test(r.body)) return { antispider: true };
@@ -667,6 +669,9 @@ module.exports = {
   _internals: {
     httpGet: _httpGet, fetchArticleFull: _fetchArticleFull,
     loadIncr: _loadIncr, saveIncr: _saveIncr,
-    titleKey: _titleKey, sleep: _sleep, jitter: _jitter
+    titleKey: _titleKey, sleep: _sleep, jitter: _jitter,
+    sogouSearch: _sogouSearch, sogouResolve: _sogouResolve,
+    isFreqCooling: () => Date.now() < _freqCoolUntil,
+    noteAntispider: (ms) => { _freqCoolUntil = Date.now() + (ms || FREQ_COOLDOWN_MS); _sogou.cookies = ''; }
   }
 };
