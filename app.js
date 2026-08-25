@@ -4373,7 +4373,7 @@ const AUTH={
 const GLOBE={
   canvas:null,ctx:null,rotation:0,tilt:0,autoRotate:true,
   isDragging:false,dragStartX:0,dragStartRot:0,dragStartY:0,dragStartTilt:0,
-  _stars:null,_landDots:null,_chinaDots:null,_protectLines:null,_tradeRoutes:null,
+  _stars:null,_landDots:null,_chinaDots:null,_protectLines:null,_tradeRoutes:null,_nodes:null,_wideOrbits:null,
   _scanAngle:0,_time:0,
   BEIJING:{lat:39.9,lon:116.4},
   _chokepoints:[
@@ -4400,7 +4400,7 @@ const GLOBE={
       const rect=this.canvas.getBoundingClientRect();
       const mx=e.clientX-rect.left,my=e.clientY-rect.top;
       const cx=this.canvas.width/2,cy=this.canvas.height/2;
-      const r=Math.min(this.canvas.width,this.canvas.height)*0.36;
+      const r=Math.min(this.canvas.width*0.30,this.canvas.height*0.42);
       const dx=(mx-cx)/r,dy=(my-cy)/r;
       if(dx*dx+dy*dy<1){
         const lat=Math.asin(-dy)*180/Math.PI;
@@ -4414,7 +4414,7 @@ const GLOBE={
     this.canvas.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];this.isDragging=true;this.dragStartX=t.clientX;this.dragStartY=t.clientY;this.dragStartRot=this.rotation;this.dragStartTilt=this.tilt;this.autoRotate=false;},{passive:false});
     this.canvas.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];if(this.isDragging){this.rotation=this.dragStartRot+(t.clientX-this.dragStartX)*0.5;this.tilt=Math.max(-45,Math.min(45,this.dragStartTilt-(t.clientY-this.dragStartY)*0.3));}},{passive:false});
     this.canvas.addEventListener('touchend',()=>{this.isDragging=false;setTimeout(()=>{this.autoRotate=true;},3000);});
-    window.addEventListener('resize',()=>{if(this.canvas){this.canvas.width=this.canvas.parentElement.clientWidth;this.canvas.height=500;this._stars=null;}});
+    window.addEventListener('resize',()=>{if(this.canvas){this.canvas.width=this.canvas.parentElement.clientWidth;this.canvas.height=500;this._stars=null;this._nodes=null;}});
     if(!this._landDots)this._genLandDots();
     if(!this._protectLines)this._genProtectLines();
     if(!this._tradeRoutes)this._genTradeRoutes();
@@ -4586,7 +4586,7 @@ const GLOBE={
   },
   draw(){
     const ctx=this.ctx,w=this.canvas.width,h=this.canvas.height;
-    const cx=w/2,cy=h/2,r=Math.min(w,h)*0.36;
+    const cx=w/2,cy=h/2,r=Math.min(w*0.30,h*0.42);
     const tilt=this.tilt;
     // Deep space background
     const bg=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(w,h)*0.7);
@@ -4602,6 +4602,8 @@ const GLOBE={
       ctx.fillStyle='rgba('+(s.s>1.2?'180,220,255':'100,140,180')+','+(tw*0.5)+')';
       ctx.fillRect(s.x,s.y,s.s,s.s);
     });
+    // Futuristic backdrop layer (constellation / wide escort orbits / tech rings / scan beam / spectrum walls)
+    this._drawBackdrop(ctx,w,h,cx,cy,r);
     // Atmosphere glow (4 layers)
     for(let i=3;i>=0;i--){
       const ag=ctx.createRadialGradient(cx,cy,r*0.92,cx,cy,r*(1.2+i*0.14));
@@ -4756,6 +4758,8 @@ const GLOBE={
       }
     }
     ctx.restore();
+    // Wide-orbit escort craft (front pass, above globe)
+    this._drawEscorts(ctx,cx,cy,r);
     // Coordinate tick marks around globe
     ctx.save();ctx.translate(cx,cy);
     for(var a=0;a<360;a+=30){
@@ -4769,6 +4773,142 @@ const GLOBE={
     // HUD time
     const te=document.getElementById('globe-hud-time');
     if(te)te.textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  },
+  _drawBackdrop(ctx,w,h,cx,cy,r){
+    const t=this._time;
+    // 1) Drifting data constellation (fills side whitespace, very low alpha)
+    if(!this._nodes){
+      this._nodes=[];
+      const n=Math.max(50,Math.min(100,Math.round(w/16)));
+      for(let i=0;i<n;i++)this._nodes.push({x:Math.random()*w,y:Math.random()*h,vx:(Math.random()-0.5)*0.18,vy:(Math.random()-0.5)*0.18,s:Math.random()<0.2?1.8:1.1});
+    }
+    const nodes=this._nodes,LD=110;
+    ctx.lineWidth=0.5;
+    for(let i=0;i<nodes.length;i++){
+      const a=nodes[i];
+      a.x+=a.vx;a.y+=a.vy;
+      if(a.x<-10)a.x=w+10;if(a.x>w+10)a.x=-10;
+      if(a.y<-10)a.y=h+10;if(a.y>h+10)a.y=-10;
+      for(let j=i+1;j<nodes.length;j++){
+        const b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;
+        if(d2<LD*LD){
+          const al=(1-Math.sqrt(d2)/LD)*0.12;
+          ctx.strokeStyle='rgba(91,155,255,'+al+')';
+          ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+        }
+      }
+      ctx.fillStyle='rgba(120,175,255,0.40)';
+      ctx.fillRect(a.x,a.y,a.s,a.s);
+    }
+    // 1b) Soft side light columns (reduce dark edge feeling)
+    const sg=ctx.createLinearGradient(0,0,120,0);
+    sg.addColorStop(0,'rgba(91,155,255,0.08)');sg.addColorStop(0.7,'rgba(91,155,255,0.02)');sg.addColorStop(1,'rgba(91,155,255,0)');
+    ctx.fillStyle=sg;ctx.fillRect(0,0,120,h);
+    const sg2=ctx.createLinearGradient(w-120,0,w,0);
+    sg2.addColorStop(0,'rgba(91,155,255,0)');sg2.addColorStop(0.3,'rgba(91,155,255,0.02)');sg2.addColorStop(1,'rgba(91,155,255,0.08)');
+    ctx.fillStyle=sg2;ctx.fillRect(w-120,0,120,h);
+    // 2) Wide escort orbits behind globe (reach into left/right whitespace)
+    this._wideOrbits=[
+      {rx:Math.min(w*0.40,r*2.7),ry:r*0.60,rot:-0.14,speed:0.0035,ph:0},
+      {rx:Math.min(w*0.33,r*2.2),ry:r*0.88,rot:0.20,speed:-0.0026,ph:2.1},
+      {rx:Math.min(w*0.45,r*3.1),ry:r*0.38,rot:0.04,speed:0.0020,ph:4.2}
+    ];
+    ctx.save();ctx.translate(cx,cy);
+    this._wideOrbits.forEach(o=>{
+      ctx.save();ctx.rotate(o.rot);
+      ctx.setLineDash([3,7]);
+      ctx.strokeStyle='rgba(91,155,255,0.15)';ctx.lineWidth=0.8;
+      ctx.beginPath();ctx.ellipse(0,0,o.rx,o.ry,0,0,Math.PI*2);ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    });
+    ctx.restore();
+    // 3) Rotating tech rings hugging the globe
+    ctx.save();ctx.translate(cx,cy);
+    ctx.save();ctx.rotate(t*0.0022);
+    ctx.setLineDash([2,8]);
+    ctx.strokeStyle='rgba(0,212,255,0.14)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(0,0,r*1.09,0,Math.PI*2);ctx.stroke();
+    ctx.restore();
+    ctx.save();ctx.rotate(-t*0.0013);
+    ctx.setLineDash([14,18]);
+    ctx.strokeStyle='rgba(91,155,255,0.10)';ctx.lineWidth=3;
+    ctx.beginPath();ctx.arc(0,0,r*1.24,0,Math.PI*2);ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+    // 4) Full-width horizontal scan beam (slow sweep, very faint)
+    const beamY=((t*0.5)%(h+200))-100;
+    const bg2=ctx.createLinearGradient(0,beamY-30,0,beamY+30);
+    bg2.addColorStop(0,'rgba(91,155,255,0)');
+    bg2.addColorStop(0.5,'rgba(91,155,255,0.07)');
+    bg2.addColorStop(1,'rgba(91,155,255,0)');
+    ctx.fillStyle=bg2;ctx.fillRect(0,beamY-30,w,60);
+    ctx.strokeStyle='rgba(120,180,255,0.14)';ctx.lineWidth=0.6;
+    ctx.beginPath();ctx.moveTo(0,beamY);ctx.lineTo(w,beamY);ctx.stroke();
+    // 5) Edge spectrum walls (mid-band left/right)
+    this._drawSpectrumWall(ctx,6,cy,1,t);
+    this._drawSpectrumWall(ctx,w-6,cy,-1,t);
+    // 6) Top-center sentinel status line
+    const msg='GLOBAL SENTINEL · 全球海外利益保护 · 全天候在线';
+    ctx.font='10px "Courier New",monospace';ctx.textAlign='center';
+    ctx.fillStyle='rgba(120,175,255,0.45)';
+    ctx.fillText(msg,cx,20);
+    if(Math.floor(t/30)%2===0){
+      const twd=ctx.measureText(msg).width;
+      ctx.fillStyle='rgba(255,200,60,0.65)';
+      ctx.fillText('●',cx-twd/2-14,20);
+    }
+    ctx.textAlign='left';
+  },
+  _drawSpectrumWall(ctx,x,cy,dir,t){
+    const bars=30,gap=8;
+    const y0=cy-(bars*gap)/2;
+    for(let i=0;i<bars;i++){
+      const lv=Math.abs(Math.sin(i*0.9+t*0.035)+Math.sin(i*0.37-t*0.021))*0.5;
+      const len=6+lv*44;
+      const y=y0+i*gap;
+      const al=0.06+lv*0.16;
+      ctx.fillStyle='rgba(91,155,255,'+al+')';
+      if(dir>0)ctx.fillRect(x,y,len,2);else ctx.fillRect(x-len,y,len,2);
+      if(lv>0.82){
+        ctx.fillStyle='rgba(160,205,255,'+(al+0.18)+')';
+        if(dir>0)ctx.fillRect(x+len-2,y,2,2);else ctx.fillRect(x-len,y,2,2);
+      }
+    }
+  },
+  _drawEscorts(ctx,cx,cy,r){
+    if(!this._wideOrbits)return;
+    const t=this._time;
+    ctx.save();ctx.translate(cx,cy);
+    this._wideOrbits.forEach((o,oi)=>{
+      ctx.save();ctx.rotate(o.rot);
+      const dirS=o.speed>=0?1:-1;
+      for(let k=0;k<2;k++){
+        const ang=t*o.speed+o.ph+k*Math.PI;
+        const ex=Math.cos(ang)*o.rx,ey=Math.sin(ang)*o.ry;
+        const front=ey>0;
+        // Trail (fades behind direction of motion)
+        for(let s=1;s<=8;s++){
+          const a2=ang-s*0.028*dirS;
+          const tx2=Math.cos(a2)*o.rx,ty2=Math.sin(a2)*o.ry;
+          if(ty2<=0)continue;
+          ctx.fillStyle='rgba(140,195,255,'+((1-s/9)*0.40)+')';
+          ctx.fillRect(tx2-0.75,ty2-0.75,1.5,1.5);
+        }
+        const al=front?0.9:0.22;
+        ctx.beginPath();ctx.arc(ex,ey,front?2.8:1.5,0,Math.PI*2);
+        ctx.fillStyle='rgba(140,195,255,'+al+')';ctx.fill();
+        if(front){
+          ctx.beginPath();ctx.arc(ex,ey,6,0,Math.PI*2);
+          ctx.strokeStyle='rgba(140,195,255,0.30)';ctx.lineWidth=0.8;ctx.stroke();
+          ctx.font='8px "Courier New",monospace';
+          ctx.fillStyle='rgba(140,195,255,0.50)';
+          ctx.fillText('ESCORT-'+(oi*2+k+1),ex+7,ey+2);
+        }
+      }
+      ctx.restore();
+    });
+    ctx.restore();
   },
   _drawProtectLines(ctx,cx,cy,r,tilt){
     if(!this._protectLines)return;
