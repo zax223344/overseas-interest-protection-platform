@@ -8526,7 +8526,7 @@ function showSitEvents(){
 
 // ===== MONITOR VIEW (Map + Countries + Events + Chokepoints + Corridors) =====
 const MONITOR={
-  tab:'geoint',
+  tab:'map',
   switch(t){if(t==='threats'){navigateTo('threatorgs');return;}this.tab=t;document.querySelectorAll('#mon-tabs .dc-tab').forEach((e,i)=>{e.classList.toggle('active',['geoint','map','countries','events','chokepoints','corridors','flight-ais'][i]===t);});this.render();if(t!=='geoint')this._stopGeointCarousel();},
   init(){this.switch(this.tab||'geoint');},
   render(){
@@ -8538,6 +8538,8 @@ const MONITOR={
     else if(this.tab==='corridors'){ if(window.STRAT_VIZ&&STRAT_VIZ.renderCorridors){STRAT_VIZ.renderCorridors(el);} else if(typeof WORLDMAP!=='undefined'){ WORLDMAP.activeLayer='corridors'; WORLDMAP.render(); } }
     else if(this.tab==='flight-ais')this.renderFlightAis(el);
     else if(this.tab==='geoint')this.renderGeoint(el);
+    /* 应急指南始终固定在监测中心最下方（所有子tab共用） */
+    this.renderEmergencyGuide();
   },
   _mapLayer:'risk',
   renderMap(el){
@@ -8579,16 +8581,11 @@ const MONITOR={
       '<div class="risk-map-stat" style="cursor:pointer" onclick="MONITOR.showEventAnalysis()"><div class="lb">追踪事件</div><div class="vl" style="color:var(--yellow)">'+activeEvents+'</div><div class="delta">共'+EVENTS.length+'起</div></div>'+
       '<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px">📊 区域风险热力</div><div id="mon-map-region"></div></div>'+
       '<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px;display:flex;justify-content:space-between;align-items:center"><span>⚡ 最新事件</span><span style="font-size:9px;color:var(--red)">● LIVE</span></div><div class="risk-map-event-list" id="mon-map-events"></div></div>'+
-      '</div></div>'+
-      /* ===== 应急指南（2026-08-26 用户指令：监测中心最下方，覆盖所有中资项目国家）===== */
-      '<div class="card" style="margin-top:12px"><div class="card-tt"><span class="ic">🆘</span>应急指南 · 中资项目所在国撤离路线 / 避难所 / 使领馆'+
-      '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px">外交部全球领保热线 +86-10-12308（24小时）</span></div>'+
-      '<div id="mon-emg-guide"></div></div>';
+      '</div></div>';
     this._renderMapSVG();
     this._renderMapRegion();
     this._renderMapEvents();
     this._renderMapLegend();
-    this.renderEmergencyGuide();
   },
   /* 风险分析详情 */
   showRiskAnalysis(){

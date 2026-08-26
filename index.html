@@ -871,12 +871,15 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: MONITOR (Map + Countries + Events) -->
 <div class="view" id="view-monitor">
 <div class="dc-tabs" id="mon-tabs">
-<div class="dc-tab active" onclick="SUPERMAP.switch(this,'risk')">🗺️ 风险地图</div>
-<div class="dc-tab" onclick="SUPERMAP.switch(this,'countries')">🌐 国家监测</div>
-<div class="dc-tab" onclick="SUPERMAP.switch(this,'events')">📋 事件追踪</div>
-<div class="dc-tab" onclick="WORLDMAP.switch(this)">🗺️ 航运要道与一带一路</div>
+<div class="dc-tab active" onclick="MONITOR.switch('map')">🗺️ 风险地图</div>
+<div class="dc-tab" onclick="MONITOR.switch('countries')">🌐 国家监测</div>
+<div class="dc-tab" onclick="MONITOR.switch('events')">📋 事件追踪</div>
+<div class="dc-tab" onclick="MONITOR.switch('corridors')">🛤️ 航运要道与一带一路</div>
 </div>
 <div id="mon-content"></div>
+<div class="card" style="margin-top:12px"><div class="card-tt"><span class="ic">🆘</span>应急指南 · 中资项目所在国撤离路线 / 避难所 / 使领馆
+<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px">外交部全球领保热线 +86-10-12308（24小时）</span></div>
+<div id="mon-emg-guide"></div></div>
 </div>
 
 <!-- VIEW: THREAT ORGS -->
@@ -1109,7 +1112,7 @@ function closeMobileMenu(){
 <!-- IndexedDB 持久层（同步外观）：必须在 app.js 之前加载 -->
 <script src="idb-store.js?v=1"></script>
 <script src="scraper.js?v=53"></script>
-<script src="app.js?v=226"></script>
+<script src="app.js?v=227"></script>
 <script src="distribute.js?v=30"></script>
 <script src="datasources.js?v=25"></script>
 <script src="threats.js?v=7"></script>
