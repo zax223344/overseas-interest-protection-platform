@@ -33,6 +33,7 @@ const DIRECT_REGIONAL = [
   _m('阿富汗', 'AF', CA, 'Khaama Press', 'https://www.khaama.com/feed/', 'en', '安全/政局'),
   _m('阿富汗', 'AF', CA, 'Ariana News', 'https://ariananews.af/feed/', 'en', '安全/政局'),
   _m('阿富汗', 'AF', CA, 'Afghanistan International', 'https://www.afintl.com/en/rss', 'en', '政局/人权'),
+  _m('阿富汗', 'AF', CA, 'KabulNow', 'https://kabulnow.com/feed/', 'en', '安全/投资/电力'),
   /* ---- 中亚五国 ---- */
   _m('哈萨克斯坦', 'KZ', CA, 'The Astana Times', 'https://astanatimes.com/feed/', 'en', '政局/经济'),
   _m('哈萨克斯坦', 'KZ', CA, 'Kazinform', 'https://qazinform.com/rss/', 'en', '官方通讯'),

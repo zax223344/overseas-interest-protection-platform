@@ -47,7 +47,7 @@ const COUNTRY_MAP = [
   ['土库曼斯坦', 'Turkmenistan'], ['蒙古', 'Mongolia'], ['伊朗', 'Iran'], ['伊拉克', 'Iraq'],
   ['叙利亚', 'Syria'], ['也门', 'Yemen'], ['沙特', 'Saudi Arabia'], ['阿联酋', 'UAE'],
   ['土耳其', 'Turkey'], ['以色列', 'Israel'], ['黎巴嫩', 'Lebanon'], ['约旦', 'Jordan'],
-  ['乌克兰', 'Ukraine'], ['俄罗斯', 'Russia'], ['委内瑞拉', 'Venezuela'], ['哥伦比亚', 'Colombia'],
+  ['乌克兰', 'Ukraine'], ['俄罗斯', 'Russia'], ['加拿大', 'Canada'], ['委内瑞拉', 'Venezuela'], ['哥伦比亚', 'Colombia'],
   ['秘鲁', 'Peru'], ['智利', 'Chile'], ['巴西', 'Brazil'], ['墨西哥', 'Mexico'],
   ['阿根廷', 'Argentina'], ['玻利维亚', 'Bolivia'], ['厄瓜多尔', 'Ecuador'], ['巴布亚新几内亚', 'Papua New Guinea'],
   ['所罗门群岛', 'Solomon Islands'], ['斐济', 'Fiji'], ['塞尔维亚', 'Serbia'], ['匈牙利', 'Hungary'],
@@ -61,7 +61,8 @@ const EVENT_MAP = [
   ['抢劫', 'robbery'], ['骚乱', 'riot'], ['抗议', 'protest'], ['示威', 'demonstration'],
   ['政变', 'coup'], ['死亡', 'killed'], ['遇难', 'killed'], ['身亡', 'killed'],
   ['逮捕', 'arrested'], ['扣押', 'detained'], ['拘留', 'detained'],
-  ['制裁', 'sanctions'], ['撤侨', 'evacuation'], ['撤离', 'evacuation'],
+  ['制裁', 'sanctions'], ['反倾销', 'anti-dumping'], ['终裁', 'final ruling'], ['倾销', 'dumping'],
+  ['关税', 'tariff'], ['贸易救济', 'trade remedy'], ['撤侨', 'evacuation'], ['撤离', 'evacuation'],
   ['海盗', 'piracy'], ['地震', 'earthquake'], ['洪水', 'flood'], ['台风', 'typhoon'],
   ['罢工', 'strike'], ['火灾', 'fire'], ['事故', 'accident'], ['坠机', 'plane crash'],
   ['安全预警', 'security warning'], ['风险提示', 'travel warning']

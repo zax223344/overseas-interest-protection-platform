@@ -410,6 +410,11 @@ var DATASOURCES = (function(){
         if(typeof COLLECTED_DB!=='undefined' && typeof COLLECTED_DB.add==='function'){
           var _cat2 = FEED_TO_CAT[src.feeds[0]] || 'osint_intel';
           var _ttl2 = (isReal ? txt : src.name+'：'+txt);
+          /* 涉华安全类必须真实命中中国要素，否则降级为开源情报 */
+          if (_cat2 === 'security_events') {
+            var _chinaSig = /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i.test(_ttl2+' '+(_ri && _ri.content || ''));
+            if (!_chinaSig) _cat2 = 'osint_intel';
+          }
           if(!_dupInCollected(_cat2,_ttl2) && COLLECTED_DB.count(_cat2) < 400){
             COLLECTED_DB.add(_cat2, {
               title: _ttl2,

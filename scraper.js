@@ -145,8 +145,12 @@ var COLLECTED_DB={
     return this.CATEGORIES.reduce(function(sum,cat){return sum+me.count(cat);},0);
   },
 
-  /* 兼容旧接口（空实现，不再需要） */
-  clear(){}, deleteItem(){}, deleteBatch(){},
+  /* 兼容旧接口：透传到 DBCenter */
+  clear(){}, deleteBatch(){},
+  deleteItem(category,id){
+    if(typeof DBCenter!=='undefined'&&DBCenter.deleteItem) return DBCenter.deleteItem(category,id);
+    return false;
+  },
   setAuditStatus(){}, batchSetAuditStatus(){}, markDistributed(){},
   transferToDBCenter(){}, transferApprovedToDBCenter(){},
   purgeNonOverseas(){ return {total:0,byCat:{}}; },

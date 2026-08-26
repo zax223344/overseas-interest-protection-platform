@@ -2427,8 +2427,11 @@ function _extractEventDate(text, refDate) {
  * 同一事件被越多独立信源报道，预警置信度越高。 */
 function _eventSignature(it) {
   const t = String(it.title || '').toLowerCase();
-  const m = t.match(/attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|袭击|爆炸|死亡|绑架|枪击|制裁|抗议|冲突|炮击|撤离/);
-  const ev = m ? m[0] : '';
+  /* 提取所有事件类型关键词排序组合，避免"死亡"vs"火灾"因只取第一个而漏判同一事件 */
+  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|袭击|爆炸|死亡|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾/g;
+  const evSet = new Set();
+  let mm; while ((mm = evRe.exec(t)) !== null) evSet.add(mm[0]);
+  const ev = Array.from(evSet).sort().join('+') || '';
   const cty = String(it.country_iso || it.country_cn || it.country || '');
   /* 用提取到的事件发生日期而非发布日期，防止旧闻借新发布时间混进来 */
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
@@ -2708,7 +2711,10 @@ async function _ingestLinkedItems(items, tag, note) {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
-        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; let _dt = _classifyIntelType(it);
+        /* 涉华安全类必须真实命中中国要素，否则降级为开源情报 */
+        if (_dt === 'security_events' && !_isChinaLinked(it)) { _dt = 'osint_intel'; }
+        it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
           [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '全球海量媒体监测', JSON.stringify(it), 'approved']
@@ -5307,7 +5313,12 @@ function _localizeTitleTail(it) {
   if (!it || typeof it !== 'object') return { loc: 0, media: 0, city: 0 };
   if (_looksForeign(it.title)) {
     it._untranslated = true;
-    const probe = { title: _localizeCities(_localizeMedia(_localizeCountryNames(it.title))), content: it.content, content_zh: it.content_zh };
+    /* 即使未译出合格中文，也先把国家/城市/媒体专名本地化，降低"中外文融合"观感 */
+    const t1 = _localizeCountryNames(it.title);
+    const t2 = _localizeMedia(t1);
+    const t3 = _localizeCities(t2);
+    if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; }
+    const probe = { title: t3, content: it.content, content_zh: it.content_zh };
     _extractElements(probe);
     if (!it.location && probe.location) it.location = probe.location;
     if (!it.city && probe.city) it.city = probe.city;
@@ -5321,6 +5332,11 @@ function _localizeTitleTail(it) {
   if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; r.media = 1; }
   const t3 = _localizeCities(it.title);
   if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; r.city = 1; }
+  /* 正文同样本地化英文国家名，减少"中外文融合" */
+  if (it.content && /[A-Za-z]{4,}/.test(it.content)) {
+    const c1 = _localizeCountryNames(it.content);
+    if (c1 !== it.content) { if (!it.content_en) it.content_en = it.content; it.content = c1; it.content_zh = c1; }
+  }
   _extractElements(it);
   return r;
 }
