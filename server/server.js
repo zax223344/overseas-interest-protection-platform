@@ -28,6 +28,7 @@ const negtool = require('./negtool'); /* 社交媒体采集通道（TG+Reddit，
 const wechatoa = require('./wechat-oa'); /* 微信公众号实时采集通道（2026-08-21 用户指令：扫码登录+appmsg列表+正文+增量入库） */
 const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采（2026-08-25：搜狗检索拿不到新文的根治方案——鼎泰安元官网/郑和号观察者网号等运营方自有公开站点同步原文） */
 const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项采集（2026-08-26：组合词改排序+双信号过滤，专治涉华负面新文被埋） */
+const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索→抓取入库 四步管线（2026-08-26 用户指令：公众号只查询线索，不再从公众号抓数据入库） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -1641,6 +1642,10 @@ app.get('/api/wechat/status', (req, res) => {
     const st = wechatoa.status();
     st.lastRun = _wechatLastRun;
     st.negLastRun = _wechatNegLastRun;
+    /* 2026-08-26：公众号直采已退役，面板主状态改为四步管线 */
+    st.pipeline = 'wechat-leads';
+    st.leadsLastRun = _wechatLeadsLastRun;
+    st.pipelineNote = '公众号仅作线索查询；入库数据来自全球媒体原文（GDELT/GNews/Bing→全文抓取）';
     res.json({ ok: true, status: st });
   } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
 });
@@ -1691,6 +1696,12 @@ app.post('/api/wechat/negative-sweep', (req, res) => {
   /* 手动触发公众号涉华负面专项（2026-08-26）：异步跑，前端轮询 /api/wechat/status 看 negLastRun */
   if (Date.now() < _wxNegBusyUntil) return res.json({ ok: false, error: '上一轮涉华负面专项尚未结束，请稍候' });
   setTimeout(() => { _runWechatNegative(); }, 50);
+  res.json({ ok: true });
+});
+app.post('/api/wechat/leads-sweep', (req, res) => {
+  /* 手动触发公众号线索四步管线（2026-08-26）：异步跑，前端轮询 /api/wechat/status 看 leadsLastRun */
+  if (Date.now() < _wxLeadsBusyUntil) return res.json({ ok: false, error: '上一轮线索管线尚未结束，请稍候' });
+  setTimeout(() => { _runWechatLeads(); }, 50);
   res.json({ ok: true });
 });
 
@@ -2069,7 +2080,7 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   /* 多源印证：事件发生超过 6 小时后仍未被其他独立信源报道，视为不可信旧闻/单一信源噪音，暂不入库
    * 2026-08-25 豁免：白名单公众号（wechat_oa，含搜狗/profile_ext/镜像站三通道）是用户亲选的专业安全信源，
    * 独家首发内容永远等不到"多源印证"——刚果金上加丹加案 24h 内全网仅 2 家报道。保留 24h 时效闸（_isFreshEnough 另处执行）。 */
-  if (it._sourceType !== 'wechat_oa') {
+  if (it._sourceType !== 'wechat_oa' && it._sourceType !== 'wechat_lead') {
     const age = _getEventAgeMs(it);
     if (age > CORROBORATION_WINDOW_MS) {
       const corroborated = await _hasCorroboration(sig, 48);
@@ -4050,6 +4061,31 @@ async function _runWechatNegative() {
   finally { _wxNegBusyUntil = 0; }
 }
 
+/* ===== 公众号线索→全球搜索→抓取入库 四步管线调度（2026-08-26 用户指令）=====
+ * 新路径取代"从公众号抓取数据入库"：公众号只做线索雷达（搜狗检索），
+ * 入库数据全部来自全球媒体原文（GDELT/GNews/Bing 检索 → fulltext 抓全文 → 既有闸门入库）。 */
+let _wxLeadsBusyUntil = 0;
+let _wechatLeadsLastRun = null;
+async function _runWechatLeads() {
+  if (Date.now() < _wxLeadsBusyUntil) return;
+  _wxLeadsBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await wechatLeads.collect({ log: m => console.log('[WECHAT-LEAD] ' + m) });
+    _wechatLeadsLastRun = { at: new Date().toISOString(), stats: r.stats || {} };
+    const items = r.items || [];
+    const st = r.stats || {};
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 6); } catch (e) { console.warn('[WECHAT-LEAD] 翻译异常:', e.message); }
+      items.forEach(it => { try { ENTITY.enrich(it); it.interestLinked = true; } catch (e) {} });
+      const res = await _ingestLinkedItems(items, 'WECHAT-LEAD', '');
+      console.log('[WECHAT-LEAD] 一轮: 账号' + (st.accountsOk || 0) + '/' + (st.accounts || 0) + ' 查询' + (st.queries || 0) + ' 线索' + (st.leadsNew || 0) + '/' + (st.leads || 0) + ' 跟进' + (st.followed || 0) + ' 全球命中(gdelt ' + (st.gdelt || 0) + '/gnews ' + (st.gnews || 0) + '/bing ' + (st.bing || 0) + ') GNews解析(成功' + (st.gnewsResolved || 0) + '/失败' + (st.gnewsResolveFailed || 0) + ') 抓文' + (st.fetched || 0) + ' 相关过滤' + (st.droppedIrrelevant || 0) + ' 入库' + ((res && res.inserted) || 0));
+    } else {
+      console.log('[WECHAT-LEAD] 一轮无入库: 账号' + (st.accountsOk || 0) + '/' + (st.accounts || 0) + ' 查询' + (st.queries || 0) + ' 线索' + (st.leadsNew || 0) + '/' + (st.leads || 0) + ' 跟进' + (st.followed || 0) + ' 全球命中(gdelt ' + (st.gdelt || 0) + '/gnews ' + (st.gnews || 0) + '/bing ' + (st.bing || 0) + ') GNews解析(成功' + (st.gnewsResolved || 0) + '/失败' + (st.gnewsResolveFailed || 0) + ') 抓文' + (st.fetched || 0) + ' 相关过滤' + (st.droppedIrrelevant || 0) + (st.errors && st.errors.length ? ' | ' + st.errors.slice(0, 3).join(';') : ''));
+    }
+  } catch (e) { console.warn('[WECHAT-LEAD] 采集失败:', e.message); }
+  finally { _wxLeadsBusyUntil = 0; }
+}
+
 function startGlobalMediaCron() {
   setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); }); }, 5000);  // 启动后5s先同步统计再首跑
   setInterval(_runGlobalMedia, GLOBAL_MEDIA_INTERVAL_MS); // 每60秒刷新一轮
@@ -4062,10 +4098,10 @@ function startGlobalMediaCron() {
   // 公众号镜像站直采：每15分钟一轮（2026-08-25；与搜狗/profile_ext 通道并行互补）
   setTimeout(_runWechatMirrors, 150 * 1000);
   setInterval(_runWechatMirrors, 15 * 60 * 1000);
-  // 公众号涉华负面专项：每90分钟一轮（2026-08-26 #384 提速；8 词组合池轮换，4 轮=6h 全池覆盖，
-  // 单轮请求量不变，搜狗风控由共享 90min 冷却兜底）
-  setTimeout(_runWechatNegative, 6 * 60 * 1000);
-  setInterval(_runWechatNegative, 90 * 60 * 1000);
+  // 公众号线索四步管线：每30分钟一轮（2026-08-26 用户指令：公众号只查询线索，全球搜索抓数据入库；
+  // 取代原 _runWechatOA/_runWechatNegative 直采入库——公众号文章本身不再入库）
+  setTimeout(_runWechatLeads, 5 * 60 * 1000);
+  setInterval(_runWechatLeads, 30 * 60 * 1000);
   // 每5分钟再同步一次数据库，防止统计漂移
   setInterval(_syncDailyStatsFromDB, 5 * 60 * 1000);
   // 采集自动驾驶调速器：每10分钟自检，落后自动加码，达标自动降档
@@ -4083,9 +4119,8 @@ function startGlobalMediaCron() {
   // 区域均衡采集器：每30分钟挑最薄弱2区域定向采集（2026-08-17 用户指令：采集全球均衡）
   setTimeout(_runRegionBalance, 90000);
   setInterval(_runRegionBalance, 30 * 60 * 1000);
-  // 微信公众号采集器：每15分钟一轮（扫码登录后生效；低频防风控，2026-08-21 用户指令）
-  setTimeout(_runWechatOA, 120000);
-  setInterval(_runWechatOA, 15 * 60 * 1000);
+  // 原微信公众号直采 cron 已于 2026-08-26 退役（用户指令：不再从公众号抓取数据入库，
+  // 由 _runWechatLeads 四步管线取代；wechatoa/wechatNeg 模块保留供手动诊断端点使用）。
   // Neon 云采集同步：每10分钟拉取 GitHub Actions 采集的原始条目（2026-08-24 方案二；未配置 NEON_DATABASE_URL 时静默跳过）
   setTimeout(_runNeonSync, 90000);
   setInterval(_runNeonSync, 10 * 60 * 1000);
