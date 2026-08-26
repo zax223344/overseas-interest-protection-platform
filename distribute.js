@@ -104,8 +104,13 @@
       }
       return 'orange';
     }
-    /* 上游标的红：涉华校验，不涉华降橙 */
-    if (l === 'red') return china ? 'red' : 'orange';
+    /* 上游标的红：只有涉华 + 真实严重安全事件才保留红色；
+     * 涉华但仅为制裁/表态/经济摩擦的，一律压橙，杜绝“有中国字样即红” */
+    if (l === 'red') {
+      if (china && _SEVERE_RE.test(text)) return 'red';
+      if (!china && _SEVERE_RE.test(text)) return 'orange';
+      return 'orange';
+    }
     if (['orange', 'yellow', 'blue'].indexOf(l) >= 0) return l;
     /* 橙色：中资/华人/项目遇袭或重大风险、严重制裁、重大运营中断 */
     if (/中资.*(?:遇袭|袭击|冲突|威胁|风险|损失|中断|停工|冻结|制裁)|中企.*(?:遇袭|袭击|冲突|威胁|风险|损失|中断|停工|冻结|制裁)|华人.*(?:遇害|被绑|袭击|威胁|风险)|华侨.*(?:遇害|被绑|袭击|威胁|风险)|使馆.*(?:遇袭|袭击|威胁|风险)|项目.*(?:遇袭|中断|停工|冻结|重大风险|重大损失)|重大制裁|严厉制裁|大规模抗议|军事冲突|武装冲突|资产.*冻结|重大损失/i.test(text)) return 'orange';
@@ -444,7 +449,10 @@
       /* 蓝色提示级移出预警中心（分级铁律） */
       if (a0.level === 'blue') { ALERTS.splice(i, 1); staleDropped++; continue; }
       var text = t0;
-      if (a0.level === 'red' && !_hasChinaDirect(text)) { a0.level = 'orange'; lvFixed++; }
+      /* 红色硬约束：涉华 + 严重安全事件才保留红；否则压橙 */
+      if (a0.level === 'red') {
+        if (!_hasChinaDirect(text) || !_SEVERE_RE.test(text)) { a0.level = 'orange'; lvFixed++; }
+      }
       if (a0._live) {
         var c = _extractCountryFromText(text);
         if (c && a0.country && c !== a0.country) { a0.country = c; ctyFixed++; }

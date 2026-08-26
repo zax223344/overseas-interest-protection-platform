@@ -782,14 +782,16 @@ async function _serverAlertGen() {
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
     const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
-    /* 2026-08-26 赋分改革回填：存量预警缺 risk_zone 的现场重算（分数驱动等级，红区硬约束同步生效） */
+    /* 2026-08-26 赋分改革回填：版本化重算，确保红区硬约束修正后存量预警同步降级 */
     let backfilled = 0;
     for (const a of alerts) {
-      if (!a || a.risk_zone) continue;
+      if (!a) continue;
+      if (a._riskVersion === 2) continue;
       try {
         const s = _scoreRiskItem({ title: a.title || '', title_zh: a.title_zh || '', content: a.desc || '', country: a.country || '', source: a.source || '', publishedAt: a.publishedAt || a.time || '' });
         a.risk_score = s.score; a.risk_zone = s.zone; a.risk_rationale = s.rationale; a.zone_action = s.action;
         a.level = s.level; /* 分数权威性最高：旧"涉华+严重即红"的等级一律以新分数为准 */
+        a._riskVersion = 2;
         backfilled++;
       } catch (e) {}
     }
@@ -843,7 +845,8 @@ async function _serverAlertGen() {
         risk_score: it.risk_score != null ? it.risk_score : null,
         risk_zone: it.risk_zone || '',
         risk_rationale: it.risk_rationale || '',
-        zone_action: it.zone_action || (it.risk_zone ? ZONE_ACTIONS[it.risk_zone] : '') || ''
+        zone_action: it.zone_action || (it.risk_zone ? ZONE_ACTIONS[it.risk_zone] : '') || '',
+        _riskVersion: 2
       };
       added.unshift(alert);
       have.add(tkey);
@@ -2261,14 +2264,22 @@ function _scoreRiskItem(it) {
              t.match(/(\d{1,4})\s*(?:people\s+)?(?:killed|dead|deaths)/i) ||
              t.match(/(?:death toll|kills)\s*(\d{1,4})/i);
   const deaths = cm ? parseInt(cm[1], 10) : 0;
-  const hardTarget = ent.enterprises.length > 0 || ent.projects.length > 0 || ent.assets.some(a => (a.weight || 0) >= 0.9);
+  /* hardTarget：只认中资主体/重大项目/高权重核心资产（人员/机构/工程/能源/矿业≥0.95）。
+   * 航运船舶(0.9)、境外金融(0.8)等泛资产不能单独把制裁/表态类抬进红区。 */
+  const hardTarget = ent.enterprises.length > 0 || ent.projects.length > 0 || ent.assets.some(a => (a.weight || 0) >= 0.95);
   const chineseVictim = hitIds.indexOf('R-T01') >= 0 || hitIds.indexOf('R-T02') >= 0;
   /* 暴力/人身安全威胁：恐袭/枪击/战争/政变/撤离/海盗——非暴力威胁（抗议/制裁/舆论等）不得入红 */
   const VIOLENT_RULES = ['R-T01', 'R-T02', 'R-T03', 'R-T04', 'R-T05', 'R-T07', 'R-T10', 'R-T11'];
   const violentThreat = hitIds.some(id => VIOLENT_RULES.indexOf(id) >= 0);
+  /* 制裁/出口管制(R-T09)是实质非暴力威胁，除非直接命中中资主体/项目/人员受害或重大伤亡，否则不许入红 */
+  const topThreat = (hits[0] && hits[0].rule) || '';
   if (score >= 61 && !(chineseVictim || (chinaSig && hardTarget && violentThreat) || (chinaSig && deaths >= 5))) {
     hits.push({ rule: 'R-Z01', name: '红区硬约束：无暴力威胁且未直接命中中资主体/项目/核心资产或中方人员伤亡，压至黄区上沿', add: 60 - score });
     score = 60;
+  }
+  if (topThreat === 'R-T09' && score >= 61 && !(chineseVictim || (chinaSig && hardTarget && violentThreat) || (chinaSig && deaths >= 5))) {
+    hits.push({ rule: 'R-Z04', name: '制裁类硬约束：未直接命中中资主体/人员受害，压至橙区', add: 55 - score });
+    score = 55;
   }
   /* 非涉华重大伤亡（≥10死）：态势关注，提至黄区上沿，但永不入红 */
   if (!chinaSig && deaths >= 10 && score < 46) {
