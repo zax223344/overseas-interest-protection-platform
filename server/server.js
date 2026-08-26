@@ -4062,9 +4062,10 @@ function startGlobalMediaCron() {
   // 公众号镜像站直采：每15分钟一轮（2026-08-25；与搜狗/profile_ext 通道并行互补）
   setTimeout(_runWechatMirrors, 150 * 1000);
   setInterval(_runWechatMirrors, 15 * 60 * 1000);
-  // 公众号涉华负面专项：每2小时一轮（2026-08-26；组合词改排序，把涉华负面新文顶到结果页前部）
+  // 公众号涉华负面专项：每90分钟一轮（2026-08-26 #384 提速；8 词组合池轮换，4 轮=6h 全池覆盖，
+  // 单轮请求量不变，搜狗风控由共享 90min 冷却兜底）
   setTimeout(_runWechatNegative, 6 * 60 * 1000);
-  setInterval(_runWechatNegative, 2 * 60 * 60 * 1000);
+  setInterval(_runWechatNegative, 90 * 60 * 1000);
   // 每5分钟再同步一次数据库，防止统计漂移
   setInterval(_syncDailyStatsFromDB, 5 * 60 * 1000);
   // 采集自动驾驶调速器：每10分钟自检，落后自动加码，达标自动降档

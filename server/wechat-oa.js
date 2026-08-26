@@ -265,7 +265,7 @@ function _sogouParseList(html) {
   }
   return out;
 }
-async function _sogouSearch(name, queryOverride) {
+async function _sogouSearch(name, queryOverride, startPage) {
   const cookies = await _sogouEnsureCookies();
   if (!cookies) return { error: 'sogou-cookie-fail' };
   const q = String(queryOverride || name || '').trim() || name;
@@ -273,7 +273,9 @@ async function _sogouSearch(name, queryOverride) {
    * 基线检索按相关度排序会混入旧文——靠逐条 ts 时间戳 + 45 天新鲜度预过滤 + 标题增量去重控制。
    * 2026-08-25 实测恶化：部分账号（刺猬安全等 12 个）page1 全是数月前旧文 → 0 新鲜、永远采不到。
    * 对策：page1 零新鲜时自动补抓 page2（实测 page2 反而更新），仍无则放弃等下轮。
-   * 2026-08-26：支持 queryOverride（涉华负面专项用「账号名 中国」等组合词改排序）。 */
+   * 2026-08-26：支持 queryOverride（涉华负面专项用「账号名 中国」等组合词改排序）。
+   * 2026-08-26（#384 深翻页轮换）：startPage 模式下每轮固定采 2 页，起始页跨轮 1→2→3→1 轮换，
+   * 覆盖相关度排序把新文埋在第 2~3 页的场景；每轮请求数与原 page1+补 page2 相同，不增风控压力。 */
   const fetchPage = async (page) => {
     const url = 'https://weixin.sogou.com/weixin?type=2&query=' + encodeURIComponent(q) + (page > 1 ? '&page=' + page : '');
     const r = await _httpGet(url, { timeout: 12000, headers: { 'Cookie': cookies, 'Referer': SOGOU_HOME } });
@@ -281,6 +283,19 @@ async function _sogouSearch(name, queryOverride) {
     if (/antispider|请输入验证码|用户您好，我们的系统检测到您网络中存在异常访问请求/.test(r.body)) return { antispider: true };
     return { list: _sogouParseList(r.body) };
   };
+  if (startPage) {
+    const pages = [startPage, startPage % 3 + 1];   /* 起始页 + 下一页（3 页内回绕） */
+    const list = [];
+    for (let i = 0; i < pages.length; i++) {
+      if (i > 0) await _sleep(_jitter(4000, 7000));
+      const p = await fetchPage(pages[i]);
+      if (p.antispider) return p;
+      if (p.error) { if (!list.length) return p; continue; }
+      const seen = new Set(list.map(x => x.title));
+      (p.list || []).forEach(x => { if (!seen.has(x.title)) list.push(x); });
+    }
+    return { list };
+  }
   const p1 = await fetchPage(1);
   if (p1.error || p1.antispider) return p1;
   const isFresh = x => !x.ts || (Date.now() - x.ts) <= 45 * 864e5;
@@ -345,7 +360,11 @@ async function collectViaSearch(accounts, opts) {
     if (Date.now() < _freqCoolUntil) { stats.errors.push('搜狗风控冷却中'); break; }
     if (resolveBudget <= 0) { stats.errors.push('本轮解析预算已用完，剩余账号下轮再采'); break; }
     try {
-      const sr = await _sogouSearch(name);
+      /* 深翻页轮换（2026-08-26 #384）：pageRot 存增量状态，每轮起始页 1→2→3→1 轮换，
+       * 单轮请求数不变（2 页），跨轮覆盖前 3 页，专治新文被相关度排序埋掉。 */
+      incr[name] = incr[name] || {};
+      const pageRot = (incr[name].pageRot | 0) % 3;
+      const sr = await _sogouSearch(name, null, pageRot + 1);
       if (sr.antispider) {
         _freqCoolUntil = Date.now() + FREQ_COOLDOWN_MS;
         _sogou.cookies = '';   /* 旧 cookie 已被盯上，下轮换新 */
@@ -353,12 +372,12 @@ async function collectViaSearch(accounts, opts) {
         break;
       }
       if (sr.error) { stats.errors.push(name + ': ' + sr.error); continue; }
+      incr[name].pageRot = (pageRot + 1) % 3;
       stats.accountsOk++;
       stats.fetched += sr.list.length;
       /* 45 天新鲜度预过滤（与系统 MAX_AGE_DAYS 一致），省下跳转/正文请求 */
       const freshList = sr.list.filter(x => !x.ts || (Date.now() - x.ts) <= 45 * 864e5);
       stats.skippedOld += sr.list.length - freshList.length;
-      incr[name] = incr[name] || {};
       const seenT = incr[name].seenTitles || [];
       const news = freshList.filter(x => { const k = _titleKey(x.title); return k && !seenT.includes(k); });
       /* 最新优先：跳转解析是风控敏感步，有限的预算先给最新的文章 */

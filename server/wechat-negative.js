@@ -17,6 +17,11 @@ function isChinaNegative(text) {
   return CN_RE.test(t) && NEG_RE.test(t);
 }
 
+/* 涉华组合词池（2026-08-26 #384 扩查）：原来只有「中国/袭击」2 个词，涉华负面表述远不止这两种。
+ * 每号每轮从池中轮换取 2 个词（单轮请求量与原来相同），跨 4 轮覆盖全部 8 个词，
+ * 轮换进度存增量文件 qRot，服务重启不丢。 */
+const QUERY_TERMS = ['中国', '华人', '中资', '袭击', '绑架', '安全预警', '海外', '风险'];
+
 const _norm = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 /* 结果块公众号名与清单名互相包含即认为同号（清单名常带"订阅号"等后缀差异） */
 function _accMatch(resultAccount, target) {
@@ -46,8 +51,11 @@ async function collectNegative(opts) {
     const seenMain = incr[name].seenTitles || [];
     let found = false;
 
-    /* 组合词：先「账号 中国」把涉华文章顶上来；无涉华负面新文再试「账号 袭击」 */
-    const queries = [name + ' 中国', name + ' 袭击'];
+    /* 组合词轮换（2026-08-26 #384）：从 8 词池中按 qRot 取 2 个，命中涉华负面新文即停；
+     * 单轮请求量不变（≤2 查询/号），跨 4 轮（8h）每号覆盖全部组合词。 */
+    const qRot = (incr[negKey].qRot | 0) % QUERY_TERMS.length;
+    const queries = [0, 1].map(i => name + ' ' + QUERY_TERMS[(qRot + i) % QUERY_TERMS.length]);
+    incr[negKey].qRot = (qRot + 1) % QUERY_TERMS.length;
     for (const q of queries) {
       if (found) break;
       await oa._internals.sleep(oa._internals.jitter(2500, 4500));
