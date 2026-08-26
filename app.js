@@ -7748,7 +7748,10 @@ const SITUATION={
     }
     /* 实时情报流列表（2026-08-20：让 liveItems 指标可见，同时给态势总览一个实时滚动切片） */
     h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px">📡 实时情报流</div>';
-    var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue'; }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); }).slice(0,5);
+    var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue'; }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
+    /* 事件级去重：同一事件多来源/多进展只留最新一条，避免同一火灾/制裁/袭击反复刷屏 */
+    liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(liveSlice,'fuzzy'):liveSlice;
+    liveSlice=liveSlice.slice(0,5);
     if(liveSlice.length){
       liveSlice.forEach(function(a){
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
@@ -7790,13 +7793,14 @@ const SITUATION={
         if(!liveItems.some(function(x){ return String(x.id)===String(a.id); })) liveItems.push(a);
       });
     }
-    liveItems.sort(function(a,b){ try{ return new Date(b.time||0).getTime()-new Date(a.time||0).getTime(); }catch(e){ return 0; } }).filter(a=>a.level!=='blue').slice(0,8).forEach(a=>{
+    /* 合并实时与非实时预警后按事件去重，避免同一事件在 ticker 中反复出现 */
+    var tickerAlerts=liveItems.concat((ALERTS||[]).filter(function(a){ return !a._live && a.level!=='blue'; }));
+    tickerAlerts=tickerAlerts.sort(function(a,b){ try{ return new Date(b.time||0).getTime()-new Date(a.time||0).getTime(); }catch(e){ return 0; } });
+    tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(tickerAlerts,'fuzzy'):tickerAlerts;
+    tickerAlerts.slice(0,10).forEach(function(a,idx){
       const cls=a.level==="red"?"":a.level==="orange"?" orange":a.level==="yellow"?" yellow":" green";
-      items.push('<span class="ti'+cls+'">['+(ALERT_LV[a.level]?ALERT_LV[a.level].label:'预警')+']</span><b style="color:var(--cyan)">[实时]</b> '+stripTags(a.title_zh||a.title).replace('[实时] ','')+' ('+(a.time?a.time.substring(11,16):'')+')');
-    });
-    [...ALERTS].filter(a=>!a._live && a.level!=='blue').sort((a,b)=>b.time.localeCompare(a.time)).slice(0,6).forEach(a=>{
-      const cls=a.level==="red"?"":a.level==="orange"?" orange":a.level==="yellow"?" yellow":" green";
-      items.push('<span class="ti'+cls+'">['+ALERT_LV[a.level].label+']</span>'+stripTags(a.title_zh||a.title)+' - '+a.country+' ('+a.time.substring(5)+')');
+      const isLive=idx<3 && (a._live || (typeof LIVE_ALERTS!=='undefined' && LIVE_ALERTS.some(function(x){ return String(x.id)===String(a.id); })));
+      items.push('<span class="ti'+cls+'">['+(ALERT_LV[a.level]?ALERT_LV[a.level].label:'预警')+']</span>'+(isLive?'<b style="color:var(--cyan)">[实时]</b> ':'')+stripTags(a.title_zh||a.title).replace('[实时] ','')+' - '+a.country+' ('+(a.time?a.time.substring(5):'')+')');
     });
     EVENTS.filter(e=>e.level!=='blue').slice(0,6).forEach(e=>{
       items.push('<span class="ti orange">[事件]</span>'+e.title+' - '+e.country+' ('+e.date+')');
