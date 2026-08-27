@@ -7561,14 +7561,26 @@ const SITUATION={
       }
     }catch(e){ console.warn('[renderDailyStatsMini]',e); }
   },
-  /* 高可见面板统一新鲜度判定：优先真实事件时间，避免旧闻被系统盖新戳后混入 */
+  /* 高可见面板统一新鲜度判定（2026-08-28 根治旧闻盖新戳）：
+   * 旧版取全部时间字段最大值——旧闻的 time/collect_time 被任何环节刷新过就漏网，
+   * 真实事件时间被无视（伦敦使馆 08-23 旧闻混入面板的根因）。
+   * 新规则【事件时间一票否决】：
+   * ① 存在真实事件时间（publishedAt/publish_time/seendate/event_date/date）→ 必须用它判（取其中最新，多字段都是事件信号）；
+   * ② 完全无事件时间 → 才退化用 time（预警生成时间）；
+   * ③ time 也无 → collect_time；
+   * ④ 全无 → 仅 _live 实时条目放行。 */
   _freshItem(a,hours){
     var _ts=function(v){ if(!v)return 0; var d=new Date(String(v).replace(/ /g,'T')); return isNaN(d.getTime())?0:d.getTime(); };
-    var candidates=['time','publishedAt','publish_time','seendate','event_date','date','collect_time'];
-    var best=0, now=Date.now(), maxMs=(hours||24)*3600*1000;
-    for(var i=0;i<candidates.length;i++){ var t=_ts(a[candidates[i]]); if(t>best)best=t; }
-    if(!best && a._live) return true;
-    return best>0 && (now-best)<=maxMs;
+    var now=Date.now(), maxMs=(hours||24)*3600*1000;
+    var evCandidates=['publishedAt','publish_time','seendate','event_date','date'];
+    var evBest=0;
+    for(var i=0;i<evCandidates.length;i++){ var t=_ts(a[evCandidates[i]]); if(t>evBest)evBest=t; }
+    if(evBest>0) return (now-evBest)<=maxMs;               /* ① 事件时间一票否决 */
+    var tGen=_ts(a.time);
+    if(tGen>0) return (now-tGen)<=maxMs;                   /* ② 预警生成时间 */
+    var tCol=_ts(a.collect_time);
+    if(tCol>0) return (now-tCol)<=maxMs;                   /* ③ 采集时间 */
+    return !!a._live;                                      /* ④ 实时条目兜底 */
   },
   _isHighValuePanel(a){
     /* 铁律 2026-08-27：全球态势焦点/最新情报面板只显示核心安全事件
@@ -7580,6 +7592,18 @@ const SITUATION={
     var latinRuns=disp.match(/[A-Za-z][A-Za-z'’-]*(?:\s+[A-Za-z][A-Za-z'’-]*){3,}/g)||[];
     if(latinRuns.length&&/[一-龥]/.test(disp)) return false;   /* 混排：含中文又有 4+ 连续英文词 */
     if(disp.length&&(/[一-龥]/.test(disp)?false:true)&&/[A-Za-z]{6,}/.test(disp)) return false; /* 纯外文主体 */
+    /* 铁律 2026-08-28：翻译残留类烂标题不上高可见面板
+     *（例：「27人死亡11 Shtatorit，恐怖分子的组织者」——数字+外文实义词=机翻半成品） */
+    if(/[一-龥]/.test(disp)){
+      var _frags=disp.match(/\d{1,4}\s+[A-Za-z][A-Za-z]{3,}/g)||[];
+      var _wl=/^(?:CPEC|ISIS|ISIL|Taliban|COVID|IMF|WTO|NATO|TTP|BLA|ISWAP|Houthi|Houthis|Hezbollah|Hamas|RSF|ELN|FARC|OPEC|SWIFT)s?$/i;
+      for(var fi=0;fi<_frags.length;fi++){
+        var _w=String(_frags[fi]).trim().split(/\s+/)[1];
+        if(_w&&!_wl.test(_w)) return false;
+      }
+      var _lower=disp.match(/[a-z]{4,}/g)||[];
+      if(_lower.length>=2) return false;
+    }
     /* 核心事件词：必须命中 */
     var isCore=/恐袭|恐怖|自杀式|绑架|劫持|人质|武装袭击|恐怖袭击|枪击|谋杀|屠杀|灭门|刑事|命案|爆炸|伏击|突袭|武装分子|极端组织|塔利班|博科|青年党|基地组织|伊斯兰国|ISIS|绑架案|劫持案|抢劫|匪徒|帮派|枪击案|凶杀|命案|中国公民|中方人员|华人被袭|华侨被绑|撤侨|群体开枪|terror|suicide|kidnap|hostage|attack|bombing|blast|shooting|murder|massacre|militant|insurgent|extremist|Taliban|Boko|Shabaab|Qaeda|ISIS|ambush|raid|assault|armed|gunmen|criminal|gang|homicide/i.test(t);
     if(!isCore) return false;
@@ -17013,6 +17037,17 @@ function _alertTsRaw(a){
   if(!t&&typeof _parseIntelTime==='function'){ try{ t=new Date(_parseIntelTime(a)).getTime(); }catch(e){} }
   return t||0;
 }
+/* 2026-08-28 旧闻硬否决（用户铁律：杜绝非当天新闻进入预警中心）：
+ * 真实事件时间超过 72h 的，无论 time/collect_time 被哪条链路刷新到多新，一律视为旧闻。
+ * 72h 上限兼容刚果金案例（事件 2 天前、预警今天生成，合法保留）。 */
+function _isStaleEvent(a){
+  var _ts=function(v){ if(!v)return 0; var d=new Date(String(v).replace(/ /g,'T')); return isNaN(d.getTime())?0:d.getTime(); };
+  var cands=['publishedAt','publish_time','seendate','event_date','date'];
+  var best=0;
+  for(var i=0;i<cands.length;i++){ var t=_ts(a[cands[i]]); if(t>best)best=t; }
+  if(!best) return false;                     /* 无事件时间 → 交给 24h 生成窗判断 */
+  return (Date.now()-best) > 72*3600*1000;    /* 事件超 72h → 旧闻一票否决 */
+}
 /* 历史静态种子黑名单（2026-08-15）：以下条目为早期内置示例数据，被"盖新戳再生链"反复冒充今日预警；
  * 真实复发的新闻必然带原文链接，故仅拦截无 url 的裸条目。 */
 var _STALE_SEED_RE=/暗网论坛出现针对中资矿业公司的雇佣兵招募信息|卡拉奇港中资码头出现可疑车辆|马里北部发生武装袭击，金矿区安全形势恶化|苏丹武装冲突升级，多国发布撤侨警告/;
@@ -17030,6 +17065,7 @@ function _purgeAlertsNotToday(){
   var before=ALERTS.length;
   ALERTS=ALERTS.filter(function(a){
     if(_isStaleSeed(a)) return false;
+    if(_isStaleEvent(a)) return false;   /* 2026-08-28 旧闻硬否决：事件超 72h 一律剔除（伦敦使馆旧闻根治） */
     var t=_alertTsRaw(a);
     if(t) return t>=ds;
     /* 无时间字段：用预警编号内嵌日期兜底（alert_no 的 YYYYMMDD = 采入生成日，诚实可靠），

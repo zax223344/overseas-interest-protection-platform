@@ -2118,6 +2118,23 @@ function _isTitleQualityOk(it) {
   const tzh = String(it.title_zh || '').trim();
   const usable = tzh || t;
   if (usable.length < 12) return false;
+  /* 2026-08-28 翻译残留类根治（用户指令：解决一类问题而非个案）：
+   * 小语种（阿尔巴尼亚语等拉丁字母语言）机翻只翻一半，产出「27人死亡11 Shtatorit」
+   * 式烂标题——数字后紧跟外文实义词是典型残留信号（正常中文写"9月11日"不写"11 Shtatorit"）。
+   * 专名/缩写白名单放行（人名地名保留在中文标题属正常操作）。 */
+  if (/[\u4e00-\u9fa5]/.test(usable)) {
+    const m = usable.match(/\d{1,4}\s+[A-Za-z][A-Za-z]{3,}/g) || [];
+    const WL = /^(?:CPEC|ISIS|ISIL|Taliban|COVID|IMF|WTO|NATO|UNHCR|TTP|BLA|ISWAP|Houthi|Houthis|Hezbollah|Hamas|RSF|ELN|FARC|UNICEF|OPEC|SWIFT|killed|injured|dead)s?$/i;
+    for (const frag of m) {
+      const w = String(frag).trim().split(/\s+/)[1];
+      if (w && !WL.test(w)) return false;   /* 数字+外文实义词残留 → 拦截 */
+    }
+    /* 中文标题内连续 2+ 个非白名单外文词（非首字母专名模式）→ 机翻半成品 */
+    const words = usable.match(/[a-z]{4,}/g) || [];   /* 全小写词 = 非专名，实义词残留 */
+    const WL2 = /^(?:killed|injured|dead|attack|attackers|missing|wounded|hostage|kidnapped)$/i;
+    const lowerWords = words.filter(w => !WL2.test(w));
+    if (lowerWords.length >= 2) return false;
+  }
   /* 拦截明显缺主语/缺事件要素的标题：地名+人称+动词 but 无对象 */
   if (/^来自.*的.*称|^来自.*称| claimed by |claims that|^来自.*的.*表示|^据.*报道|^.*称.*是$/i.test(usable)) {
     /* 若同时含具体事件要素则放行 */
