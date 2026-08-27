@@ -923,9 +923,14 @@ var DATACENTER={
     }).catch(function(){});
   },
   updateBadge(){
-    var stats=this.computeLiveStats();
+    /* 2026-08-28 口径统一（#432）：徽标优先用服务端权威总数（PostgreSQL 实数）。
+     * 旧版用前端内存数——前端只加载了分页/限量数据（如 4954），
+     * 与态势总览的服务端口径（7404+）永久对不上。 */
     var badge=document.getElementById('sb-dc-count');
-    if(badge){badge.textContent=stats.total;badge.classList.toggle('zero',stats.total===0);}
+    if(badge){
+      var n=(this._serverStats&&typeof this._serverStats.total==='number')?this._serverStats.total:this.computeLiveStats().total;
+      badge.textContent=n;badge.classList.toggle('zero',n===0);
+    }
   },
   computeLiveStats(){
     var catList=[

@@ -387,6 +387,12 @@ const _DR_TYPE_NAMES = {
   public_health: '公共卫生', infrastructure: '基础设施与供应链', security_events: '治安事件',
   geopolitical_intel: '地缘动态', osint_intel: '开源情报综合'
 };
+/* 前一日 key（本地时区，供简报环比） */
+function _prevDayKey(dateKey) {
+  const parts = String(dateKey).split('-').map(Number);
+  const d = new Date(parts[0], parts[1] - 1, parts[2] - 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 async function _generateDailyReport(dateKey) {
   const parts = dateKey.split('-').map(Number);
   const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
@@ -395,29 +401,49 @@ async function _generateDailyReport(dateKey) {
     "SELECT id, data_type, title, country, severity, source, event_date, collect_time, data_json FROM intel_data WHERE collect_time >= $1 AND collect_time < $2 AND audit_status='approved' ORDER BY collect_time DESC",
     [start, end]
   );
-  const cnRe = /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i;
+  /* 2026-08-28 涉华口径与全系统统一：用 isChinaRelatedStrict（Chinese 泛称/港台疆藏不再误标） */
   const items = rows.map(r => {
     const j = r.data_json || {};
     return {
       id: r.id, type: r.data_type, title: j.title_zh || r.title || '', country: r.country || j.country_cn || '',
       severity: j.level_norm || r.severity || 'yellow', source: r.source || j.source || '',
       time: j.publish_time || r.event_date || '',
-      china: cnRe.test((r.title || '') + ' ' + (j.title_zh || '')),
+      china: scrapers.isChinaRelatedStrict((r.title || '') + ' ' + (j.title_zh || '')),
       assets: j.asset_tags || [], cred: j.credibility || '', corr: j.corroboration || 0,
-      negative: j._chinaNegative === true || j._chinaNegative === 'true'
+      negative: j._chinaNegative === true || j._chinaNegative === 'true',
+      _sig: j._eventSig || ''
     };
   });
-  const total = items.length;
-  const chinaItems = items.filter(i => i.china && !i.negative);
-  const negItems = items.filter(i => i.negative);
-  const reds = items.filter(i => i.severity === 'red');
-  const byType = {}; items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
-  const byCountry = {}; items.forEach(i => { const c = i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+  /* ===== 事件级去重（2026-08-28 用户指令：简报去重）=====
+   * 同一事件多来源/多进展只保留一条：优先事件签名，其次归一化中文标题键。
+   * 保留规则：级别更高 > 印证源更多 > 更新。 */
+  const _sigOf = i => i._sig && String(i._sig).indexOf('|') >= 0 ? i._sig : 't:' + _normTitleKey(i.title);
+  const _lvW = { red: 4, orange: 3, yellow: 2, blue: 1 };
+  const seen = new Map();
+  items.forEach(i => {
+    const k = _sigOf(i);
+    if (!k || k === 't:') return;
+    const prev = seen.get(k);
+    if (!prev) { seen.set(k, i); return; }
+    const better = (_lvW[i.severity] || 0) * 100 + (i.corr || 0) * 10 > (_lvW[prev.severity] || 0) * 100 + (prev.corr || 0) * 10;
+    if (better) seen.set(k, i);
+  });
+  const uniq = Array.from(seen.values());
+  const total = uniq.length;
+  const rawTotal = items.length;
+  const chinaItems = uniq.filter(i => i.china && !i.negative);
+  const negItems = uniq.filter(i => i.negative);
+  const reds = uniq.filter(i => i.severity === 'red');
+  const byType = {}; uniq.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+  const byCountry = {}; uniq.forEach(i => { const c = i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
   const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const assetHits = items.filter(i => i.assets && i.assets.length);
-  const corroborated = items.filter(i => i.corr >= 2).sort((a, b) => b.corr - a.corr);
-  const sanctions = items.filter(i => i.type === 'sanctions_data');
+  const assetHits = uniq.filter(i => i.assets && i.assets.length);
+  const corroborated = uniq.filter(i => i.corr >= 2).sort((a, b) => b.corr - a.corr);
+  const sanctions = uniq.filter(i => i.type === 'sanctions_data');
   const sources = {}; items.forEach(i => { sources[i.source] = 1; });
+  /* 核心威胁（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚）单列研判素材 */
+  const _CORE_RE = /巴基斯坦|俾路支|瓜达尔|CPEC|中巴经济走廊|阿富汗|喀布尔|尼日利亚|索马里|马里|尼日尔|布基纳法索|刚果|苏丹|埃塞俄比亚|肯尼亚|哈萨克斯坦|乌兹别克|吉尔吉斯|塔吉克|缅甸|泰国|马来西亚|印度尼西亚|菲律宾|Vietnam|Pakistan|Afghanistan/i;
+  const coreThreats = uniq.filter(i => _CORE_RE.test(String(i.country || '') + String(i.title || '')) && /terror_events|military_conflicts|security_events/.test(i.type));
 
   function row(i, extra) {
     const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
@@ -457,6 +483,21 @@ async function _generateDailyReport(dateKey) {
   html += section('境外涉华负面舆情', '⚠️', negItems.slice(0, 10).map(i => row(i)).join(''), '当日无涉华负面条目');
   html += section('制裁、出口管制与合规动态', '⚖️', sanctions.slice(0, 12).map(i => row(i)).join(''), '当日无制裁合规类条目');
   html += section('多源印证事件（≥2 方独立信源）', '🔗', corroborated.slice(0, 12).map(i => row(i)).join(''), '当日无多源印证事件');
+  /* ===== 十二类全景（2026-08-28 用户指令：简报全覆盖，不能只盯着恐袭）=====
+   * 每类列当日 TOP2 代表事件；空类如实标注"当日无条目"。 */
+  {
+    const ALL_TYPES = ['terror_events', 'military_conflicts', 'security_events', 'social_unrest', 'political_events',
+      'economic_risk', 'sanctions_data', 'legal_compliance', 'cyber_security', 'infrastructure', 'natural_disasters', 'public_health'];
+    let inner = '';
+    ALL_TYPES.forEach(t => {
+      const list = uniq.filter(i => i.type === t).slice(0, 2);
+      const n = byType[t] || 0;
+      inner += '<div style="margin:10px 0"><div style="font-size:13px;font-weight:700;color:#0a84ff">' + (_DR_TYPE_NAMES[t] || t)
+        + ' <span style="opacity:0.6;font-weight:400">（当日 ' + n + ' 条）</span></div>'
+        + (list.length ? list.map(i => row(i)).join('') : '<div style="opacity:0.45;font-size:11px;padding:2px 10px">当日无条目</div>') + '</div>';
+    });
+    html += section('十二类情报全景', '🗂️', inner);
+  }
   html += section('重点国别分布', '🌍',
     topCountries.map(e => {
       const pct = total ? Math.round(e[1] / total * 100) : 0;
@@ -465,6 +506,56 @@ async function _generateDailyReport(dateKey) {
         + '<div style="flex:1;height:8px;background:rgba(128,128,128,0.15);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:#0a84ff"></div></div>'
         + '<span style="min-width:60px;text-align:right;opacity:0.7">' + e[1] + ' 条</span></div>';
     }).join(''));
+  /* ===== 预警研判（2026-08-28 用户指令：简报要增加预警研判）=====
+   * 全部结论由当日与前一日真实数据推导：总量环比、红橙态势、核心威胁区聚焦、
+   * 升温国别（较前日增量 TOP3）、明日关注建议。零虚构。 */
+  {
+    let prev = null;
+    try {
+      const pr = await query('SELECT summary FROM daily_reports WHERE report_date = $1', [_prevDayKey(dateKey)]);
+      if (pr && pr.rows && pr.rows[0]) prev = pr.rows[0].summary;
+    } catch (e) {}
+    const lines = [];
+    /* 1. 总量与结构环比 */
+    if (prev && typeof prev.total === 'number') {
+      const d = total - prev.total;
+      const dp = prev.total ? Math.round(d / prev.total * 100) : 0;
+      lines.push('<div style="font-size:13px;margin:6px 0">📊 <b>采集环比</b>：昨日事件 ' + prev.total + ' → 今日 ' + total + '（'
+        + (d >= 0 ? '+' : '') + d + ' / ' + (dp >= 0 ? '+' : '') + dp + '%），去重后原始条目 ' + rawTotal + ' 条收敛为 ' + total + ' 个独立事件。</div>');
+      /* 2. 升温国别 */
+      const prevC = (prev.topCountries || []);
+      const rises = [];
+      topCountries.forEach(([c, n]) => {
+        const p = prevC.find(x => x[0] === c);
+        const pd = p ? n - p[1] : n;
+        if (pd > 0) rises.push([c, pd, n]);
+      });
+      rises.sort((a, b) => b[1] - a[1]);
+      if (rises.length) {
+        lines.push('<div style="font-size:13px;margin:6px 0">📈 <b>升温国别</b>：' + rises.slice(0, 3).map(r => _escapeHtml(r[0]) + '（+' + r[1] + '，共' + r[2] + '条）').join('、') + '，建议关注事件升级与外溢风险。</div>');
+      }
+    } else {
+      lines.push('<div style="font-size:13px;margin:6px 0">📊 当日独立事件 ' + total + ' 个（原始 ' + rawTotal + ' 条，已做事件级去重）。</div>');
+    }
+    /* 3. 红橙态势 */
+    const oranges = uniq.filter(i => i.severity === 'orange').length;
+    lines.push('<div style="font-size:13px;margin:6px 0">🚨 <b>预警分级态势</b>：红 ' + reds.length + ' / 橙 ' + oranges + '，红色事件' + (reds.length ? '须当日核实处置闭环' : '为零（按红区铁律仅中国公民被袭/被绑/撤侨/群体枪击事件可赋红）') + '。</div>');
+    /* 4. 核心威胁区聚焦 */
+    const coreByC = {};
+    coreThreats.forEach(i => { const c = i.country || '未标注'; coreByC[c] = (coreByC[c] || 0) + 1; });
+    const coreTop = Object.entries(coreByC).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    lines.push('<div style="font-size:13px;margin:6px 0">🎯 <b>核心威胁区</b>（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚）：当日恐袭/冲突/治安事件 ' + coreThreats.length + ' 条'
+      + (coreTop.length ? '，集中于 ' + coreTop.map(e => _escapeHtml(e[0]) + ' ' + e[1] + ' 条').join('、') : '') + '。</div>');
+    /* 5. 明日关注建议（由数据推导，不虚构） */
+    const focus = [];
+    if (reds.length) focus.push('红色事件处置闭环核查');
+    if (assetHits.length) focus.push('中资资产关联警报跟踪');
+    if (coreThreats.length >= 5) focus.push('核心威胁区态势持续监测');
+    if (chinaItems.length + negItems.length >= 10) focus.push('涉华情报专项复核');
+    if (prev && topCountries[0]) focus.push(_escapeHtml(topCountries[0][0]) + '升温动态跟踪');
+    lines.push('<div style="font-size:13px;margin:6px 0">📋 <b>明日关注建议</b>：' + (focus.length ? focus.join('；') : '常规监测') + '。</div>');
+    html += section('预警研判', '🧭', lines.join(''));
+  }
 
   const summary = { total, china: chinaItems.length, negative: negItems.length, red: reds.length, sources: Object.keys(sources).length, byType, topCountries };
   await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
@@ -2351,7 +2442,12 @@ function _ruUaQuotaOk(it) {
 /* ===== 高发国家日配额（2026-08-17 用户指令：采集全球均衡）=====
  * 伊朗/美国/巴基斯坦等高产国：非涉华条目达日配额即停收（涉华/重大伤亡豁免）。
  * 与俄乌配额同思路：保证拉美/非洲/中亚/欧洲在库里有位置。 */
-const DOMINANT_DAILY_CAP = { '伊朗': 45, '美国': 45, '巴基斯坦': 65, '阿富汗': 45, '巴勒斯坦': 30, '以色列': 25 };
+/* ===== 高发国家日配额（2026-08-17 用户指令：采集全球均衡；2026-08-28 复盘加帽）=====
+ * 伊朗/美国/巴基斯坦等高产国：非涉华条目达日配额即停收（涉华/重大伤亡豁免）。
+ * 与俄乌配额同思路：保证拉美/非洲/中亚/欧洲在库里有位置。
+ * 2026-08-28 实测 24h 分布（尼泊尔50/尼日利亚47/巴基斯坦40/伊朗38/印度35）后：
+ * 新增 尼泊尔/尼日利亚/印度 三国帽，伊朗 45→35。 */
+const DOMINANT_DAILY_CAP = { '伊朗': 35, '美国': 45, '巴基斯坦': 55, '阿富汗': 45, '巴勒斯坦': 30, '以色列': 25, '尼泊尔': 40, '尼日利亚': 40, '印度': 40 };
 const _domCounts = { date: '', by: {}, t: 0 };
 function _dominantQuotaOk(it) {
   const ctry = String(it.country || it.country_cn || '');
@@ -4037,6 +4133,154 @@ async function _runRegionBalance() {
   finally { _regionBalanceBusyUntil = 0; }
 }
 
+/* ===== 类别均衡采集器（2026-08-28 用户指令：12 类全方位采集，不能只盯着恐袭）=====
+ * 背景：实测 24h 类别分布 terror 142 / geopolitical 120 / 灾害 49 / 军事 46 一边倒，
+ * economic 7 / cyber 4 / political 3 / health 3 / legal 2 / infrastructure 5 几近为零。
+ * 每 30 分钟：统计今日各类别入库量，挑最薄弱 3 类，用 GDELT 定向查询补齐。
+ * 查询词锚定"海外利益关联国 + 类别事件"（中资所在国经济危机/网络攻击/政局变动等），
+ * 过既有闸门（时效/去重/配额）入库，不降低任何质量标准。 */
+const CATEGORY_PACKS = {
+  economic_risk: {
+    name: '经济风险',
+    queries: [
+      '(Pakistan OR Sri Lanka OR Egypt OR Nigeria OR Argentina OR Turkey) (debt crisis OR default OR inflation OR currency collapse OR recession)',
+      '(Kazakhstan OR Uzbekistan OR Kenya OR Ethiopia OR Bangladesh) (economic crisis OR IMF OR inflation OR currency)',
+      '(China OR Chinese) overseas (investment OR loan OR debt OR economy) (risk OR crisis OR default OR loss)'
+    ]
+  },
+  cyber_security: {
+    name: '网络安全',
+    queries: [
+      '(Pakistan OR India OR Vietnam OR Philippines OR Nigeria OR Kenya) (cyberattack OR ransomware OR data breach OR hacking)',
+      '(Kazakhstan OR Uzbekistan OR Indonesia OR Malaysia OR Egypt) (cyber attack OR ransomware OR hacker OR data leak)',
+      'Chinese (company OR embassy OR bank) (cyberattack OR hack OR data breach OR ransomware)'
+    ]
+  },
+  political_events: {
+    name: '政局变动',
+    queries: [
+      '(Pakistan OR Bangladesh OR Myanmar OR Thailand OR Tunisia) (protest OR coup OR political crisis OR resignation OR election)',
+      '(Niger OR Mali OR Burkina Faso OR Sudan OR Chad) (junta OR coup OR political transition OR protest)',
+      '(Sri Lanka OR Nepal OR Kyrgyzstan OR Moldova OR Georgia) (political crisis OR protest OR parliament OR election)'
+    ]
+  },
+  public_health: {
+    name: '公共卫生',
+    queries: [
+      '(cholera OR dengue OR mpox OR measles) outbreak (Sudan OR Nigeria OR Congo OR Ethiopia OR Kenya OR Afghanistan)',
+      '(Pakistan OR Afghanistan OR Yemen OR Syria) (polio OR cholera OR epidemic OR health crisis OR hospital attack)'
+    ]
+  },
+  legal_compliance: {
+    name: '法律合规',
+    queries: [
+      '(lawsuit OR litigation OR fine OR penalty OR court ruling) (Chinese company OR China firm OR Chinese worker)',
+      '(Pakistan OR Indonesia OR Kazakhstan OR Nigeria OR Vietnam) (court OR lawsuit OR arbitration OR fine) (China OR Chinese OR mining OR investment)'
+    ]
+  },
+  infrastructure: {
+    name: '基础设施',
+    queries: [
+      '(Kazakhstan OR Uzbekistan OR Pakistan OR Laos OR Ethiopia OR Kenya) (railway OR pipeline OR port OR power plant OR dam) (attack OR damage OR halt OR protest OR China)',
+      '(CPEC OR "Belt and Road" OR Chinese-built) (port OR railway OR highway OR pipeline OR power) (attack OR disruption OR damage OR delay)'
+    ]
+  },
+  social_unrest: {
+    name: '社会动荡',
+    queries: [
+      '(strike OR demonstration OR curfew OR riot) (Bangladesh OR Kenya OR Nigeria OR Haiti OR Ecuador OR Bolivia OR Kazakhstan)',
+      '(factory OR mine OR construction) (China OR Chinese) (strike OR protest OR riot OR labor dispute)'
+    ]
+  },
+  sanctions_data: {
+    name: '制裁管制',
+    queries: [
+      'sanctions OR tariff OR "export control" (China OR Chinese) (impose OR new OR expand OR entity list)',
+      '(Iran OR Russia OR Myanmar OR Venezuela OR Sudan) sanctions (China OR Chinese OR oil OR shipping)'
+    ]
+  },
+  military_conflicts: {
+    name: '武装冲突',
+    queries: [
+      '(shelling OR airstrike OR ceasefire OR offensive OR clash) (Sudan OR Myanmar OR Ukraine OR Yemen OR Syria OR Congo)',
+      '(border OR frontier) (clash OR shelling OR firing OR tension) (India OR Pakistan OR Afghanistan OR Tajikistan OR Kyrgyzstan)'
+    ]
+  },
+  natural_disasters: {
+    name: '自然灾害',
+    queries: [
+      '(earthquake OR flood OR typhoon OR landslide OR volcano OR cyclone) (China OR Chinese) (citizen OR rescue OR evacuation OR aid)',
+      '(earthquake OR flood OR typhoon OR drought OR famine) (Afghanistan OR Pakistan OR Nepal OR Bangladesh OR Philippines OR Indonesia OR Horn of Africa)'
+    ]
+  }
+};
+let _categoryBalanceBusyUntil = 0;
+async function _runCategoryBalance() {
+  if (Date.now() < _categoryBalanceBusyUntil) return;
+  _categoryBalanceBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  const t0 = Date.now();
+  const CAT_TARGET = 30; /* 单类别当日达标量：12 类每类 ≥30 才算全方位覆盖 */
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const cnt = await query('SELECT data_type, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1', [dayStart]);
+    const catN = {};
+    Object.keys(CATEGORY_PACKS).forEach(k => catN[k] = 0);
+    cnt.rows.forEach(r => { if (catN[r.data_type] !== undefined) catN[r.data_type] += parseInt(r.n, 10); });
+    const targets = Object.keys(catN).filter(k => catN[k] < CAT_TARGET)
+      .sort((a, b) => catN[a] - catN[b]).slice(0, 3);
+    if (!targets.length) { console.log('[CAT-BAL] 各类别均已达标(' + CAT_TARGET + ')，本轮回填空闲'); return; }
+    const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
+    let inserted = 0, fetched = 0, rejected = 0;
+    const titleKeys = await _getRecentTitleKeys();
+    for (const ct of targets) {
+      const pack = CATEGORY_PACKS[ct];
+      const q = pack.queries[cyc % pack.queries.length];
+      let arts = [];
+      try { arts = await crawler.gdeltSearch(q, { timespan: '1d', maxrecords: 15 }); } catch (e) { console.warn('[CAT-BAL] 查询失败:', ct, e.message); }
+      if (!arts.length) {
+        try { const apq = q.replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
+          arts = await crawler.apSearch(apq, { maxrecords: 12, pages: 1 }); } catch (e) {}
+      }
+      /* GDELT seendate → 标准日期（与区域均衡同源修复） */
+      arts.forEach(it => {
+        if (!it.publish_time && !it.publishedAt && !it.date && it.seendate) {
+          const iso = String(it.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
+          if (iso !== it.seendate) { it.publish_time = iso; it.publishedAt = iso; it.date = iso; }
+        }
+      });
+      fetched += arts.length;
+      if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
+      let catIns = 0;
+      for (const it of arts) {
+        it.interestLinked = true;
+        const u = it.url || it.title; if (!u) continue;
+        const ctext = String(it.title || '') + ' ' + String(it.content || it.description || '');
+        /* 国内噪声拦截（2026-08-28 实测教训：志邦家居中报混入 economic_risk）：
+         * 中文主体且无任何境外国名/海外利益标记 → 纯国内财经/证券/民生，不入海外利益情报库 */
+        if (/[\u4e00-\u9fa5]/.test(String(it.title || '')) && /中报|年报|季报|A股|涨停|跌停|上交所|深交所|北交所|证监会|中财网|东方财富|同花顺|证券时报|券商|基金净值|理财产品|存款利率|房贷|车险|社保缴费|公积金|医保报销|景区门票|中小学|期末考试|考研国家线|高考分数线|公务员省考|事业单位招聘|油价调整|天气预报|空气质量指数|交通限行|地铁延时|公交调线/.test(ctext)
+            && !/海外|境外|驻外|一带一路|中资|中企|华人|华侨|使馆|撤侨|留学生|巴基斯坦|阿富汗|哈萨克斯坦|乌兹别克|吉尔吉斯|塔吉克|土库曼|孟加拉|斯里兰卡|尼泊尔|缅甸|泰国|越南|老挝|柬埔寨|马来西亚|新加坡|印尼|印度尼西亚|菲律宾|蒙古|伊朗|伊拉克|叙利亚|也门|沙特|阿联酋|土耳其|埃及|利比亚|苏丹|南苏丹|索马里|埃塞俄比亚|肯尼亚|坦桑尼亚|乌干达|卢旺达|刚果|尼日利亚|加纳|马里|尼日尔|乍得|喀麦隆|莫桑比克|赞比亚|津巴布韦|安哥拉|南非|阿尔及利亚|摩洛哥|突尼斯|俄罗斯|乌克兰|白俄罗斯|波兰|塞尔维亚|匈牙利|希腊|意大利|西班牙|葡萄牙|法国|德国|英国|荷兰|比利时|瑞士|瑞典|挪威|芬兰|丹麦|奥地利|捷克|罗马尼亚|保加利亚|美国|加拿大|墨西哥|巴西|阿根廷|智利|秘鲁|哥伦比亚|委内瑞拉|厄瓜多尔|玻利维亚|古巴|牙买加|海地|澳大利亚|新西兰|日本|韩国|朝鲜|印度|东帝汶|巴布亚|斐济/i.test(ctext)) { rejected++; continue; }
+        if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
+        if (!_isFreshEnough(it)) { rejected++; continue; }
+        if (!_dominantQuotaOk(it)) { rejected++; continue; }
+        if (!_ruUaQuotaOk(it)) { rejected++; continue; }
+        try {
+          it._eventSig = _eventSignature(it); _tagAssets(it);
+          const _lv = _normLevelForStore(it); it.level_norm = _lv;
+          it.data_type = ct; /* 类别均衡器权威指定：不被通用分类器覆盖 */
+          await query(
+            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [ct, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || ('类别均衡·' + pack.name), JSON.stringify(it), 'approved']
+          );
+          _addTitleKey(titleKeys, it); inserted++; catIns++;
+          if (catIns >= 8) break;
+        } catch (e) { /* URL 唯一冲突等 */ }
+      }
+    }
+    console.log('[CAT-BAL] 类别均衡(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 补 ' + targets.map(w => CATEGORY_PACKS[w].name + '(' + catN[w] + ')').join('+') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected);
+  } catch (e) { console.warn('[CAT-BAL] 采集失败:', e.message); }
+  finally { _categoryBalanceBusyUntil = 0; }
+}
+
 /* ===== 海外核心安全威胁一分钟哨兵调度（2026-08-27 用户铁指令）=====
  * 7×24 每 60 秒一轮：core-threat-watch 四层采集（GDELT 区域×事件矩阵 +
  * GNews/Bing RSS 原子查询 + 高危本地 RSS 直采），覆盖巴基斯坦/CPEC、阿富汗、
@@ -4184,6 +4428,9 @@ function startGlobalMediaCron() {
   // 区域均衡采集器：每30分钟挑最薄弱2区域定向采集（2026-08-17 用户指令：采集全球均衡）
   setTimeout(_runRegionBalance, 90000);
   setInterval(_runRegionBalance, 30 * 60 * 1000);
+  // 类别均衡采集器：每30分钟挑最薄弱3类别定向补齐（2026-08-28 用户指令：12类全方位采集不能偏科）
+  setTimeout(_runCategoryBalance, 120000);
+  setInterval(_runCategoryBalance, 30 * 60 * 1000);
   // 原微信公众号直采 cron 已于 2026-08-26 退役（用户指令：不再从公众号抓取数据入库，
   // 由 _runWechatLeads 四步管线取代；wechatoa/wechatNeg 模块保留供手动诊断端点使用）。
   // Neon 云采集同步：每10分钟拉取 GitHub Actions 采集的原始条目（2026-08-24 方案二；未配置 NEON_DATABASE_URL 时静默跳过）
@@ -4831,12 +5078,14 @@ function _looksForeign(s) {
     .replace(/^[^:：]{0,12}[:：]\s*/, '');                 // 参考消息： / RT：
   /* 外文脚本判定（2026-08-05 补：旧版只认拉丁字母，
    * 西里尔/希腊/阿拉伯/谚文/假名等非拉丁外文标题（如俄语报道）永久逃过翻译）。
+   * 2026-08-28 再补：孟加拉文/缅甸文/高棉文/老挝文/僧伽罗文/泰米尔文/希伯来文/亚美尼亚文/
+   * 格鲁吉亚文——类别均衡器实测孟加拉语标题（বাংলাদেশ）逃过翻译直接入库。
    * 任意连续 4+ 字符为外文脚本 → 判定为外文主体。 */
-  const FOREIGN_RUN = /([a-zA-Z]|\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}){4,}/u;
+  const FOREIGN_RUN = /([a-zA-Z]|\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Bengali}|\p{Script=Myanmar}|\p{Script=Khmer}|\p{Script=Lao}|\p{Script=Sinhala}|\p{Script=Tamil}|\p{Script=Telugu}|\p{Script=Hebrew}|\p{Script=Armenian}|\p{Script=Georgian}){4,}/u;
   if (!FOREIGN_RUN.test(body)) return false;
   const zh = (body.match(/[一-龥]/g) || []).length;
   const foreign = (body.match(/[a-zA-Z]/g) || []).length
-                + (body.match(/\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}/gu) || []).length;
+                + (body.match(/\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Bengali}|\p{Script=Myanmar}|\p{Script=Khmer}|\p{Script=Lao}|\p{Script=Sinhala}|\p{Script=Tamil}|\p{Script=Telugu}|\p{Script=Hebrew}|\p{Script=Armenian}|\p{Script=Georgian}/gu) || []).length;
   /* 中文字符不足外文主体字符的 1/4 —— 主体仍是外文，需要翻译 */
   return zh === 0 || zh * 4 < foreign;
 }
