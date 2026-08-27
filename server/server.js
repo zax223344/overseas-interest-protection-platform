@@ -30,6 +30,10 @@ const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采�
 const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项采集（2026-08-26：组合词改排序+双信号过滤，专治涉华负面新文被埋） */
 const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索→抓取入库 四步管线（2026-08-26 用户指令：公众号只查询线索，不再从公众号抓数据入库） */
 const coreThreatWatch = require('./core-threat-watch'); /* 海外核心安全威胁一分钟哨兵（2026-08-27 用户铁指令：巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚 恐袭/袭击/绑架/刑案，1 分钟一轮） */
+const INTEREST_BASE = require('./interest-base'); /* 海外利益底数库（2026-08-28 官方框架：国家梯队+六大类项目+通道+经济底数+人员底数+东道国风险指标） */
+const channelWatch = require('./channel-watch'); /* 海上战略通道哨兵（维度⑤：八大咽喉点通航/海盗/航运事件，30分钟一轮） */
+const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（维度⑥：OFAC/实体清单/出口管制/外资审查，30分钟一轮） */
+const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维度②：外交部安全提醒/撤侨/领保案件，30分钟一轮） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -2337,6 +2341,34 @@ function _tagAssets(it) {
   const hits = [];
   for (const a of ASSET_PROFILES) { if (a.re.test(t)) hits.push(a.name); }
   if (hits.length) it.asset_tags = hits;
+  /* ===== 2026-08-28 海外利益底数标签（官方框架五维全挂）=====
+   * 每条情报自动锚定：重点项目（六大类）/海上通道/国家梯队/经济暴露/人员足迹/东道国风险指标。
+   * 这是"事件→利益受损研判"的底数锚点：命中越多，利益暴露越重。 */
+  try {
+    const ib = INTEREST_BASE;
+    const projects = ib.matchProjects(t);
+    if (projects.length) it.interest_projects = projects.map(p => p.name);
+    const channels = ib.matchChannels(t);
+    if (channels.length) it.channel_tags = channels.map(c => c.name);
+    const ctry = String(it.country || it.country_cn || '');
+    if (ctry) {
+      const tier = ib.getTier(ctry);
+      if (tier) {
+        it.interest_tier = tier;
+        const prof = (ib.COUNTRY_TIERS[tier] || []).find(x => ctry.indexOf(x.cn) >= 0 || x.cn.indexOf(ctry) >= 0);
+        if (prof) {
+          it.interest_anchor = prof.interests;          /* 该国核心利益锚点 */
+          it.risk_profile = prof.risks;                 /* 该国主要威胁 */
+        }
+      }
+      const expo = ib.ECONOMIC_BASE.countryExposure(ctry);
+      if (expo) it.econ_exposure = expo.name + ' ODI' + expo.share;   /* 经济利益暴露 */
+      const foot = ib.PERSONNEL_BASE.footprintOf(ctry);
+      if (foot) it.personnel_footprint = foot;          /* 人员机构足迹 */
+      const risk = ib.COUNTRY_RISK_INDICATORS.riskOf(ctry);
+      if (risk) it.country_risk_indicators = risk;      /* 四维风险指标 */
+    }
+  } catch (e) {}
   /* 2026-08-25 要素补全（用户指令：数据要素不全——实测近3天入库条目 factSheet 缺失率 100%）。
    * extractFacts 纯正则零网络，在 中文标题+中文正文+原文 上抽取伤亡/行为体/事件性质/中方主体/
    * 金额/时间/处置并附原句佐证，写入 factSheet 供前端详情卡片、detailed 判定与风险分级使用。 */
@@ -2425,6 +2457,17 @@ function _scoreRiskItem(it) {
     hits.push({ rule: 'R-Z03', name: '涉华实质威胁（征收/制裁/法律/用工），提级黄区下沿', add: 40 - score });
     score = 40;
   }
+  /* ===== 2026-08-28 海外利益暴露加权（官方框架底数锚点）=====
+   * 事件落在利益底数上的权重：第一梯队国 +8、第二梯队 +4；命中重点项目 +6；
+   * 命中海上战略通道 +5；东道国公共安全指标≥8 +3。加权不突破红区铁律（R-Z05 仍最后执行）。 */
+  try {
+    const _bump = v => { if (score < 61) score = Math.min(60, score + v); };  /* 只加不降：红区条目不受影响 */
+    if (it.interest_tier === 'TIER1') { _bump(8); hits.push({ rule: 'R-IB1', name: '第一梯队利益国（利益极重+风险极高）', add: 8 }); }
+    else if (it.interest_tier === 'TIER2') { _bump(4); hits.push({ rule: 'R-IB2', name: '第二梯队利益国', add: 4 }); }
+    if (it.interest_projects && it.interest_projects.length) { _bump(6); hits.push({ rule: 'R-IB3', name: '命中重点项目：' + it.interest_projects.join('、'), add: 6 }); }
+    if (it.channel_tags && it.channel_tags.length) { _bump(5); hits.push({ rule: 'R-IB4', name: '涉及海上战略通道：' + it.channel_tags.join('、'), add: 5 }); }
+    if (it.country_risk_indicators && (it.country_risk_indicators.security >= 8 || it.country_risk_indicators.political >= 8)) { _bump(3); hits.push({ rule: 'R-IB5', name: '东道国风险指标高危（政治/公共安全≥8）', add: 3 }); }
+  } catch (e) {}
   const zone = score >= 61 ? 'red' : score >= 31 ? 'yellow' : 'green';
   const level = score >= 61 ? 'red' : score >= 46 ? 'orange' : score >= 31 ? 'yellow' : 'blue';
   return { score: score, zone: zone, level: level,
@@ -4326,6 +4369,79 @@ async function _runCoreThreatWatch() {
   finally { _coreThreatBusyUntil = 0; }
 }
 
+/* ===== 海上战略通道哨兵调度（维度⑤，2026-08-28 官方框架六维补全）=====
+ * 每 30 分钟：八大咽喉点（马六甲/霍尔木兹/红海/苏伊士/巴拿马/台海/几内亚湾/亚丁湾）
+ * 通航·封锁·海盗·袭击油轮事件 + 海运专业源。 */
+let _channelWatchBusyUntil = 0;
+async function _runChannelWatch() {
+  if (Date.now() < _channelWatchBusyUntil) return;
+  _channelWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await channelWatch.runChannelWatch({ maxPerQuery: 12 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      it.interestLinked = true;
+      it._forceDataType = true;
+      it.data_type = 'infrastructure';       /* 通道安全归基础设施与供应链类 */
+      if (!it.category) it.category = '海上通道安全';
+      try { ENTITY.enrich(it); } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'CHANNEL-WATCH', '');
+    if (res && res.inserted) console.log('[CHANNEL-WATCH] ✅ 新入库海上通道事件 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[CHANNEL-WATCH] 采集失败:', e.message); }
+  finally { _channelWatchBusyUntil = 0; }
+}
+
+/* ===== 制裁合规哨兵调度（维度⑥，2026-08-28 官方框架六维补全）=====
+ * 每 30 分钟：OFAC 制裁/实体清单/CFIUS 审查/出口管制 + 涉华经贸壁垒动态。 */
+let _complianceWatchBusyUntil = 0;
+async function _runComplianceWatch() {
+  if (Date.now() < _complianceWatchBusyUntil) return;
+  _complianceWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await complianceWatch.runComplianceWatch({ maxPerQuery: 12 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      it.interestLinked = true;
+      it._forceDataType = true;
+      it.data_type = 'sanctions_data';
+      if (!it.category) it.category = '制裁合规';
+      try { ENTITY.enrich(it); } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'COMPLIANCE-WATCH', '');
+    if (res && res.inserted) console.log('[COMPLIANCE-WATCH] ✅ 新入库制裁合规情报 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[COMPLIANCE-WATCH] 采集失败:', e.message); }
+  finally { _complianceWatchBusyUntil = 0; }
+}
+
+/* ===== 领事保护哨兵调度（维度②，2026-08-28 官方框架六维补全）=====
+ * 每 30 分钟：外交部领事直击安全提醒直采 + 撤侨/领保案件/使领馆动态全球检索。 */
+let _consularWatchBusyUntil = 0;
+async function _runConsularWatch() {
+  if (Date.now() < _consularWatchBusyUntil) return;
+  _consularWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await consularWatch.runConsularWatch({ maxPerQuery: 12 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      it.interestLinked = true;
+      it._forceDataType = true;
+      it.data_type = 'security_events';       /* 领保/撤侨归涉华安全类（命中红区铁律自动红） */
+      if (!it.category) it.category = '领事保护';
+      try { ENTITY.enrich(it); } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'CONSULAR-WATCH', '');
+    if (res && res.inserted) console.log('[CONSULAR-WATCH] ✅ 新入库领事保护情报 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[CONSULAR-WATCH] 采集失败:', e.message); }
+  finally { _consularWatchBusyUntil = 0; }
+}
+
 /* ===== 涉华人员安全专项哨兵调度（2026-08-25 用户铁指令）=====
  * 7×24 每 30 分钟一轮：cn-security-watch 三层采集（GDELT/GNews/Bing 多语种关键词组合
  * + 高危国别本地小源直采 RSS + 老旧 TLS curl 兜底），入库走与 GLOBALMEDIA 同一套
@@ -4421,6 +4537,13 @@ function startGlobalMediaCron() {
   setInterval(_runChinaNegative, 60 * 1000);  // 境外涉华负面专项每60秒运行一次（AP检索耗时较长，避免阻塞主循环）
   setInterval(_runTerrorAttacks, 90 * 1000);  // 恐怖袭击/武装袭击专项每90秒运行一次（高危国家重点监控）
   setInterval(_runCoreThreatWatch, 60 * 1000);  // 海外核心安全威胁一分钟哨兵（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚），用户 2026-08-27 铁指令
+  // ===== 官方框架五维哨兵（2026-08-28 用户指令：六大维度不留空白）=====
+  setTimeout(_runChannelWatch, 200000);       // 海上战略通道哨兵（维度⑤），启动200s后首跑
+  setInterval(_runChannelWatch, 30 * 60 * 1000);
+  setTimeout(_runComplianceWatch, 260000);    // 制裁合规哨兵（维度⑥），启动260s后首跑
+  setInterval(_runComplianceWatch, 30 * 60 * 1000);
+  setTimeout(_runConsularWatch, 320000);      // 领事保护哨兵（维度②：MFA安全提醒/撤侨/领保），启动320s后首跑
+  setInterval(_runConsularWatch, 30 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 30 * 60 * 1000);
