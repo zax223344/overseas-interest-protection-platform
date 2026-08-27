@@ -7547,6 +7547,24 @@ const SITUATION={
       }
     }catch(e){ console.warn('[renderDailyStatsMini]',e); }
   },
+  /* 高可见面板统一新鲜度判定：优先真实事件时间，避免旧闻被系统盖新戳后混入 */
+  _freshItem(a,hours){
+    var _ts=function(v){ if(!v)return 0; var d=new Date(String(v).replace(/ /g,'T')); return isNaN(d.getTime())?0:d.getTime(); };
+    var candidates=['time','publishedAt','publish_time','seendate','event_date','date','collect_time'];
+    var best=0, now=Date.now(), maxMs=(hours||24)*3600*1000;
+    for(var i=0;i<candidates.length;i++){ var t=_ts(a[candidates[i]]); if(t>best)best=t; }
+    if(!best && a._live) return true;
+    return best>0 && (now-best)<=maxMs;
+  },
+  _isHighValuePanel(a){
+    /* 面板低价值过滤：表态/制裁/日常政治动态默认不出现，除非红区或涉华 */
+    var t=String(a.title||'')+String(a.title_zh||'');
+    var isLow=/关税|制裁|贸易战|出口管制|实体清单|法案|立法|政策|立场|谴责|祝贺|欢迎|支持|反倾销|终裁|倾销|立场|声明|表示|宣布|tariff|sanction|trade war|export control|entity list|bill|legislation|policy|position|condemn|congratulate|welcome|support/i.test(t);
+    if(!isLow) return true;
+    if(a.level==='red') return true;
+    if(/中国|中资|中企|中方|华人|华侨|一带一路|Chinese|China|CPEC|涉华|对华/i.test(t)) return true;
+    return false;
+  },
   renderLiveStats(){
     try{
       var aA=ALERTS.filter(function(a){return a.status==='active'||a.status==='responding';}).length;
@@ -7567,10 +7585,8 @@ const SITUATION={
       var _val=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._alertValue)?AVIEW._alertValue(a):{score:0,tags:[]};}catch(e){return {score:0,tags:[]};}};
       var _facts=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._liteFacts)?AVIEW._liteFacts(a):[];}catch(e){return [];}};
       var _tier=function(a){var t=String(a.title||'')+String(a.title_zh||'');if(a.chinaNegative||a._chinaNegative)return 0;if(_cnRe.test(t))return 1;if(_corrRe.test(t+String(a.country||'')))return 2;return 3;};
-      /* 2026-08-27 高可见面板只展示 24h 内数据，杜绝陈旧旧闻刷屏 */
-      var _now=Date.now(),_FRESH_MS=24*60*60*1000;
-      var _fresh=function(a){var ts=new Date(String(a.time||'').replace(' ','T')).getTime();return !isNaN(ts) && (_now-ts)<=_FRESH_MS;};
-      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && _fresh(a);});
+      /* 2026-08-27 高可见面板只展示 24h 内高价值数据，杜绝陈旧旧闻刷屏 */
+      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a);});
       if(this._laLevel!=='all')pool=pool.filter(function(a){return a.level===self._laLevel;});
       if(this._laCnOnly)pool=pool.filter(function(a){return _tier(a)<=1;});
       /* 排序：等级为主（红>橙>黄>蓝，重大事件优先）+ 涉华/高危走廊加权 + 价值分决胜 + 时间 */
@@ -7690,9 +7706,7 @@ const SITUATION={
     var topAlerts=[];
     try{
       /* 2026-08-27 全球态势焦点只展示 24h 内高价值预警 */
-      var _now2=Date.now(),_FRESH_MS2=24*60*60*1000;
-      var _fresh2=function(a){var ts=new Date(String(a.time||'').replace(' ','T')).getTime();return !isNaN(ts) && (_now2-ts)<=_FRESH_MS2;};
-      topAlerts=(ALERTS||[]).filter(function(a){return _fresh2(a);}).sort(function(a,b){
+      topAlerts=(ALERTS||[]).filter(function(a){return SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a);}).sort(function(a,b){
         return (typeof AVIEW!=='undefined'?AVIEW._alertValue(b).score:0)-(typeof AVIEW!=='undefined'?AVIEW._alertValue(a).score:0);
       });
       topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(topAlerts,'fuzzy'):topAlerts;
@@ -7771,7 +7785,7 @@ const SITUATION={
     }
     /* 实时情报流列表（2026-08-20：让 liveItems 指标可见，同时给态势总览一个实时滚动切片） */
     h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px">📡 实时情报流</div>';
-    var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue'; }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
+    var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
     /* 事件级去重：同一事件多来源/多进展只留最新一条，避免同一火灾/制裁/袭击反复刷屏 */
     liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(liveSlice,'fuzzy'):liveSlice;
     /* 全球态势焦点面板内跨子面板国别去重 */
@@ -7820,9 +7834,7 @@ const SITUATION={
       });
     }
     /* 合并实时与非实时预警后按事件去重，避免同一事件在 ticker 中反复出现 */
-    var _now3=Date.now(),_FRESH_MS3=24*60*60*1000;
-    var _fresh3=function(a){var ts=new Date(String(a.time||'').replace(' ','T')).getTime();return !isNaN(ts) && (_now3-ts)<=_FRESH_MS3;};
-    var tickerAlerts=liveItems.concat((ALERTS||[]).filter(function(a){ return !a._live && a.level!=='blue' && _fresh3(a); }));
+    var tickerAlerts=liveItems.concat((ALERTS||[]).filter(function(a){ return !a._live && a.level!=='blue' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a); }));
     tickerAlerts=tickerAlerts.sort(function(a,b){ try{ return new Date(b.time||0).getTime()-new Date(a.time||0).getTime(); }catch(e){ return 0; } });
     tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(tickerAlerts,'fuzzy'):tickerAlerts;
     tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(tickerAlerts,1):tickerAlerts;
