@@ -786,7 +786,7 @@ async function _serverAlertGen() {
     let backfilled = 0;
     for (const a of alerts) {
       if (!a) continue;
-      if (a._riskVersion === 2) continue;
+      if (a._riskVersion === 3) continue;
       try {
         const s = _scoreRiskItem({ title: a.title || '', title_zh: a.title_zh || '', content: a.desc || '', country: a.country || '', source: a.source || '', publishedAt: a.publishedAt || a.time || '' });
         a.risk_score = s.score; a.risk_zone = s.zone; a.risk_rationale = s.rationale; a.zone_action = s.action;
@@ -2264,21 +2264,24 @@ function _scoreRiskItem(it) {
              t.match(/(\d{1,4})\s*(?:people\s+)?(?:killed|dead|deaths)/i) ||
              t.match(/(?:death toll|kills)\s*(\d{1,4})/i);
   const deaths = cm ? parseInt(cm[1], 10) : 0;
-  /* hardTarget：只认中资主体/重大项目/高权重核心资产（人员/机构/工程/能源/矿业≥0.95）。
-   * 航运船舶(0.9)、境外金融(0.8)等泛资产不能单独把制裁/表态类抬进红区。 */
-  const hardTarget = ent.enterprises.length > 0 || ent.projects.length > 0 || ent.assets.some(a => (a.weight || 0) >= 0.95);
-  const chineseVictim = hitIds.indexOf('R-T01') >= 0 || hitIds.indexOf('R-T02') >= 0;
-  /* 暴力/人身安全威胁：恐袭/枪击/战争/政变/撤离/海盗——非暴力威胁（抗议/制裁/舆论等）不得入红 */
-  const VIOLENT_RULES = ['R-T01', 'R-T02', 'R-T03', 'R-T04', 'R-T05', 'R-T07', 'R-T10', 'R-T11'];
-  const violentThreat = hitIds.some(id => VIOLENT_RULES.indexOf(id) >= 0);
-  /* 制裁/出口管制(R-T09)是实质非暴力威胁，除非直接命中中资主体/项目/人员受害或重大伤亡，否则不许入红 */
-  const topThreat = (hits[0] && hits[0].rule) || '';
-  if (score >= 61 && !(chineseVictim || (chinaSig && hardTarget && violentThreat) || (chinaSig && deaths >= 5))) {
-    hits.push({ rule: 'R-Z01', name: '红区硬约束：无暴力威胁且未直接命中中资主体/项目/核心资产或中方人员伤亡，压至黄区上沿', add: 60 - score });
+  /* 2026-08-27 红区铁律：仅以下四类可入红区，其余一律不准红色。
+   * 1) 中国公民/中方人员/华人华侨被袭击；2) 中国公民/中方人员/华人华侨被绑架；
+   * 3) 撤侨/撤离中国公民；4) 群体开枪/大规模枪击且涉中方人员。
+   * 其他情形（普通重大伤亡、工厂火灾、自然灾害、制裁表态等）最高橙区。 */
+  const RED_ELIGIBLE_RE = /中国公民[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持|被枪杀|被击毙|被杀害)|中方人员[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持)|华人[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持)|华侨[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持)|华裔[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持)|中国留学生[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持)|中国工人[^，。；;]{0,20}(?:被袭|遭袭|受袭|遇袭|被绑|遭绑架|被绑架|遭劫持|被劫持)|撤侨|撤离[^，。；;]{0,20}中国公民|遣返[^，。；;]{0,20}中国公民|群体开枪|大规模枪击|中国公民[^，。；;]{0,20}枪击|中方人员[^，。；;]{0,20}枪击|华人[^，。；;]{0,20}枪击|华侨[^，。；;]{0,20}枪击|华裔[^，。；;]{0,20}枪击/i;
+  const redEligible = RED_ELIGIBLE_RE.test(t);
+  if (score >= 61 && !redEligible) {
+    hits.push({ rule: 'R-Z05', name: '红区硬约束：仅中国公民被袭击/绑架/撤侨/群体开枪可入红，压至橙区上沿', add: 60 - score });
     score = 60;
   }
-  if (topThreat === 'R-T09' && score >= 61 && !(chineseVictim || (chinaSig && hardTarget && violentThreat) || (chinaSig && deaths >= 5))) {
-    hits.push({ rule: 'R-Z04', name: '制裁类硬约束：未直接命中中资主体/人员受害，压至橙区', add: 55 - score });
+  if (redEligible && score < 61) {
+    hits.push({ rule: 'R-Z06', name: '红区触发：命中中国公民被袭击/绑架/撤侨/群体开枪', add: 61 - score });
+    score = 61;
+  }
+  /* 制裁/出口管制(R-T09)一律不准入红 */
+  const topThreat = (hits[0] && hits[0].rule) || '';
+  if (topThreat === 'R-T09' && score >= 61 && !redEligible) {
+    hits.push({ rule: 'R-Z04', name: '制裁类硬约束：一律不准入红', add: 55 - score });
     score = 55;
   }
   /* 非涉华重大伤亡（≥10死）：态势关注，提至黄区上沿，但永不入红 */

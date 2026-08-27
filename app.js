@@ -3501,6 +3501,10 @@ var DataHub={
       this._loadFromAPI();
       var self=this;
       setTimeout(function(){ if(APIClient.isOnline()) self._loadFromAPI(); },10000);
+      /* 2026-08-27 态势总览/预警面板 1 分钟循环刷新：持续从服务端拉取最新数据 */
+      if(!this._apiRefreshTimer){
+        this._apiRefreshTimer=setInterval(function(){ if(APIClient.isOnline()) self._loadFromAPI(); },60000);
+      }
     }
   },
   _loadFromAPI(){
@@ -7563,7 +7567,10 @@ const SITUATION={
       var _val=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._alertValue)?AVIEW._alertValue(a):{score:0,tags:[]};}catch(e){return {score:0,tags:[]};}};
       var _facts=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._liteFacts)?AVIEW._liteFacts(a):[];}catch(e){return [];}};
       var _tier=function(a){var t=String(a.title||'')+String(a.title_zh||'');if(a.chinaNegative||a._chinaNegative)return 0;if(_cnRe.test(t))return 1;if(_corrRe.test(t+String(a.country||'')))return 2;return 3;};
-      var pool=ALERTS.filter(function(a){return a.status!=='resolved';});
+      /* 2026-08-27 高可见面板只展示 24h 内数据，杜绝陈旧旧闻刷屏 */
+      var _now=Date.now(),_FRESH_MS=24*60*60*1000;
+      var _fresh=function(a){var ts=new Date(String(a.time||'').replace(' ','T')).getTime();return !isNaN(ts) && (_now-ts)<=_FRESH_MS;};
+      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && _fresh(a);});
       if(this._laLevel!=='all')pool=pool.filter(function(a){return a.level===self._laLevel;});
       if(this._laCnOnly)pool=pool.filter(function(a){return _tier(a)<=1;});
       /* 排序：等级为主（红>橙>黄>蓝，重大事件优先）+ 涉华/高危走廊加权 + 价值分决胜 + 时间 */
@@ -7682,7 +7689,10 @@ const SITUATION={
     }catch(e){}
     var topAlerts=[];
     try{
-      topAlerts=(ALERTS||[]).slice().sort(function(a,b){
+      /* 2026-08-27 全球态势焦点只展示 24h 内高价值预警 */
+      var _now2=Date.now(),_FRESH_MS2=24*60*60*1000;
+      var _fresh2=function(a){var ts=new Date(String(a.time||'').replace(' ','T')).getTime();return !isNaN(ts) && (_now2-ts)<=_FRESH_MS2;};
+      topAlerts=(ALERTS||[]).filter(function(a){return _fresh2(a);}).sort(function(a,b){
         return (typeof AVIEW!=='undefined'?AVIEW._alertValue(b).score:0)-(typeof AVIEW!=='undefined'?AVIEW._alertValue(a).score:0);
       });
       topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(topAlerts,'fuzzy'):topAlerts;
@@ -7810,7 +7820,9 @@ const SITUATION={
       });
     }
     /* 合并实时与非实时预警后按事件去重，避免同一事件在 ticker 中反复出现 */
-    var tickerAlerts=liveItems.concat((ALERTS||[]).filter(function(a){ return !a._live && a.level!=='blue'; }));
+    var _now3=Date.now(),_FRESH_MS3=24*60*60*1000;
+    var _fresh3=function(a){var ts=new Date(String(a.time||'').replace(' ','T')).getTime();return !isNaN(ts) && (_now3-ts)<=_FRESH_MS3;};
+    var tickerAlerts=liveItems.concat((ALERTS||[]).filter(function(a){ return !a._live && a.level!=='blue' && _fresh3(a); }));
     tickerAlerts=tickerAlerts.sort(function(a,b){ try{ return new Date(b.time||0).getTime()-new Date(a.time||0).getTime(); }catch(e){ return 0; } });
     tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(tickerAlerts,'fuzzy'):tickerAlerts;
     tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(tickerAlerts,1):tickerAlerts;
@@ -10704,6 +10716,11 @@ const AVIEW={
     /* 健康/民生/生活方式/科技八卦类：即便误入也压低价值分 */
     var isHealthNoise=/\b(木糖醇|xylitol|糖替代品|代糖|甜味剂|阿斯巴甜|三氯蔗糖|糖尿病|血糖|胰岛素|饮食|营养|维生素|蛋白质|减肥|肥胖|运动|睡眠|压力|心理健康|抑郁|焦虑|癌症|肿瘤|阿尔茨海默|痴呆|帕金森|心脏病|中风|心肌梗死|血压|胆固醇|疫苗接种|流感疫苗|感冒|普通病毒|细菌感染|抗生素|药物治疗|手术|医院|医生|患者|病历|医保|养生|保健|美容|护肤|化妆|香水|口红|面膜|洗发水|牙膏|牙刷|毛巾|纸巾|尿布|奶粉|婴儿|育儿|孕妇|产妇|月子|养老|退休金|彩票|抽奖|中奖|竞猜|投票|选秀|综艺|明星|演员|歌手|导演|编剧|制片人|主持人|网红|主播|博主|粉丝|点赞|转发|评论|弹幕|爆料|八卦|绯闻|恋情|结婚|离婚|出轨|整容|增肌|健身|瑜伽|跑步|马拉松|骑行|钓鱼|摄影|影评|剧评|书评|音乐推荐|综艺推荐|动漫推荐|漫画推荐|小说推荐|网文|游戏攻略|游戏评测|显卡|CPU|主板|内存|固态硬盘|显示器|机械键盘|鼠标|耳机|数码评测|手机评测|汽车评测|美食探店|旅游攻略|穿搭|美妆教程|护肤知识|健身教程|瑜伽入门|跑步指南|钓鱼技巧|摄影教程|咖啡|茶|酒|香烟|电子烟|烟草|酒精|毒品|赌博|色情)\b/i.test(text);
     if(isHealthNoise){score-=30;tags.push({t:'非安全主题',c:'#888'});}
+    /* 2026-08-27 核心类别高权重：恐怖袭击/海外袭击/绑架/重大刑事案件优先；制裁/表态/日常政治压分 */
+    var isCore=/中国公民被袭|中国公民遭袭|中方人员被袭|中方人员遭袭|华人被袭|华人遭袭|华侨被袭|华侨遭袭|中国公民被绑|中国公民遭绑架|中方人员被绑|中方人员遭绑架|华人被绑|华人遭绑架|华侨被绑|华侨遭绑架|恐袭|恐怖|自杀式|绑架|劫持|人质|武装袭击|恐怖袭击|枪击|谋杀|屠杀|灭门|刑事|命案|terror|suicide|kidnap|hostage|attack|bombing|blast|shooting|murder|massacre/i.test(text);
+    var isStatement=/称|表示|宣布|声明|重申|强调|警告|提醒|指出|认为|回应|答复|反击|报复|反制|决定|将|已|计划|准备|开始|继续|加强|采取|实施|执行|扩大|升级|加剧|缓解|呼吁|敦促|要求|请求|寻求|试图|可能|也许|似乎|据报道|关税|制裁|贸易战|出口管制|实体清单|法案|立法|政策|立场|谴责|祝贺|欢迎|支持/i.test(text);
+    if(isCore){score+=35;tags.push({t:'核心安全事件',c:'var(--red)'});}
+    if(isStatement){score-=15;tags.push({t:'表态/政策动态',c:'var(--text3)'});}
     score+={red:40,orange:25,yellow:12,blue:5}[a.level]||10;
     var cm=text.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
     var deaths=cm?parseInt(cm[1]||cm[2],10):0;
@@ -10742,6 +10759,11 @@ const AVIEW={
     /* 健康/民生/生活方式/科技八卦类：即便误入也压低价值分 */
     var isHealthNoise=/\b(木糖醇|xylitol|糖替代品|代糖|甜味剂|阿斯巴甜|三氯蔗糖|糖尿病|血糖|胰岛素|饮食|营养|维生素|蛋白质|减肥|肥胖|运动|睡眠|压力|心理健康|抑郁|焦虑|癌症|肿瘤|阿尔茨海默|痴呆|帕金森|心脏病|中风|心肌梗死|血压|胆固醇|疫苗接种|流感疫苗|感冒|普通病毒|细菌感染|抗生素|药物治疗|手术|医院|医生|患者|病历|医保|养生|保健|美容|护肤|化妆|香水|口红|面膜|洗发水|牙膏|牙刷|毛巾|纸巾|尿布|奶粉|婴儿|育儿|孕妇|产妇|月子|养老|退休金|彩票|抽奖|中奖|竞猜|投票|选秀|综艺|明星|演员|歌手|导演|编剧|制片人|主持人|网红|主播|博主|粉丝|点赞|转发|评论|弹幕|爆料|八卦|绯闻|恋情|结婚|离婚|出轨|整容|增肌|健身|瑜伽|跑步|马拉松|骑行|钓鱼|摄影|影评|剧评|书评|音乐推荐|综艺推荐|动漫推荐|漫画推荐|小说推荐|网文|游戏攻略|游戏评测|显卡|CPU|主板|内存|固态硬盘|显示器|机械键盘|鼠标|耳机|数码评测|手机评测|汽车评测|美食探店|旅游攻略|穿搭|美妆教程|护肤知识|健身教程|瑜伽入门|跑步指南|钓鱼技巧|摄影教程|咖啡|茶|酒|香烟|电子烟|烟草|酒精|毒品|赌博|色情)\b/i.test(text);
     if(isHealthNoise){score-=30;tags.push({t:'非安全主题',c:'#888'});}
+    /* 2026-08-27 核心类别高权重：恐怖袭击/海外袭击/绑架/重大刑事案件优先；制裁/表态/日常政治压分 */
+    var isCore=/中国公民被袭|中国公民遭袭|中方人员被袭|中方人员遭袭|华人被袭|华人遭袭|华侨被袭|华侨遭袭|中国公民被绑|中国公民遭绑架|中方人员被绑|中方人员遭绑架|华人被绑|华人遭绑架|华侨被绑|华侨遭绑架|恐袭|恐怖|自杀式|绑架|劫持|人质|武装袭击|恐怖袭击|枪击|谋杀|屠杀|灭门|刑事|命案|terror|suicide|kidnap|hostage|attack|bombing|blast|shooting|murder|massacre/i.test(text);
+    var isStatement=/称|表示|宣布|声明|重申|强调|警告|提醒|指出|认为|回应|答复|反击|报复|反制|决定|将|已|计划|准备|开始|继续|加强|采取|实施|执行|扩大|升级|加剧|缓解|呼吁|敦促|要求|请求|寻求|试图|可能|也许|似乎|据报道|关税|制裁|贸易战|出口管制|实体清单|法案|立法|政策|立场|谴责|祝贺|欢迎|支持/i.test(text);
+    if(isCore){score+=35;tags.push({t:'核心安全事件',c:'var(--red)'});}
+    if(isStatement){score-=15;tags.push({t:'表态/政策动态',c:'var(--text3)'});}
     score+={red:40,orange:25,yellow:12,blue:5}[a.level]||10;
     var cm=text.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
     var deaths=cm?parseInt(cm[1]||cm[2],10):0;
@@ -17532,7 +17554,19 @@ function initApp(){
   // ---- 数据链路：禁止自动同步，必须管理员审核后手动同步 ----
   // 初始不加载数据到态势感知/监测中心，等待管理员审核后手动一键同步
   // Subscribe SITUATION to data changes for auto-refresh
-  DataHub.subscribe(function(collection){if(typeof SITUATION!=='undefined'){SITUATION._needsRefresh=true;}});
+  DataHub.subscribe(function(collection){
+    if(typeof SITUATION==='undefined') return;
+    SITUATION._needsRefresh=true;
+    /* 2026-08-27 当前在态势总览页时自动重绘面板，保证 1 分钟内看到新数据 */
+    if(window._currentView==='situation'){
+      var now=Date.now();
+      if(!window._lastSituationRefresh || now-window._lastSituationRefresh>3000){
+        window._lastSituationRefresh=now;
+        try{ SITUATION.renderLiveStats(); }catch(e){}
+        try{ SITUATION.renderIntelPanels(); }catch(e){}
+      }
+    }
+  });
   // Init first view（异步，防止卡死页面）
   setTimeout(function(){try{SITUATION.init();}catch(e){console.error('SITUATION.init错误:',e);}},100);
   console.log('[initApp] 完成，SITUATION.init 已异步启动');
