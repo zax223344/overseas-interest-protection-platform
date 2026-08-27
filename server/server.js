@@ -4987,6 +4987,15 @@ function _translationOk(src, dst) {
   if (cjk / b.length < 0.15) return false;
   const ratio = b.length / Math.max(1, a.length);
   if (ratio < 0.2 || ratio > 4) return false;
+  /* 2026-08-27 铁律：拒绝半中半英翻译。若译文中仍含大量英文短语（如 US designates、UK-based、
+     Action as foreign terrorist group 这类明显未翻译的完整英文片段），判定为不合格，
+     宁可保留原文打 _untranslated 标记，也不入库混排标题。 */
+  const enWords = b.match(/[A-Za-z]{3,}/g) || [];
+  const longEnPhrases = enWords.filter(function(w) { return w.length >= 4; }).length;
+  if (longEnPhrases >= 3 && cjk / b.length < 0.5) return false;
+  /* 常见未翻译英文短语黑名单 */
+  const untranslatedPhrases = /US designates|UK-based|Action as foreign|terrorist group|as foreign|designates.*as|said in a statement|according to.*said/i;
+  if (untranslatedPhrases.test(b) && cjk / b.length < 0.6) return false;
   return true;
 }
 

@@ -7557,13 +7557,54 @@ const SITUATION={
     return best>0 && (now-best)<=maxMs;
   },
   _isHighValuePanel(a){
-    /* 面板低价值过滤：表态/制裁/日常政治动态默认不出现，除非红区或涉华 */
+    /* 铁律 2026-08-27：全球态势焦点/最新情报面板只显示核心安全事件
+       （恐怖袭击/海外袭击/绑架/重大刑案/恐怖组织动态），其他一律不显示 */
     var t=String(a.title||'')+String(a.title_zh||'');
-    var isLow=/关税|制裁|贸易战|出口管制|实体清单|法案|立法|政策|立场|谴责|祝贺|欢迎|支持|反倾销|终裁|倾销|立场|声明|表示|宣布|tariff|sanction|trade war|export control|entity list|bill|legislation|policy|position|condemn|congratulate|welcome|support/i.test(t);
-    if(!isLow) return true;
-    if(a.level==='red') return true;
-    if(/中国|中资|中企|中方|华人|华侨|一带一路|Chinese|China|CPEC|涉华|对华/i.test(t)) return true;
-    return false;
+    /* 核心事件词：必须命中 */
+    var isCore=/恐袭|恐怖|自杀式|绑架|劫持|人质|武装袭击|恐怖袭击|枪击|谋杀|屠杀|灭门|刑事|命案|爆炸|伏击|突袭|武装分子|极端组织|塔利班|博科|青年党|基地组织|伊斯兰国|ISIS|绑架案|劫持案|抢劫|匪徒|帮派|枪击案|凶杀|命案|中国公民|中方人员|华人被袭|华侨被绑|撤侨|群体开枪|terror|suicide|kidnap|hostage|attack|bombing|blast|shooting|murder|massacre|militant|insurgent|extremist|Taliban|Boko|Shabaab|Qaeda|ISIS|ambush|raid|assault|armed|gunmen|criminal|gang|homicide/i.test(t);
+    if(!isCore) return false;
+    /* 排除明显非安全噪声 */
+    var isNoise=/关税|制裁|贸易战|出口管制|实体清单|法案|立法|政策|立场|谴责|祝贺|欢迎|支持|反倾销|终裁|倾销|立场|声明|表示|宣布|选举|投票|议会|部长|总统|总理|外交|峰会|贸易|股价|股市|芯片|黑客|天气|预报|气候|洪水|地震|台风|节日|庆典|电影|娱乐|足球|篮球|体育|世界杯|tariff|sanction|trade war|export control|entity list|bill|legislation|policy|position|condemn|congratulate|welcome|support|election|poll|vote|parliament|minister|president|diplomat|summit|stock|shares|market|GDP|inflation|chip|semiconductor|cyber|hacker|weather|forecast|climate|flood|earthquake|typhoon|festival|celebration|award|concert|movie|football|soccer|FIFA|World Cup|NBA|tennis/i.test(t);
+    if(isNoise) return false;
+    return true;
+  },
+  /* 面板哨兵：每 30 秒检查一次高可见面板内容，自动清退非核心事件并刷新 */
+  _panelSentinel(){
+    if(this._panelSentinelTimer) return;
+    var self=this;
+    this._panelSentinelTimer=setInterval(function(){
+      if(document.hidden) return;
+      try{
+        /* 检查最新预警面板 */
+        var sa=document.getElementById('sit-alerts');
+        if(sa){
+          var rows=sa.querySelectorAll('.sit-alert-row');
+          var bad=0;
+          rows.forEach(function(r){
+            var t=r.textContent||'';
+            if(!SITUATION._isHighValuePanel({title:t})) bad++;
+          });
+          if(bad>0){
+            console.warn('[SITUATION-SENTINEL] 最新预警面板检出 '+bad+' 条非核心事件，强制刷新');
+            self.renderLiveStats();
+          }
+        }
+        /* 检查全球态势焦点面板 */
+        var gi=document.getElementById('globe-intel-live');
+        if(gi){
+          var items=gi.querySelectorAll('.live-item');
+          var bad2=0;
+          items.forEach(function(r){
+            var t=r.textContent||'';
+            if(!SITUATION._isHighValuePanel({title:t})) bad2++;
+          });
+          if(bad2>0){
+            console.warn('[SITUATION-SENTINEL] 全球态势焦点面板检出 '+bad2+' 条非核心事件，强制刷新');
+            self.renderIntelPanels();
+          }
+        }
+      }catch(e){}
+    },30000);
   },
   renderLiveStats(){
     try{
@@ -7663,6 +7704,8 @@ const SITUATION={
       this.renderRiskLevelPanel();
       /* 启动1分钟自动轮播 */
       this._startAlertRotation();
+      /* 启动面板哨兵（铁律 2026-08-27） */
+      this._panelSentinel();
     }catch(e){}
   },
   /* 最新预警分页轮播：每1分钟自动切换 */
@@ -8568,7 +8611,7 @@ function showSitEvents(){
 // ===== MONITOR VIEW (Map + Countries + Events + Chokepoints + Corridors) =====
 const MONITOR={
   tab:'map',
-  switch(t){if(t==='threats'){navigateTo('threatorgs');return;}this.tab=t;document.querySelectorAll('#mon-tabs .dc-tab').forEach((e,i)=>{e.classList.toggle('active',['geoint','map','countries','events','chokepoints','corridors','flight-ais'][i]===t);});this.render();if(t!=='geoint')this._stopGeointCarousel();},
+  switch(t){if(t==='threats'){navigateTo('threatorgs');return;}this.tab=t;var _tabOrder=['map','countries','events','corridors'];document.querySelectorAll('#mon-tabs .dc-tab').forEach((e,i)=>{e.classList.toggle('active',_tabOrder[i]===t);});this.render();if(t!=='geoint')this._stopGeointCarousel();},
   init(){this.switch(this.tab||'geoint');},
   render(){
     const el=document.getElementById('mon-content');
@@ -13989,7 +14032,7 @@ const FORECAST={
   },
   switch(t){
     this.tab=t;
-    var tabs=['foresee','prediction','scenario','expert','stats'];
+    var tabs=['prediction','scenario','expert','stats'];
     document.querySelectorAll('#fc-tabs .dc-tab').forEach(function(e,i){e.classList.toggle('active',tabs[i]===t);});
     this.render();
   },
