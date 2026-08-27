@@ -553,6 +553,8 @@ function _kwMatch(text, kw){
 }
 function _scoreOverseasInterest(text){
   if(!text) return { score:0, reasons:[] };
+  /* 健康/民生/生活方式/科技八卦类噪声：无论发生在哪个重点国家，都不构成中国海外利益安全 */
+  if(typeof _isHealthLifestyleNoise==='function' && _isHealthLifestyleNoise(text)) return { score:0, reasons:[] };
   var score = 0, reasons = [];
   for(var d in OI_DIM_KW){
     if(!Object.prototype.hasOwnProperty.call(OI_DIM_KW, d)) continue;
@@ -623,6 +625,18 @@ function _isRoutineEnforcement(text){
   if(/\b(?:weapon|weapons|explosive|explosives|drug|drugs|narcotic|narcotics|terrorist|terrorists|militant|militants|insurgent|insurgents|bomb|bombs|arms|ammunition|firearm|firearms|gun|guns|步枪|手枪|炸弹|毒品|武器|爆炸物|恐怖分子|武装分子|叛乱分子|极端组织)\b/i.test(low)) return false;
   return true;
 }
+/* 健康/民生/生活方式/科技八卦类噪声：与海外利益安全无关。
+ * 典型误判："研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关"。
+ * 豁免：真实公卫安全事件（疫情/霍乱/埃博拉/重大食物中毒/生物恐怖主义等）及
+ * 药品/医疗物资出口管制、疫苗外交等涉我海外利益主题放行。 */
+const AK_HEALTH_LIFESTYLE_NOISE_RE = /\b(木糖醇|xylitol|糖替代品|代糖|甜味剂|阿斯巴甜|三氯蔗糖|糖尿病|血糖|胰岛素|饮食|营养|维生素|蛋白质|减肥|肥胖|运动|睡眠|压力|心理健康|抑郁|焦虑|癌症|肿瘤|阿尔茨海默|痴呆|帕金森|心脏病|中风|心肌梗死|血压|胆固醇|疫苗接种|流感疫苗|感冒|普通病毒|细菌感染|抗生素|药物治疗|手术|医院|医生|患者|病历|医保|养生|保健|美容|护肤|化妆|香水|口红|面膜|洗发水|牙膏|牙刷|毛巾|纸巾|尿布|奶粉|婴儿|育儿|孕妇|产妇|月子|养老|退休金|彩票|抽奖|中奖|竞猜|投票|选秀|综艺|明星|演员|歌手|导演|编剧|制片人|主持人|网红|主播|博主|粉丝|点赞|转发|评论|弹幕|爆料|八卦|绯闻|恋情|结婚|离婚|出轨|整容|增肌|健身|瑜伽|跑步|马拉松|骑行|钓鱼|摄影|影评|剧评|书评|音乐推荐|综艺推荐|动漫推荐|漫画推荐|小说推荐|网文|游戏攻略|游戏评测|显卡|CPU|主板|内存|固态硬盘|显示器|机械键盘|鼠标|耳机|数码评测|手机评测|汽车评测|美食探店|旅游攻略|穿搭|美妆教程|护肤知识|健身教程|瑜伽入门|跑步指南|钓鱼技巧|摄影教程|咖啡|茶|酒|香烟|电子烟|烟草|酒精|毒品|赌博|色情)\b/i;
+function _isHealthLifestyleNoise(text){
+  if(!text) return false;
+  if(!AK_HEALTH_LIFESTYLE_NOISE_RE.test(text)) return false;
+  /* 豁免真实公卫安全事件与涉我医疗物资/疫苗外交 */
+  if(/\b(疫情|传染病|瘟疫|大流行|霍乱|埃博拉|脊髓灰质炎|黄热病|登革热|疟疾|鼠疫|炭疽|生化武器|生物恐怖|实验室泄漏|疫苗外交|医疗物资|医疗援助|缺医少药|药品短缺|出口管制|禁运|制裁|WHO|世界卫生组织| CDC |卫生紧急状态|public health emergency|outbreak|epidemic|pandemic|cholera|ebola|polio|yellow fever|dengue|malaria|plague|anthrax)\b/i.test(text)) return false;
+  return true;
+}
 /* CPEC/俾路支热点（2026-08-18 用户指令）：BLA/TTP/BLF 在俾路支省及中巴经济走廊沿线以中资
  * 项目/矿业/工程/营地为主要袭击目标。该语境下 矿业/项目/公司/营地 + 武装绑架/袭击 即视为高度涉我
  * 海外利益——即便一手英文报道未点名"Chinese"（2026-08-12 沙盖 Chagai 铜矿7矿工被 BLA 绑架，
@@ -649,6 +663,8 @@ const AK_FOCUS_COUNTRY_RE = /俾路支|瓜达尔|巴基斯坦|哈萨克|乌兹�
 function chinaOverseasGate(text){
   if(!text) return {pass:true, reason:'empty'};
   if(_isTopicNoise(text)) return {pass:false, reason:'topic-noise'};  /* 体育/娱乐，无论是否涉华 */
+  /* 健康/民生/生活方式/科技八卦类噪声（2026-08-27） */
+  if(_isHealthLifestyleNoise(text)) return {pass:false, reason:'health-lifestyle-noise'};
   /* 境外日常民事/行政/债务执法：与中国海外利益安全无关，优先拦截（2026-08-20） */
   if(_isRoutineEnforcement(text)) return {pass:false, reason:'routine-enforcement'};
   /* 涉华APP/技术/芯片禁令：属中国海外利益安全（中国企业出海受阻/技术被封锁），优先放行 */
@@ -714,7 +730,8 @@ var hasStrongOverseas = AK_STRONG_OVERSEAS_RE.test(text);
   var sc = _scoreOverseasInterest(text);
   if(sc.score >= 60){
     var hasChinaLink = sc.reasons.indexOf('A') >= 0 || AK_STRONG_OVERSEAS_RE.test(text);
-    var hasRiskSpillover = sc.reasons.indexOf('F') >= 0 && sc.reasons.indexOf('G') >= 0;
+    /* F+G 风险外溢必须排除健康/民生/生活方式噪声（例：美国木糖醇健康研究含 "death" 被误判为安全事件） */
+    var hasRiskSpillover = sc.reasons.indexOf('F') >= 0 && sc.reasons.indexOf('G') >= 0 && !_isHealthLifestyleNoise(text);
     if(hasChinaLink || hasRiskSpillover){
       return {pass:true, reason:'indirect-overseas-interest:' + sc.reasons.join(',')};
     }

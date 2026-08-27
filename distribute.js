@@ -63,12 +63,50 @@
   /* ---------- 已分发记录去重（防刷新/重复注入） ---------- */
   var _ingestedIds = {};
   var _liveCount = 0;
-  /* ---------- 事件级去重（同一事件不同来源/分类只进一次预警中心） ---------- */
+  /* ---------- 事件级去重（同一事件不同来源/分类只进一次预警中心） ----------
+   * 2026-08-27 升级为 fuzzy 指纹：抵抗同事件多来源标题差异，防止尼泊尔/俄罗斯涉中事件反复刷屏 */
   var _eventFingerprints = {};
+  function _mainEventCountry(t) {
+    if (!t) return '';
+    function _clean(s) { return s.replace(/(?:的|地区|省|州|市|港|机场|边境|海域|海峡|综合体|项目|工厂|厂房|厂|基地|设施|园区|区域|附近|境内|国内|国外|海外|国际|国家|城市|首都)$/, '').trim(); }
+    function _valid(s) { if (!s || s.length < 2) return false; if (typeof COUNTRIES === 'undefined' || !COUNTRIES.length) return true; for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i].name === s) return true; return false; }
+    var m, loc;
+    m = t.match(/(?:在|于)([^，。；,;]{1,12}?(?:国|地区|省|州|市|港|机场|边境|海域|海峡))/);
+    if (m) { loc = _clean(m[1]); if (_valid(loc)) return loc; }
+    m = t.match(/([^，。；,;]{1,10}?(?:国|地区))(?:发生|爆发|肆虐|袭击|遭袭|境内|附近)/);
+    if (m) { loc = _clean(m[1]); if (_valid(loc)) return loc; }
+    m = t.match(/(?:^|[\s\-–—])([^\s\-–—和与]{2,10})(?:和|与|-|–|—)([^\s\-–—和与]{2,10})/);
+    if (m) {
+      var c1 = _clean(m[1]), c2 = _clean(m[2]);
+      if (c1 === '中国' || c1 === 'China') { if (_valid(c2)) return c2; }
+      else if (c2 === '中国' || c2 === 'China') { if (_valid(c1)) return c1; }
+      else { if (_valid(c1)) return c1; if (_valid(c2)) return c2; }
+    }
+    if (typeof COUNTRIES !== 'undefined' && COUNTRIES.length) { for (var i = 0; i < COUNTRIES.length; i++) { var cn = COUNTRIES[i].name; if (!cn || cn === '中国' || cn === 'China') continue; if (t.indexOf(cn) >= 0) return cn; } }
+    return '';
+  }
   function _eventFingerprint(item) {
-    var title = String(item.title || item.title_zh || '').toLowerCase().replace(/[\s\[\]【】]+/g, '').replace(/[^\u4e00-\u9fa5a-z0-9]/g, '').slice(0, 40);
-    var country = item.country || _extractCountryFromText(title + ' ' + (item.content || item.desc || ''));
-    return country + '|' + title;
+    var raw = String(item.title || item.title_zh || '');
+    var country = _mainEventCountry(raw) || item.country || _extractCountryFromText(raw + ' ' + (item.content || item.desc || ''));
+    var title = raw.replace(/\s*[-—–]\s*[^，。；;]+$/, '').replace(/\d+/g, '').replace(/[０-９]+/g, '');
+    var norm = title
+      .replace(/液化天然气厂|LNG厂|LNG综合体|液化天然气综合体|天然气厂|天然气工厂|天然气综合体|天然气化工厂|天然气化工综合体|煤气厂|石化厂|石油化工|炼油厂|石油厂|油田|气田|化工园区|工业园区|工业综合体|发电厂|电站|火电站|水电站|核电站|制造厂|生产基地|工业基地|产业园|产业区/g, '能源设施')
+      .replace(/综合体|工厂|厂房|厂区|车间|仓库|基地|设施/g, '能源设施')
+      .replace(/工人|员工|公民|人员|民众|群众|雇员|职员|务工者|劳务人员/g, '人')
+      .replace(/死亡|遇难|丧生|遇害|罹难|身亡|死者|遇难者|受害者|丧命/g, '亡')
+      .replace(/失踪|失联|下落不明|不知所踪/g, '踪')
+      .replace(/发生火灾|起火|着火|大火|火灾事故|火情|失火/g, '火灾')
+      .replace(/山洪|洪灾|洪涝|洪流/g, '洪水')
+      .replace(/中国|中方|华人|华侨|华裔|中企|中资|中国大陆/g, '中');
+    if (typeof COUNTRIES !== 'undefined' && COUNTRIES.length) { for (var i = 0; i < COUNTRIES.length; i++) { var cn = COUNTRIES[i].name; if (!cn || cn.length < 2) continue; norm = norm.split(cn).join('国'); } }
+    norm = norm.replace(/[\s\u0000-\u002F\u003A-\u0040\u005B-\u0060\u007B-\u007E\u3000-\u303F\uFF00-\uFFEF]/g, '');
+    var ent = norm.match(/(能源设施|化工厂|矿区|营地|港口|机场|车站|铁路|边境|首都|海域|海峡|设施|法院|司法机关|贸易|经济|市场|货币|汇率|银行|金融|关税|制裁|冲突|战争|无人机|导弹|战机|军舰|潜艇|航母|坦克|装甲车|火炮|火箭弹|地雷|爆炸物)/);
+    var inc = norm.match(/(火灾|爆炸|袭击|绑架|劫持|枪击|坠机|沉船|地震|洪水|山洪|制裁|冲突|战争|事故|坠毁|沉没|抗议|骚乱|罢工|政变|恐袭|空袭|交火|扣押|逮捕|审判|选举|公投|签约|谈判|协议|条约|关税|贸易战|禁运|封锁|入侵|占领|撤退|停火|维和|救援|疏散|撤离|遣返|驱逐|引渡|通缉|追捕|伏击|屠杀|人道主义危机|难民|饥荒|干旱|飓风|台风|龙卷风|海啸|火山|泥石流|雪崩|山火|森林火灾|化学泄漏|核泄漏|辐射|污染|中毒|传染病|疫情|网络攻击|黑客|勒索|数据泄露|间谍|监控|审查|宣传|欺诈|诈骗|洗钱|腐败|贿赂|走私|贩毒|武器|弹药|导弹|无人机)/);
+    if (country && ent && ent[1] !== '边境' && inc) return country + '|' + ent[1] + '|' + inc[1];
+    if (country && inc) return country + '|' + inc[1];
+    var clean = norm.replace(/[^一-龥a-z]/gi, '');
+    var sorted = clean.split('').sort().join('');
+    return (country || '') + '|' + sorted.slice(0, 14);
   }
   function _isDuplicateEvent(item) {
     var fp = _eventFingerprint(item);

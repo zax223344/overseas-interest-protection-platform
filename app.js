@@ -7409,7 +7409,9 @@ const SITUATION={
       return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;transition:.2s" onclick="SITUATION.showRegion(\''+r+'\')" onmouseover="this.style.background=\'rgba(0,212,255,0.04)\'" onmouseout="this.style.background=\'\'"><div style="width:55px;font-size:11px;font-weight:600;color:var(--cyan)">'+r+'</div><div style="flex:1"><div class="risk-bar"><div class="risk-bar-fill" style="width:'+avg*10+'%;background:'+lv.color+'"></div></div></div><div style="width:30px;text-align:right;font-size:12px;font-weight:700;color:'+lv.color+'">'+avg.toFixed(1)+'</div><div style="width:45px;text-align:right;font-size:10px;color:var(--text2)">'+cs.length+'国</div></div>';
     }).join('');
     // Latest alerts — 8 items with rich info filling the card
-    const la=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents?AVIEW._mergeEvents([...ALERTS].sort((a,b)=>b.time.localeCompare(a.time)),'fuzzy'):[...ALERTS].sort((a,b)=>b.time.localeCompare(a.time))).slice(0,8);
+    var la=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents?AVIEW._mergeEvents([...ALERTS].sort((a,b)=>b.time.localeCompare(a.time)),'fuzzy'):[...ALERTS].sort((a,b)=>b.time.localeCompare(a.time)));
+    /* 国别封顶：同一国家相似新闻在最新预警面板只留 1 条 */
+    la=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry?AVIEW._capPerCountry(la,1):la).slice(0,8);
     var alertHtml='';
     la.forEach(function(a,i){
       var lv=ALERT_LV[a.level];
@@ -7574,6 +7576,8 @@ const SITUATION={
       });
       /* 事件级合并：同事件多来源/多进展只留最高优先级一条，避免同一火灾/绑架反复刷屏 */
       sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(sortedAlerts,'fuzzy'):sortedAlerts;
+      /* 国别封顶：同一国家（按标题提取事发国）在最新预警面板中最多 1 条 */
+      sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(sortedAlerts,1):sortedAlerts;
       var totalPages=Math.max(1,Math.ceil(sortedAlerts.length/pageSize));
       if(this._alertPage>=totalPages)this._alertPage=0;
       var start=(this._alertPage%totalPages)*pageSize;
@@ -7682,7 +7686,16 @@ const SITUATION={
         return (typeof AVIEW!=='undefined'?AVIEW._alertValue(b).score:0)-(typeof AVIEW!=='undefined'?AVIEW._alertValue(a).score:0);
       });
       topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(topAlerts,'fuzzy'):topAlerts;
+      topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(topAlerts,1):topAlerts;
       topAlerts=topAlerts.slice(0,4);
+    }catch(e){}
+    /* 全球态势焦点面板内跨子面板国别去重：最高价值预警已出现的国家，不再进入实时情报流 */
+    var usedCountries={};
+    try{
+      topAlerts.forEach(function(a){
+        var c=(typeof AVIEW!=='undefined'&&AVIEW._eventKeyFuzzy)?(AVIEW._eventKeyFuzzy(a).split('|')[0]||a.country||''):(a.country||'');
+        if(c) usedCountries[c]=true;
+      });
     }catch(e){}
     var now=new Date();
     var hh=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
@@ -7751,6 +7764,9 @@ const SITUATION={
     var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue'; }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
     /* 事件级去重：同一事件多来源/多进展只留最新一条，避免同一火灾/制裁/袭击反复刷屏 */
     liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(liveSlice,'fuzzy'):liveSlice;
+    /* 全球态势焦点面板内跨子面板国别去重 */
+    liveSlice=liveSlice.filter(function(a){ var c=(typeof AVIEW!=='undefined'&&AVIEW._eventKeyFuzzy)?(AVIEW._eventKeyFuzzy(a).split('|')[0]||a.country||''):(a.country||''); return !usedCountries[c]; });
+    liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(liveSlice,1):liveSlice;
     liveSlice=liveSlice.slice(0,5);
     if(liveSlice.length){
       liveSlice.forEach(function(a){
@@ -7797,6 +7813,7 @@ const SITUATION={
     var tickerAlerts=liveItems.concat((ALERTS||[]).filter(function(a){ return !a._live && a.level!=='blue'; }));
     tickerAlerts=tickerAlerts.sort(function(a,b){ try{ return new Date(b.time||0).getTime()-new Date(a.time||0).getTime(); }catch(e){ return 0; } });
     tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(tickerAlerts,'fuzzy'):tickerAlerts;
+    tickerAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(tickerAlerts,1):tickerAlerts;
     tickerAlerts.slice(0,10).forEach(function(a,idx){
       const cls=a.level==="red"?"":a.level==="orange"?" orange":a.level==="yellow"?" yellow":" green";
       const isLive=idx<3 && (a._live || (typeof LIVE_ALERTS!=='undefined' && LIVE_ALERTS.some(function(x){ return String(x.id)===String(a.id); })));
@@ -8949,84 +8966,21 @@ const MONITOR={
           +'<div style="color:var(--text3)">第三国中转：'+esc(r.third||'—')+(r.note?'　备注：'+esc(r.note):'')+'</div></div>';
       }).join('');
       html+='<div style="font-size:11px;color:var(--text3);line-height:1.7;margin-bottom:6px"><b style="color:var(--text1)">避难所：</b>'+(guide.shelters||[]).map(function(s){return esc(s.name)+(s.note?'（'+esc(s.note)+'）':'');}).join('；')+'</div>';
-      html+='<div style="text-align:right"><button class="btn sm primary" onclick="document.getElementById(\'modal\').classList.remove(\'show\');MONITOR.showEmergencyGuideFor(\''+p.country+'\')">查看完整应急指南 →</button></div>';
+      html+='<div style="text-align:right"><button class="btn sm primary" onclick="if(typeof EMERGENCY_CENTER!==\'undefined\'){EMERGENCY_CENTER.focusProject(\''+p.id+'\');}try{document.getElementById(\'modal\').classList.remove(\'show\');}catch(e){}">查看完整应急指南 →</button></div>';
     }
     showModal('🏗️ '+p.name+' · 实时风险详情',html);
   },
 
   /* ===== 应急指南区块（监测中心最下方）===== */
   renderEmergencyGuide(country){
+    /* 2026-08-27：应急指南实战化重设计，统一由 EMERGENCY_CENTER 渲染 */
+    if (typeof EMERGENCY_CENTER !== 'undefined') {
+      EMERGENCY_CENTER.render(country);
+      return;
+    }
+    /* 兜底：旧版极简提示 */
     var el=document.getElementById('mon-emg-guide');if(!el)return;
-    if(typeof EMERGENCY_GUIDE==='undefined'){ el.innerHTML='<div style="padding:14px;font-size:11px;color:var(--text3)">应急指南数据未加载</div>'; return; }
-    var self=this;
-    var cs=EMERGENCY_GUIDE.countries();
-    /* 默认选中：当前活跃预警分数最高的项目国，否则第一个 */
-    if(!country){
-      var best='',bestS=-1;
-      (typeof ALERTS!=='undefined'?ALERTS:[]).forEach(function(a){
-        if(!a||a.status==='resolved')return;
-        if(cs.indexOf(a.country)>=0 && (a.risk_score||0)>bestS){ bestS=a.risk_score||0; best=a.country; }
-      });
-      country=best||cs[0];
-    }
-    this._emgCountry=country;
-    /* 国家活跃预警统计（实时联动） */
-    var cAlerts=(typeof ALERTS!=='undefined'?ALERTS:[]).filter(function(a){return a&&a.status!=='resolved'&&a.country===country;});
-    var cMax=cAlerts.reduce(function(m,a){return Math.max(m,a.risk_score||0);},0);
-    var cZone=cMax>=61?'red':cMax>=31?'yellow':'green';
-    var zc=cZone==='red'?'var(--red)':cZone==='yellow'?'var(--yellow)':'var(--green)';
-    var zl=cZone==='red'?'红区':cZone==='yellow'?'黄区':'绿区';
-    /* 该国项目清单 */
-    var projs=(typeof ENTITY!=='undefined'&&ENTITY.PROJECTS)?ENTITY.PROJECTS.filter(function(p){return p.country===country||(country==='德国'&&p.country==='欧洲');}):[];
-    var g=EMERGENCY_GUIDE.guideOf(country);
-    var html='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
-      +'<select class="input" style="max-width:200px;font-size:12px" onchange="MONITOR.renderEmergencyGuide(this.value)">'
-      +cs.map(function(c){return '<option value="'+c+'"'+(c===country?' selected':'')+'>'+c+'</option>';}).join('')
-      +'</select>'
-      +'<span class="badge" style="background:'+zc+';color:#000;font-weight:700">当前'+zl+' '+cMax+'分</span>'
-      +'<span style="font-size:10px;color:var(--text3)">活跃预警 '+cAlerts.length+' 条 · 中资项目 '+projs.length+' 个</span>'
-      +'</div>';
-    if(!g){ el.innerHTML=html+'<div style="padding:10px;font-size:11px;color:var(--text3)">该国应急指南待补充</div>'; return; }
-    if(projs.length){
-      html+='<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">'+projs.map(function(p){
-        var pr=self._projectRiskOf(p);
-        var pc=pr.zone==='red'?'var(--red)':pr.zone==='yellow'?'var(--yellow)':'var(--green)';
-        return '<span style="cursor:pointer;font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid '+pc+';color:'+pc+'" onclick="MONITOR.showProjectRisk(\''+p.id+'\')" title="实时风险 '+pr.score+' 分">🏗️ '+p.name+' '+pr.score+'</span>';
-      }).join('')+'</div>';
-    }
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
-    /* 左列：使领馆 + 口岸 */
-    html+='<div>';
-    html+='<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--cyan);border-radius:6px;margin-bottom:8px;font-size:11px;line-height:1.8">'
-      +'<div style="font-weight:700;color:var(--cyan);margin-bottom:4px">🏛️ 使领馆（真实）</div>'
-      +'<div><b>'+g.embassy.name+'</b>（'+g.embassy.city+(g.embassy.addr?' · '+g.embassy.addr:'')+'）</div>'
-      +'<div>📞 '+esc(g.embassy.phone)+'</div>'
-      +(g.consulates||[]).map(function(c){return '<div>'+c.name+'（'+c.city+'）📞 '+esc(c.phone)+'</div>';}).join('')
-      +'<div style="color:var(--red);font-weight:700;margin-top:4px">🆘 '+EMERGENCY_GUIDE.HOTLINE.name+'：'+EMERGENCY_GUIDE.HOTLINE.phone+' / '+EMERGENCY_GUIDE.HOTLINE.alt+'（'+EMERGENCY_GUIDE.HOTLINE.hours+'）</div></div>';
-    html+='<div style="padding:10px;background:var(--bg2);border-radius:6px;font-size:11px;line-height:1.8">'
-      +'<div style="font-weight:700;color:var(--text1);margin-bottom:4px">✈️ 空港 / ⚓ 海港</div>'
-      +(g.airports||[]).map(function(a){return '<div>✈️ '+a.name+(a.iata&&a.iata!=='—'?'（'+a.iata+'）':'')+'</div>';}).join('')
-      +(g.seaports&&g.seaports.length?g.seaports.map(function(s){return '<div>⚓ '+s.name+'</div>';}).join(''):'<div style="color:var(--text3)">内陆国，无海港</div>')
-      +'</div></div>';
-    /* 右列：避难所 + 第三国 */
-    html+='<div>';
-    html+='<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--green);border-radius:6px;margin-bottom:8px;font-size:11px;line-height:1.8">'
-      +'<div style="font-weight:700;color:var(--green);margin-bottom:4px">🛡️ 避难所（真实推定）</div>'
-      +(g.shelters||[]).map(function(s){return '<div>• <b>'+esc(s.name)+'</b>'+(s.note?'：'+esc(s.note):'')+'</div>';}).join('')+'</div>';
-    html+='<div style="padding:10px;background:var(--bg2);border-radius:6px;font-size:11px;line-height:1.8">'
-      +'<div style="font-weight:700;color:var(--text1);margin-bottom:4px">🌐 第三国中转</div>'
-      +'<div>'+(g.transit||[]).map(function(t){return '<span class="badge b-blue" style="margin:0 4px 4px 0">'+t+'</span>';}).join('')+'</div></div>';
-    html+='</div></div>';
-    /* 分场景撤离路线 */
-    html+='<div style="font-weight:700;color:var(--orange);font-size:12px;margin:8px 0 6px">🚨 分场景撤离路线（项目地 → 海港/空港 → 第三国）</div>';
-    html+=(g.routes||[]).map(function(r){
-      return '<div style="padding:10px;background:var(--bg2);border-left:3px solid var(--orange);border-radius:6px;margin-bottom:6px;font-size:11px;line-height:1.8">'
-        +'<div style="font-weight:700;color:var(--orange)">▶ '+esc(r.scene)+'</div>'
-        +'<div>'+r.steps.map(function(s,i){return '<span style="color:var(--cyan);font-weight:700">'+(i+1)+'</span>. '+esc(s);}).join(' <span style="color:var(--text3)">→</span> ')+'</div>'
-        +'<div style="color:var(--text3)">第三国：'+esc(r.third||'—')+(r.note?'　｜　'+esc(r.note):'')+'</div></div>';
-    }).join('');
-    if(g.note) html+='<div style="font-size:10px;color:var(--text3);padding:8px;background:var(--bg2);border-radius:6px">⚠️ '+esc(g.note)+'</div>';
-    el.innerHTML=html;
+    el.innerHTML='<div style="padding:14px;font-size:11px;color:var(--text3)">应急指南模块加载中…</div>';
   },
   /* 项目详情跳完整指南 */
   showEmergencyGuideFor(country){
@@ -10747,6 +10701,9 @@ const AVIEW={
   _alertValue(a){
     var text=String(a.title||'')+' '+String(a.title_zh||'')+' '+String(a.desc||'');
     var score=0,tags=[];
+    /* 健康/民生/生活方式/科技八卦类：即便误入也压低价值分 */
+    var isHealthNoise=/\b(木糖醇|xylitol|糖替代品|代糖|甜味剂|阿斯巴甜|三氯蔗糖|糖尿病|血糖|胰岛素|饮食|营养|维生素|蛋白质|减肥|肥胖|运动|睡眠|压力|心理健康|抑郁|焦虑|癌症|肿瘤|阿尔茨海默|痴呆|帕金森|心脏病|中风|心肌梗死|血压|胆固醇|疫苗接种|流感疫苗|感冒|普通病毒|细菌感染|抗生素|药物治疗|手术|医院|医生|患者|病历|医保|养生|保健|美容|护肤|化妆|香水|口红|面膜|洗发水|牙膏|牙刷|毛巾|纸巾|尿布|奶粉|婴儿|育儿|孕妇|产妇|月子|养老|退休金|彩票|抽奖|中奖|竞猜|投票|选秀|综艺|明星|演员|歌手|导演|编剧|制片人|主持人|网红|主播|博主|粉丝|点赞|转发|评论|弹幕|爆料|八卦|绯闻|恋情|结婚|离婚|出轨|整容|增肌|健身|瑜伽|跑步|马拉松|骑行|钓鱼|摄影|影评|剧评|书评|音乐推荐|综艺推荐|动漫推荐|漫画推荐|小说推荐|网文|游戏攻略|游戏评测|显卡|CPU|主板|内存|固态硬盘|显示器|机械键盘|鼠标|耳机|数码评测|手机评测|汽车评测|美食探店|旅游攻略|穿搭|美妆教程|护肤知识|健身教程|瑜伽入门|跑步指南|钓鱼技巧|摄影教程|咖啡|茶|酒|香烟|电子烟|烟草|酒精|毒品|赌博|色情)\b/i.test(text);
+    if(isHealthNoise){score-=30;tags.push({t:'非安全主题',c:'#888'});}
     score+={red:40,orange:25,yellow:12,blue:5}[a.level]||10;
     var cm=text.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
     var deaths=cm?parseInt(cm[1]||cm[2],10):0;
@@ -10758,7 +10715,7 @@ const AVIEW={
     if(/恐袭|恐怖|自杀式|绑架|劫持|人质|terror|suicide|kidnap|hostage/i.test(text)){score+=10;tags.push({t:'恐袭特征',c:'var(--red)'});}
     if(/塔利班|青年党|博科|伊斯兰国|基地组织|胡塞|真主党|哈马斯|俾路支|Taliban|Shabaab|Boko|ISIS|Qaeda|Houthi|BLA|TTP/i.test(text)){score+=8;tags.push({t:'威胁组织关联',c:'var(--orange)'});}
     if(a.chinaNegative||a._chinaNegative){score+=6;tags.push({t:'涉华负面',c:'var(--orange)'});}
-    score=Math.min(100,score);
+    score=Math.max(0,Math.min(100,score));
     return {score:score,tags:tags,why:tags.length?tags.slice(0,3).map(function(x){return x.t;}).join(' · '):'一般动态监测'};
   },
   /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
@@ -10782,6 +10739,9 @@ const AVIEW={
   _alertValue(a){
     var text=String(a.title||'')+' '+String(a.title_zh||'')+' '+String(a.desc||'');
     var score=0,tags=[];
+    /* 健康/民生/生活方式/科技八卦类：即便误入也压低价值分 */
+    var isHealthNoise=/\b(木糖醇|xylitol|糖替代品|代糖|甜味剂|阿斯巴甜|三氯蔗糖|糖尿病|血糖|胰岛素|饮食|营养|维生素|蛋白质|减肥|肥胖|运动|睡眠|压力|心理健康|抑郁|焦虑|癌症|肿瘤|阿尔茨海默|痴呆|帕金森|心脏病|中风|心肌梗死|血压|胆固醇|疫苗接种|流感疫苗|感冒|普通病毒|细菌感染|抗生素|药物治疗|手术|医院|医生|患者|病历|医保|养生|保健|美容|护肤|化妆|香水|口红|面膜|洗发水|牙膏|牙刷|毛巾|纸巾|尿布|奶粉|婴儿|育儿|孕妇|产妇|月子|养老|退休金|彩票|抽奖|中奖|竞猜|投票|选秀|综艺|明星|演员|歌手|导演|编剧|制片人|主持人|网红|主播|博主|粉丝|点赞|转发|评论|弹幕|爆料|八卦|绯闻|恋情|结婚|离婚|出轨|整容|增肌|健身|瑜伽|跑步|马拉松|骑行|钓鱼|摄影|影评|剧评|书评|音乐推荐|综艺推荐|动漫推荐|漫画推荐|小说推荐|网文|游戏攻略|游戏评测|显卡|CPU|主板|内存|固态硬盘|显示器|机械键盘|鼠标|耳机|数码评测|手机评测|汽车评测|美食探店|旅游攻略|穿搭|美妆教程|护肤知识|健身教程|瑜伽入门|跑步指南|钓鱼技巧|摄影教程|咖啡|茶|酒|香烟|电子烟|烟草|酒精|毒品|赌博|色情)\b/i.test(text);
+    if(isHealthNoise){score-=30;tags.push({t:'非安全主题',c:'#888'});}
     score+={red:40,orange:25,yellow:12,blue:5}[a.level]||10;
     var cm=text.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
     var deaths=cm?parseInt(cm[1]||cm[2],10):0;
@@ -10793,7 +10753,7 @@ const AVIEW={
     if(/恐袭|恐怖|自杀式|绑架|劫持|人质|terror|suicide|kidnap|hostage/i.test(text)){score+=10;tags.push({t:'恐袭特征',c:'var(--red)'});}
     if(/塔利班|青年党|博科|伊斯兰国|基地组织|胡塞|真主党|哈马斯|俾路支|Taliban|Shabaab|Boko|ISIS|Qaeda|Houthi|BLA|TTP/i.test(text)){score+=8;tags.push({t:'威胁组织关联',c:'var(--orange)'});}
     if(a.chinaNegative||a._chinaNegative){score+=6;tags.push({t:'涉华负面',c:'var(--orange)'});}
-    score=Math.min(100,score);
+    score=Math.max(0,Math.min(100,score));
     return {score:score,tags:tags,why:tags.length?tags.slice(0,3).map(function(x){return x.t;}).join(' · '):'一般动态监测'};
   },
   /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
@@ -10822,30 +10782,101 @@ const AVIEW={
   },
   /* 模糊事件键：用于态势总览/实时流等摘要面板，抵抗同事件多来源标题的词序/同义差异 */
   _eventKeyFuzzy(a){
-    var title=String(a.title_zh||a.title||'');
-    var country=String(a.country||'');
-    /* country 缺失时从标题补提 */
-    if(!country && typeof COUNTRIES!=='undefined' && COUNTRIES.length){
-      for(var i=0;i<COUNTRIES.length;i++){ if(title.indexOf(COUNTRIES[i].name)>=0){ country=COUNTRIES[i].name; break; } }
+    try{
+      var title=String(a.title_zh||a.title||'');
+      var country=String(a.country||'');
+      /* 如果 country 字段明显错误（如把受害者国籍/来源国当初事发国），尝试从标题提取主事发国 */
+      function _mainEventCountry(t){
+        if(!t) return '';
+        function _clean(s){
+          return s.replace(/(?:的|地区|省|州|市|港|机场|边境|海域|海峡|综合体|项目|工厂|厂房|厂|基地|设施|园区|区域|附近|境内|国内|国外|海外|国际|国家|城市|首都|洪水|山洪|泥石流|山体滑坡|滑坡|地震|火灾|爆炸|空袭|袭击|冲突|战争|绑架|劫持|枪击|疫情|疾病|事故|灾难|灾害|灾害事故)$/,'').trim();
+        }
+        function _valid(s){
+          if(!s || s.length<2) return false;
+          if(typeof COUNTRIES==='undefined' || !COUNTRIES.length) return true;
+          for(var i=0;i<COUNTRIES.length;i++) if(COUNTRIES[i].name===s) return true;
+          return false;
+        }
+        var m,loc;
+        /* 1. 明确地点介词：在X / 于X / X发生 / X境内；X 后可接灾害/事件词，避免“乌克兰人在尼泊尔洪水”误判为乌克兰 */
+        m=t.match(/(?:在|于)([^，。；,;]{1,14}?)(?:境内|附近|的|洪水|山洪|泥石流|山体滑坡|滑坡|地震|火灾|爆炸|空袭|袭击|冲突|战争|绑架|劫持|枪击|疫情|疾病|事故|灾难|灾害|中|时|后|前|，|；|,|;|$)/);
+        if(m){ loc=_clean(m[1]); if(_valid(loc)) return loc; }
+        /* 1b. 明确地点介词 + 地点后缀：在X国 / 于X省 / X境内 */
+        m=t.match(/(?:在|于)([^，。；,;]{1,12}?(?:国|地区|省|州|市|港|机场|边境|海域|海峡))/);
+        if(m){ loc=_clean(m[1]); if(_valid(loc)) return loc; }
+        /* 2. X国发生/爆发/... */
+        m=t.match(/([^，。；,;]{1,10}?(?:国|地区))(?:发生|爆发|肆虐|袭击|遭袭|境内|附近)/);
+        if(m){ loc=_clean(m[1]); if(_valid(loc)) return loc; }
+        /* 3. X-Y / X和Y 结构：优先非“中国”的有效国家（避免把受害者/邻国误判为事发地） */
+        m=t.match(/(?:^|[\s\-–—])([^\s\-–—和与]{2,10})(?:和|与|-|–|—)([^\s\-–—和与]{2,10})/);
+        if(m){
+          var c1=_clean(m[1]), c2=_clean(m[2]);
+          if(c1==='中国' || c1==='China'){ if(_valid(c2)) return c2; }
+          else if(c2==='中国' || c2==='China'){ if(_valid(c1)) return c1; }
+          else { if(_valid(c1)) return c1; if(_valid(c2)) return c2; }
+        }
+        /* 4. 取标题中第一个非“中国”的已知国家名 */
+        if(typeof COUNTRIES!=='undefined' && COUNTRIES.length){
+          for(var i=0;i<COUNTRIES.length;i++){
+            var cn=COUNTRIES[i].name;
+            if(!cn || cn==='中国' || cn==='China') continue;
+            if(t.indexOf(cn)>=0) return cn;
+          }
+        }
+        return '';
+      }
+      var extracted=_mainEventCountry(title);
+      if(extracted) country=extracted;
+      else if(!country && typeof COUNTRIES!=='undefined' && COUNTRIES.length){
+        for(var i=0;i<COUNTRIES.length;i++){ if(title.indexOf(COUNTRIES[i].name)>=0){ country=COUNTRIES[i].name; break; } }
+      }
+      /* 去掉媒体来源后缀、数字、计数 */
+      title=title.replace(/\s*[-—–]\s*[^，。；;]+$/,'').replace(/\d+/g,'').replace(/[０-９]+/g,'');
+      /* 同义/近义归一 */
+      var norm=title
+        .replace(/液化天然气厂|LNG厂|LNG综合体|液化天然气综合体|天然气厂|天然气工厂|天然气综合体|天然气化工厂|天然气化工综合体|煤气厂|石化厂|石油化工|炼油厂|石油厂|油田|气田|化工园区|工业园区|工业综合体|发电厂|电站|火电站|水电站|核电站|制造厂|生产基地|工业基地|产业园|产业区/g,'能源设施')
+        .replace(/化学工厂|化工综合体|化工园区|化工厂|炼油厂|石油化工厂|煤化工厂/g,'化工厂')
+        .replace(/综合体|工厂|厂房|厂区|车间|仓库|基地|设施/g,'能源设施')
+        .replace(/工人|员工|公民|人员|民众|群众|雇员|职员|务工者|劳务人员/g,'人')
+        .replace(/死亡|遇难|丧生|遇害|罹难|身亡|死者|遇难者|受害者|丧命/g,'亡')
+        .replace(/失踪|失联|下落不明|不知所踪/g,'踪')
+        .replace(/发生火灾|起火|着火|大火|火灾事故|火情|失火/g,'火灾')
+        .replace(/山洪|洪灾|洪涝|洪流/g,'洪水')
+        .replace(/中国|中方|华人|华侨|华裔|中企|中资|中国大陆/g,'中')
+        .replace(/誓言|宣称|声称|表示|称|说|宣布|宣告|声明|重申|强调|警告|提醒|指出|认为|回应|答复|反击|报复|反制|决定|将|已|计划|准备|开始|继续|加强|采取|实施|执行|扩大|升级|加剧|缓解|呼吁|敦促|要求|请求|寻求|试图|可能|也许|似乎| reportedly| according to sources/g,'')
+        .replace(/关税战|贸易摩擦|贸易争端|贸易紧张|加征关税|提高关税|征收关税|取消关税|减免关税|最惠国待遇|贸易关系|正常贸易关系/g,'贸易战')
+        .replace(/经济制裁|金融制裁|出口管制|贸易禁运|武器禁运|单方面制裁|多边制裁|制裁措施|制裁名单|扩大制裁|追加制裁/g,'制裁')
+        .replace(/武装冲突|军事冲突|暴力冲突|流血冲突|冲突升级|冲突加剧|冲突爆发/g,'冲突')
+        .replace(/军事打击|空袭打击|导弹打击|火箭弹袭击|无人机袭击|自杀式袭击|武装袭击|恐怖袭击|连环爆炸|汽车炸弹|路边炸弹/g,'袭击')
+        .replace(/人员伤亡|造成伤亡|死伤|死伤者/g,'伤亡');
+      /* 国家名统一归一为"国"（从 COUNTRIES 动态替换） */
+      if(typeof COUNTRIES!=='undefined' && COUNTRIES.length){
+        for(var i=0;i<COUNTRIES.length;i++){
+          var cn=COUNTRIES[i].name;
+          if(!cn || cn.length<2) continue;
+          norm=norm.split(cn).join('国');
+        }
+      }
+      /* 去掉常见虚词、介词、助词、标点、空白、全角符号 */
+      norm=norm.replace(/[\s\u0000-\u002F\u003A-\u0040\u005B-\u0060\u007B-\u007E\u3000-\u303F\uFF00-\uFFEF]/g,'')
+        .replace(/的|了|和|与|及|或|在|是|对|为|被|把|从|到|向|给|让|使|由|因|于|关于|有关|随着|通过|根据|按照|由于|为了|除了|以及|或者|而且|但是|然而|因为|所以|因此|因而|如果|虽然|尽管|即使|不但|不仅|并且|然后|接着|随后|同时|此外|另外|其余|其他|等等|之一|一下|一些|一位|一名|一个|一起|一度|一直|不断|持续|已经|正在|将要|将会|曾经|刚刚|现在|目前|当前|今天|昨日|日前|近来|最近|不久|很快|即将|可能|也许|大概|大约|几乎|差不多|完全|十分|非常|特别|极其|比较|相当|更加|越来越|进一步|逐步|逐渐|渐渐|终于|最终|最后|最初|开始|结束|完成|进行|开展|推动|促进|加强|深化|扩大|拓展|提升|提高|增强|增加|增长|减少|降低|下降|上升|上涨|下跌|波动|变化|转变|转换|调整|改革|开放|发展|建设|建立|成立|组建|设置|设立|取消|撤销|废除|恢复|重建|修复|维护|保护|保障|确保|保证|实现|达到|获得|取得|赢得|失去|遭受|面临|遇到|发现|出现|发生|爆发|引发|导致|造成|产生|形成|构成|成为|作为|当作|看作|认为|以为|觉得|感到|显示|表明|说明|指出|介绍|描述|解释|分析|评论|批评|谴责|指责|反对|支持|同意|拒绝|接受|欢迎|呼吁|敦促|要求|请求|征求|寻求|寻找|探索|研究|调查|检查|审查|审核|评估|评价|判断|认定|确认|确定|宣布|宣告|声明|称|说|讲|谈|讨论|商议|协商|谈判|会谈|会晤|接触|交流|交换|沟通|联系|通知|通报|报告|汇报|反映|反馈|答复|回答|回复|反应|应对|处理|处置|办理|解决|消除|化解|防止|避免|预防|遏制|打击|镇压|制裁|惩罚|处罚|罚款|逮捕|拘留|扣押|扣留|关押|监禁|审判|判决|裁决|裁定|起诉|控告|指控|缉捕|追捕|通缉|引渡|驱逐|遣返|流放|撤离|疏散|撤退|转移|调动|部署|驻扎|驻守|警戒|警卫|守卫|保卫|防御|防卫|进攻|攻击|袭击|入侵|侵犯|侵略|占领|控制|收复|解放|独立|统一|分裂|解体|崩溃|瓦解|垮台|倒台|下台|上台|执政|掌权|统治|管辖|管理|治理|负责|承担|负担|承受|经受|经历|体验|感受|知觉|意识|认识|了解|知道|明白|懂得|理解|谅解|原谅|饶恕|赦免|宽恕|包容|容忍|忍耐|忍受|遭遇|遇到|碰见|遇见|会见|接见|接待|迎接|送别|送行|告别|离别|分离|分开|分散|分布|散布|传播|流传|传染|感染|污染|玷污|弄脏|清洁|打扫|清理|清除|消灭|灭绝|毁灭|毁坏|破坏|损坏|损害|损伤|伤害|杀害|杀死|谋杀|暗杀|刺杀|击毙|击伤|击毁|击落|击沉|击败|打败|战胜|战败|失败|胜利|成功|获胜|赢得|夺取|占领|收获|收益|利润|亏损|丢失|遗失|遗忘|忘记|记得|记忆|回忆|回顾|展望|预测|预计|估计|估算|计算|统计|汇总|总结|归纳|概括|综合|整理|排列|排序|分类|归类|划分|区分|辨别|识别|鉴定|鉴别|辨认|分辨|解析|剖析|组合|整合|合并|联合|接合|配合|协作|合作|协同|协调|调和|调解|仲裁|裁判|评判|评选|选择|挑选|选拔/g,'');
+      /* 语义要素抽取 */
+      var ent=norm.match(/(能源设施|化工厂|矿区|营地|港口|机场|车站|铁路|边境|首都|海域|海峡|设施|法院|司法机关|贸易|经济|市场|货币|汇率|银行|金融|关税|制裁|冲突|战争|无人机|导弹|战机|军舰|潜艇|航母|坦克|装甲车|火炮|火箭弹|地雷|爆炸物)/);
+      var inc=norm.match(/(火灾|爆炸|袭击|绑架|劫持|枪击|坠机|沉船|地震|洪水|山洪|制裁|冲突|战争|事故|坠毁|沉没|抗议|骚乱|罢工|政变|恐袭|空袭|交火|扣押|逮捕|审判|选举|公投|签约|谈判|协议|条约|关税|贸易战|禁运|封锁|入侵|占领|撤退|停火|维和|救援|疏散|撤离|遣返|驱逐|引渡|通缉|追捕|伏击|屠杀|人道主义危机|难民|饥荒|干旱|飓风|台风|龙卷风|海啸|火山|泥石流|雪崩|山火|森林火灾|化学泄漏|核泄漏|辐射|污染|中毒|传染病|疫情|网络攻击|黑客|勒索|数据泄露|间谍|监控|审查|宣传|欺诈|诈骗|洗钱|腐败|贿赂|走私|贩毒|武器|弹药|导弹|无人机)/);
+      /* 2026-08-27 去重键不再区分是否提及中方受害者：同一事件多条变体有的写中国有的不写，避免因此拆成多条
+       * “边境”只是位置修饰，不是实体，避免同一洪灾因是否写“边境”而拆成两条 */
+      if(country && ent && ent[1]!=='边境' && inc) return country+'|'+ent[1]+'|'+inc[1];
+      /* 国家+灾害/事件类型 兜底合并：同一国家同一类灾害（洪水/袭击/冲突等）只留一条 */
+      if(country && inc) return country+'|'+inc[1];
+      /* 回退：国家+排序后的字符指纹（抵抗词序差异） */
+      var clean=norm.replace(/[^一-龥a-z]/gi,'');
+      var sorted=clean.split('').sort().join('');
+      var fallback=(country||'')+'|'+sorted.slice(0,14);
+      return fallback;
+    }catch(e){
+      /* 任何异常退回到严格事件键，避免整个面板崩溃 */
+      return this._eventKey(a);
     }
-    /* 去掉媒体来源后缀、数字、计数 */
-    title=title.replace(/\s*[-—–]\s*[^，。；;]+$/,'').replace(/\d+/g,'').replace(/[０-９]+/g,'');
-    /* 同义/近义归一 */
-    var norm=title
-      .replace(/液化天然气厂|LNG厂|LNG综合体|液化天然气综合体|天然气厂|天然气工厂|天然气综合体|天然气化工厂|天然气化工综合体|煤气厂|石化厂|石油化工|炼油厂|石油厂|油田|气田|化工园区|工业综合体/g,'能源设施')
-      .replace(/化学工厂|化工综合体/g,'化工厂')
-      .replace(/工人|员工|公民|人员|民众|群众|雇员|职员|务工者|劳务人员/g,'人')
-      .replace(/死亡|遇难|丧生|遇害|罹难|身亡|死者|遇难者|受害者|丧命/g,'亡')
-      .replace(/失踪|失联|下落不明|不知所踪/g,'踪')
-      .replace(/发生火灾|起火|着火|大火|火灾事故|火情|失火/g,'火灾')
-      .replace(/中国|中方|华人|华侨|华裔|中企|中资|中国大陆/g,'中');
-    /* 语义要素抽取 */
-    var ent=norm.match(/(能源设施|化工厂|矿区|营地|港口|机场|车站|铁路|边境|首都|海域|海峡|综合体|设施)/);
-    var inc=norm.match(/(火灾|爆炸|袭击|绑架|劫持|枪击|坠机|沉船|地震|洪水|制裁|冲突|战争|事故|坠毁|沉没|抗议|骚乱|罢工|政变|恐袭|空袭|交火|扣押|逮捕|审判|选举|公投|签约|谈判|协议|条约|关税|贸易战|禁运|封锁|入侵|占领|撤退|停火|维和|救援|疏散|撤离|遣返|驱逐|引渡|通缉|追捕|伏击|屠杀|人道主义危机|难民|饥荒|干旱|飓风|台风|龙卷风|海啸|火山|泥石流|雪崩|山火|森林火灾|化学泄漏|核泄漏|辐射|污染|中毒|传染病|疫情|网络攻击|黑客|勒索|数据泄露|间谍|监控|审查|宣传|欺诈|诈骗|洗钱|腐败|贿赂|走私|贩毒|武器|弹药|导弹|无人机|战机|军舰|潜艇|航母|坦克|装甲车|火炮|火箭弹|地雷|爆炸物)/);
-    var vic=/(中|Chinese|China)/i.test(norm)?'中':'';
-    if(country && ent && inc) return country+'|'+ent[1]+'|'+inc[1]+'|'+vic;
-    /* 回退严格键 */
-    return AVIEW._eventKey(a);
   },
   /* 事件级合并：同事件只留最新（列表已按级别/时间排序，第一条即最新/最重）
    * mode='fuzzy' 用于态势总览/实时流摘要面板，抵抗多来源标题差异 */
@@ -10854,12 +10885,45 @@ const AVIEW={
     var self=this;
     var keyFn=(mode==='fuzzy'&&self._eventKeyFuzzy)?self._eventKeyFuzzy:function(x){return self._eventKey(x);};
     list.forEach(function(a){
-      var k=keyFn.call(self,a);
-      if(k.replace(/\|/g,'').length<6){ out.push(a); return; }
-      if(seen[k]){ seen[k]._mergedN=(seen[k]._mergedN||1)+1; return; }
+      var k;
+      try{ k=keyFn.call(self,a); }catch(err){ k=self._eventKey(a); }
+      if(!k || k.replace(/\|/g,'').length<6){ out.push(a); return; }
+      if(seen[k]){
+        seen[k]._mergedN=(seen[k]._mergedN||1)+1;
+        /* 合并涉华标记：任一版本提到中方受害者，主条目即标为涉华 */
+        var t=String(a.title||'')+String(a.title_zh||'')+String(a.desc||'');
+        if(/中国|中方|华人|华侨|华裔|中企|中资|Chinese|China/i.test(t)) seen[k]._chinaVictim=true;
+        return;
+      }
       seen[k]=a; out.push(a);
     });
     return out;
+  },
+  /* 2026-08-27 态势总览高可见面板按国别封顶：同一国家（按标题提取的事发国）相似新闻只留 1 条，
+   * 优先保留价值分最高/最新的那一条，避免尼泊尔洪水、尼日利亚绑架等单一事件多来源刷屏。 */
+  _capPerCountry(list,maxPerCountry){
+    if(!list || list.length<=1) return list;
+    maxPerCountry=maxPerCountry||1;
+    var self=this;
+    var groups={};
+    list.forEach(function(a,idx){
+      var country='';
+      try{ country=(self._eventKeyFuzzy?self._eventKeyFuzzy(a):'').split('|')[0]||''; }catch(e){}
+      if(!country) country=a.country||'';
+      if(!country) country='其他';
+      if(!groups[country]) groups[country]=[];
+      groups[country].push({a:a,idx:idx,sc:(self._alertValue?self._alertValue(a).score:0),time:String(a.time||'')});
+    });
+    var out=[];
+    Object.keys(groups).forEach(function(c){
+      var arr=groups[c].sort(function(x,y){
+        if(y.sc!==x.sc) return y.sc-x.sc;
+        return y.time.localeCompare(x.time);
+      }).slice(0,maxPerCountry);
+      out=out.concat(arr);
+    });
+    out.sort(function(x,y){ return x.idx-y.idx; });
+    return out.map(function(x){ return x.a; });
   },
   renderQueue(){
     var alerts=ALERTS.slice();
