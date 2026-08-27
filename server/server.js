@@ -29,6 +29,7 @@ const wechatoa = require('./wechat-oa'); /* 微信公众号实时采集通道（
 const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采（2026-08-25：搜狗检索拿不到新文的根治方案——鼎泰安元官网/郑和号观察者网号等运营方自有公开站点同步原文） */
 const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项采集（2026-08-26：组合词改排序+双信号过滤，专治涉华负面新文被埋） */
 const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索→抓取入库 四步管线（2026-08-26 用户指令：公众号只查询线索，不再从公众号抓数据入库） */
+const coreThreatWatch = require('./core-threat-watch'); /* 海外核心安全威胁一分钟哨兵（2026-08-27 用户铁指令：巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚 恐袭/袭击/绑架/刑案，1 分钟一轮） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -1706,6 +1707,23 @@ app.post('/api/wechat/leads-sweep', (req, res) => {
   if (Date.now() < _wxLeadsBusyUntil) return res.json({ ok: false, error: '上一轮线索管线尚未结束，请稍候' });
   setTimeout(() => { _runWechatLeads(); }, 50);
   res.json({ ok: true });
+});
+
+/* ===== 海外核心安全威胁一分钟哨兵手动触发端点（2026-08-27） ===== */
+app.post('/api/core-threat/sweep', async (req, res) => {
+  try {
+    if (Date.now() < _coreThreatBusyUntil) return res.json({ ok: false, error: '上一轮核心威胁哨兵尚未结束，请稍候' });
+    const r = await coreThreatWatch.runCoreThreatWatch({ maxPerQuery: 15 });
+    const items = r.items || [];
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 4); } catch (e) {}
+      items.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} });
+      const res2 = await _ingestLinkedItems(items, 'CORE-THREAT-MANUAL', '');
+      return res.json({ ok: true, count: items.length, inserted: (res2 && res2.inserted) || 0, stats: r.stats });
+    }
+    res.json({ ok: true, count: 0, inserted: 0, stats: r.stats });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  finally { _coreThreatBusyUntil = 0; }
 });
 
 /* ===== 特种兵爬虫（一键全网深抓：涉华负面 + 各国媒体 + 社交平台） =====
@@ -4018,6 +4036,31 @@ async function _runRegionBalance() {
   finally { _regionBalanceBusyUntil = 0; }
 }
 
+/* ===== 海外核心安全威胁一分钟哨兵调度（2026-08-27 用户铁指令）=====
+ * 7×24 每 60 秒一轮：core-threat-watch 四层采集（GDELT 区域×事件矩阵 +
+ * GNews/Bing RSS 原子查询 + 高危本地 RSS 直采），覆盖巴基斯坦/CPEC、阿富汗、
+ * 非洲、中亚、东南亚 的恐怖袭击/海外袭击/绑架/重大刑事案件。 */
+let _coreThreatBusyUntil = 0;
+async function _runCoreThreatWatch() {
+  if (Date.now() < _coreThreatBusyUntil) return;
+  _coreThreatBusyUntil = Date.now() + 90000; /* 单轮 90 秒锁，避免 GDELT 慢响应重叠 */
+  try {
+    const r = await coreThreatWatch.runCoreThreatWatch({ maxPerQuery: 12 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[CORE-THREAT] 翻译异常:', e.message); }
+    items.forEach(it => {
+      try {
+        ENTITY.enrich(it);
+        if (!it.category) it.category = '安全事件';
+      } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'CORE-THREAT', '');
+    if (res && res.inserted) console.log('[CORE-THREAT] ✅ 新入库核心威胁事件 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[CORE-THREAT] 采集失败:', e.message); }
+  finally { _coreThreatBusyUntil = 0; }
+}
+
 /* ===== 涉华人员安全专项哨兵调度（2026-08-25 用户铁指令）=====
  * 7×24 每 30 分钟一轮：cn-security-watch 三层采集（GDELT/GNews/Bing 多语种关键词组合
  * + 高危国别本地小源直采 RSS + 老旧 TLS curl 兜底），入库走与 GLOBALMEDIA 同一套
@@ -4107,11 +4150,12 @@ async function _runWechatLeads() {
 }
 
 function startGlobalMediaCron() {
-  setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); }); }, 5000);  // 启动后5s先同步统计再首跑
+  setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); _runCoreThreatWatch(); }); }, 5000);  // 启动后5s先同步统计再首跑
   setInterval(_runGlobalMedia, GLOBAL_MEDIA_INTERVAL_MS); // 每60秒刷新一轮
   setInterval(_runChinaFocus, GLOBAL_MEDIA_INTERVAL_MS);  // 涉华专项同步运行
   setInterval(_runChinaNegative, 60 * 1000);  // 境外涉华负面专项每60秒运行一次（AP检索耗时较长，避免阻塞主循环）
   setInterval(_runTerrorAttacks, 90 * 1000);  // 恐怖袭击/武装袭击专项每90秒运行一次（高危国家重点监控）
+  setInterval(_runCoreThreatWatch, 60 * 1000);  // 海外核心安全威胁一分钟哨兵（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚），用户 2026-08-27 铁指令
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 30 * 60 * 1000);
