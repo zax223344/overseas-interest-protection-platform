@@ -62,10 +62,8 @@ const NEG_TERMS = [
   'hostile','condemn','accuse','arrest','probe','ban','sanctions'
 ];
 function chinaRelated(text){
-  if(!text) return false;
-  var low = text.toLowerCase();
-  for(var i=0;i<CHINA_TERMS.length;i++){ if(low.indexOf(CHINA_TERMS[i].toLowerCase())>=0) return true; }
-  return false;
+  /* 2026-08-27 统一走后端严格涉华判定，避免 "Chinese" 单独作为形容词误标 */
+  return scrapers.isChinaRelatedStrict(text);
 }
 function chinaNegative(text){
   if(!text) return false;

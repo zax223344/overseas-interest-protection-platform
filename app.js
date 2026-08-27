@@ -109,7 +109,16 @@ function esc(s){return String(s==null?'':s).replace(/</g,'&lt;').replace(/>/g,'&
  * 注入 innerHTML 后吞掉后续 DOM：预警队列标题变默认蓝色链接、点不开；态势总览布局被冲乱。
  * 两处用法：① 完整标签 <[^>]*> 直接移除；② 末尾未闭合残标 <[^>]*$ 一并移除。
  * 所有把 title/desc/content 注入 innerHTML 的位置必须先过本函数（先 strip 再 substring，顺序不可反）。 */
-function stripTags(s){return String(s==null?'':s).replace(/<[^>]*>/g,'').replace(/<[^>]*$/g,'');}
+function stripTags(s){var v=String(s==null?'':s);
+/* 2026-08-28：先解码 HTML 实体再剥标签——Google News RSS 的 desc 存的是 &lt;a href=... 实体，
+ * 直接拼 innerHTML 会被浏览器解码成真 <a> 标签吞掉后续 DOM（半中半英+布局错乱同源）。 */
+v=v.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
+return v.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi,'').replace(/<(?:font|span|div|b|i|em|strong|u)\b[^>]*>[\s\S]*?<\/(?:font|span|div|b|i|em|strong|u)>/gi,'').replace(/<br\s*\/?>/gi,' ').replace(/<[^>]*>/g,'').replace(/<[^>]*$/g,'').replace(/href\s*=\s*["'][^"']*["']/gi,'').replace(/https?:\/\/\S+/g,'').replace(/CBMi[a-zA-Z0-9]+/g,'').replace(/target\s*=\s*["'][^"']*["']/gi,'').replace(/\s{2,}/g,' ').trim();}
+/* 2026-08-28：desc 中文净化——清洗实体/标签后若为外文主体（Google News RSS 英文原文）则返回空串，
+ * 避免中文标题下挂英文原文造成半中半英观感。 */
+function _descCn(d){var s=stripTags(d||'');if(!s)return '';s=s.replace(/&[a-zA-Z]+;?/g,' ').replace(/\s{2,}/g,' ').trim();if(!s)return '';var zh=(s.match(/[一-龥]/g)||[]).length;var en=(s.match(/[A-Za-z]/g)||[]).length;if(en>12&&zh*3<en)return '';return s;}
+/* 去重标题拼接 + 中英双语合并清洗：源名/中文译文与英文原文被同时塞入 title 时裁剪 */
+function _dedupeTitleConcat(t){var s=String(t||'');var half=Math.floor(s.length/2);for(var cut=half;cut>10;cut--){if(s.slice(0,cut)===s.slice(cut))return s.slice(0,cut);}var m=s.match(/^(.+?--[\u4e00-\u9fa5A-Za-z·\s]{2,18})(?:\1|.+)$/);if(m&&m[1])return m[1];return s;}
 var WARNING_RULES=[
 {id:'WR01',name:'国家综合风险红色阈值',desc:'国家综合风险评分≥8.0时自动触发红色预警',threshold:'≥8.0',level:'red',type:'综合风险',enabled:true,trigCount:6},
 {id:'WR02',name:'国家综合风险橙色阈值',desc:'国家综合风险评分≥6.0且＜8.0时触发橙色预警',threshold:'6.0-8.0',level:'orange',type:'综合风险',enabled:true,trigCount:14},
@@ -7435,9 +7444,9 @@ const SITUATION={
         '<div style="flex:1;min-width:0">'+
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'+
             '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 5px">'+lv.label+'</span>'+
-            '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1"> '+stripTags(a.title_zh||a.title)+'</span>'+
+            '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1"> '+stripTags(_dedupeTitleConcat(a.title_zh||a.title))+'</span>'+
           '</div>'+
-          '<div style="font-size:10px;color:var(--text2);line-height:1.4;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+stripTags(a.desc||'').substring(0,60)+'</div>'+
+          '<div style="font-size:10px;color:var(--text2);line-height:1.4;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+_descCn(a.desc||'').substring(0,60)+'</div>'+
           '<div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text3)">'+
             '<span class="badge b-blue" style="font-size:8px;padding:0 4px">'+a.type+'</span>'+
             '<span>🌍 '+a.country+'</span>'+
@@ -7560,6 +7569,12 @@ const SITUATION={
     /* 铁律 2026-08-27：全球态势焦点/最新情报面板只显示核心安全事件
        （恐怖袭击/海外袭击/绑架/重大刑案/恐怖组织动态），其他一律不显示 */
     var t=String(a.title||'')+String(a.title_zh||'');
+    /* 铁律 2026-08-27 深夜追加：外文/半中半英标题一律不上焦点面板
+       （例：「US designates UK-based 巴勒斯坦 Action as foreign」）。 */
+    var disp=String(a.title_zh||a.title||'');
+    var latinRuns=disp.match(/[A-Za-z][A-Za-z'’-]*(?:\s+[A-Za-z][A-Za-z'’-]*){3,}/g)||[];
+    if(latinRuns.length&&/[一-龥]/.test(disp)) return false;   /* 混排：含中文又有 4+ 连续英文词 */
+    if(disp.length&&(/[一-龥]/.test(disp)?false:true)&&/[A-Za-z]{6,}/.test(disp)) return false; /* 纯外文主体 */
     /* 核心事件词：必须命中 */
     var isCore=/恐袭|恐怖|自杀式|绑架|劫持|人质|武装袭击|恐怖袭击|枪击|谋杀|屠杀|灭门|刑事|命案|爆炸|伏击|突袭|武装分子|极端组织|塔利班|博科|青年党|基地组织|伊斯兰国|ISIS|绑架案|劫持案|抢劫|匪徒|帮派|枪击案|凶杀|命案|中国公民|中方人员|华人被袭|华侨被绑|撤侨|群体开枪|terror|suicide|kidnap|hostage|attack|bombing|blast|shooting|murder|massacre|militant|insurgent|extremist|Taliban|Boko|Shabaab|Qaeda|ISIS|ambush|raid|assault|armed|gunmen|criminal|gang|homicide/i.test(t);
     if(!isCore) return false;
@@ -7685,7 +7700,7 @@ const SITUATION={
           '<div style="flex:1;min-width:0">'+
             '<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">'+
               '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 5px">'+lv.label+'</span>'+
-              '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+stripTags(a.title_zh||a.title)+'</span>'+
+              '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title))+'</span>'+
               '<span style="color:'+(val.score>=70?'var(--red)':val.score>=45?'var(--orange)':'var(--text3)')+';font-weight:800;font-size:9px" title="预警价值分（为什么值得预警）">◆'+val.score+'</span>'+liveTag+
             '</div>'+
             tagHtml+factHtml+
@@ -7735,7 +7750,7 @@ const SITUATION={
     try{
       (ALERTS||[]).forEach(function(a){
         if(a.level==='red')red++; else if(a.level==='orange')orange++; else if(a.level==='yellow')yellow++;
-        if(/中国|中资|中企|中方|华人|一带一路|涉华|Chinese|China|CPEC/i.test((a.title||'')+(a.title_zh||'')))cnN++;
+        if(typeof GATE!=='undefined'&&GATE.isChinaRelatedStrict?GATE.isChinaRelatedStrict((a.title||'')+(a.title_zh||'')):/中国|中资|中企|中方|华人|一带一路|涉华|Chinese|China|CPEC/i.test((a.title||'')+(a.title_zh||'')))cnN++;
       });
     }catch(e){}
     var focus=[], watchN=0;
@@ -7819,7 +7834,7 @@ const SITUATION={
         h+='<div style="padding:4px 2px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,"")+'\');},300)">'+
           '<div style="display:flex;gap:4px;align-items:center;font-size:10px">'+
           '<span class="badge '+lv.cls+'" style="font-size:8px;padding:0 3px">'+lv.label+'</span>'+
-          '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">'+stripTags(a.title_zh||a.title||'').slice(0,22)+'</span>'+
+          '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,22)+'</span>'+
           '<span style="color:'+(sc>=70?'var(--red)':sc>=45?'var(--orange)':'var(--text3)')+';font-weight:800;font-size:9px">◆'+sc+'</span></div>'+
           '<div style="font-size:9px;color:var(--text3);margin-top:1px">📍'+(a.country||'-')+' · 🕐'+String(a.time||'').slice(5,16)+'</div></div>';
       });
@@ -7840,7 +7855,7 @@ const SITUATION={
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
         h+='<div class="live-item" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,'')+'\');},300)">'+
           '<span class="live-lv '+lv.cls+'">'+lv.label+'</span>'+
-          '<span class="live-title">'+stripTags(a.title_zh||a.title||'').slice(0,24)+'</span>'+
+          '<span class="live-title">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,24)+'</span>'+
           '<span class="live-time">'+(a.time||'').slice(5,16)+'</span></div>';
       });
     }else{
@@ -10718,7 +10733,7 @@ const AVIEW={
     var list=(typeof ALERTS!=='undefined'?ALERTS:[]).filter(function(a){return a.status!=='resolved';});
     var red=list.filter(function(a){return a.level==='red';}).length;
     var orange=list.filter(function(a){return a.level==='orange';}).length;
-    var cnN=list.filter(function(a){return /中国|中资|中企|中方|华人|华侨|一带一路|涉华|Chinese|China|CPEC/i.test(String(a.title||'')+String(a.title_zh||''));}).length;
+    var cnN=list.filter(function(a){return (typeof GATE!=='undefined'&&GATE.isChinaRelatedStrict)?GATE.isChinaRelatedStrict(String(a.title||'')+String(a.title_zh||'')):/中国|中资|中企|中方|华人|华侨|一带一路|涉华|Chinese|China|CPEC/i.test(String(a.title||'')+String(a.title_zh||''));}).length;
     var domCnt={}; list.forEach(function(a){var d=me._domainOf(a);domCnt[d]=(domCnt[d]||0)+1;});
     var DIMS=[
       {k:'personnel',n:'🛡️ 人员与项目',c:'var(--red)'},
@@ -10792,7 +10807,8 @@ const AVIEW={
   },
   /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
   _liteFacts(a){
-    var text=String(a.title_zh||a.title||'')+' '+String(a.content_zh||a.desc||a.content||'');
+    /* 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会让"⚡➡️"facts 显示半中半英。 */
+    var text=String(a.title_zh||a.title||'')+' '+String(a.content_zh||'');
     var f=[];
     var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
     if(tm)f.push({k:'🕐',v:tm[1]});
@@ -10835,7 +10851,8 @@ const AVIEW={
   },
   /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
   _liteFacts(a){
-    var text=String(a.title_zh||a.title||'')+' '+String(a.content_zh||a.desc||a.content||'');
+    /* 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会让"⚡➡️"facts 显示半中半英。 */
+    var text=String(a.title_zh||a.title||'')+' '+String(a.content_zh||'');
     var f=[];
     var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
     if(tm)f.push({k:'🕐',v:tm[1]});
@@ -11767,7 +11784,7 @@ const AVIEW={
         '<span class="badge b-blue" style="font-size:8px;padding:0 4px">'+a.type+'</span>'+
         '<span style="font-size:9px;color:var(--text3)">'+(a.time||'').substring(5,16)+'</span></div>'+
         '<div style="font-size:11px;font-weight:600;line-height:1.3;margin-bottom:2px">'+stripTags(a.title)+'</div>'+
-        '<div style="font-size:9px;color:var(--text2);line-height:1.35;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+stripTags(a.desc||'').substring(0,50)+'</div>'+
+        '<div style="font-size:9px;color:var(--text2);line-height:1.35;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+_descCn(a.desc||'').substring(0,50)+'</div>'+
         '<div style="font-size:10px;color:var(--text3)">📍'+a.country+(a.enterprise?' | 🏢'+a.enterprise:'')+'</div>'+
         '</div>';
     });

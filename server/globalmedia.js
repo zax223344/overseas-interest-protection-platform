@@ -531,7 +531,7 @@ function _tagRssItem(it, s, dims, fromSource) {
   if (!gate.pass) return null;
   /* 涉华判定铁律（2026-08-13 用户定义）：只看标题要素（中国/中资/华人等），
    * 不再按"来源是中国媒体"注入 A 维度——新华社发的世界新闻不是涉华情报 */
-  const isChinaTitle = /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i.test(it.title || '');
+  const isChinaTitle = scrapers.isChinaRelatedStrict(it.title || '');
   const effectiveDims = (dims || []).slice();
   if (isChinaTitle && effectiveDims.indexOf('A') < 0) effectiveDims.push('A');
   const sc = scoreDimensions(it.title, effectiveDims);

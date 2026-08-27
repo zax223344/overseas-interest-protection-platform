@@ -474,11 +474,24 @@ const AK_FOREIGN_COUNTRIES = ['阿富汗','巴基斯坦','印度','孟加拉','�
 const AK_CHINA_PROVINCES = ['北京','上海','天津','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门','广州','深圳','杭州','成都','武汉','西安','南京','青岛','大连','厦门','苏州'];
 const AK_DOMESTIC_NOISE_RE = /美丽乡村|乡村振兴|农业农村|春耕|秋收|丰收|文旅|景区|门票|机票|携程|高铁出行|高考|考研|就业|招聘|房价|医保|社保|养老|低保|补贴|婚恋|育儿|直播带货|网红|综艺|演唱会|票房|影视剧|电视剧|明星|八卦|中超|CBA|全运|冬奥|春晚|菜价|油价|猪肉|家电|汽车降价|社区|物业|垃圾分类|救援|救灾|奔赴|返乡|乡土|务工|扎根|乡愁|山水|风光|特产|老字号|非遗|民俗|节庆|庙会|灯会|农家乐|村晚|采摘|踏青|赏花|夜市|美食|小吃|火锅|年夜饭|春运|五一|十一|假期|出游|文旅厅|文旅局|乡村振兴局/;
 const AK_DOMESTIC_RISK = ['地震','海啸','台风','洪水','飓风','火山','疫情','恐袭','袭击','冲突','战争','政变','骚乱','抗议','制裁','绑架','爆炸','枪击','劫持','撤侨','撤离','边境','军事','国防','间谍','网络攻击','火灾','车祸','塌方','矿难','中毒','暴雨','强降雨','滑坡','泥石流'];
-function _akChinaRelated(text){
+/* 涉华判定（2026-08-27 收紧）：只看真实命中中国/中方/华人等主体或 China + 明确主体。
+ * 排除 "Chinese" 单独作为形容词（Chinese rivals/actors/officials 泛称）及港台疆藏单独出现的误标。
+ * 与 gate.js / globalmedia.js / crawler.js 同源，统一 export 供后端调用。 */
+function isChinaRelatedStrict(text){
   if(!text) return false;
-  var low = text.toLowerCase();
-  for(var i=0;i<AK_CHINA_TERMS.length;i++){ if(low.indexOf(AK_CHINA_TERMS[i].toLowerCase())>=0) return true; }
+  var t = String(text);
+  // 强直接主体词
+  if(/中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|中国驻|访华|驻华|CPEC|中巴经济走廊|北京|Beijing|Belt and Road|RMB|Yuan|BRICS|AIIB|Shanghai Cooperation|Xi Jinping/i.test(t)) return true;
+  // China 作为整词出现
+  if(/\bChina\b/i.test(t)) return true;
+  // Chinese 必须依附明确主体：公民/企业/使馆/人员/项目/资产/学生/游客/船员等
+  if(/\bChinese (?:citizen|national|company|companies|worker|workers|engineer|engineers|embassy|consulate|ambassador|official|officials|firm|firms|investment|investor|investors|tourist|tourists|student|students|crew|vessel|ship|ships|plane|national|nationals|nationality|flag|language|government|ministry|army|military|forces|naval|navy|aircraft|drone|drones|tech|technology|chip|chips|AI|telecom|app|apps|platform|platforms|owned|operated|contractor|contractors|mine|mining|project|projects|port|ports|base|bases|interest|interests|overseas|diaspora|community|communities|communist|communists)\b/i.test(t)) return true;
+  // Chinese + 明确海外/安全语境（被袭/被绑/遇难/撤离等）
+  if(/\bChinese\b/i.test(t) && /\b(?:attack|attacked|killed|kidnap|kidnapped|hostage|shooting|shot|injured|missing|arrested|detained|sentenced|executed|evacuat|rescue|rescued|embassy|consulate|citizen|national|company|worker|student|tourist|vessel|ship|plane|crew|overseas|abroad)\b/i.test(t)) return true;
   return false;
+}
+function _akChinaRelated(text){
+  return isChinaRelatedStrict(text);
 }
 function _akChinaNegative(text){
   if(!text) return false;
@@ -903,4 +916,5 @@ function sourceHealth() {
 
 module.exports = { scrapeSource, scrapeCategory, scrapeAll, proxyFetchText, SCRAPE_SOURCES, sourceHealth,
   /* —— 供 crawler.js（特种兵）/ agentkey.js 复用 —— */
-  fetchText: _fetchText, extractCountry, extractOverseasCountry, relevant: _relevant, parseRss: parseRssItems, chinaOverseasGate };
+  fetchText: _fetchText, extractCountry, extractOverseasCountry, relevant: _relevant, parseRss: parseRssItems, chinaOverseasGate,
+  isChinaRelatedStrict };

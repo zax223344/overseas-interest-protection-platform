@@ -69,10 +69,15 @@
     return { score:score, reasons:reasons };
   }
 
+  /* 2026-08-27 收紧：只看真实命中中国/中方/华人等主体或 China + 明确主体。
+   * 排除 "Chinese" 单独作为形容词（Chinese rivals/actors/officials 泛称）及港台疆藏单独出现的误标。 */
   function _akChinaRelated(text) {
     if (!text) return false;
-    var low = text.toLowerCase();
-    for (var i = 0; i < AK_CHINA_TERMS.length; i++) { if (low.indexOf(AK_CHINA_TERMS[i].toLowerCase()) >= 0) return true; }
+    var t = String(text);
+    if (/中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|中国驻|访华|驻华|CPEC|中巴经济走廊|北京|Beijing|Belt and Road|RMB|Yuan|BRICS|AIIB|Shanghai Cooperation|Xi Jinping/i.test(t)) return true;
+    if (/\bChina\b/i.test(t)) return true;
+    if (/\bChinese (?:citizen|national|company|companies|worker|workers|engineer|engineers|embassy|consulate|ambassador|official|officials|firm|firms|investment|investor|investors|tourist|tourists|student|students|crew|vessel|ship|ships|plane|national|nationals|nationality|flag|language|government|ministry|army|military|forces|naval|navy|aircraft|drone|drones|tech|technology|chip|chips|AI|telecom|app|apps|platform|platforms|owned|operated|contractor|contractors|mine|mining|project|projects|port|ports|base|bases|interest|interests|overseas|diaspora|community|communities|communist|communists)\b/i.test(t)) return true;
+    if (/\bChinese\b/i.test(t) && /\b(?:attack|attacked|killed|kidnap|kidnapped|hostage|shooting|shot|injured|missing|arrested|detained|sentenced|executed|evacuat|rescue|rescued|embassy|consulate|citizen|national|company|worker|student|tourist|vessel|ship|plane|crew|overseas|abroad)\b/i.test(t)) return true;
     return false;
   }
   function _akChinaNegative(text) {
@@ -262,6 +267,7 @@ var hasStrongOverseas = AK_STRONG_OVERSEAS_RE.test(text);
       if (_isProtected({ title: title, content: content, _geoint: false })) return true;
       return chinaOverseasGate((title || '') + ' ' + (content || '')).pass;
     },
+    isChinaRelatedStrict: _akChinaRelated,
     _isProtected: _isProtected
   };
 

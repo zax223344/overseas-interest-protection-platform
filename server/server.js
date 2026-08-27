@@ -2656,21 +2656,20 @@ function _isChinaLinked(it) {
   // 境外涉华负面数据独立计数，不占常规涉华指标
   if (it._chinaNegative === true) return false;
   if (it.interestLinked !== true && it.interestLinked !== 'true') return false;
-  /* 2026-08-13 用户铁律：涉华 = 标题含中国/中资/华人等要素。
-   * 口径收紧：废除"来源是中国媒体/来源国是中国即涉华"的旧规则——
-   * 新华社发的伊拉克新闻、中国日报发的美国新闻都不是涉华情报。 */
+  /* 2026-08-27 用户铁律：涉华必须真实命中中国主体/利益，禁止港台疆藏单独出现、
+   * 禁止 Chinese 泛称（Chinese rivals/officials）即标涉华。统一使用 scrapers.isChinaRelatedStrict。 */
   if (it._chinaFocus === true) return true;
   // dims A/B 在采集时基于标题计算（A=中国要素，B=一带一路项目），等同标题级判定
   if (it.dims && (it.dims.indexOf('A') >= 0 || it.dims.indexOf('B') >= 0)) return true;
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
-  return /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|Beijing|Belt and Road|CPEC/i.test(t);
+  return scrapers.isChinaRelatedStrict(t);
 }
 function _isChinaNegative(it) {
   if (!it) return false;
   if (it._chinaNegative === true) return true;
-  // 对历史已入库数据兼容识别：标题/内容同时命中涉华词与负面关键词
+  // 2026-08-27 收紧：必须先真实命中中国主体，再命中负面关键词；港台疆藏单独出现不再触发。
   const txt = String(it.title || '') + ' ' + String(it.content || '');
-  if (!/中国|Chinese|China|Beijing|Shanghai|中资|中企|中方|华人|华侨|华裔|一带一路|Hong Kong|Taiwan|Macau|RMB|Yuan|Huawei|ZTE|TikTok|WeChat|BRI|Belt and Road/i.test(txt)) return false;
+  if (!scrapers.isChinaRelatedStrict(txt)) return false;
   const negRe = globalmedia._CHINA_NEGATIVE_KW_RE;
   return negRe ? negRe.test(txt) : false;
 }
@@ -5381,13 +5380,11 @@ function _localizeMedia(s) {
 function _localizeTitleTail(it) {
   if (!it || typeof it !== 'object') return { loc: 0, media: 0, city: 0 };
   if (_looksForeign(it.title)) {
+    /* 2026-08-27 根治半中半英：翻译失败的外文标题一律保持原样 + 打 _untranslated 标记，
+     * 等回填重译。不再做部分国名/媒体/城市本地化——那正是
+     * 「US designates UK-based 巴勒斯坦 Action as foreign」混排的制造源。 */
     it._untranslated = true;
-    /* 即使未译出合格中文，也先把国家/城市/媒体专名本地化，降低"中外文融合"观感 */
-    const t1 = _localizeCountryNames(it.title);
-    const t2 = _localizeMedia(t1);
-    const t3 = _localizeCities(t2);
-    if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; }
-    const probe = { title: t3, content: it.content, content_zh: it.content_zh };
+    const probe = { title: it.title, content: it.content, content_zh: it.content_zh };
     _extractElements(probe);
     if (!it.location && probe.location) it.location = probe.location;
     if (!it.city && probe.city) it.city = probe.city;
