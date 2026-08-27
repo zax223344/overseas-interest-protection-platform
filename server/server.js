@@ -2743,7 +2743,9 @@ async function _ingestLinkedItems(items, tag, note) {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
-        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; let _dt = _classifyIntelType(it);
+        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv;
+        /* 专项采集器（如 core-threat-watch）已明确 data_type，不再被通用分类器覆盖 */
+        let _dt = (it._forceDataType && it.data_type) ? it.data_type : _classifyIntelType(it);
         /* 涉华安全类必须真实命中中国要素，否则降级为开源情报 */
         if (_dt === 'security_events' && !_isChinaLinked(it)) { _dt = 'osint_intel'; }
         it.data_type = _dt;

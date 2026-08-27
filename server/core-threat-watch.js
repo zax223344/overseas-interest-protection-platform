@@ -261,6 +261,11 @@ async function _fetchText(url, timeoutMs, legacy) {
   }
   return _curlFetch(url, timeoutMs);
 }
+function _dataTypeForCategory(cat) {
+  if (cat === '恐怖袭击' || cat === '海外袭击') return 'terror_events';
+  if (cat === '绑架案' || cat === '重大刑事案件') return 'security_events';
+  return 'terror_events';
+}
 function _mkItem(o) {
   const iso = o.date ? new Date(o.date) : null;
   const isoStr = iso && !isNaN(iso.getTime()) ? iso.toISOString() : '';
@@ -275,8 +280,8 @@ function _mkItem(o) {
     date: isoStr, publish_time: isoStr, publishedAt: isoStr, seendate: o.seendate || '',
     content: String(o.desc || '').slice(0, 600),
     country: region.cn, country_cn: region.cn, iso2: region.iso, country_iso: region.iso,
-    interestLinked: true, category: cat, data_type: 'terror_events',
-    _coreThreatWatch: true, _focus: o.focus || '',
+    interestLinked: true, category: cat, data_type: _dataTypeForCategory(cat),
+    _coreThreatWatch: true, _forceDataType: true, _focus: o.focus || '',
     _sourceType: 'core_threat_watch',
     _fromSource: 'CORE-THREAT:' + (o.channel || 'search') + ':' + region.iso,
     chinaRelated: hasChina,
