@@ -280,6 +280,30 @@ tr:hover{background:rgba(0,212,255,0.04)}
 .globe-hud{position:absolute;top:16px;right:16px;display:flex;flex-direction:column;gap:6px;align-items:flex-end;z-index:5}
 .globe-hud-item{background:rgba(10,21,37,0.85);border:1px solid rgba(0,212,255,0.2);border-radius:6px;padding:4px 10px;font-size:10px;color:var(--cyan);font-family:'Courier New',monospace;backdrop-filter:blur(10px)}
 
+/* ===== 地球/平面地图模式切换（COSRI 风格分段按钮） ===== */
+.globe-mode-switch{position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;background:rgba(10,21,37,0.9);border:1px solid rgba(0,212,255,0.25);border-radius:8px;padding:3px;z-index:8;backdrop-filter:blur(10px)}
+.gm-btn{padding:5px 14px;font-size:11px;font-weight:700;color:var(--text3);cursor:pointer;border-radius:6px;transition:.18s;user-select:none;white-space:nowrap}
+.gm-btn:hover{color:var(--text1)}
+.gm-btn.active{background:rgba(0,212,255,0.15);color:var(--cyan);box-shadow:0 0 10px rgba(0,212,255,0.15)}
+#flatmap-canvas{display:none;cursor:crosshair}
+#flatmap-canvas.show{display:block}
+#globe-canvas.hide{display:none}
+
+/* ===== 国家联动侧抽屉（COSRI 点击国家→联动面板） ===== */
+#country-drawer{position:fixed;top:0;right:-420px;width:400px;max-width:92vw;height:100vh;background:rgba(7,14,26,0.98);border-left:1px solid rgba(0,212,255,0.3);box-shadow:-8px 0 40px rgba(0,0,0,0.5);z-index:9000;transition:right .28s cubic-bezier(.22,.61,.36,1);display:flex;flex-direction:column;backdrop-filter:blur(14px)}
+#country-drawer.open{right:0}
+.cd-head{flex-shrink:0;padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:linear-gradient(180deg,rgba(0,212,255,0.06),transparent)}
+.cd-head .flag{font-size:26px;line-height:1}
+.cd-head .nm{font-size:16px;font-weight:800;color:var(--text1)}
+.cd-head .sub{font-size:10px;color:var(--text3);margin-top:2px}
+.cd-close{margin-left:auto;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border);color:var(--text2);cursor:pointer;font-size:14px;transition:.15s}
+.cd-close:hover{border-color:var(--red);color:var(--red)}
+.cd-body{flex:1;overflow-y:auto;padding:12px 14px}
+.cd-sec-tt{font-size:11px;font-weight:800;color:var(--cyan);margin:12px 0 6px;display:flex;align-items:center;gap:6px;letter-spacing:.5px}
+.cd-sec-tt:first-child{margin-top:0}
+#country-drawer-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);z-index:8990;display:none}
+#country-drawer-overlay.show{display:block}
+
 /* Globe bottom ticker */
 .globe-ticker{position:absolute;bottom:0;left:0;right:0;height:36px;background:rgba(4,8,16,0.92);border-top:1px solid rgba(0,212,255,0.15);overflow:hidden;display:flex;align-items:center;z-index:6}
 .globe-watermark{position:absolute;bottom:42px;right:12px;z-index:5;opacity:0.35;pointer-events:none}
@@ -790,6 +814,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
 <div class="sb-group">分析研判</div>
 <div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别档案</span></div>
+<div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国家档案总表</span></div>
 <div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">情报报告中心</span></div>
 <div class="sb-group">数据管理</div>
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
@@ -824,7 +849,12 @@ select.intel-input{cursor:pointer}
 <div class="view active" id="view-situation">
 <div class="globe-container">
 <div class="globe-corner tl"></div><div class="globe-corner tr"></div><div class="globe-corner bl"></div><div class="globe-corner br"></div>
+<div class="globe-mode-switch" id="globe-mode-switch">
+<span class="gm-btn active" id="gm-globe" onclick="GLOBE.setMode('globe')">🌏 转动地球</span>
+<span class="gm-btn" id="gm-flat" onclick="GLOBE.setMode('flat')">🗺️ 平面地图</span>
+</div>
 <canvas id="globe-canvas" width="700" height="500"></canvas>
+<canvas id="flatmap-canvas" width="700" height="500"></canvas>
 <div class="scan-ring"></div>
 <div class="scan-ring2"></div>
 <div class="scan-ring3"></div>
@@ -905,6 +935,11 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: COSRI 国别风险画像（2026-08-28 新增：中海安对标 + 国别档案四维底数） -->
 <div class="view" id="view-cosri">
 <div id="cosri-content"></div>
+</div>
+
+<!-- VIEW: 国家档案总表（2026-08-29 新增：COSRI 对标 P1 —— 70+国总表 + 过滤 + 点行侧抽屉） -->
+<div class="view" id="view-countryfile">
+<div id="countryfile-content"></div>
 </div>
 
 <!-- VIEW: ANOMALY 异动信号（2026-08-28 服务端三件之一：类别×国家基线环比预警） -->
@@ -1111,6 +1146,10 @@ select.intel-input{cursor:pointer}
 <div class="modal-bd" id="modal-bd"></div>
 </div></div>
 
+<!-- 国家联动侧抽屉（COSRI 对标：点地图国家 → 右侧联动面板） -->
+<div id="country-drawer-overlay" onclick="COUNTRY_DRAWER.close()"></div>
+<div id="country-drawer"></div>
+
 <!-- TOAST -->
 <div id="toast"></div>
 
@@ -1142,7 +1181,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=1"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=260"></script>
+<script src="app.js?v=261"></script>
 <script src="foresee.js?v=2"></script>
 <script src="distribute.js?v=37"></script>
 <script src="datasources.js?v=25"></script>
@@ -1155,7 +1194,7 @@ function closeMobileMenu(){
 <script src="socmint.js?v=4"></script>
 <script src="command-center.js?v=3"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=4"></script>
+<script src="role-ui.js?v=5"></script>
 <script src="dailyreport.js?v=5"></script>
 <script src="wechat.js?v=4"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->

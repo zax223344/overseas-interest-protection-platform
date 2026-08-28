@@ -3941,6 +3941,7 @@ const VIEW_MAP={
   monitor:{t:'风险监测',b:'监测中心 / 风险监测'},
   alerts:{t:'预警中心',b:'监测中心 / 预警中心（实时队列 · 智能联动 · 异动信号）'},
   country:{t:'国别档案',b:'分析研判 / 国别档案（风险矩阵 · 预测推演 · 企业资产）'},
+  countryfile:{t:'国家档案总表',b:'分析研判 / 国家档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（研判简报 · AI分析报告）'},
   datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
@@ -4099,6 +4100,7 @@ function runViewInit(v){
       else if(v==='assets'){ ASSETS.init(); }
       else if(v==='alerts'){ AVIEW.init(); }
       else if(v==='cosri'){ if(typeof COSRI_VIEW!=='undefined')COSRI_VIEW.init(); }
+      else if(v==='countryfile'){ if(typeof COUNTRYFILE!=='undefined')COUNTRYFILE.init(); }
       else if(v==='matrix'){ RISK_FUSION.fuse(); if(typeof MATRIX!=='undefined')MATRIX.init(); }
       else if(v==='forecast'){ FORECAST.init(); }
       else if(v==='datacenter'){ DATACENTER.init(); }
@@ -4232,6 +4234,186 @@ const COSRI_VIEW={
         '<div class="card-tt mt-12"><span class="ic">📅</span>近 30 天入库事件 ('+d.recentCount+')</div>'+events+
         '</div>';
     });
+  }
+};
+
+/* ============================================================
+ * COUNTRYFILE — 国家档案总表（COSRI 对标 P1，2026-08-29）
+ * 70+国总表：综合风险值 / 近7d预警数 / 关键项目数 / 关键人员数 /
+ * 24h趋势sparkline / 风险等级；过滤：风险等级 / 有中资项目 / 地区；
+ * 点行 → COUNTRY_DRAWER 联动侧抽屉。
+ * 数据：COUNTRIES + ALERTS 实时统计 + ENTERPRISES 项目/人员 + /api/cosri 四维。
+ * ============================================================ */
+const COUNTRYFILE={
+  _cosri:null,_loaded:false,_fRisk:'all',_fProj:false,_fRegion:'all',_sort:'risk',
+  init(){
+    var self=this;
+    var host=document.getElementById('countryfile-content');
+    if(!host)return;
+    host.innerHTML=
+      '<div class="card"><div class="card-tt"><span class="ic">📊</span>国家档案总表 · 风险值×预警×项目×人员 一表通览'+
+        '<span style="margin-left:auto;font-size:10px;color:var(--text3);font-weight:400">点任意行 → 国别联动详情抽屉</span></div>'+
+      '<div id="cf-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>'+
+      '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">'+
+        '<span style="font-size:11px;color:var(--text2)">过滤：</span>'+
+        '<select id="cf-f-risk" style="background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px">'+
+          '<option value="all">全部风险等级</option><option value="critical">极高(≥8)</option><option value="high">高(6-8)</option><option value="elevated">中高(4-6)</option><option value="moderate">中低(<4)</option></select>'+
+        '<select id="cf-f-region" style="background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px"><option value="all">全部地区</option></select>'+
+        '<span id="cf-f-proj" style="cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text3);user-select:none">🏗️ 仅看有中资项目</span>'+
+        '<span style="margin-left:auto;font-size:11px;color:var(--text2)">排序：</span>'+
+        '<span class="dc-tab" id="cf-s-risk" style="cursor:pointer">风险值</span>'+
+        '<span class="dc-tab" id="cf-s-alert" style="cursor:pointer">7日预警</span>'+
+        '<span style="font-size:10px;color:var(--text3)">🔄 <span id="cf-refresh" style="cursor:pointer;color:var(--cyan)">刷新</span></span>'+
+      '</div>'+
+      '<div id="cf-table"></div></div>';
+    document.getElementById('cf-f-risk').onchange=function(){self._fRisk=this.value;self._render();};
+    document.getElementById('cf-f-region').onchange=function(){self._fRegion=this.value;self._render();};
+    document.getElementById('cf-f-proj').onclick=function(){self._fProj=!self._fProj;this.style.borderColor=self._fProj?'var(--cyan)':'';this.style.color=self._fProj?'var(--cyan)':'var(--text3)';this.style.background=self._fProj?'rgba(0,212,255,0.08)':'';self._render();};
+    document.getElementById('cf-s-risk').onclick=function(){self._sort='risk';self._render();};
+    document.getElementById('cf-s-alert').onclick=function(){self._sort='alert';self._render();};
+    document.getElementById('cf-refresh').onclick=function(){self._loaded=false;self._load();};
+    if(!this._loaded)this._load(); else this._render();
+  },
+  _load(){
+    var self=this;
+    fetch('/api/cosri').then(function(r){return r.ok?r.json():null;}).then(function(d){
+      self._cosri=d;self._loaded=true;self._render();
+    }).catch(function(){self._loaded=true;self._render();});
+  },
+  /* 行数据构建：COUNTRIES ∪ ALERTS 出现国 ∪ COSRI 国 */
+  _rows(){
+    var cosriMap={};
+    (this._cosri&&this._cosri.countries||[]).forEach(function(c){cosriMap[c.country]=c;});
+    /* 每国统计：7d/24h 预警 + ENTERPRISES 项目/人员 */
+    var st={};
+    function bucket(n){
+      if(!st[n])st[n]={a7:0,a24:0,proj:0,pers:0,ents:0,inv:0};
+      return st[n];
+    }
+    var now=Date.now();
+    (ALERTS||[]).forEach(function(a){
+      var n=a.country;if(!n)return;
+      var t=null;try{t=new Date(String(a.time||'').replace(' ','T')).getTime();}catch(e){}
+      if(!t||isNaN(t))return;
+      var ageH=(now-t)/3600000;
+      var b=bucket(n);
+      if(ageH<=24*7)b.a7++;
+      if(ageH<=24)b.a24++;
+    });
+    (ENTERPRISES||[]).forEach(function(e){
+      (e.countries||[]).forEach(function(cn){var b=bucket(cn);b.ents++;b.pers+=(e.personnel||0);b.inv+=(e.investment||0);});
+      (e.projects||[]).forEach(function(p){if(p.c){bucket(p.c).proj++;}});
+    });
+    var seen={},rows=[];
+    COUNTRIES.forEach(function(c){
+      seen[c.name]=true;
+      var s=st[c.name]||{a7:0,a24:0,proj:0,pers:0,ents:0,inv:0};
+      var cs=cosriMap[c.name];
+      rows.push({name:c.name,flag:c.flag,region:c.region,risk:calcOverall(c.scores),
+        a7:s.a7,a24:s.a24,proj:Math.max(s.proj,(cs&&cs.projectCount)||0),pers:s.pers,
+        tier:cs?cs.tier:null,hasLon:true});
+    });
+    /* ALERTS 中出现但未建档的国家 */
+    Object.keys(st).forEach(function(n){
+      if(seen[n])return;
+      seen[n]=true;
+      var cs=cosriMap[n];
+      var s=st[n];
+      rows.push({name:n,flag:'🌐',region:cs?(cs.region||'其他'):'其他',
+        risk:cs?cs.overall:null,a7:s.a7,a24:s.a24,proj:Math.max(s.proj,(cs&&cs.projectCount)||0),
+        pers:s.pers,tier:cs?cs.tier:null,hasLon:false});
+    });
+    return rows;
+  },
+  _spark(series,w,h,color){
+    if(typeof COUNTRY_DRAWER!=='undefined'&&COUNTRY_DRAWER._spark)return COUNTRY_DRAWER._spark(series,w,h,color);
+    return '';
+  },
+  _render(){
+    var self=this;
+    var host=document.getElementById('cf-table');
+    if(!host)return;
+    var rows=this._rows();
+    /* 统计卡 */
+    var stEl=document.getElementById('cf-stats');
+    if(stEl){
+      var hi=rows.filter(function(r){return r.risk!==null&&r.risk>=8;}).length;
+      var withProj=rows.filter(function(r){return r.proj>0;}).length;
+      var a7all=rows.reduce(function(s,r){return s+r.a7;},0);
+      var t1=rows.filter(function(r){return r.tier==='TIER1';}).length;
+      stEl.innerHTML=
+        '<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-v" style="color:var(--cyan)">'+rows.length+'</div><div class="stat-l">在档国家</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-v" style="color:var(--red)">'+hi+'</div><div class="stat-l">极高风险国</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-v" style="color:var(--orange)">'+t1+'</div><div class="stat-l">TIER1 重点国</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-v" style="color:var(--green)">'+withProj+'</div><div class="stat-l">有中资项目国</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:120px"><div class="stat-v">'+a7all+'</div><div class="stat-l">近7日预警总量</div></div>';
+    }
+    /* 地区下拉（一次性填充） */
+    var regSel=document.getElementById('cf-f-region');
+    if(regSel&&regSel.options.length<=1){
+      var regions=[...new Set(rows.map(function(r){return r.region;}))].sort();
+      regions.forEach(function(rg){
+        var o=document.createElement('option');o.value=rg;o.textContent=rg;regSel.appendChild(o);
+      });
+    }
+    /* 过滤 */
+    rows=rows.filter(function(r){
+      if(self._fRegion!=='all'&&r.region!==self._fRegion)return false;
+      if(self._fProj&&!(r.proj>0))return false;
+      if(self._fRisk!=='all'){
+        if(r.risk===null)return false;
+        if(self._fRisk==='critical'&&r.risk<8)return false;
+        if(self._fRisk==='high'&&(r.risk<6||r.risk>=8))return false;
+        if(self._fRisk==='elevated'&&(r.risk<4||r.risk>=6))return false;
+        if(self._fRisk==='moderate'&&r.risk>=4)return false;
+      }
+      return true;
+    });
+    /* 排序 */
+    rows.sort(function(a,b){
+      if(self._sort==='alert')return (b.a7-a.a7)||((b.risk||0)-(a.risk||0));
+      return ((b.risk===null?-1:b.risk)-(a.risk===null?-1:a.risk))||(b.a7-a.a7);
+    });
+    /* 表格 */
+    var lvOf=function(r){
+      if(r.risk===null)return {label:'未评估',color:'var(--text3)',cls:'b-blue'};
+      return getLevel(r.risk);
+    };
+    var html='<div class="table-wrap" style="max-height:640px;overflow-y:auto"><table style="width:100%;border-collapse:collapse;min-width:760px"><thead><tr style="background:var(--bg2);position:sticky;top:0;z-index:2">'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">国家</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2);width:110px">综合风险值</th>'+
+      '<th style="text-align:right;padding:8px;font-size:11px;color:var(--text2);width:80px">近7d预警</th>'+
+      '<th style="text-align:right;padding:8px;font-size:11px;color:var(--text2);width:80px">关键项目</th>'+
+      '<th style="text-align:right;padding:8px;font-size:11px;color:var(--text2);width:90px">在外人员</th>'+
+      '<th style="text-align:center;padding:8px;font-size:11px;color:var(--text2);width:120px">24h/7d 趋势</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2);width:90px">风险等级</th></tr></thead><tbody>';
+    if(!rows.length){
+      html+='<tr><td colspan="7" style="padding:30px;text-align:center;color:var(--text3)">当前过滤条件下无国家，试试放宽过滤</td></tr>';
+    }
+    rows.forEach(function(r){
+      var lv=lvOf(r);
+      var tierB=r.tier==='TIER1'?'<span class="badge b-red" style="font-size:8px;padding:0 3px;margin-left:4px">T1</span>':r.tier==='TIER2'?'<span class="badge b-orange" style="font-size:8px;padding:0 3px;margin-left:4px">T2</span>':'';
+      var riskCell=r.risk===null?'<span style="color:var(--text3)">—</span>':'<b style="color:'+lv.color+';font-size:13px;font-family:\'Courier New\',monospace">'+r.risk.toFixed(1)+'</b>';
+      var a7Cell=r.a7>0?'<b style="color:'+(r.a7>=10?'var(--red)':r.a7>=4?'var(--orange)':'var(--cyan)')+'">'+r.a7+'</b>':'<span style="color:var(--text3)">0</span>';
+      var projCell=r.proj>0?'<b style="color:var(--cyan)">'+r.proj+'</b>':'<span style="color:var(--text3)">—</span>';
+      var persCell=r.pers>0?r.pers.toLocaleString():'<span style="color:var(--text3)">—</span>';
+      /* 7 日 sparkline（懒计算：只有该国有预警才画） */
+      var spark='';
+      if(r.a7>0){
+        try{spark=COUNTRY_DRAWER._spark(COUNTRY_DRAWER._dailyCounts(r.name,7),96,26,lv.color==='var(--text3)'?'#00d4ff':lv.color);}catch(e){}
+      }
+      var esc=r.name.replace(/'/g,"\\'");
+      html+='<tr data-cn="'+r.name+'" onclick="COUNTRY_DRAWER.open(\''+esc+'\')" style="cursor:pointer;border-bottom:1px solid var(--border);transition:.12s" onmouseover="this.style.background=\'rgba(0,212,255,0.05)\'" onmouseout="this.style.background=\'\'">'+
+        '<td style="padding:7px 8px"><span style="margin-right:6px">'+r.flag+'</span><b style="color:var(--text1);font-size:12px">'+r.name+'</b>'+tierB+'<div style="font-size:9px;color:var(--text3);margin-top:1px">'+r.region+'</div></td>'+
+        '<td style="padding:7px 8px">'+riskCell+'</td>'+
+        '<td style="padding:7px 8px;text-align:right">'+a7Cell+(r.a24>0?'<div style="font-size:9px;color:var(--red)">24h +'+r.a24+'</div>':'')+'</td>'+
+        '<td style="padding:7px 8px;text-align:right">'+projCell+'</td>'+
+        '<td style="padding:7px 8px;text-align:right">'+persCell+'</td>'+
+        '<td style="padding:4px 8px;text-align:center">'+(spark||'<span style="color:var(--text3);font-size:10px">—</span>')+'</td>'+
+        '<td style="padding:7px 8px"><span class="badge '+lv.cls+'" style="font-size:9px">'+lv.label+'</span></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    host.innerHTML=html;
   }
 };
 
@@ -5100,6 +5282,15 @@ const GLOBE={
     const c=this.canvas.parentElement;
     this.canvas.width=c.clientWidth;
     this.canvas.height=500;
+    /* 平面地图模式（COSRI 对标：地球/平面一键切换） */
+    this.mode=localStorage.getItem('orps_globe_mode')||'globe';
+    this._applyModeUI();
+    if(this.mode==='flat' && typeof FLATMAP!=='undefined') FLATMAP.init();
+    this.canvas.addEventListener('click',e=>{
+      if(this.mode==='flat')return;
+      const hit=this._hitCountry(e);
+      if(hit && typeof COUNTRY_DRAWER!=='undefined') COUNTRY_DRAWER.open(hit);
+    });
     this.canvas.addEventListener('mousedown',e=>{this.isDragging=true;this.dragStartX=e.clientX;this.dragStartY=e.clientY;this.dragStartRot=this.rotation;this.dragStartTilt=this.tilt;this.autoRotate=false;});
     this.canvas.addEventListener('mousemove',e=>{
       if(this.isDragging){
@@ -5280,8 +5471,55 @@ const GLOBE={
     this._scanAngle=(this._scanAngle+0.012)%(Math.PI*2);
     if(this._protectLines)this._protectLines.forEach(a=>{a.progress+=a.speed;if(a.progress>1)a.progress=0;});
     if(this._tradeRoutes)this._tradeRoutes.forEach(a=>{a.progress+=a.speed;if(a.progress>1)a.progress=0;});
-    this.draw();
+    if(this.mode==='flat'){
+      if(typeof FLATMAP!=='undefined')FLATMAP.draw();
+    }else{
+      this.draw();
+    }
     requestAnimationFrame(()=>this.animate());
+  },
+  /* ===== 平面地图/转动地球 切换（COSRI 对标 P0-1） ===== */
+  setMode(m){
+    this.mode=m;
+    try{localStorage.setItem('orps_globe_mode',m);}catch(e){}
+    this._applyModeUI();
+    if(m==='flat'){
+      if(typeof FLATMAP!=='undefined')FLATMAP.init();
+    }else{
+      this._stars=null;this._nodes=null; /* 切回地球重建星空层 */
+    }
+  },
+  _applyModeUI(){
+    var gc=this.canvas,bg=document.getElementById('gm-globe'),bf=document.getElementById('gm-flat');
+    var fc=document.getElementById('flatmap-canvas');
+    if(!gc)return;
+    if(this.mode==='flat'){
+      gc.classList.add('hide');
+      if(fc){fc.classList.add('show');if(fc.width!==gc.width){fc.width=gc.width;fc.height=500;}}
+      if(bf)bf.classList.add('active');
+      if(bg)bg.classList.remove('active');
+    }else{
+      gc.classList.remove('hide');
+      if(fc)fc.classList.remove('show');
+      if(bg)bg.classList.add('active');
+      if(bf)bf.classList.remove('active');
+    }
+  },
+  /* 鼠标事件 → 命中国家（地球模式：3D 反投影找最近标记点；平面模式交给 FLATMAP） */
+  _hitCountry(e){
+    const rect=this.canvas.getBoundingClientRect();
+    const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+    const w=this.canvas.width,h=this.canvas.height;
+    const cx=w/2,cy=h/2,r=Math.min(w*0.30,h*0.42);
+    let best=null,bestD=14; /* 命中半径 px */
+    COUNTRIES.forEach(c=>{
+      if(c.name==='中国')return;
+      const p=this._ll2xy(c.lat,c.lon,cx,cy,r,this.rotation,this.tilt);
+      if(!p.v)return;
+      const d=Math.hypot(p.x-mx,p.y-my);
+      if(d<bestD){bestD=d;best=c.name;}
+    });
+    return best;
   },
   _ll2xy(lat,lon,cx,cy,r,rot,tilt){
     const lr=lat*Math.PI/180,lor=(lon+rot)*Math.PI/180;
@@ -5712,6 +5950,344 @@ const GLOBE={
       else s=false;
     }
     ctx.stroke();
+  }
+};
+
+/* ============================================================
+ * FLATMAP — 平面世界地图模式（COSRI 对标 P0-1，2026-08-29）
+ * 等距圆柱投影：复用 GLOBE 的陆地点阵数据换投影渲染；
+ * 国家风险四色标记 + 高危国标签 + 咽喉点 + 北京原点；
+ * 点击国家 → COUNTRY_DRAWER 联动侧抽屉（P0-2）。
+ * ============================================================ */
+const FLATMAP={
+  canvas:null,ctx:null,_hover:null,_bound:false,
+  PAD:{l:34,r:16,t:26,b:34}, /* 留出经纬度刻度 */
+  init(){
+    this.canvas=document.getElementById('flatmap-canvas');
+    if(!this.canvas)return;
+    this.ctx=this.canvas.getContext('2d');
+    const gc=document.getElementById('globe-canvas');
+    if(gc&&this.canvas.width!==gc.width){this.canvas.width=gc.width;}
+    this.canvas.height=500;
+    if(!GLOBE._landDots)GLOBE._genLandDots();
+    if(!this._bound){
+      this._bound=true;
+      this.canvas.addEventListener('mousemove',e=>{
+        const hit=this._hit(e);
+        this._hover=hit;
+        this.canvas.style.cursor=hit?'pointer':'crosshair';
+        if(hit){
+          const el=document.getElementById('globe-hud-coord');
+          if(el)el.textContent=hit+' · 点击查看国别详情';
+        }
+      });
+      this.canvas.addEventListener('mouseleave',()=>{this._hover=null;});
+      this.canvas.addEventListener('click',e=>{
+        const hit=this._hit(e);
+        if(hit&&typeof COUNTRY_DRAWER!=='undefined')COUNTRY_DRAWER.open(hit);
+      });
+      window.addEventListener('resize',()=>{if(this.canvas&&gc){this.canvas.width=gc.parentElement.clientWidth;this.canvas.height=500;}});
+    }
+  },
+  _proj(lat,lon){
+    const w=this.canvas.width,h=this.canvas.height,P=this.PAD;
+    const x=P.l+((lon+180)/360)*(w-P.l-P.r);
+    const y=P.t+((90-lat)/180)*(h-P.t-P.b);
+    return{x,y};
+  },
+  _hit(e){
+    if(!this.canvas)return null;
+    const rect=this.canvas.getBoundingClientRect();
+    const mx=(e.clientX-rect.left)*(this.canvas.width/rect.width);
+    const my=(e.clientY-rect.top)*(this.canvas.height/rect.height);
+    let best=null,bestD=15;
+    COUNTRIES.forEach(c=>{
+      if(c.name==='中国')return;
+      const p=this._proj(c.lat,c.lon);
+      const d=Math.hypot(p.x-mx,p.y-my);
+      if(d<bestD){bestD=d;best=c.name;}
+    });
+    return best;
+  },
+  _riskCol(risk){
+    return risk>=8?[255,51,85]:risk>=6?[255,136,0]:risk>=4?[255,204,0]:[0,255,159];
+  },
+  draw(){
+    if(!this.canvas||!this.ctx)return;
+    const ctx=this.ctx,w=this.canvas.width,h=this.canvas.height,P=this.PAD;
+    const t=Date.now();
+    /* 深空背景（与地球模式同源） */
+    const bg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.max(w,h)*0.7);
+    bg.addColorStop(0,'#0a1428');bg.addColorStop(0.5,'#070b14');bg.addColorStop(1,'#030508');
+    ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+    /* 星点 */
+    if(!GLOBE._stars){GLOBE._stars=[];for(let i=0;i<200;i++)GLOBE._stars.push({x:Math.random()*w,y:Math.random()*h,s:Math.random()*1.8+0.2,p:Math.random()*Math.PI*2,sp:0.015+Math.random()*0.04});}
+    GLOBE._stars.forEach(s=>{
+      const tw=Math.sin(GLOBE._time*s.sp+s.p)*0.3+0.7;
+      ctx.fillStyle='rgba('+(s.s>1.2?'180,220,255':'100,140,180')+','+(tw*0.5)+')';
+      ctx.fillRect(s.x,s.y,s.s,s.s);
+    });
+    /* 地图投影区边框 */
+    ctx.strokeStyle='rgba(0,212,255,0.25)';ctx.lineWidth=1;
+    ctx.strokeRect(P.l,P.t,w-P.l-P.r,h-P.t-P.b);
+    /* 网格经纬线 */
+    ctx.strokeStyle='rgba(0,212,255,0.06)';ctx.lineWidth=0.5;
+    for(let lon=-180;lon<=180;lon+=30){
+      const p1=this._proj(85,lon),p2=this._proj(-85,lon);
+      ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+    }
+    for(let lat=-60;lat<=80;lat+=20){
+      const p1=this._proj(lat,-180),p2=this._proj(lat,180);
+      ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+    }
+    /* 赤道高亮 */
+    ctx.strokeStyle='rgba(0,212,255,0.14)';ctx.lineWidth=0.8;
+    const e1=this._proj(0,-180),e2=this._proj(0,180);
+    ctx.beginPath();ctx.moveTo(e1.x,e1.y);ctx.lineTo(e2.x,e2.y);ctx.stroke();
+    /* 经纬度刻度文字 */
+    ctx.font='8px "Courier New",monospace';ctx.fillStyle='rgba(0,212,255,0.35)';
+    [-120,-60,0,60,120].forEach(lon=>{const p=this._proj(85,lon);ctx.fillText((lon===0?'0°':(lon>0?lon+'E':(-lon)+'W')),p.x-8,P.t-4);});
+    [60,30,0,-30].forEach(lat=>{const p=this._proj(lat,-180);ctx.fillText(Math.abs(lat)+'°'+(lat>=0?'N':'S'),6,p.y+3);});
+    /* 陆地点阵（等距圆柱投影） */
+    if(GLOBE._landDots)GLOBE._landDots.forEach(d=>{
+      const p=this._proj(d.lat,d.lon);
+      ctx.fillStyle='rgba(0,160,210,0.22)';
+      ctx.fillRect(p.x-0.7,p.y-0.7,1.4,1.4);
+    });
+    if(GLOBE._chinaDots)GLOBE._chinaDots.forEach(d=>{
+      const p=this._proj(d.lat,d.lon);
+      ctx.fillStyle='rgba(255,200,60,0.4)';
+      ctx.fillRect(p.x-0.8,p.y-0.8,1.6,1.6);
+    });
+    /* 贸易航线（北京→枢纽，直线渐变） */
+    ctx.setLineDash([4,4]);ctx.lineWidth=1;
+    GLOBE._chokepoints.forEach(cp=>{
+      const bj=this._proj(GLOBE.BEIJING.lat,GLOBE.BEIJING.lon);
+      const p=this._proj(cp.lat,cp.lon);
+      ctx.strokeStyle='rgba(0,212,255,0.12)';
+      ctx.beginPath();ctx.moveTo(bj.x,bj.y);ctx.lineTo(p.x,p.y);ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    /* 国家风险标记 */
+    COUNTRIES.forEach(c=>{
+      if(c.name==='中国')return;
+      const p=this._proj(c.lat,c.lon);
+      const risk=calcOverall(c.scores);
+      const ents=getEntsInCountry(c.name).length;
+      const col=this._riskCol(risk);
+      const sz=2.5+Math.min(ents*0.35,2.5)+(risk/10)*3;
+      const hov=this._hover===c.name;
+      /* 有 24h 预警的国家加脉冲环 */
+      var has24=false;
+      try{has24=(ALERTS||[]).some(function(a){return a.country===c.name&&a.status!=='resolved'&&SITUATION._freshItem(a,24);});}catch(e){}
+      if(risk>=7||has24){
+        const ps=Math.sin(t/400+c.lon)*0.5+0.5;
+        ctx.beginPath();ctx.arc(p.x,p.y,sz+3+ps*7,0,Math.PI*2);
+        ctx.strokeStyle='rgba('+col[0]+','+col[1]+','+col[2]+','+(0.35*ps)+')';ctx.lineWidth=1.5;ctx.stroke();
+        ctx.beginPath();ctx.arc(p.x,p.y,sz+6+ps*12,0,Math.PI*2);
+        ctx.strokeStyle='rgba('+col[0]+','+col[1]+','+col[2]+','+(0.12*ps)+')';ctx.lineWidth=0.8;ctx.stroke();
+      }
+      if(has24){
+        ctx.beginPath();ctx.arc(p.x,p.y,sz+2,0,Math.PI*2);
+        ctx.fillStyle='rgba('+col[0]+','+col[1]+','+col[2]+',0.25)';ctx.fill();
+      }
+      ctx.beginPath();ctx.arc(p.x,p.y,hov?sz+2:sz,0,Math.PI*2);
+      ctx.fillStyle='rgba('+col[0]+','+col[1]+','+col[2]+','+(hov?1:0.9)+')';ctx.fill();
+      ctx.beginPath();ctx.arc(p.x,p.y,sz+1.5,0,Math.PI*2);
+      ctx.fillStyle='rgba('+col[0]+','+col[1]+','+col[2]+',0.18)';ctx.fill();
+      /* 高危/悬停 国家名标签 */
+      if(risk>=6||hov){
+        ctx.font='bold '+(hov?'10px':'9px')+' "Microsoft YaHei",sans-serif';
+        ctx.fillStyle=hov?'rgba(255,255,255,0.95)':'rgba('+col[0]+','+col[1]+','+col[2]+',0.75)';
+        ctx.fillText(c.name,p.x+sz+3,p.y+3);
+      }
+    });
+    /* 海上咽喉点（菱形） */
+    GLOBE._chokepoints.forEach(cp=>{
+      const p=this._proj(cp.lat,cp.lon);
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI/4);
+      ctx.strokeStyle='rgba(255,170,0,0.85)';ctx.lineWidth=1.5;
+      ctx.strokeRect(-3.5,-3.5,7,7);
+      ctx.fillStyle='rgba(255,170,0,0.3)';
+      ctx.fillRect(-3.5,-3.5,7,7);
+      ctx.restore();
+      ctx.font='9px "Microsoft YaHei",sans-serif';ctx.fillStyle='rgba(255,170,0,0.7)';
+      ctx.fillText(cp.name,p.x+7,p.y-4);
+    });
+    /* 北京原点 */
+    const bj=this._proj(GLOBE.BEIJING.lat,GLOBE.BEIJING.lon);
+    const ps2=Math.sin(t/600)*0.5+0.5;
+    ctx.beginPath();ctx.arc(bj.x,bj.y,4,0,Math.PI*2);ctx.fillStyle='rgba(255,220,100,1)';ctx.fill();
+    ctx.beginPath();ctx.arc(bj.x,bj.y,8+ps2*6,0,Math.PI*2);ctx.strokeStyle='rgba(255,200,60,'+(0.5*ps2)+')';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.font='bold 10px "Microsoft YaHei",sans-serif';ctx.fillStyle='rgba(255,220,100,0.9)';
+    ctx.fillText('★ 北京',bj.x+9,bj.y+3);
+    /* 模式标注 */
+    ctx.font='10px "Microsoft YaHei",sans-serif';ctx.fillStyle='rgba(0,212,255,0.5)';
+    ctx.fillText('🗺️ 平面地图模式 · 点击国家查看联动详情',P.l,h-10);
+    /* HUD 时间 */
+    const te=document.getElementById('globe-hud-time');
+    if(te)te.textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  }
+};
+
+/* ============================================================
+ * COUNTRY_DRAWER — 国家联动侧抽屉（COSRI 对标 P0-2，2026-08-29）
+ * 点地图国家 → 右侧抽屉：①COSI 风格指数卡(综合风险+7日sparkline+四维)
+ * ②最近24h该国预警5条 ③该国中资项目清单 ④在档人员机构数量。
+ * 数据：客户端 COUNTRIES/ALERTS/ENTERPRISES 实时计算 + /api/cosri/<国> 增强。
+ * ============================================================ */
+const COUNTRY_DRAWER={
+  _open:null,_escBound:false,
+  open(name){
+    var self=this;
+    this._open=name;
+    var d=document.getElementById('country-drawer');
+    var ov=document.getElementById('country-drawer-overlay');
+    if(!d||!ov)return;
+    d.innerHTML='<div class="cd-body" style="display:flex;align-items:center;justify-content:center;color:var(--text3);padding:40px 0;font-size:12px">加载 '+name+' 国别数据…</div>';
+    d.classList.add('open');ov.classList.add('show');
+    if(!this._escBound){
+      this._escBound=true;
+      document.addEventListener('keydown',function(e){if(e.key==='Escape')self.close();});
+    }
+    this._render(name);
+  },
+  close(){
+    this._open=null;
+    var d=document.getElementById('country-drawer');
+    var ov=document.getElementById('country-drawer-overlay');
+    if(d)d.classList.remove('open');
+    if(ov)ov.classList.remove('show');
+  },
+  /* 最近 N 天每日该国预警量（sparkline 数据源） */
+  _dailyCounts(name,days){
+    var buckets=[],now=new Date();
+    for(var i=days-1;i>=0;i--){
+      var day=new Date(now.getTime()-i*86400000);
+      var key=day.getFullYear()+'-'+String(day.getMonth()+1).padStart(2,'0')+'-'+String(day.getDate()).padStart(2,'0');
+      buckets.push({key:key,n:0,dd:String(day.getMonth()+1).padStart(2,'0')+'/'+String(day.getDate()).padStart(2,'0')});
+    }
+    var idx={};buckets.forEach(function(b){idx[b.key]=b;});
+    (ALERTS||[]).forEach(function(a){
+      if(a.country!==name)return;
+      var t=String(a.time||'').replace(' ','T');
+      var d2=null;try{d2=new Date(t);}catch(e){}
+      if(!d2||isNaN(d2.getTime()))return;
+      var key=d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0')+'-'+String(d2.getDate()).padStart(2,'0');
+      if(idx[key])idx[key].n++;
+    });
+    return buckets;
+  },
+  _spark(series,w,h,color){
+    var max=Math.max.apply(null,series.map(function(s){return s.n;}).concat([1]));
+    var step=series.length>1?w/(series.length-1):w;
+    var pts=series.map(function(s,i){
+      var y=h-3-(s.n/max)*(h-8);
+      return (i*step).toFixed(1)+','+y.toFixed(1);
+    }).join(' ');
+    var dots=series.map(function(s,i){
+      var y=h-3-(s.n/max)*(h-8);
+      return '<circle cx="'+(i*step).toFixed(1)+'" cy="'+y.toFixed(1)+'" r="1.8" fill="'+color+'"><title>'+s.dd+'：'+s.n+' 条</title></circle>';
+    }).join('');
+    return '<svg width="'+w+'" height="'+h+'" style="display:block">'+
+      '<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round"/>'+
+      '<polyline points="0,'+h+' '+pts+' '+w+','+h+'" fill="'+color+'18" stroke="none"/>'+dots+'</svg>';
+  },
+  _render(name){
+    var self=this;
+    var c=COUNTRIES.find(function(x){return x.name===name;});
+    var d=document.getElementById('country-drawer');
+    if(!d)return;
+    /* --- 客户端即时数据 --- */
+    var ov=c?calcOverall(c.scores):null;
+    var lv=ov!==null?getLevel(ov):null;
+    var ents=getEntsInCountry(name);
+    var pers=ents.reduce(function(s,e){return s+(e.personnel||0);},0);
+    var inv=ents.reduce(function(s,e){return s+(e.investment||0);},0);
+    var alerts24=[];
+    try{alerts24=(ALERTS||[]).filter(function(a){return a.country===name&&SITUATION._freshItem(a,24);}).sort(function(a,b){return String(b.time||'').localeCompare(String(a.time||''));});}catch(e){}
+    var localProjects=[];
+    (ENTERPRISES||[]).forEach(function(e){
+      (e.projects||[]).forEach(function(p){if(p.c===name)localProjects.push({name:p.n,ent:e.short,inv:p.inv,pers:p.p});});
+    });
+    var week=this._dailyCounts(name,7);
+    var weekN=week.reduce(function(s,b){return s+b.n;},0);
+    var projHtml=localProjects.length?localProjects.map(function(p){
+      return '<div style="padding:7px 10px;background:var(--bg2);border-radius:6px;margin-bottom:4px;border-left:3px solid var(--cyan)">'+
+        '<div style="font-size:12px;font-weight:700;color:var(--text1)">'+p.name+'</div>'+
+        '<div style="font-size:10px;color:var(--text3);margin-top:2px">'+p.ent+' · '+(p.inv?p.inv+'亿$ · ':'')+(p.p?p.p+'人':'')+'</div></div>';
+    }).join(''):'<div id="cd-proj-ph" style="padding:8px;font-size:11px;color:var(--text3)">查询中资项目库…</div>';
+    var aHtml=alerts24.length?alerts24.slice(0,5).map(function(a){
+      var l=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
+      return '<div style="padding:7px 8px;background:var(--panel2);border-radius:6px;margin-bottom:4px;cursor:pointer;border-left:3px solid '+(a.level==='red'?'var(--red)':a.level==='orange'?'var(--orange)':'var(--yellow)')+'" onclick="navigateTo(\'alerts\');setTimeout(function(){if(typeof AVIEW!==\'undefined\')AVIEW.selectAlert(\''+String(a.id).replace(/[^a-zA-Z0-9_-]/g,'')+'\');},350)">'+
+        '<div style="display:flex;gap:5px;align-items:center"><span class="badge '+l.cls+'" style="font-size:8px;padding:0 4px">'+l.label+'</span>'+
+        '<span style="flex:1;font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,30)+'</span></div>'+
+        '<div style="font-size:9px;color:var(--text3);margin-top:2px">🕐 '+String(a.time||'').slice(5,16)+' · '+(a.type||'安全风险')+'</div></div>';
+    }).join(''):'<div style="padding:10px;font-size:11px;color:var(--text3);text-align:center">最近 24 小时无该国预警</div>';
+    /* --- HTML --- */
+    d.innerHTML=
+      '<div class="cd-head">'+
+        '<div class="flag">'+(c?c.flag:'🌐')+'</div>'+
+        '<div><div class="nm">'+name+'</div><div class="sub">'+(c?(c.region+' · '+c.capital):'（系统未建档国，仅实时情报）')+'</div></div>'+
+        (lv?'<span class="badge '+lv.cls+'" style="margin-left:8px">'+lv.label+' '+ov.toFixed(1)+'</span>':'')+
+        '<div class="cd-close" onclick="COUNTRY_DRAWER.close()">✕</div>'+
+      '</div>'+
+      '<div class="cd-body">'+
+        '<div class="cd-sec-tt">📊 COSI 综合风险指数 <span style="margin-left:auto;font-size:9px;font-weight:400;color:var(--text3)">近7日 '+weekN+' 条预警</span></div>'+
+        (ov!==null?
+          '<div style="padding:10px 12px;background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(0,255,159,0.04));border:1px solid rgba(0,212,255,0.2);border-radius:10px;display:flex;gap:12px;align-items:center">'+
+            '<div style="text-align:center;flex-shrink:0">'+
+              '<div style="font-size:34px;font-weight:900;color:'+lv.color+';line-height:1;font-family:\'Courier New\',monospace">'+ov.toFixed(1)+'</div>'+
+              '<div style="font-size:9px;color:var(--text3);margin-top:3px">风险指数 /10</div>'+
+            '</div>'+
+            '<div style="flex:1;min-width:0">'+
+              '<div style="font-size:9px;color:var(--text3);margin-bottom:2px">近 7 日预警趋势</div>'+
+              this._spark(week,150,42,lv.color)+
+            '</div>'+
+          '</div>':
+          '<div style="padding:10px;font-size:11px;color:var(--text3)">该国暂无风险评分底数</div>')+
+        '<div class="cd-sec-tt">🚨 最近 24 小时预警 ('+alerts24.length+')</div>'+aHtml+
+        '<div class="cd-sec-tt">🏗️ 在该国中资项目 ('+localProjects.length+')</div>'+
+        '<div id="cd-projects">'+projHtml+'</div>'+
+        '<div class="cd-sec-tt">👥 在档企业 / 人员机构</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'+
+          '<div style="padding:8px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--cyan)">'+ents.length+'</div><div style="font-size:9px;color:var(--text3)">在档企业</div></div>'+
+          '<div style="padding:8px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--orange)">'+pers.toLocaleString()+'</div><div style="font-size:9px;color:var(--text3)">在外人员</div></div>'+
+          '<div style="padding:8px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--green)">'+inv.toLocaleString()+'</div><div style="font-size:9px;color:var(--text3)">投资(亿$)</div></div>'+
+        '</div>'+
+        (ents.length?'<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">'+ents.map(function(e){return '<span class="badge b-blue" style="font-size:10px;cursor:pointer" onclick="showEntDetail('+e.id+')">'+e.short+'</span>';}).join('')+'</div>':'<div style="margin-top:6px;font-size:10px;color:var(--text3)">无在档中资企业</div>')+
+        '<div style="margin-top:16px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:8px">'+
+          '<button class="btn sm" style="flex:1;font-size:11px" onclick="COUNTRY_DRAWER.close();navigateTo(\'countryfile\')">📊 查看国家档案总表</button>'+
+          (c?'<button class="btn sm" style="flex:1;font-size:11px" onclick="COUNTRY_DRAWER.close();showCtyDetail(\''+name+'\')">🗂️ 完整风险详情</button>':'')+
+        '</div>'+
+      '</div>';
+    /* --- /api/cosri 增强：四维 + 项目库合并（后台静默） --- */
+    fetch('/api/cosri/'+encodeURIComponent(name)).then(function(r){return r.ok?r.json():null;}).then(function(cs){
+      if(!cs||cs.error||self._open!==name)return;
+      /* 四维条插到指数卡下 */
+      var dims=[['political','政治风险','#ff3d7f'],['economic','经济风险','#ffcc00'],['social','社会风险','#00d4ff'],['security','公共安全','#ff3355']];
+      var four='<div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:6px">'+dims.map(function(kv){
+        var v=cs.scores?cs.scores[kv[0]]:null;
+        if(v===null||v===undefined)return '';
+        return '<div style="padding:6px 8px;background:var(--bg2);border-radius:6px"><div style="display:flex;justify-content:space-between;font-size:10px"><span style="color:var(--text2)">'+kv[1]+'</span><b style="color:'+kv[2]+'">'+v+'</b></div><div style="height:4px;background:var(--bg3);border-radius:2px;margin-top:3px;overflow:hidden"><div style="width:'+(v*10)+'%;height:100%;background:'+kv[2]+'"></div></div></div>';
+      }).join('')+'</div>';
+      var card=d.querySelector('.cd-body');
+      if(card){
+        var anchor=card.children[1]; /* 指数卡 div */
+        if(anchor&&anchor.insertAdjacentHTML)anchor.insertAdjacentHTML('afterend',four);
+      }
+      /* 项目合并：服务端项目库（interest-base 20重点项目） */
+      if(cs.projects&&cs.projects.length){
+        var ph=d.querySelector('#cd-projects');
+        if(ph&&!localProjects.length){
+          ph.innerHTML=cs.projects.slice(0,12).map(function(p){
+            return '<div style="padding:7px 10px;background:var(--bg2);border-radius:6px;margin-bottom:4px;border-left:3px solid var(--cyan)">'+
+              '<div style="font-size:12px;font-weight:700;color:var(--text1)">'+p.name+'</div>'+
+              '<div style="font-size:10px;color:var(--text3);margin-top:2px">重点项目库 · '+(p.cat||'-')+'</div></div>';
+          }).join('');
+        }
+      }
+    }).catch(function(){});
   }
 };
 // ===== INTEL IMAGE CENTER (Independent View) =====
@@ -8463,6 +9039,13 @@ const SITUATION={
   /* ===== 全球态势焦点面板（2026-08-18 用户指令：态势总览要体现"态势"——
    * ① 今日态势总温（预警分级/涉华/升温国数）② 升温国家 TOP5（八维推演引擎实算）
    * ③ 高价值预警 TOP4（价值分引擎实算）。信息流由底部滚动条承担。 */
+  /* P0-3 实时情报流精简/详细模式切换（状态持久化；只加开关不砍内容） */
+  _liveCompact:(function(){try{return localStorage.getItem('orps_live_compact')==='1';}catch(e){return false;}})(),
+  toggleLiveCompact(){
+    this._liveCompact=!this._liveCompact;
+    try{localStorage.setItem('orps_live_compact',this._liveCompact?'1':'0');}catch(e){}
+    this.renderIntelPanels();
+  },
   renderIntelPanels(){
     var liveEl=document.getElementById('globe-intel-live');
     if(!liveEl) return;
@@ -8593,8 +9176,35 @@ const SITUATION={
     liveSlice=liveSlice.slice(0,15); /* 池扩容 5→15 */
     var livePoolLen=liveSlice.length;
     liveSlice=_win(liveSlice,5);
-    h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px">📡 实时情报流'+(livePoolLen>5?'<span style="font-size:8px;color:var(--text3);font-weight:400"> · 轮播 '+(rot%livePoolLen+1)+'/'+livePoolLen+'</span>':'')+'</div>';
-    if(liveSlice.length){
+    /* ===== P0-3 精简模式开关（2026-08-29 用户批准：只加开关，不砍既有内容） =====
+     * 精简模式 = 国家/标题/时间 三列 10 条最新滚动（快速扫读）；
+     * 默认详细模式（5 条轮播 + 层级徽章 + 价值分）保持原样不动。 */
+    var compact=!!this._liveCompact;
+    h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px;display:flex;align-items:center;gap:6px">📡 实时情报流'+(livePoolLen>5&&!compact?'<span style="font-size:8px;color:var(--text3);font-weight:400"> · 轮播 '+(rot%livePoolLen+1)+'/'+livePoolLen+'</span>':'')+
+      '<span onclick="SITUATION.toggleLiveCompact()" title="切换 精简模式（国家/标题/时间 三列10条）与 详细模式" style="margin-left:auto;cursor:pointer;padding:1px 7px;border-radius:5px;font-size:9px;font-weight:700;border:1px solid '+(compact?'var(--cyan)':'var(--border)')+';color:'+(compact?'var(--cyan)':'var(--text3)')+';background:'+(compact?'rgba(0,212,255,0.10)':'transparent')+'">'+(compact?'☰ 精简':'☑ 详细')+'</span></div>';
+    if(compact){
+      /* 精简模式：三列 10 条最新（不走轮播窗口，直接取池子前 10） */
+      var cmpPool=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
+      try{
+        cmpPool=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(cmpPool,'fuzzy'):cmpPool;
+        cmpPool=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(cmpPool,1):cmpPool;
+      }catch(e){}
+      cmpPool=cmpPool.slice(0,10);
+      if(cmpPool.length){
+        h+='<div style="border:1px solid rgba(0,212,255,0.15);border-radius:6px;overflow:hidden">';
+        h+='<div style="display:grid;grid-template-columns:64px 1fr 44px;gap:4px;padding:3px 8px;background:rgba(0,212,255,0.08);font-size:9px;color:var(--cyan);font-weight:700"><span>国家</span><span>标题</span><span style="text-align:right">时间</span></div>';
+        cmpPool.forEach(function(a){
+          var cty=String(a.country||'—');
+          h+='<div onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/[^a-zA-Z0-9_-]/g,'')+'\');},300)" style="display:grid;grid-template-columns:64px 1fr 44px;gap:4px;padding:3px 8px;border-top:1px solid rgba(255,255,255,0.04);cursor:pointer;font-size:10px" onmouseover="this.style.background=\'rgba(0,212,255,0.06)\'" onmouseout="this.style.background=\'\'">'+
+            '<span style="color:'+(a.level==='red'?'var(--red)':a.level==='orange'?'var(--orange)':'var(--text2)')+';font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+cty+'</span>'+
+            '<span style="color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,26)+'</span>'+
+            '<span style="color:var(--text3);text-align:right">'+String(a.time||'').slice(11,16)+'</span></div>';
+        });
+        h+='</div>';
+      }else{
+        h+='<div style="padding:6px;font-size:10px;color:var(--text3)">暂无实时数据</div>';
+      }
+    }else if(liveSlice.length){
       liveSlice.forEach(function(a){
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
         h+='<div class="live-item" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,'')+'\');},300)">'+
