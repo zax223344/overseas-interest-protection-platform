@@ -34,14 +34,39 @@ var DAILY_REPORT = {
 
   _renderLayout: function (el) {
     var me = this;
-    var chips = this._list.map(function (r) {
-      var s = r.summary || {};
-      return '<div class="dr-chip' + (r.report_date === me._current ? ' active' : '') + '" data-date="' + r.report_date + '" onclick="DAILY_REPORT.pick(\'' + r.report_date + '\')" '
-        + 'style="padding:10px 14px;background:var(--panel2);border:1px solid ' + (r.report_date === me._current ? 'var(--cyan)' : 'var(--border)') + ';border-radius:8px;cursor:pointer;min-width:120px">'
-        + '<div style="font-size:13px;font-weight:700;color:' + (r.report_date === me._current ? 'var(--cyan)' : 'var(--text)') + '">' + r.report_date + '</div>'
-        + '<div style="font-size:10px;color:var(--text3);margin-top:2px">总量 ' + (s.total || 0) + ' · 涉华 ' + (s.china || 0) + ' · 红色 ' + (s.red || 0) + '</div>'
+    /* 2026-08-28 日期选择器改造（用户指令：简报日期一多 chips 会堆满）：
+     * ≤8 期沿用 chips 平铺；>8 期自动切换为「下拉选择 + 前后翻页」紧凑模式。 */
+    var useChips = this._list.length <= 8;
+    var idx = this._list.findIndex(function (x) { return x.report_date === me._current; });
+    if (idx < 0) idx = 0;
+    var prev = this._list[idx + 1], next = this._list[idx - 1]; /* _list 按日期倒序 */
+    var cur = this._list[idx] || {};
+    var cs = cur.summary || {};
+    var dateCtl;
+    if (useChips) {
+      var chips = this._list.map(function (r) {
+        var s = r.summary || {};
+        return '<div class="dr-chip' + (r.report_date === me._current ? ' active' : '') + '" data-date="' + r.report_date + '" onclick="DAILY_REPORT.pick(\'' + r.report_date + '\')" '
+          + 'style="padding:10px 14px;background:var(--panel2);border:1px solid ' + (r.report_date === me._current ? 'var(--cyan)' : 'var(--border)') + ';border-radius:8px;cursor:pointer;min-width:120px">'
+          + '<div style="font-size:13px;font-weight:700;color:' + (r.report_date === me._current ? 'var(--cyan)' : 'var(--text)') + '">' + r.report_date + '</div>'
+          + '<div style="font-size:10px;color:var(--text3);margin-top:2px">总量 ' + (s.total || 0) + ' · 涉华 ' + (s.china || 0) + ' · 红色 ' + (s.red || 0) + '</div>'
+          + '</div>';
+      }).join('');
+      dateCtl = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + chips + '</div>';
+    } else {
+      var opts = this._list.map(function (r) {
+        var s = r.summary || {};
+        return '<option value="' + r.report_date + '"' + (r.report_date === me._current ? ' selected' : '') + '>'
+          + r.report_date + '（总量 ' + (s.total || 0) + ' · 涉华 ' + (s.china || 0) + ' · 红色 ' + (s.red || 0) + '）</option>';
+      }).join('');
+      dateCtl =
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
+        + '<button class="btn sm" ' + (prev ? '' : 'disabled style="opacity:.35" ') + 'onclick="DAILY_REPORT.pick(\'' + (prev ? prev.report_date : '') + '\')" title="上一期（更早）">◀ 更早</button>'
+        + '<select id="dr-date-sel" onchange="DAILY_REPORT.pick(this.value)" style="padding:6px 10px;background:var(--panel2);border:1px solid var(--cyan);border-radius:8px;color:var(--text);font-size:13px;font-weight:700;min-width:280px">' + opts + '</select>'
+        + '<button class="btn sm" ' + (next ? '' : 'disabled style="opacity:.35" ') + 'onclick="DAILY_REPORT.pick(\'' + (next ? next.report_date : '') + '\')" title="下一期（更新）">更新 ▶</button>'
+        + '<span style="font-size:11px;color:var(--text3)">共 ' + this._list.length + ' 期简报</span>'
         + '</div>';
-    }).join('');
+    }
     el.innerHTML =
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
       + '<div style="font-size:15px;font-weight:700">📰 每日简报</div>'
@@ -50,7 +75,8 @@ var DAILY_REPORT = {
       + '<button class="btn sm" onclick="DAILY_REPORT.generate()" title="以前一日数据重新生成">⚙️ 重新生成昨日简报</button>'
       + '<button class="btn sm" onclick="DAILY_REPORT.print()" title="打印/导出当前简报">🖨️ 打印</button>'
       + '</div>'
-      + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + chips + '</div>'
+      + dateCtl
+      + (useChips ? '' : '<div style="font-size:12px;color:var(--text3);margin-bottom:10px">当前：' + cur.report_date + ' · 总量 ' + (cs.total || 0) + ' · 涉华 ' + (cs.china || 0) + ' · 红色 ' + (cs.red || 0) + '</div>')
       + '<div id="dr-body" class="card" style="padding:20px 24px;max-width:960px"><div style="color:var(--text3)">加载中…</div></div>';
   },
 

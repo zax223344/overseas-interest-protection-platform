@@ -424,8 +424,17 @@ async function _generateDailyReport(dateKey) {
    * 保留规则：级别更高 > 印证源更多 > 更新。 */
   const _sigOf = i => i._sig && String(i._sig).indexOf('|') >= 0 ? i._sig : 't:' + _normTitleKey(i.title);
   const _lvW = { red: 4, orange: 3, yellow: 2, blue: 1 };
+  /* 2026-08-28 简报质量三过滤（用户实测反馈）：
+   * ① 体育/娱乐噪声（NBA 阵容混入恐袭类）；② 未翻译外文标题（芬兰语等拉丁小语种，
+   *    非拉丁拦截拦不住——展示侧兜底：标题无中文一律不上简报）；③ 泛提及噪声。 */
+  const _NOISE_RE = /\bNBA\b|lineup|Premier League|cricket|板球|联赛|锦标赛|世界杯|奥运会|box office|票房/i;
+  const itemsClean = items.filter(i => {
+    if (_NOISE_RE.test(String(i.title || ''))) return false;
+    if (!/[\u4e00-\u9fa5]/.test(String(i.title || ''))) return false; /* 落库即中文铁律：外文标题不上简报 */
+    return true;
+  });
   const seen = new Map();
-  items.forEach(i => {
+  itemsClean.forEach(i => {
     const k = _sigOf(i);
     if (!k || k === 't:') return;
     const prev = seen.get(k);
@@ -440,7 +449,7 @@ async function _generateDailyReport(dateKey) {
   const negItems = uniq.filter(i => i.negative);
   const reds = uniq.filter(i => i.severity === 'red');
   const byType = {}; uniq.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
-  const byCountry = {}; uniq.forEach(i => { const c = i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+  const byCountry = {}; uniq.forEach(i => { const c = _reportEventCountry(i) || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
   const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const assetHits = uniq.filter(i => i.assets && i.assets.length);
   const corroborated = uniq.filter(i => i.corr >= 2).sort((a, b) => b.corr - a.corr);
@@ -448,16 +457,40 @@ async function _generateDailyReport(dateKey) {
   const sources = {}; items.forEach(i => { sources[i.source] = 1; });
   /* 核心威胁（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚）单列研判素材 */
   const _CORE_RE = /巴基斯坦|俾路支|瓜达尔|CPEC|中巴经济走廊|阿富汗|喀布尔|尼日利亚|索马里|马里|尼日尔|布基纳法索|刚果|苏丹|埃塞俄比亚|肯尼亚|哈萨克斯坦|乌兹别克|吉尔吉斯|塔吉克|缅甸|泰国|马来西亚|印度尼西亚|菲律宾|Vietnam|Pakistan|Afghanistan/i;
-  const coreThreats = uniq.filter(i => _CORE_RE.test(String(i.country || '') + String(i.title || '')) && /terror_events|military_conflicts|security_events/.test(i.type));
+  const coreThreats = uniq.filter(i => _CORE_RE.test(_reportEventCountry(i) + String(i.title || '')) && /terror_events|military_conflicts|security_events/.test(i.type));
+
+  /* ===== 跨节互斥（2026-08-28 用户实测反馈：同一事件在红色节+涉华动态+制裁节重复出现）=====
+   * 节优先级：红色 > 资产警报 > 涉华负面 > 涉华动态 > 制裁合规 > 多源印证 > 十二类全景。
+   * 已在高位节显示的事件签名，低位节不再重复。 */
+  const _shown = new Set();
+  function take(list, n) {
+    const out = [];
+    for (const i of list) {
+      const k = _sigOf(i);
+      if (k && _shown.has(k)) continue;
+      if (k) _shown.add(k);
+      out.push(i);
+      if (out.length >= n) break;
+    }
+    return out;
+  }
+  /* 事件国纠正（用户实测：尼泊尔洪水标📍乌克兰、涉华贸易标📍玻利维亚——DB country
+   * 是采集通道国/来源国污染。简报展示一律从标题提取事发国，提不到才用 DB 值）。 */
+  function _reportEventCountry(i) {
+    const t = String(i.title || '');
+    const c = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0);
+    return c || String(i.country || '');
+  }
 
   function row(i, extra) {
     const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
     const lvColor = { red: '#ff3355', orange: '#ff8800', yellow: '#ffcc00', blue: '#00d4ff' }[i.severity] || '#888';
+    const cty = _reportEventCountry(i);
     return '<div style="padding:8px 10px;border-left:3px solid ' + lvColor + ';background:rgba(128,128,128,0.06);border-radius:6px;margin-bottom:6px">'
       + '<div style="font-size:13px;font-weight:600">' + _escapeHtml(i.title) + '</div>'
       + '<div style="font-size:11px;opacity:0.65;margin-top:2px">'
       + '<span style="color:' + lvColor + '">' + lvName + '</span>'
-      + (i.country ? ' · 📍' + _escapeHtml(i.country) : '')
+      + (cty ? ' · 📍' + _escapeHtml(cty) : '')
       + (i.time ? ' · 🕐' + _escapeHtml(String(i.time).slice(0, 16)) : '')
       + ' · ' + _escapeHtml(i.source)
       + (i.cred ? ' · 信源' + i.cred + '级' : '')
@@ -482,12 +515,14 @@ async function _generateDailyReport(dateKey) {
     + '<span>红色（涉华严重） <b style="font-size:18px;color:#ff3355">' + reds.length + '</b></span>'
     + '<span>信源 <b style="font-size:18px">' + Object.keys(sources).length + '</b> 家</span></div>'
     + '<div>' + typeRows + '</div>');
-  html += section('涉华严重事件（红色）', '🔴', reds.slice(0, 20).map(i => row(i)).join(''), '当日无涉华严重事件');
-  html += section('中资海外资产关联警报', '🏗️', assetHits.slice(0, 15).map(i => row(i, ' · 资产：' + _escapeHtml(i.assets.join('、')))).join(''), '当日无资产关联警报');
-  html += section('涉华动态', '🇨🇳', chinaItems.slice(0, 15).map(i => row(i)).join(''), '当日无涉华条目');
-  html += section('境外涉华负面舆情', '⚠️', negItems.slice(0, 10).map(i => row(i)).join(''), '当日无涉华负面条目');
-  html += section('制裁、出口管制与合规动态', '⚖️', sanctions.slice(0, 12).map(i => row(i)).join(''), '当日无制裁合规类条目');
-  html += section('多源印证事件（≥2 方独立信源）', '🔗', corroborated.slice(0, 12).map(i => row(i)).join(''), '当日无多源印证事件');
+  html += section('涉华严重事件（红色）', '🔴', take(reds, 20).map(i => row(i)).join(''), '当日无涉华严重事件');
+  html += section('中资海外资产关联警报', '🏗️', take(assetHits, 15).map(i => row(i, ' · 资产：' + _escapeHtml(i.assets.join('、')))).join(''), '当日无资产关联警报');
+  /* 涉华动态按级别降序（用户实测：红橙条目沉底、蓝色"学者访谈"置顶——观感差） */
+  const chinaSorted = chinaItems.slice().sort((a, b) => (_lvW[b.severity] || 0) - (_lvW[a.severity] || 0) || (b.corr || 0) - (a.corr || 0));
+  html += section('涉华动态', '🇨🇳', take(chinaSorted, 15).map(i => row(i)).join(''), '当日无涉华条目');
+  html += section('境外涉华负面舆情', '⚠️', take(negItems, 10).map(i => row(i)).join(''), '当日无涉华负面条目');
+  html += section('制裁、出口管制与合规动态', '⚖️', take(sanctions, 12).map(i => row(i)).join(''), '当日无制裁合规类条目');
+  html += section('多源印证事件（≥2 方独立信源）', '🔗', take(corroborated, 12).map(i => row(i)).join(''), '当日无多源印证事件');
   /* ===== 十二类全景（2026-08-28 用户指令：简报全覆盖，不能只盯着恐袭）=====
    * 每类列当日 TOP2 代表事件；空类如实标注"当日无条目"。 */
   {
@@ -495,7 +530,7 @@ async function _generateDailyReport(dateKey) {
       'economic_risk', 'sanctions_data', 'legal_compliance', 'cyber_security', 'infrastructure', 'natural_disasters', 'public_health'];
     let inner = '';
     ALL_TYPES.forEach(t => {
-      const list = uniq.filter(i => i.type === t).slice(0, 2);
+      const list = take(uniq.filter(i => i.type === t), 2);
       const n = byType[t] || 0;
       inner += '<div style="margin:10px 0"><div style="font-size:13px;font-weight:700;color:#0a84ff">' + (_DR_TYPE_NAMES[t] || t)
         + ' <span style="opacity:0.6;font-weight:400">（当日 ' + n + ' 条）</span></div>'
@@ -547,7 +582,7 @@ async function _generateDailyReport(dateKey) {
     lines.push('<div style="font-size:13px;margin:6px 0">🚨 <b>预警分级态势</b>：红 ' + reds.length + ' / 橙 ' + oranges + '，红色事件' + (reds.length ? '须当日核实处置闭环' : '为零（按红区铁律仅中国公民被袭/被绑/撤侨/群体枪击事件可赋红）') + '。</div>');
     /* 4. 核心威胁区聚焦 */
     const coreByC = {};
-    coreThreats.forEach(i => { const c = i.country || '未标注'; coreByC[c] = (coreByC[c] || 0) + 1; });
+    coreThreats.forEach(i => { const c = _reportEventCountry(i) || '未标注'; coreByC[c] = (coreByC[c] || 0) + 1; });
     const coreTop = Object.entries(coreByC).sort((a, b) => b[1] - a[1]).slice(0, 5);
     lines.push('<div style="font-size:13px;margin:6px 0">🎯 <b>核心威胁区</b>（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚）：当日恐袭/冲突/治安事件 ' + coreThreats.length + ' 条'
       + (coreTop.length ? '，集中于 ' + coreTop.map(e => _escapeHtml(e[0]) + ' ' + e[1] + ' 条').join('、') : '') + '。</div>');
