@@ -34,6 +34,7 @@ const INTEREST_BASE = require('./interest-base'); /* 海外利益底数库（202
 const channelWatch = require('./channel-watch'); /* 海上战略通道哨兵（维度⑤：八大咽喉点通航/海盗/航运事件，30分钟一轮） */
 const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（维度⑥：OFAC/实体清单/出口管制/外资审查，30分钟一轮） */
 const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维度②：外交部安全提醒/撤侨/领保案件，30分钟一轮） */
+const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -2644,6 +2645,18 @@ async function _markCorroboration(id, it) {
     if (n > 1) {
       await query(`UPDATE intel_data SET data_json = jsonb_set(data_json, '{corroboration}', $1::jsonb) WHERE id = $2`, [String(n), id]);
     }
+    /* 2026-08-28 立场证据链（94源工程包核心思想）：
+     * 同事件被 ≥2 个不同 stance（G政府/I独立/N非营利/W西方/C中国官方）的源报道
+     * → stance_verified=true（多立场交叉验证，防单一叙事源带偏，高告警通道门槛） */
+    const { rows: srows } = await query(
+      `SELECT DISTINCT data_json->>'stance' st FROM intel_data WHERE collect_time >= $1 AND data_json->>'_eventSig' = $2 AND data_json->>'stance' IS NOT NULL`,
+      [since, sig]
+    );
+    const stances = srows.map(r => r.st).filter(Boolean);
+    if (stances.length >= 2) {
+      await query(`UPDATE intel_data SET data_json = jsonb_set(jsonb_set(data_json, '{stance_set}', $1::jsonb), '{stance_verified}', 'true') WHERE id = $2`,
+        [JSON.stringify(stances), id]);
+    }
   } catch (e) {}
 }
 
@@ -4442,6 +4455,29 @@ async function _runConsularWatch() {
   finally { _consularWatchBusyUntil = 0; }
 }
 
+/* ===== 94源工程包采集器调度（2026-08-28 用户提供 WORKBUDDY-INSTRUCTION 工程包）=====
+ * 每 30 分钟：11 个实测活源直采（中国新闻网/巴联社/塔斯社/尼日利亚双源/巴西双源/秘鲁安第斯通讯社/
+ * BBC/BangkokPost/半岛）+ 死源 GNews site: 复活轮换（Reuters/AP/SCMP/Dawn/Kazinform 等）。
+ * 条目带 stance 立场标签（G/I/N/W/C），入库后 _markCorroboration 做 ≥2 立场交叉验证。 */
+let _sourcesPackBusyUntil = 0;
+async function _runSourcesCollector() {
+  if (Date.now() < _sourcesPackBusyUntil) return;
+  _sourcesPackBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await sourcesCollector.runSourcesCollector({ maxPerFeed: 10, maxPerQuery: 10 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      it.interestLinked = true;
+      try { ENTITY.enrich(it); } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'SOURCES-PACK', '（活源' + r.liveCount + '+复活' + r.revivedCount + '）');
+    if (res && res.inserted) console.log('[SOURCES-PACK] ✅ 新入库多立场源情报 ' + res.inserted + ' 条（活源' + r.liveCount + '/site:复活' + r.revivedCount + '）');
+  } catch (e) { console.warn('[SOURCES-PACK] 采集失败:', e.message); }
+  finally { _sourcesPackBusyUntil = 0; }
+}
+
 /* ===== 涉华人员安全专项哨兵调度（2026-08-25 用户铁指令）=====
  * 7×24 每 30 分钟一轮：cn-security-watch 三层采集（GDELT/GNews/Bing 多语种关键词组合
  * + 高危国别本地小源直采 RSS + 老旧 TLS curl 兜底），入库走与 GLOBALMEDIA 同一套
@@ -4544,6 +4580,9 @@ function startGlobalMediaCron() {
   setInterval(_runComplianceWatch, 30 * 60 * 1000);
   setTimeout(_runConsularWatch, 320000);      // 领事保护哨兵（维度②：MFA安全提醒/撤侨/领保），启动320s后首跑
   setInterval(_runConsularWatch, 30 * 60 * 1000);
+  // 94源工程包采集器（2026-08-28：多立场源证据链），启动380s后首跑
+  setTimeout(_runSourcesCollector, 380000);
+  setInterval(_runSourcesCollector, 30 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 30 * 60 * 1000);
