@@ -56,7 +56,11 @@ const ALLOWED_HOSTS = [
   'data.gov', 'www.data.gov', 'data.europa.eu', 'data.gov.uk', 'open.canada.ca',
   'data.gov.au', 'www.data.gouv.fr',
   /* — 百科 / 知识图谱 — */
-  'zh.wikipedia.org', 'en.wikipedia.org', 'query.wikidata.org', 'archive.org'
+  'zh.wikipedia.org', 'en.wikipedia.org', 'query.wikidata.org', 'archive.org',
+  /* — 海运 / 领事保护 / 合规官方源（2026-08-28 六维哨兵：通道/合规/领保直采） — */
+  'gcaptain.com', 'www.gcaptain.com', 'maritime-executive.com', 'www.maritime-executive.com',
+  'fleetmon.com', 'www.fleetmon.com', 'cs.mfa.gov.cn', 'www.mfa.gov.cn',
+  'www.bis.gov', 'bis.gov', 'home.treasury.gov', 'ofac.treasury.gov'
 ];
 function _hostAllowed(host) {
   if (!host) return false;

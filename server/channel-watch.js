@@ -15,8 +15,15 @@ const _gdelt = (q, o) => Promise.race([
   crawler.gdeltSearch(q, o).catch(() => []),
   new Promise(res => setTimeout(() => res([]), 30000))
 ]);
-const netx = require('./netx');
 const scrapers = require('./scrapers');
+const netx = require('./netx');
+/* RSS/HTML 直取（2026-08-28）：netx.smartFetch + Response.text() + 竞速兜底。
+ * 已实测：Treasury（需代理回退）/gCaptain 通，maritime-executive 会挂死由竞速兜住。 */
+const _fetchPage = (u, ms) => Promise.race([
+  netx.smartFetch(u, { timeout: ms || 10000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+    .then(r => (r && r.ok) ? r.text() : null).catch(() => null),
+  new Promise(res => setTimeout(() => res(null), (ms || 10000) + 2000))
+]);
 
 const CHANNEL_RSS = [
   { name: 'Maritime Executive', url: 'https://www.maritime-executive.com/rss.xml' },
@@ -37,9 +44,44 @@ const CHANNEL_QUERIES = [
   'Chinese oil tanker rerouting OR war risk'
 ];
 
-/* 通道安全信号（必须与通道词同时命中） */
-const CHANNEL_SEC_RE = /pirac|pirate|hijack|seiz|attack|missile|drone|boarding|robber|blocka|closur|disrupt|delay|grounding|collision|detain|war risk|rerout|escort|convoy|绑架|劫持|袭击|海盗|封锁|中断|滞留|扣留|绕行|护航/i;
-const CHANNEL_NAME_RE = /hormuz|malacca|red sea|bab el|suez|panama canal|taiwan strait|gulf of guinea|aden|strait|canal|channel|海峡|运河|红海|海盗|油轮|货轮|商船|航运/i;
+/* GNews 原子查询集（GNews 不支持 OR 操作符——2026-08-28 实测含 OR 返回 0 条） */
+const CHANNEL_GNEWS_QUERIES = [
+  'Strait of Hormuz tanker',
+  'Malacca Strait piracy',
+  'Red Sea shipping attack',
+  'Gulf of Guinea piracy',
+  'Suez Canal disruption',
+  'Panama Canal restriction',
+  'Chinese vessel attacked',
+  'Chinese tanker hijacked'
+];
+/* 通道安全信号（必须与通道词同时命中；2026-08-28 扩充：hit/struck/damage/sank/toll/warning/risk 等） */
+const CHANNEL_SEC_RE = /pirac|pirate|hijack|seiz|attack|missile|drone|boarding|robber|blocka|closur|disrupt|delay|grounding|collision|detain|war risk|rerout|escort|convoy|\bhit\b|struck|damage|sank|sunk|fire|explos|threat|warning|tension|military|naval|drill|exercise|restrict|limit|suspend|halt|toll|tariff|accident|incident|safety|risk|绑架|劫持|袭击|海盗|封锁|中断|滞留|扣留|绕行|护航|演习|军演|受限|暂停|事故|险情|警告/i;
+const CHANNEL_NAME_RE = /hormuz|malacca|red sea|bab el|suez|panama canal|taiwan strait|gulf of guinea|aden|strait|canal|channel|海峡|运河|红海|海盗|油轮|货轮|商船|航运|tanker|bulker|cargo ship|vessel|container ship|shipping/i;
+
+/* Google News RSS 检索（2026-08-28 实测高可用：英文查询返回当天真实新闻，Hormuz 100条/OFAC 58条；
+ * 中文参数返回空——故只用于英文查询。Bing 网页搜索已弃：返回百科/官网首页非新闻。）
+ * when:1d 限定当天，与哨兵时效铁律对齐。 */
+async function _gnewsRss(q, max) {
+  /* 2026-08-28 实测：Google News 对并发请求立即限流（3 并发全挂），必须串行 + 单次重试 */
+  const _once = () => Promise.race([
+    netx.smartFetch('https://news.google.com/rss/search?q=' + encodeURIComponent(q + ' when:3d') + '&hl=en-US&gl=US&ceid=US:en',
+      { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+      .then(r => (r && r.ok) ? r.text() : null).catch(() => null),
+    new Promise(res => setTimeout(() => res(null), 14000))
+  ]);
+  try {
+    let text = await _once();
+    for (let r = 0; !text && r < 2; r++) { await new Promise(s => setTimeout(s, 2000)); text = await _once(); }  /* 间歇限流重试×2 */
+    if (!text) return [];
+    const items = (scrapers.parseRss(text) || []).slice(0, max || 10);
+    return items.map(it => ({
+      title: it.title || '', content: it.description || '', url: it.link || '',
+      publish_time: it.pubDate || '', source: 'Google News', country: '',
+      _sourceType: 'gnews'
+    }));
+  } catch (e) { return []; }
+}
 
 async function runChannelWatch(opts) {
   opts = opts || {};
@@ -59,16 +101,18 @@ async function runChannelWatch(opts) {
       });
     } catch (e) { /* GDELT 熔断则本轮跳过 */ }
   }
-  /* ② 专业 RSS（并行 + 硬超时竞速——实测 maritime-executive 会挂死连接，必须 race 兜底） */
-  const _rssFetch = (u) => Promise.race([
-    netx.smartFetch(u, { timeout: 12000 }).catch(() => null),
-    new Promise(res => setTimeout(() => res(null), 14000))
-  ]);
-  const rssResults = await Promise.allSettled(CHANNEL_RSS.map(s => _rssFetch(s.url)));
-  rssResults.forEach((r, i) => {
-    if (r.status !== 'fulfilled') return;
+  /* ② 专业 RSS（走 scrapers.fetchText 既有通道：UA+白名单+竞速；2026-08-28 修复
+   * 旧版误用 netx.smartFetch 返回值当 {body} —— 实际返回 fetch Response 对象，取 body 恒 undefined → 8h 零产出根因） */
+  const rssTexts = await Promise.all(CHANNEL_RSS.map(s =>
+    Promise.race([
+      _fetchPage(s.url, 10000),
+      new Promise(res => setTimeout(() => res(null), 12000))
+    ])
+  ));
+  rssTexts.forEach((text, i) => {
+    if (!text) return;
     try {
-      const items = scrapers.parseRss(r.value.body || '');
+      const items = scrapers.parseRss(text) || [];
       items.slice(0, 8).forEach(it => {
         out.push({
           title: it.title || '', content: it.description || '', url: it.link || CHANNEL_RSS[i].url,
