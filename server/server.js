@@ -34,6 +34,7 @@ const INTEREST_BASE = require('./interest-base'); /* 海外利益底数库（202
 const channelWatch = require('./channel-watch'); /* 海上战略通道哨兵（维度⑤：八大咽喉点通航/海盗/航运事件，30分钟一轮） */
 const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（维度⑥：OFAC/实体清单/出口管制/外资审查，30分钟一轮） */
 const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维度②：外交部安全提醒/撤侨/领保案件，30分钟一轮） */
+const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专项哨兵（2026-08-28：涉华受害/政变/外资审查等弱类补强，10分钟一轮） */
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const { spawn } = require('child_process');
 
@@ -2446,11 +2447,40 @@ const ASSET_PROFILES = [
   { name: '拉姆镍矿', re: /拉姆镍|ramu/i },
   { name: '苏伊士经贸合作区', re: /苏伊士.*经贸|teda/i }
 ];
+/* ===== 核心威胁标记引擎（2026-08-28 用户指令：预警中心重点体现十大核心威胁）=====
+ * 涉华人员机构袭击/绑架/劫持、海盗、恐袭、局部冲突、政变、航运安全、
+ * 外资审查、出口管制、制裁清单——命中即打 core_threat 标签（预警中心置顶专区依据）。 */
+const CORE_THREAT_RULES = [
+  { k: 'cn_victim', n: '涉华人员/机构受害', re: /(中国(?:公民|工人|工程师|留学生|游客|女子|船员|矿工)|中方人员|华人|华侨|中资企业|中企|中国公司|Chinese (?:citizen|worker|engineer|national|company)|China[- ]owned)[^。；]{0,30}(被袭|遇袭|遭袭|被绑|绑架|劫持|身亡|遇难|被杀|遇害|失踪|被扣|被拘|袭击|抢劫|killed|kidnapped|abducted|attacked|detained)|(?:袭击|绑架|劫持|杀害|抢劫|扣押)[^。；]{0,30}(中国(?:公民|工人|工程师)|中方人员|华人|华侨|中资企业)/i },
+  { k: 'piracy', n: '海盗事件', re: /海盗|piracy|pirates|劫船|seajack/i },
+  { k: 'terror', n: '恐怖袭击', re: /恐袭|恐怖袭击|自杀式爆炸|汽车炸弹|枪击事件|自杀式|bomb (?:blast|attack|explodes)|suicide bomb|terror attack|ISIS|Taliban|Boko Haram|Al[- ]?Shabaab|博科圣地|塔利班|伊斯兰国|极端组织武装/i },
+  { k: 'conflict', n: '局部冲突', re: /武装冲突|交火|炮击|空袭|战事|clashes? (?:erupt|between|kill)|armed conflict|shelling|airstrike|militants? (?:attack|kill)|叛军|反政府武装/i },
+  { k: 'coup', n: '政变/政局突变', re: /政变|兵变|coup|军人接管|军政府|戒严|martial law|总统被废|解散议会|emergency decree/i },
+  { k: 'maritime', n: '航运安全事件', re: /油轮|货轮|商船|集装箱船|航运中断|航线暂停|海峡封锁|沉船|船只遇险|tanker (?:attack|hit|seized)|vessel (?:attacked|hijacked|sank)|strait (?:closed|blockade)|shipping (?:disrupted|halted)|苏伊士|霍尔木兹|马六甲|红海航运|曼德海峡/i },
+  { k: 'investment_screening', n: '东道国外资审查', re: /外资审查|投资审查|投资安全审查|CFIUS|foreign investment (?:screening|review|restriction)|investment screening|国家安全审查|外资准入|外资限制/i },
+  { k: 'export_control', n: '出口管制', re: /出口管制|export (?:control|restriction|ban)|技术管制|两用物项|dual[- ]use|半导体禁令|chip (?:ban|export control)|实体清单管制/i },
+  { k: 'sanctions', n: '制裁清单', re: /实体清单|SDN|黑名单|制裁清单|OFAC|新增制裁|列入制裁|designated sanctions|unreliable entity|不可靠实体/i },
+  { k: 'kidnap_any', n: '绑架/劫持事件', re: /绑架|劫持人质|绑匪|赎金|kidnapp|abduction|hostage|ransom demand/i }
+];
+function _tagCoreThreat(it) {
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.desc || it.description || '').slice(0, 400);
+  const hits = [];
+  for (const r of CORE_THREAT_RULES) { if (r.re.test(t)) hits.push(r.k); }
+  if (hits.length) {
+    it.core_threat = hits[0];            /* 主类 */
+    it.core_threat_tags = hits;          /* 全部命中 */
+    it.core_threat_name = CORE_THREAT_RULES.find(r => r.k === hits[0]).n;
+  }
+  return hits;
+}
+
 function _tagAssets(it) {
   const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '');
   const hits = [];
   for (const a of ASSET_PROFILES) { if (a.re.test(t)) hits.push(a.name); }
   if (hits.length) it.asset_tags = hits;
+  /* 核心威胁标记（2026-08-28）：十大核心威胁命中即打标签——预警中心置顶专区依据 */
+  try { _tagCoreThreat(it); } catch (e) {}
   /* ===== 2026-08-28 海外利益底数标签（官方框架五维全挂）=====
    * 每条情报自动锚定：重点项目（六大类）/海上通道/国家梯队/经济暴露/人员足迹/东道国风险指标。
    * 这是"事件→利益受损研判"的底数锚点：命中越多，利益暴露越重。 */
@@ -2577,6 +2607,15 @@ function _scoreRiskItem(it) {
     if (it.interest_projects && it.interest_projects.length) { _bump(6); hits.push({ rule: 'R-IB3', name: '命中重点项目：' + it.interest_projects.join('、'), add: 6 }); }
     if (it.channel_tags && it.channel_tags.length) { _bump(5); hits.push({ rule: 'R-IB4', name: '涉及海上战略通道：' + it.channel_tags.join('、'), add: 5 }); }
     if (it.country_risk_indicators && (it.country_risk_indicators.security >= 8 || it.country_risk_indicators.political >= 8)) { _bump(3); hits.push({ rule: 'R-IB5', name: '东道国风险指标高危（政治/公共安全≥8）', add: 3 }); }
+  } catch (e) {}
+  /* 核心威胁加权（2026-08-28 用户指令：十大核心威胁是预警中心重点）：
+   * 涉华受害 +10（最高优先）；恐袭/绑架/海盗/冲突/政变/航运/制裁类 +5。
+   * 只加不降，红区铁律仍最后执行。 */
+  try {
+    const _bump2 = v => { if (score < 61) score = Math.min(60, score + v); };
+    const tags = it.core_threat_tags || [];
+    if (tags.includes('cn_victim')) { _bump2(10); hits.push({ rule: 'R-CT1', name: '核心威胁：涉华人员/机构受害', add: 10 }); }
+    else if (tags.length) { _bump2(5); hits.push({ rule: 'R-CT2', name: '核心威胁：' + (it.core_threat_name || tags.join('/')), add: 5 }); }
   } catch (e) {}
   const zone = score >= 61 ? 'red' : score >= 31 ? 'yellow' : 'green';
   const level = score >= 61 ? 'red' : score >= 46 ? 'orange' : score >= 31 ? 'yellow' : 'blue';
@@ -4607,6 +4646,38 @@ async function _runConsularWatch() {
   finally { _consularWatchBusyUntil = 0; }
 }
 
+/* ===== 核心威胁专项哨兵调度（2026-08-28 用户指令：十大核心威胁重点采集）=====
+ * 体检实测四类零产出（涉华袭击/涉华绑架/政变/外资审查），本哨兵专用查询矩阵补强。
+ * 每 10 分钟一轮；条目强制 data_type 按内容分类（恐袭→terror_events/制裁→sanctions_data/
+ * 涉华受害→security_events/政变→political_events/航运→infrastructure）。 */
+let _ctSentinelBusyUntil = 0;
+async function _runCoreThreatSentinel() {
+  if (Date.now() < _ctSentinelBusyUntil) return;
+  _ctSentinelBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await coreThreatSentinel.runCoreThreatWatch({ maxPerQuery: 12 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      try { ENTITY.enrich(it); it.interestLinked = true; } catch (e) {}
+      /* 强制 data_type：按核心威胁主类映射 */
+      const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+      if (/绑架|劫持|kidnap|hostage|abduct/i.test(t) && /中国|中方|华人|华侨|Chinese/i.test(t)) it.data_type = 'security_events';
+      else if (/政变|coup|军政府|junta/i.test(t)) it.data_type = 'political_events';
+      else if (/制裁|实体清单|sanction|entity list|出口管制|export control|外资审查|CFIUS|投资审查/i.test(t)) it.data_type = 'sanctions_data';
+      else if (/海盗|piracy|油轮|tanker|航运|shipping|strait|海峡/i.test(t)) it.data_type = 'infrastructure';
+      else if (/恐袭|恐怖袭击|爆炸|bomb|suicide|枪击/i.test(t)) it.data_type = 'terror_events';
+      else it.data_type = 'osint_intel';
+      it._forceDataType = true; /* 权威指定不被通用分类器覆盖 */
+      it._sourceType = 'core_threat_sentinel';
+    });
+    const res = await _ingestLinkedItems(items, 'CT-SENTINEL', '');
+    if (res && res.inserted) console.log('[CT-SENTINEL] ✅ 新入库核心威胁情报 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[CT-SENTINEL] 采集失败:', e.message); }
+  finally { _ctSentinelBusyUntil = 0; }
+}
+
 /* ===== 94源工程包采集器调度（2026-08-28 用户提供 WORKBUDDY-INSTRUCTION 工程包）=====
  * 每 30 分钟：11 个实测活源直采（中国新闻网/巴联社/塔斯社/尼日利亚双源/巴西双源/秘鲁安第斯通讯社/
  * BBC/BangkokPost/半岛）+ 死源 GNews site: 复活轮换（Reuters/AP/SCMP/Dawn/Kazinform 等）。
@@ -4732,6 +4803,8 @@ function startGlobalMediaCron() {
   setInterval(_runComplianceWatch, 15 * 60 * 1000); /* 2026-08-28 时效提速：30min→15min */
   setTimeout(_runConsularWatch, 320000);      // 领事保护哨兵（维度②：MFA安全提醒/撤侨/领保），启动320s后首跑
   setInterval(_runConsularWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min（用户指令：涉华受害是采集核心） */
+  setTimeout(_runCoreThreatSentinel, 350000);  // 核心威胁专项哨兵（弱类补强），启动350s后首跑
+  setInterval(_runCoreThreatSentinel, 10 * 60 * 1000);
   // 94源工程包采集器（2026-08-28：多立场源证据链），启动380s后首跑
   setTimeout(_runSourcesCollector, 380000);
   setInterval(_runSourcesCollector, 15 * 60 * 1000); /* 2026-08-28 时效提速：30min→15min */

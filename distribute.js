@@ -352,6 +352,7 @@
       stance: item.stance || '', stance_set: item.stance_set || '',
       stance_verified: item.stance_verified === true || item.stance_verified === 'true',
       interest_tier: item.interest_tier || '', asset_tags: item.asset_tags || [], channel_tags: item.channel_tags || [],
+      core_threat: item.core_threat || '', core_threat_name: item.core_threat_name || '', core_threat_tags: item.core_threat_tags || [],
       _eventSig: item._eventSig || '',
       _live: true, _approved: true, _seq: _liveCount
     };

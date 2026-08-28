@@ -11166,12 +11166,15 @@ const AVIEW={
     }
     var lvlOrder={red:0,orange:1,yellow:2,blue:3};
     var stOrder={active:0,acknowledged:1,responding:2,resolved:3};
-    /* 2026-08-14 用户指令：预警队列分层——涉华负面 > 涉华 > 其他；层内按级别>状态>时间 */
+    /* 2026-08-14 用户指令：预警队列分层——涉华负面 > 涉华 > 其他；层内按级别>状态>时间
+     * 2026-08-28 核心威胁置顶：十大核心威胁（涉华受害/海盗/恐袭/政变/制裁…）排最前 */
     var _cnQ=function(a){
       var t=String(a.title||'')+' '+String(a.title_zh||'');
       return /中国|中资|中企|中方|华人|华侨|涉华|对华|一带一路|Chinese|China|Beijing|CPEC/i.test(t);
     };
     alerts.sort(function(a,b){
+      var ca=a.core_threat?0:1, cb=b.core_threat?0:1;
+      if(ca!==cb)return ca-cb;
       var ta=(a.chinaNegative||a._chinaNegative)?0:(_cnQ(a)?1:2);
       var tb=(b.chinaNegative||b._chinaNegative)?0:(_cnQ(b)?1:2);
       if(ta!==tb)return ta-tb;
@@ -11197,6 +11200,11 @@ const AVIEW={
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
           var h='';
+          /* 核心威胁徽章（2026-08-28 用户指令：十大核心威胁置顶体现） */
+          if(a.core_threat_name){
+            h+='<div style="display:flex;flex-wrap:wrap;gap:3px;margin:3px 0 1px">'+
+              '<span style="font-size:8px;padding:0 5px;border-radius:6px;background:rgba(255,51,85,.15);border:1px solid #ff3355;color:#ff3355;font-weight:700" title="核心威胁（预警中心重点类目）">🚨 '+a.core_threat_name+'</span></div>';
+          }
           if(val.tags.length){
             h+='<div style="display:flex;flex-wrap:wrap;gap:3px;margin:3px 0 1px">'+
               '<span style="font-size:9px;font-weight:800;color:'+(val.score>=70?'var(--red)':val.score>=45?'var(--orange)':'var(--text3)')+'" title="预警价值分">◆'+val.score+'</span>'+
@@ -11350,6 +11358,11 @@ const AVIEW={
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
           var h='';
+          /* 核心威胁徽章（2026-08-28 用户指令：十大核心威胁置顶体现） */
+          if(a.core_threat_name){
+            h+='<div style="display:flex;flex-wrap:wrap;gap:3px;margin:3px 0 1px">'+
+              '<span style="font-size:8px;padding:0 5px;border-radius:6px;background:rgba(255,51,85,.15);border:1px solid #ff3355;color:#ff3355;font-weight:700" title="核心威胁（预警中心重点类目）">🚨 '+a.core_threat_name+'</span></div>';
+          }
           if(val.tags.length){
             h+='<div style="display:flex;flex-wrap:wrap;gap:3px;margin:3px 0 1px">'+
               '<span style="font-size:9px;font-weight:800;color:'+(val.score>=70?'var(--red)':val.score>=45?'var(--orange)':'var(--text3)')+'" title="预警价值分">◆'+val.score+'</span>'+
