@@ -2632,6 +2632,9 @@ function _eventSignature(it) {
   return cty + '|' + ev + '|' + day;
 }
 /* 入库后计算印证数（近2天同签名独立来源数+1），写回本条 data_json */
+/* 立场证据链用的：标题事发国表 + 事件词（2026-08-28） */
+const _SIG_COUNTRIES = ['尼泊尔','巴基斯坦','阿富汗','伊朗','伊拉克','叙利亚','也门','沙特','以色列','巴勒斯坦','乌克兰','俄罗斯','缅甸','泰国','越南','老挝','柬埔寨','马来西亚','印度尼西亚','菲律宾','新加坡','孟加拉国','斯里兰卡','印度','哈萨克斯坦','乌兹别克斯坦','塔吉克斯坦','吉尔吉斯斯坦','土库曼斯坦','蒙古','韩国','日本','朝鲜','埃及','利比亚','阿尔及利亚','突尼斯','摩洛哥','苏丹','南苏丹','埃塞俄比亚','索马里','肯尼亚','坦桑尼亚','乌干达','卢旺达','刚果','尼日利亚','加纳','马里','尼日尔','乍得','喀麦隆','布基纳法索','赞比亚','津巴布韦','安哥拉','莫桑比克','南非','几内亚','墨西哥','巴西','阿根廷','智利','秘鲁','哥伦比亚','委内瑞拉','玻利维亚','厄瓜多尔','古巴','海地','巴拿马','美国','加拿大','英国','法国','德国','意大利','西班牙','葡萄牙','荷兰','比利时','瑞士','瑞典','挪威','芬兰','丹麦','奥地利','希腊','波兰','塞尔维亚','匈牙利','罗马尼亚','捷克','保加利亚','澳大利亚','新西兰','Nepal','Pakistan','Afghanistan','Iran','Iraq','Syria','Yemen','Saudi','Israel','Ukraine','Russia','Myanmar','Thailand','Vietnam','Laos','Cambodia','Malaysia','Indonesia','Philippines','Bangladesh','Sri Lanka','India','Kazakhstan','Uzbekistan','Ethiopia','Somalia','Kenya','Nigeria','Ghana','Mali','Niger','Chad','Cameroon','South Africa','Mexico','Brazil','Argentina','Chile','Peru','Colombia','Venezuela','Ecuador','Bolivia','Haiti','Panama'];
+const _SIG_EVENT_RE = /死亡|遇难|身亡|伤亡|洪水|地震|袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|抗议|示威|制裁|坠机|沉船|山火|台风|飓风|killed|dead|flood|earthquake|attack|bomb|kidnap|clash|protest|sanction|coup|crash/i;
 async function _markCorroboration(id, it) {
   try {
     const sig = it._eventSig;
@@ -2647,16 +2650,27 @@ async function _markCorroboration(id, it) {
     }
     /* 2026-08-28 立场证据链（94源工程包核心思想）：
      * 同事件被 ≥2 个不同 stance（G政府/I独立/N非营利/W西方/C中国官方）的源报道
-     * → stance_verified=true（多立场交叉验证，防单一叙事源带偏，高告警通道门槛） */
-    const { rows: srows } = await query(
-      `SELECT DISTINCT data_json->>'stance' st FROM intel_data WHERE collect_time >= $1 AND data_json->>'_eventSig' = $2 AND data_json->>'stance' IS NOT NULL`,
-      [since, sig]
-    );
-    const stances = srows.map(r => r.st).filter(Boolean);
-    if (stances.length >= 2) {
-      await query(`UPDATE intel_data SET data_json = jsonb_set(jsonb_set(data_json, '{stance_set}', $1::jsonb), '{stance_verified}', 'true') WHERE id = $2`,
-        [JSON.stringify(stances), id]);
-    }
+     * → stance_verified=true（多立场交叉验证，防单一叙事源带偏，高告警通道门槛）。
+     * 2026-08-28 修正：_eventSig 的国别是"来源国"——同一事件不同国来源签名不同（尼泊尔洪水
+     * 在 TASS/Andina/论坛报 签名分别为 RU/PE/TH），跨源立场配对永远失败。此处改用
+     * 标题内"事发国"重算签名配对（标题必含事发国名，如"尼泊尔洪水死亡469人"）。 */
+    try {
+      const title = String(it.title || '') + ' ' + String(it.title_zh || '');
+      const c = _SIG_COUNTRIES.find(x => title.indexOf(x) >= 0);
+      const em = title.match(_SIG_EVENT_RE);
+      if (c && em) {
+        const sig2 = c + '|' + em[0];
+        const { rows: srows } = await query(
+          `SELECT DISTINCT data_json->>'stance' st FROM intel_data WHERE collect_time >= $1 AND data_json->>'stance' IS NOT NULL AND (title LIKE '%' || $2 || '%' OR data_json->>'title_zh' LIKE '%' || $2 || '%')`,
+          [since, c]
+        );
+        const stances = srows.map(r => r.st).filter(Boolean);
+        if (stances.length >= 2) {
+          await query(`UPDATE intel_data SET data_json = jsonb_set(jsonb_set(data_json, '{stance_set}', $1::jsonb), '{stance_verified}', 'true') WHERE id = $2`,
+            [JSON.stringify(stances), id]);
+        }
+      }
+    } catch (e2) {}
   } catch (e) {}
 }
 
