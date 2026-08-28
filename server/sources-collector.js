@@ -19,7 +19,9 @@ const LIVE_RSS_IDS = [
   'br_folha', 'br_brasil247', 'pe_andina', 'bbc_world', 'th_bangkokpost', 'qa_aljazeera'
 ];
 
-/* 死源 → GNews site: 复活清单（取工程包高价值死源，每轮轮换查 2 个站） */
+/* 死源 → GNews site: 复活清单（取工程包高价值死源，每轮轮换查 2 个站）
+ * 2026-08-28 扩充（用户指令：34 重点国全覆盖）：补零产出国
+ * 沙特/阿联酋/秘鲁/阿尔及利亚/安哥拉 + 低产出国 印尼/刚果金/智利/越南/柬埔寨 */
 const SITE_REVIVE = [
   { id: 'reuters',        site: 'reuters.com',        q: 'china OR Chinese' },
   { id: 'apnews',         site: 'apnews.com',         q: 'china OR Chinese' },
@@ -32,7 +34,39 @@ const SITE_REVIVE = [
   { id: 'aljazeera_alt',  site: 'aljazeera.com',      q: 'china belt road' },
   { id: 'un_news_alt',    site: 'news.un.org',        q: 'china' },
   { id: 'irrawaddy',      site: 'irrawaddy.com',      q: 'china OR pipeline' },
-  { id: 'premium_alt',    site: 'premiumtimesng.com', q: 'china OR kidnapped' }
+  { id: 'premium_alt',    site: 'premiumtimesng.com', q: 'china OR kidnapped' },
+  /* ——— 2026-08-28 重点国扩充（34 国全覆盖）——— */
+  { id: 'sa_gulfnews',    site: 'gulfnews.com',       q: 'china OR Chinese',        _c: '阿联酋' },
+  { id: 'ae_khaleej',     site: 'khaleejtimes.com',   q: 'china OR trade',          _c: '阿联酋' },
+  { id: 'pe_comercio',    site: 'elcomercio.pe',      q: 'chancay OR china',        _c: '秘鲁' },
+  { id: 'dz_aps',         site: 'aps.dz',             q: 'china OR algerian',       _c: '阿尔及利亚' },
+  { id: 'ao_angop',       site: 'angop.ao',           q: 'china OR investment',     _c: '安哥拉' },
+  { id: 'id_jakpost',     site: 'jakartapost.com',    q: 'china OR nickel',         _c: '印尼' },
+  { id: 'id_tempo',       site: 'tempo.co',           q: 'china OR smelter',        _c: '印尼' },
+  { id: 'cd_actualite',   site: 'actualite.cd',       q: 'chinois OR mine',         _c: '刚果（金）' },
+  { id: 'cl_mercurio',    site: 'emol.com',           q: 'china OR lithium',        _c: '智利' },
+  { id: 'vn_vnexpress',   site: 'vnexpress.net',      q: 'china OR trade',          _c: '越南' },
+  { id: 'kh_phnom',       site: 'phnompenhpost.com',  q: 'china OR investment',     _c: '柬埔寨' },
+  { id: 'th_nation',      site: 'nationthailand.com', q: 'china OR rail',           _c: '泰国' },
+  { id: 'my_star',        site: 'thestar.com.my',     q: 'china OR ECRL',           _c: '马来西亚' },
+  { id: 'eg_ahram',       site: 'english.ahram.org.eg', q: 'china OR suez',         _c: '埃及' },
+  { id: 'rs_tanjug',      site: 'tanjug.rs',          q: 'china OR railway',        _c: '塞尔维亚' },
+  { id: 'mx_news',        site: 'mexiconewsdaily.com', q: 'china OR investment',    _c: '墨西哥' },
+  { id: 'za_news24',      site: 'news24.com',         q: 'china OR mining',         _c: '南非' },
+  { id: 'gn_guineenews',  site: 'guineenews.org',     q: 'simandou OR chine',       _c: '几内亚' },
+  { id: 'tz_citizen',     site: 'thecitizen.co.tz',   q: 'china OR port',           _c: '坦桑尼亚' },
+  { id: 'ke_standard',    site: 'standardmedia.co.ke', q: 'china OR railway',       _c: '肯尼亚' },
+  { id: 'etReporter',     site: 'addisstandard.com',  q: 'china OR ethiopia',       _c: '埃塞俄比亚' },
+  { id: 'zambia',         site: 'zambianobserver.com', q: 'china OR mine',          _c: '赞比亚' },
+  { id: 'arg_buenos',     site: 'batimes.com.ar',     q: 'china OR lithium',        _c: '阿根廷' },
+  { id: 'br_folha2',      site: 'agenciabrasil.ebc.com.br', q: 'china OR trade',   _c: '巴西' },
+  { id: 'iq_iraqinews',   site: 'iraqinews.com',      q: 'china OR oil',            _c: '伊拉克' },
+  { id: 'tj_asia',        site: 'asiaplustj.info',    q: 'china OR tajik',          _c: '塔吉克斯坦' },
+  { id: 'uk_guardian',    site: 'theguardian.com',    q: 'china',                   _c: '英国' },
+  { id: 'de_dw',          site: 'dw.com',             q: 'china OR chinese',        _c: '德国' },
+  { id: 'jp_japantimes',  site: 'japantimes.co.jp',   q: 'china',                   _c: '日本' },
+  { id: 'au_smh',         site: 'smh.com.au',         q: 'china OR darwin',         _c: '澳大利亚' },
+  { id: 'ca_globe',       site: 'theglobeandmail.com', q: 'china',                  _c: '加拿大' }
 ];
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' };
@@ -63,10 +97,20 @@ async function collectLiveRss(maxPerFeed) {
   return out;
 }
 
-/* ② 死源 GNews site: 复活（每轮轮换 2 个站，串行防限流） */
+/* ② 死源 GNews site: 复活（每轮轮换 4 个站，串行防限流）
+ * 2026-08-28：2→4 站/轮（44 站全量 11 轮覆盖，15min/轮约 2.75h 全轮换一遍）；
+ * 每轮保证 2 站来自零产出国优先级清单。 */
+const PRIORITY_NATIONS = ['沙特', '阿联酋', '秘鲁', '阿尔及利亚', '安哥拉', '印尼', '刚果（金）', '智利', '越南', '柬埔寨'];
 async function collectSiteRevive(cyc, maxPerQuery) {
   const out = [];
-  const picks = [SITE_REVIVE[cyc % SITE_REVIVE.length], SITE_REVIVE[(cyc + 5) % SITE_REVIVE.length]];
+  const prio = SITE_REVIVE.filter(s => PRIORITY_NATIONS.indexOf(s._c) >= 0);
+  const normal = SITE_REVIVE.filter(s => PRIORITY_NATIONS.indexOf(s._c) < 0);
+  const picks = [
+    prio[cyc % prio.length],
+    prio[(cyc + 3) % prio.length],
+    normal[cyc % normal.length],
+    normal[(cyc + 5) % normal.length]
+  ].filter(Boolean);
   for (const p of picks) {
     const meta = get(p.id) || {};
     const q = 'site:' + p.site + ' ' + p.q;
@@ -78,7 +122,7 @@ async function collectSiteRevive(cyc, maxPerQuery) {
     items.forEach(it => out.push({
       title: it.title || '', content: it.description || '', url: it.link || '',
       publish_time: it.pubDate || '', source: meta.name || p.site,
-      country: meta.country || '', stance: meta.stance || 'I',
+      country: p._c || meta.country || '', stance: meta.stance || 'I',
       risk_topics: meta.risk_topics || [],
       _sourceType: 'sources_pack', _sourceId: p.id, region: meta.region || ''
     }));

@@ -2098,6 +2098,7 @@ async function _getRecentTitleKeys() {
       const k2 = _normTitleKey(r.tzh); if (k2.length >= 10) set.add(k2);
     });
     _titleKeyCache = { t: Date.now(), set };
+    _recentTitleKeysCache = set;   /* 同步只读视图刷新（当天铁律用） */
   } catch (e) { console.warn('[TITLE-DEDUP] 指纹缓存构建失败:', e.message); }
   return _titleKeyCache.set;
 }
@@ -2116,6 +2117,10 @@ function _addTitleKey(titleKeys, it) {
 /* 事件签名去重：近 7 天同国家+同事件类型+同日期的条目视为同一事件，只保留最早/信源最高者。
  * 用于拦截"IS 声称喀布尔中国餐馆爆炸"这类旧闻 2-3 天后换标题重发。 */
 let _eventSigCache = { t: 0, set: new Set() };
+/* 当天铁律用的同步只读视图（2026-08-28）：_isFreshEnough 是同步函数无法 await，
+ * 由 _getRecentEventSigs/_getRecentTitleKeys 刷新时同步更新此二引用 */
+var _recentEventSigsCache = new Set();
+var _recentTitleKeysCache = new Set();
 async function _getRecentEventSigs() {
   if (Date.now() - _eventSigCache.t < 5 * 60 * 1000 && _eventSigCache.set.size) return _eventSigCache.set;
   try {
@@ -2124,6 +2129,7 @@ async function _getRecentEventSigs() {
     const set = new Set();
     rows.forEach(r => { if (r.sig) set.add(r.sig); });
     _eventSigCache = { t: Date.now(), set };
+    _recentEventSigsCache = set;   /* 同步只读视图刷新 */
     return set;
   } catch (e) { return _eventSigCache.set || new Set(); }
 }
@@ -2899,13 +2905,15 @@ function _isFreshEnough(it) {
    * 2026-08-25 实测近 3 天 43% 入库条目无任何日期字段） */
   if (!dated) return false;
 
-  /* ===== 当天数据铁律（2026-08-28 用户指令：当天只采当天数据，除非非常重要）=====
+  /* ===== 当天数据铁律（2026-08-28 用户指令：当天只采当天数据，除非非常重要且库内无此条）=====
    * 实测各通道当天率仅 14-41%（昨天的新闻跨零点后仍满足 24h 窗口）。
-   * 收紧：事件时间非今天的 → 必须是"重要类"才放行：
-   * ① 核心威胁（涉华受害/恐袭/绑架/海盗/政变/制裁清单等十类）
-   * ② 红橙级（涉华严重事件）
-   * ③ 白名单公众号（用户亲选信源，发布日期即准绳——已在上方 trustPubDate）
-   * 其余旧数据一律拦截（进非预警数据池可复核）。 */
+   * 收紧：事件时间非今天的 → 必须同时满足：
+   * ① "重要类"：核心威胁十类 / 红橙级 / 白名单公众号
+   * ② "库内无此条"：事件签名+标题指纹双查重——库里已有该事件的任何版本都不再采
+   *    （旧事件的多源跟进报道只更新印证数，不新增条目）
+   * 其余旧数据一律拦截（进非预警数据池可复核）。
+   * 注意：本函数被同步调用（部分路径），库内查重做成异步安全——返回 Promise 时由调用方 await；
+   * 这里用内存缓存近似：近 3 天事件签名集合已由 _getRecentEventSigs 维护，直接复用标题指纹缓存。 */
   try {
     const _evStr = String(it._extractedEventDate || it.event_date || it.publish_time || it.publishedAt || it.pubDate || it.date || '');
     if (_evStr) {
@@ -2918,7 +2926,14 @@ function _isFreshEnough(it) {
             || it.level === 'red' || it.level === 'orange'
             || it._sourceType === 'wechat_oa' || it._sourceType === 'wechat_lead';
           if (!_important) return false;
-          it._staleButImportant = true;   /* 标记：重要旧闻，展示时注明事件日期 */
+          /* 库内已有该条判定：事件签名或标题指纹已见于库 → 拒收（同步近似用内存缓存，
+           * 精确 DB 查重在 _preInsertGate 的 event-sig-dup/title-dup 双保险已执行） */
+          const _sig = _eventSignature(it);
+          const _tk = _normTitleKey(it.title_zh || it.title);
+          if (_recentEventSigsCache.has(_sig) || (_tk.length >= 10 && _recentTitleKeysCache.has(_tk))) {
+            return false; /* 重要旧事件已有库内版本：多源跟进不新增条目 */
+          }
+          it._staleButImportant = true;   /* 标记：重要旧闻（库内首见），展示时注明事件日期 */
         }
       }
     }
