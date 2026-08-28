@@ -3935,6 +3935,7 @@ var AUDIT={
 // ===== VIEW MAP =====
 const VIEW_MAP={
   situation:{t:'态势总览',b:'态势感知 / 态势总览'},
+  myfocus:{t:'我的关注',b:'态势感知 / 我的工作台'},
   datasources:{t:'数据源库',b:'数据中枢 / 数据源库'},
   wechat:{t:'公众号采集',b:'数据管理 / 公众号采集'},
   intel:{t:'情报影像中心',b:'监测中心 / 情报影像中心'},
@@ -10550,7 +10551,7 @@ var INTEL_ITEMS=[
 
 // ===== ALERTS VIEW (v3 - Command Center) =====
 const AVIEW={
-  filterLevel:'all',filterType:'all',filterStatus:'all',searchQuery:'',
+  filterLevel:'all',filterType:'all',filterStatus:'all',searchQuery:'',_showBlue:false,
   /* ===== 任务域分组（2026-08-14 预警中心重设计：部委实战视角）=====
    * 安全部/公安部看人员项目安全，外交部看涉华负面舆情，商务部看制裁合规，
    * 央国企看通道供应链与项目资产——队列默认按任务域分节，不再一大锅混排 */
@@ -10829,6 +10830,7 @@ const AVIEW={
       '<input class="alert-cmd-search" id="alert-search" placeholder="🔍 搜索预警标题/国家/企业..." oninput="AVIEW.searchQuery=this.value;AVIEW.qPage=1;AVIEW.renderQueue()">'+
       '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
       '<select class="select" style="font-size:11px;padding:4px 8px" onchange="AVIEW.filterLevel=this.value;AVIEW.qPage=1;AVIEW.renderQueue()"><option value="all">全部等级</option><option value="red">🔴 红色</option><option value="orange">🟠 橙色</option><option value="yellow">🟡 黄色</option><option value="blue">🔵 蓝色</option></select>'+
+      '<button class="btn sm" style="font-size:10px;white-space:nowrap;'+(this._showBlue?'background:rgba(0,212,255,.15);border-color:var(--cyan);color:var(--cyan)':'')+'" onclick="AVIEW.toggleBlue()" title="蓝色=普通动态/分析文章，默认折叠；点击展开显示" id="aview-blue-toggle">'+(this._showBlue?'🔵 蓝色已展开':'🔵 显示蓝色动态')+'</button>'+
       '<select class="select" style="font-size:11px;padding:4px 8px" onchange="AVIEW.filterStatus=this.value;AVIEW.qPage=1;AVIEW.renderQueue()"><option value="all">全部状态</option><option value="active">待处理</option><option value="acknowledged">已确认</option><option value="responding">处置中</option><option value="resolved">已解除</option></select>'+
             '<button class="btn sm" onclick="AVIEW.generateInsight()" style="font-size:10px;white-space:nowrap">🤖 AI分析</button>'+
       (PERM.canUpload()?'<button class="btn sm" style="font-size:10px;white-space:nowrap;background:rgba(0,212,255,0.1);border-color:var(--cyan);color:var(--cyan)" onclick="AVIEW.batchPushToReport()">🤖 批量推送至AI报告</button>':'')+
@@ -11081,6 +11083,66 @@ const AVIEW={
     out.sort(function(x,y){ return x.idx-y.idx; });
     return out.map(function(x){ return x.a; });
   },
+  toggleBlue(){ /* 2026-08-28 信噪分离：蓝色动态折叠开关 */
+    this._showBlue=!this._showBlue; this.qPage=1;
+    var b=document.getElementById('aview-blue-toggle');
+    if(b){ b.textContent=this._showBlue?'🔵 蓝色已展开':'🔵 显示蓝色动态';
+      b.style.background=this._showBlue?'rgba(0,212,255,.15)':'';
+      b.style.borderColor=this._showBlue?'var(--cyan)':'';
+      b.style.color=this._showBlue?'var(--cyan)':''; }
+    this.renderQueue();
+  },
+  /* ===== 即时行动指引映射表（2026-08-28 用户指令：预警挂接处置预案）=====
+   * 事件类型 → 通用行动清单；叠加国别特殊性（重点国追加针对性建议）。
+   * 安保主管视角：预警不能只告诉我"发生了什么"，还要告诉我"现在该做什么"。 */
+  _ACTION_GUIDES:{
+    terror:{ic:'💥',t:'恐怖袭击/爆炸',acts:['立即启动就地避难（SHELTER-IN-PLACE），全员停止外出','清点驻地/营地全部中方人员，30分钟内报平安','核查通勤路线是否穿越事发3公里范围，切换备用路线','联系属地安保力量确认威胁是否持续，评估升级撤离','向使馆领事保护处（12308）通报在岗人数与位置']},
+    kidnap:{ic:'⛓️',t:'绑架/劫持',acts:['立即启动绑架应急预案，成立专项处置小组','冻结社交媒体发布，严禁家属/员工私自联系媒体','通过当地可靠中间人建立沟通渠道，聘请专业危机谈判顾问','排查同期其他驻地/通勤人员是否失联','向使馆与国内总部双线报告，启动家属安抚机制']},
+    protest:{ic:'📢',t:'抗议/骚乱/群体性事件',acts:['封控驻地出入口，非必要人员禁止外出','撤除驻地/工地的醒目中文标识，降低针对性','评估当地中资企业是否为抗议目标，做好备勤','错峰办公，外籍与本地员工统一管理口径','持续监测舆情走向，预判48小时事态']},
+    sanction:{ic:'⚖️',t:'制裁/合规',acts:['24小时内完成涉事业务合规排查（资金/技术/设备）','通知法务与财务评估存量合同与资金通道','排查供应链是否经涉制裁第三方转口','暂停可能触发的付款与新签约，待合规结论','留存交易证据链，准备可能的豁免申请']},
+    disaster:{ic:'🌊',t:'自然灾害',acts:['确认项目营地是否在影响范围，启动撤离评估','备妥72小时应急物资（水/食品/发电/药品）','检查通信备份手段（卫星电话）可用性','排查地质灾害次生风险（边坡/河道/尾矿）','与当地中资企业联防，共享救援资源']},
+    conflict:{ic:'⚔️',t:'武装冲突',acts:['启动最高级安保状态，全员进入坚固掩体','评估启动跨国撤离预案（第三国中转路线）','登记全部人员护照/签证信息，备撤离使用','与使馆保持每日通联，获取撤离窗口情报','现金/黄金等硬通货分散保管，备应急']},
+    maritime:{ic:'🚢',t:'海盗/海上通道',acts:['涉事船只立即报告 UKMTO/MSCHOA 与中国海上搜救中心','调整航线绕行高风险海域，加装防护栏','船员进入安全舱（Citadel）待命','核查货物保险与战争险条款有效性','评估后续航次的武装护航申请']},
+    consular:{ic:'🏛️',t:'领保/撤侨',acts:['全员核对旅行证件有效期与备份','确认就近避难点与集结路线','建立与使馆的直通联系方式','非必要人员提前安排商业航班离境','关键岗位确认继任方案（防止业务中断）']},
+    disease:{ic:'🦠',t:'公共卫生',acts:['启动驻地封闭管理，暂停外部人员进入','备妥医疗物资与隔离空间','排查近期人员与病例的接触史','建立每日健康报告制度','必要时安排包机医疗转运']},
+    cyber:{ic:'💻',t:'网络攻击',acts:['立即断网隔离受影响系统，保全证据','启动IT应急响应，评估数据外泄范围','排查是否涉密数据/商业秘密外泄','按当地法律与总部要求履行通报义务','恢复前完成全系统安全加固']}
+  },
+  _COUNTRY_GUIDES:{
+    '巴基斯坦':{t:'巴特殊情境',acts:['联系巴军警特别安全师（SSD）属地单位请求支援','核查CPEC项目走廊安保等级是否调整','白沙瓦/奎达/俾路支区域一律暂停非必要行程','与巴方项目安保负责人（通常军方背景）直接通联']},
+    '尼日利亚':{t:'尼特殊情境',acts:['核实事件是否在纳萨拉瓦/尼日尔州矿区带（中资采矿集中区）','联系驻地军区/警区指挥官，确认护送安排','东南州（IPOB活动区）人员行程冻结','评估绑架赎金险与专业危机响应公司（如INKS）介入']},
+    '阿富汗':{t:'阿特殊情境',acts:['非必要人员一律不得单独外出（塔利班检查站风险）','与内政部对口联络人确认通行许可','女性员工外出着装与陪同合规核查','现金兑换与银行取现错峰，防挤兑']},
+    '刚果（金）':{t:'刚果（金）特殊情境',acts:['东部四省（北基伍/南基伍/伊图里/上韦莱）人员撤至金沙萨','矿区物资转运暂停，改飞金洛瓦兹中转','与当地矿业警察（GMK）确认驻点','核对钴/铜矿出口通道是否受武装影响']},
+    '缅甸':{t:'缅特殊情境',acts:['若开/钦邦/克钦战区人员不得停留','与民地武控制区联络人保持沟通','仰光/曼德勒宵禁时段核查（通常22:00-04:00）','中缅油气管道沿线安保等级确认']},
+    '马里':{t:'马里特殊情境',acts:['巴马科以外北部/中部地区行程冻结','核查Barkhane/联稳团撤离后安保真空区','矿区（黄金带）护卫队资质与忠诚度复核','法航/联航航班中断预案']},
+    '俄罗斯':{t:'俄特殊情境',acts:['核查制裁对支付/物流的次级影响','远东项目与中国境内双通道备份','人员证件与移民卡登记有效期核查','评估当地安全部门检查频率变化']}
+  },
+  _actionGuideHtml(a){
+    var t=String(a.title||'')+' '+String(a.title_zh||'')+' '+String(a.desc||a.type||'');
+    var tl=t.toLowerCase();
+    function has(arr){return arr.some(function(w){return tl.indexOf(w)>=0;});}
+    var g=null;
+    if(has(['绑架','劫持','人质','赎金','kidnap','hostage','abduct']))g=this._ACTION_GUIDES.kidnap;
+    else if(has(['恐袭','恐怖袭击','爆炸','自杀式','枪击','武装袭击','bomb','blast','suicide']))g=this._ACTION_GUIDES.terror;
+    else if(has(['抗议','示威','骚乱','罢工','暴乱','群体性','riot','protest','unrest']))g=this._ACTION_GUIDES.protest;
+    else if(has(['制裁','出口管制','实体清单','禁运','sanction','embargo']))g=this._ACTION_GUIDES.sanction;
+    else if(has(['洪水','地震','台风','海啸','滑坡','泥石流','flood','earthquake','typhoon']))g=this._ACTION_GUIDES.disaster;
+    else if(has(['武装冲突','交火','炮击','空袭','clash','conflict','shelling','airstrike']))g=this._ACTION_GUIDES.conflict;
+    else if(has(['海盗','劫船','油轮','海峡扣押','piracy','hijack.*ship']))g=this._ACTION_GUIDES.maritime;
+    else if(has(['撤离','撤侨','领事','领保','evacuat','consular']))g=this._ACTION_GUIDES.consular;
+    else if(has(['疫情','传染病','霍乱','麻疹','outbreak','epidemic']))g=this._ACTION_GUIDES.disease;
+    else if(has(['网络攻击','数据泄露','黑客','勒索软件','hack','breach','ransomware']))g=this._ACTION_GUIDES.cyber;
+    if(!g)return '';
+    var cg=this._COUNTRY_GUIDES[a.country]||null;
+    var acts=g.acts.slice();
+    if(cg)acts=acts.concat(cg.acts);
+    var h='<div style="margin-top:10px;padding:10px 12px;background:rgba(255,51,85,0.06);border:1px solid rgba(255,51,85,0.25);border-radius:8px">'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="font-size:14px">'+g.ic+'</span><strong style="font-size:12px;color:var(--red)">🚨 即时行动指引 · '+g.t+'</strong>'+
+      (cg?'<span style="font-size:10px;padding:0 6px;border-radius:6px;border:1px solid rgba(255,51,85,.4);color:var(--red)">'+cg.t+'</span>':'')+'</div>'+
+      '<ol style="margin:0;padding-left:18px;font-size:11px;line-height:1.8;color:var(--text2)">'+
+      acts.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ol>'+
+      '<div style="font-size:9px;color:var(--text3);margin-top:6px">※ 由事件类型'+(cg?'×国别':'')+'自动匹配的标准处置清单，供值班人员第一时间参考；完整流程见右侧推荐预案。</div></div>';
+    return h;
+  },
   renderQueue(){
     var alerts=ALERTS.slice();
     alerts=AVIEW._mergeEvents(alerts); /* 事件级合并（2026-08-17）：同事件进展只留最新 */
@@ -11088,7 +11150,12 @@ const AVIEW={
       var _lvW={red:400,orange:300,yellow:200,blue:100};
       alerts.sort(function(a,b){ return ((_lvW[b.level]||0)+AVIEW._alertValue(b).score)-((_lvW[a.level]||0)+AVIEW._alertValue(a).score); });
     }
-    if(this.filterLevel!=='all')alerts=alerts.filter(function(a){return a.level===AVIEW.filterLevel;});
+    /* 2026-08-28 信噪分离（用户指令：预警中心只展红橙黄）：
+     * 蓝色=普通动态/分析文章，默认折叠不进队列——除非用户显式选"蓝色"或"全部等级"要看的。
+     * 蓝色仍留在数据中心/实时情报流可查，只是不占预警中心版面。 */
+    if(this.filterLevel==='all')alerts=alerts.filter(function(a){return a.level!=='blue'||AVIEW._showBlue;});
+    else if(this.filterLevel!=='blue')alerts=alerts.filter(function(a){return a.level===AVIEW.filterLevel;});
+    else alerts=alerts.filter(function(a){return a.level==='blue';});
     if(this.filterStatus!=='all')alerts=alerts.filter(function(a){return a.status===AVIEW.filterStatus;});
     if(this.filterDomain && this.filterDomain!=='all')alerts=alerts.filter(function(a){return AVIEW._domainOf(a)===AVIEW.filterDomain;});
     if(this.searchQuery){
@@ -11519,6 +11586,8 @@ const AVIEW={
     }
     /* AI 预案研判槽位（2026-08-19 用户指令：推荐预案必须 AI 智能化）：渲染后异步语义研判 */
     pbHtml+='<div id="pb-ai-slot"></div>';
+    /* ===== 即时行动指引（2026-08-28 用户指令：预警挂接处置预案，事件类型×国别→行动建议）===== */
+    pbHtml+=AVIEW._actionGuideHtml(a);
     var infoHtml='<div class="alert-detail-info">'+
       '<div class="alert-detail-info-item"><div class="alert-detail-info-label">影响国家</div><div class="alert-detail-info-val">'+a.country+(country?' '+country.flag:'')+'</div></div>'+
       ((a.stance)?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">信源立场</div><div class="alert-detail-info-val" style="font-size:12px">'+(STANCE_META[a.stance]?STANCE_META[a.stance].t:a.stance)+((a.stance_verified===true||a.stance_verified==='true')?' <span style="color:var(--green);font-weight:700">✓ 多立场交叉验证'+(a.stance_set?'（'+String(a.stance_set).replace(/["\[\]\s]/g,'').split(',').filter(Boolean).map(function(x){return (STANCE_META[x]||{}).t||x;}).join('＋')+'）':'')+'</span>':' <span style="color:var(--text3)">（单源线索）</span>')+'</div></div>':'')+
@@ -14786,6 +14855,7 @@ function navigateTo(v){
     document.getElementById('pageCrumb').textContent=i.b;
     const r=document.getElementById('content');if(r)r.scrollTop=0;
     if(v==='situation'){setTimeout(function(){try{if(SITUATION._needsRefresh){SITUATION._needsRefresh=false;}SITUATION.init();}catch(e){console.error('SITUATION.init错误:',e);}},0);}
+    if(v==='myfocus'){setTimeout(function(){try{if(typeof MYFOCUS!=='undefined')MYFOCUS.init();}catch(e){console.error('MYFOCUS.init错误:',e);}},0);}
     if(v==='intel'){setTimeout(function(){try{INTELCENTER.init();}catch(e){console.error('INTELCENTER.init错误:',e);}},0);}
     if(v==='monitor'){setTimeout(function(){try{MONITOR.init();}catch(e){console.error('MONITOR.init错误:',e);}},0);}
     if(v==='assets'){setTimeout(function(){try{ASSETS.init();}catch(e){console.error('ASSETS.init错误:',e);}},0);}

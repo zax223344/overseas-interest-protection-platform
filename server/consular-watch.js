@@ -39,14 +39,22 @@ const CONSULAR_QUERIES_EN = [
   'Chinese citizens abroad rescued OR evacuated OR missing',
   '12308 consular protection Chinese emergency'
 ];
-/* GNews 原子查询集（GNews 不支持 OR；中文参数返回空——只用英文原子词组） */
+/* GNews 原子查询集（GNews 不支持 OR；中文参数返回空——只用英文原子词组）
+ * 2026-08-28 涉华受害专项提速（用户指令：涉华受害是采集核心）：
+ * 新增 attacked/kidnapped/killed/detained/injured 直接受害句式 */
 const CONSULAR_GNEWS_QUERIES = [
   'Chinese embassy alert',
   'China evacuate citizens',
   'Chinese nationals evacuated',
   'consular protection Chinese',
   'Chinese citizens missing abroad',
-  'Chinese workers rescued'
+  'Chinese workers rescued',
+  'Chinese worker kidnapped',
+  'Chinese national attacked',
+  'Chinese citizens killed',
+  'Chinese engineer abducted',
+  'Chinese tourists robbed',
+  'Chinese national detained'
 ];
 
 /* 领保信号词（标题必须命中其一；2026-08-28 扩充：warns citizens to leave / Chinese student death 等领保新闻高频句式） */

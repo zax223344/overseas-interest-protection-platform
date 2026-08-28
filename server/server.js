@@ -4727,17 +4727,17 @@ function startGlobalMediaCron() {
   setInterval(_runCoreThreatWatch, 60 * 1000);  // 海外核心安全威胁一分钟哨兵（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚），用户 2026-08-27 铁指令
   // ===== 官方框架五维哨兵（2026-08-28 用户指令：六大维度不留空白）=====
   setTimeout(_runChannelWatch, 200000);       // 海上战略通道哨兵（维度⑤），启动200s后首跑
-  setInterval(_runChannelWatch, 30 * 60 * 1000);
+  setInterval(_runChannelWatch, 10 * 60 * 1000); /* 2026-08-28 时效提速：30min→10min（海上通道事件波及航运分秒必争） */
   setTimeout(_runComplianceWatch, 260000);    // 制裁合规哨兵（维度⑥），启动260s后首跑
-  setInterval(_runComplianceWatch, 30 * 60 * 1000);
+  setInterval(_runComplianceWatch, 15 * 60 * 1000); /* 2026-08-28 时效提速：30min→15min */
   setTimeout(_runConsularWatch, 320000);      // 领事保护哨兵（维度②：MFA安全提醒/撤侨/领保），启动320s后首跑
-  setInterval(_runConsularWatch, 30 * 60 * 1000);
+  setInterval(_runConsularWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min（用户指令：涉华受害是采集核心） */
   // 94源工程包采集器（2026-08-28：多立场源证据链），启动380s后首跑
   setTimeout(_runSourcesCollector, 380000);
-  setInterval(_runSourcesCollector, 30 * 60 * 1000);
+  setInterval(_runSourcesCollector, 15 * 60 * 1000); /* 2026-08-28 时效提速：30min→15min */
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
-  setInterval(_runCnSecurityWatch, 30 * 60 * 1000);
+  setInterval(_runCnSecurityWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min */
   // 公众号镜像站直采：每15分钟一轮（2026-08-25；与搜狗/profile_ext 通道并行互补）
   setTimeout(_runWechatMirrors, 150 * 1000);
   setInterval(_runWechatMirrors, 15 * 60 * 1000);

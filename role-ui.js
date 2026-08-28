@@ -27,7 +27,7 @@
   };
 
   const VIEW_LABELS = {
-    situation:'态势总览', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
+    situation:'态势总览', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
     intel:'情报影像中心', assets:'企业资产', alerts:'预警中心', autoalert:'自动预警',
     matrix:'风险矩阵', forecast:'预测预警', analysis:'研判简报', aireport:'AI情报分析报告', explain:'可解释审计',
     role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池', settings:'系统设置', dailyreport:'每日简报',
@@ -44,6 +44,7 @@
 
   const PERMISSION_MATRIX = [
     { key: 'situation', label: '态势总览', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'myfocus', label: '我的关注', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'alerts', label: '预警中心', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'assets', label: '企业资产', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'command', label: '指挥调度', roles: ['mfa','mofcom','mps','enterprise'] },

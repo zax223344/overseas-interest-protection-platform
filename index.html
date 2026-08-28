@@ -777,6 +777,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-nav">
 <div class="sb-group">态势感知</div>
 <div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">态势总览</span></div>
+<div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">🎯</span><span class="lb">我的关注</span></div>
 <div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
 <div class="sb-group">监测中心</div>
 <div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic">📡</span><span class="lb">风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
@@ -1007,6 +1008,8 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: WECHAT 公众号采集（wechat.js 整视图渲染） -->
 <div class="view" id="view-wechat"><div id="wechat-content"></div></div>
 <!-- VIEW: 非预警数据池（sidepool.js 整视图渲染） -->
+<!-- VIEW: 我的工作台（myfocus.js 整视图渲染） -->
+<div class="view" id="view-myfocus"><div id="myfocus-content"></div></div>
 <div class="view" id="view-sidepool"><div id="sidepool-content"></div></div>
 <div class="view" id="view-datacenter">
 <div class="stat-grid" id="dc-stats"></div>
@@ -1118,8 +1121,9 @@ function closeMobileMenu(){
 <script src="scraper.js?v=53"></script>
 <!-- 天地图/本地矢量底图统一封装，所有 Leaflet 地图共用 -->
 <script src="local-basemap.js?v=2"></script>
+<script src="myfocus.js?v=1"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=253"></script>
+<script src="app.js?v=254"></script>
 <script src="distribute.js?v=36"></script>
 <script src="datasources.js?v=25"></script>
 <script src="threats.js?v=7"></script>
