@@ -119,6 +119,21 @@ return v.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi,'').replace(/<(?:font|span|div|b|i|
 function _descCn(d){var s=stripTags(d||'');if(!s)return '';s=s.replace(/&[a-zA-Z]+;?/g,' ').replace(/\s{2,}/g,' ').trim();if(!s)return '';var zh=(s.match(/[一-龥]/g)||[]).length;var en=(s.match(/[A-Za-z]/g)||[]).length;if(en>12&&zh*3<en)return '';return s;}
 /* 去重标题拼接 + 中英双语合并清洗：源名/中文译文与英文原文被同时塞入 title 时裁剪 */
 function _dedupeTitleConcat(t){var s=String(t||'');var half=Math.floor(s.length/2);for(var cut=half;cut>10;cut--){if(s.slice(0,cut)===s.slice(cut))return s.slice(0,cut);}var m=s.match(/^(.+?--[\u4e00-\u9fa5A-Za-z·\s]{2,18})(?:\1|.+)$/);if(m&&m[1])return m[1];return s;}
+/* 2026-08-28 立场徽章（94源工程包 stance 证据链可视化）：
+ * G=政府控制 I=独立商业 N=非营利调查 W=西方中心 C=中国官方；
+ * stance_verified = 同事件被 ≥2 个不同立场信源交叉报道（高置信）。 */
+var STANCE_META={G:{t:'政府',c:'#4da3ff'},I:{t:'独立',c:'#37d67a'},N:{t:'调查',c:'#f5a623'},W:{t:'西方',c:'#ff6b81'},C:{t:'中国官方',c:'#ff4d4f'}};
+function _stanceBadgeHtml(a){
+  if(!a||!a.stance)return '';
+  var m=STANCE_META[a.stance];if(!m)return '';
+  var h='<span style="font-size:8px;padding:0 4px;border-radius:6px;border:1px solid '+m.c+'66;color:'+m.c+';white-space:nowrap" title="信源立场：'+m.t+'">'+m.t+'</span>';
+  if(a.stance_verified===true||a.stance_verified==='true'){
+    var set=String(a.stance_set||'').replace(/["\[\]\s]/g,'').split(',').filter(Boolean);
+    var names=set.map(function(x){return (STANCE_META[x]||{}).t||x;}).join('＋');
+    h+='<span style="font-size:8px;padding:0 4px;border-radius:6px;background:rgba(55,214,122,.12);border:1px solid #37d67a;color:#37d67a;white-space:nowrap" title="多立场交叉验证：'+(names||'≥2个不同立场信源')+'">✓已验证</span>';
+  }
+  return h;
+}
 var WARNING_RULES=[
 {id:'WR01',name:'国家综合风险红色阈值',desc:'国家综合风险评分≥8.0时自动触发红色预警',threshold:'≥8.0',level:'red',type:'综合风险',enabled:true,trigCount:6},
 {id:'WR02',name:'国家综合风险橙色阈值',desc:'国家综合风险评分≥6.0且＜8.0时触发橙色预警',threshold:'6.0-8.0',level:'orange',type:'综合风险',enabled:true,trigCount:14},
@@ -10906,6 +10921,10 @@ const AVIEW={
   /* 模糊事件键：用于态势总览/实时流等摘要面板，抵抗同事件多来源标题的词序/同义差异 */
   _eventKeyFuzzy(a){
     try{
+      /* 2026-08-28：优先服务端事件签名 v3（事发国+事件词+锚点，入库时算好）——
+       * 跨源同事件签名一致（根治"尼泊尔洪水三源三签"式重复），同国不同事件
+       * 因锚点不同不会误合并（根治"巴基斯坦同日16条共用一签"式误合并）。 */
+      if(a&&a._eventSig&&String(a._eventSig).indexOf('|')>0) return String(a._eventSig);
       var title=String(a.title_zh||a.title||'');
       var country=String(a.country||'');
       /* 如果 country 字段明显错误（如把受害者国籍/来源国当初事发国），尝试从标题提取主事发国 */
@@ -11110,6 +11129,7 @@ const AVIEW={
         })()+
         '<div class="alert-q-meta">'+
         '<span>📍'+a.country+'</span>'+
+        _stanceBadgeHtml(a)+
         '<span>🕐'+(a.time||'').substring(5,16)+'</span>'+
         '<span style="color:'+(sc[a.status]||'#999')+';font-weight:600">●'+(sl[a.status]||a.status)+'</span>'+
         '<span style="margin-left:auto;display:flex;gap:2px">'+
@@ -11262,6 +11282,7 @@ const AVIEW={
         })()+
         '<div class="alert-q-meta">'+
         '<span>📍'+a.country+'</span>'+
+        _stanceBadgeHtml(a)+
         '<span>🕐'+(a.time||'').substring(5,16)+'</span>'+
         '<span style="color:'+(sc[a.status]||'#999')+';font-weight:600">●'+(sl[a.status]||a.status)+'</span>'+
         '<span style="margin-left:auto;display:flex;gap:2px">'+
@@ -11486,6 +11507,7 @@ const AVIEW={
     pbHtml+='<div id="pb-ai-slot"></div>';
     var infoHtml='<div class="alert-detail-info">'+
       '<div class="alert-detail-info-item"><div class="alert-detail-info-label">影响国家</div><div class="alert-detail-info-val">'+a.country+(country?' '+country.flag:'')+'</div></div>'+
+      ((a.stance)?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">信源立场</div><div class="alert-detail-info-val" style="font-size:12px">'+(STANCE_META[a.stance]?STANCE_META[a.stance].t:a.stance)+((a.stance_verified===true||a.stance_verified==='true')?' <span style="color:var(--green);font-weight:700">✓ 多立场交叉验证'+(a.stance_set?'（'+String(a.stance_set).replace(/["\[\]\s]/g,'').split(',').filter(Boolean).map(function(x){return (STANCE_META[x]||{}).t||x;}).join('＋')+'）':'')+'</span>':' <span style="color:var(--text3)">（单源线索）</span>')+'</div></div>':'')+
       '<div class="alert-detail-info-item"><div class="alert-detail-info-label">风险类型</div><div class="alert-detail-info-val" style="font-size:12px">'+a.type+'</div></div>'+
       (a.enterprise?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">关联企业</div><div class="alert-detail-info-val" style="font-size:12px">'+a.enterprise+'</div></div>':'')+
       (a.affectedP?'<div class="alert-detail-info-item"><div class="alert-detail-info-label">影响人员</div><div class="alert-detail-info-val" style="color:var(--orange)">'+a.affectedP+' 人</div></div>':'')+
@@ -11502,7 +11524,7 @@ const AVIEW={
     el.innerHTML=
       '<div class="alert-detail-hd">'+
         '<div style="flex:1">'+
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="badge '+lv.cls+'">'+lv.label+'</span><span style="color:'+(sc[a.status]||'#999')+';font-size:11px;font-weight:600">● '+(sl[a.status]||a.status)+'</span></div>'+
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap"><span class="badge '+lv.cls+'">'+lv.label+'</span><span style="color:'+(sc[a.status]||'#999')+';font-size:11px;font-weight:600">● '+(sl[a.status]||a.status)+'</span>'+_stanceBadgeHtml(a)+'</div>'+
         '<div style="font-size:14px;font-weight:700;line-height:1.4">'+stripTags(a.title_zh||a.title)+'</div>'+
         (a.title_zh?'<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4">原文：'+esc(stripTags(a.title))+'</div>':'')+
         '<div class="alert-detail-id">⏱ '+(a.time||'')+'</div>'+

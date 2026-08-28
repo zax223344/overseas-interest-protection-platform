@@ -202,6 +202,8 @@
    * ============================================================ */
   /* 海外利益关联评分（2026-08-16 用户指令：预警中心每条必须体现对中国海外利益安全的影响） */
   var _INTEREST_CN_RE = /中国|中资|中企|中方|华人|华侨|华裔|一带一路|涉华|对华|驻[^，。]{0,4}使馆|孔子|撤侨|Chinese|China|Beijing|CPEC|Belt and Road/i;
+  /* 事件要素（2026-08-28 质量整治）：一条情报要成为"预警"必须携带的可感事件信号 */
+  var _EVENT_ELEM_RE = /死亡|遇难|身亡|伤亡|失踪|受伤|袭击|攻击|爆炸|自杀式|枪击|交火|冲突|炮击|空袭|绑架|劫持|扣押|逮捕|拘留|制裁|管制|封禁|禁令|反倾销|政变|抗议|示威|骚乱|罢工|洪水|地震|海啸|台风|飓风|山火|干旱|塌方|溃坝|坠机|失事|沉船|碰撞|火灾|泄露|疫情|霍乱|麻疹|撤离|撤侨|断供|停产|停运|停摆|封锁|中断|缺口|危机|紧张|对峙|killed|dead|death|casualt|attack|bomb|blast|explosion|shoot|clash|conflict|kidnap|hostage|abduct|seiz|detain|arrest|sanction|embargo|tariff|coup|protest|riot|strike|unrest|flood|earthquake|tsunami|typhoon|hurricane|wildfire|landslide|collapse|crash|sank|grounding|fire|outbreak|evacuat|shortage|shutdown|disruption|crisis/i;
   var _INTEREST_ASSET_RE = /瓜达尔|中巴经济走廊|汉班托塔|比雷埃夫斯|皎漂|中老铁路|雅万|蒙内|亚吉|钱凯|科伦坡港口城|中白工业园|吉布提|莱基|坦赞|西芒杜|中欧班列|China Railway Express/i;
   var _INTEREST_ORG_RE = /塔利班|青年党|博科圣地|伊斯兰国|基地组织|胡塞|真主党|哈马斯|俾路支|Taliban|Shabaab|Boko|ISIS|Qaeda|Houthi|BLA|TTP/i;
   var _FOCUS_COUNTRIES = ['巴基斯坦','哈萨克斯坦','乌兹别克斯坦','吉尔吉斯斯坦','塔吉克斯坦','土库曼斯坦','老挝','柬埔寨','缅甸','印度尼西亚','马来西亚','泰国','越南','塞尔维亚','匈牙利','希腊','埃塞俄比亚','肯尼亚','吉布提','埃及','斯里兰卡','孟加拉国','尼泊尔','沙特阿拉伯','阿联酋','土耳其','白俄罗斯','波兰','苏丹','刚果(金)','刚果（金）','尼日利亚','伊拉克','也门','马里','尼日尔','索马里','阿富汗','叙利亚','利比亚','中非','莫桑比克','坦桑尼亚','赞比亚','津巴布韦','安哥拉','摩洛哥','突尼斯','阿尔及利亚','约旦','黎巴嫩','伊朗','印度','菲律宾','哥伦比亚','秘鲁','墨西哥','南非','阿根廷','智利','委内瑞拉','蒙古','喀麦隆','乍得','南苏丹'];
@@ -322,6 +324,15 @@
       console.log('[INGEST-GATE] 无利益关联不入预警中心: ' + String(item.title || '').slice(0, 40));
       return;
     }
+    /* 事件要素闸（2026-08-28 用户指令：预警中心数据质量整治）：
+     * 黄色低烈度且标题/摘要无任何事件要素（伤亡/袭击/绑架/制裁/灾害/冲突/撤离/扣押等）的
+     * 泛新闻（"数据中心投资""估价大会开幕"类——实测占黄色预警 62%），降为线索级：
+     * 留数据中心可查，不进预警中心刷屏。红橙级与涉华直接受害/资产/通道关联的放行。 */
+    if (lv === 'yellow' && !_EVENT_ELEM_RE.test(String(item.title || '') + ' ' + String(item.title_zh || '') + ' ' + String(item.content || item.desc || ''))
+        && !/(?:被袭|遇袭|遭袭|绑架|劫持|身亡|遇难|撤离|撤侨)/.test(text)) {
+      console.log('[INGEST-GATE] 黄色无事件要素(泛新闻)不入预警中心: ' + String(item.title || '').slice(0, 40));
+      return;
+    }
     var typeMap = { terror_events: '安全风险', security_events: '安全风险', military_conflicts: '安全风险', political_events: '政治风险', natural_disasters: '自然环境风险', public_health: '安全风险', sanctions_data: '经济风险', social_unrest: '社会文化风险', infrastructure: '运营风险', geopolitical_intel: '地缘战略风险', osint_intel: '安全风险', socmint_intel: '安全风险' };
     var type = item.type || typeMap[cat] || '安全风险';
     var title = item.title || item.content || '实时情报';
@@ -338,6 +349,10 @@
       author: item.author || '', publishedAt: item.publishedAt || item.pubDate || '',
       alertLevel: item.alertLevel || '', credibility: item.credibility || '', social_platform: item.social_platform || '',
       corroboration: item.corroboration || 0,
+      stance: item.stance || '', stance_set: item.stance_set || '',
+      stance_verified: item.stance_verified === true || item.stance_verified === 'true',
+      interest_tier: item.interest_tier || '', asset_tags: item.asset_tags || [], channel_tags: item.channel_tags || [],
+      _eventSig: item._eventSig || '',
       _live: true, _approved: true, _seq: _liveCount
     };
 

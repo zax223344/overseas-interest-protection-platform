@@ -2614,27 +2614,36 @@ function _extractEventDate(text, refDate) {
   });
 }
 
-/* ===== 多源印证（2026-08-13 用户指令）=====
- * 事件签名 = 国家 + 事件类型词 + 日期；同签名不同来源的条数 = 印证数。
- * 同一事件被越多独立信源报道，预警置信度越高。 */
+const _SIG_COUNTRIES = ['尼泊尔','巴基斯坦','阿富汗','伊朗','伊拉克','叙利亚','也门','沙特','以色列','巴勒斯坦','乌克兰','俄罗斯','缅甸','泰国','越南','老挝','柬埔寨','马来西亚','印度尼西亚','菲律宾','新加坡','孟加拉国','斯里兰卡','印度','哈萨克斯坦','乌兹别克斯坦','塔吉克斯坦','吉尔吉斯斯坦','土库曼斯坦','蒙古','韩国','日本','朝鲜','埃及','利比亚','阿尔及利亚','突尼斯','摩洛哥','苏丹','南苏丹','埃塞俄比亚','索马里','肯尼亚','坦桑尼亚','乌干达','卢旺达','刚果','尼日利亚','加纳','马里','尼日尔','乍得','喀麦隆','布基纳法索','赞比亚','津巴布韦','安哥拉','莫桑比克','南非','几内亚','墨西哥','巴西','阿根廷','智利','秘鲁','哥伦比亚','委内瑞拉','玻利维亚','厄瓜多尔','古巴','海地','巴拿马','美国','加拿大','英国','法国','德国','意大利','西班牙','葡萄牙','荷兰','比利时','瑞士','瑞典','挪威','芬兰','丹麦','奥地利','希腊','波兰','塞尔维亚','匈牙利','罗马尼亚','捷克','保加利亚','澳大利亚','新西兰','Nepal','Pakistan','Afghanistan','Iran','Iraq','Syria','Yemen','Saudi','Israel','Ukraine','Russia','Myanmar','Thailand','Vietnam','Laos','Cambodia','Malaysia','Indonesia','Philippines','Bangladesh','Sri Lanka','India','Kazakhstan','Uzbekistan','Ethiopia','Somalia','Kenya','Nigeria','Ghana','Mali','Niger','Chad','Cameroon','South Africa','Mexico','Brazil','Argentina','Chile','Peru','Colombia','Venezuela','Ecuador','Bolivia','Haiti','Panama'];
+const _SIG_EVENT_RE = /死亡|遇难|身亡|伤亡|洪水|地震|袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|抗议|示威|制裁|坠机|沉船|山火|台风|飓风|killed|dead|flood|earthquake|attack|bomb|kidnap|clash|protest|sanction|coup|crash/i;
+/* ===== 多源印证（2026-08-13 用户指令；2026-08-28 重构）=====
+ * 事件签名 v3 = 事发国（标题提取，非来源国）+ 事件词集合 + 日期 + 主语锚点词。
+ * v2 缺陷（面板重复/误合并的根因）：
+ *  ① 国别取来源国（it.country）——同一事件跨国来源分签（尼泊尔洪水→RU/PE/TH 三签），
+ *    前端 _mergeEvents 合不了 → 面板重复；
+ *  ② 只有国+日期时（无事件词）粒度过粗——巴基斯坦同日 16 条不同事件共用一签，
+ *    前端误合并不同事件 → "同一事件多条变体"观感。
+ * v3：事件国优先从标题提取；加主语锚点（设施/组织/数字伤亡）提升同事件聚合度。 */
 function _eventSignature(it) {
-  const t = String(it.title || '').toLowerCase();
-  /* 提取所有事件类型关键词排序组合，避免"死亡"vs"火灾"因只取第一个而漏判同一事件 */
-  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|袭击|爆炸|死亡|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾/g;
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+  const tl = t.toLowerCase();
+  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|flood|earthquake|袭击|爆炸|死亡|遇难|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾|洪水|地震|恐袭|劫持|政变/g;
   const evSet = new Set();
-  let mm; while ((mm = evRe.exec(t)) !== null) evSet.add(mm[0]);
+  let mm; while ((mm = evRe.exec(tl)) !== null) evSet.add(mm[0]);
   const ev = Array.from(evSet).sort().join('+') || '';
-  const cty = String(it.country_iso || it.country_cn || it.country || '');
-  /* 用提取到的事件发生日期而非发布日期，防止旧闻借新发布时间混进来 */
+  /* 事发国：标题优先（跨源一致），标题无国名才退化用条目国别 */
+  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || String(it.country_cn || it.country || '');
+  /* 主语锚点：伤亡数字 / 威胁组织 / 关键设施——同事件不同措辞的共同锚 */
+  const num = (t.match(/(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|killed|missing|injured|dead)/i) || [])[1] || '';
+  const org = (t.match(/塔利班|胡塞|博科|青年党|BLA|TTP|ISIS|伊斯兰国|基地组织|Taliban|Houthi|Hamas|Hezbollah/i) || [])[0] || '';
+  const fac = (t.match(/瓜达尔|霍尔木兹|红海|苏伊士|中巴经济走廊|CPEC|大使馆|使馆|清真寺|学校|医院|机场|港口|Gwadar|Hormuz|embassy/i) || [])[0] || '';
+  const anchor = [num, org, fac].filter(Boolean).join('/');
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
   const evtDate = _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || new Date());
   const day = evtDate ? evtDate.toISOString().slice(0, 10) : String(it.publish_time || it.publishedAt || '').slice(0, 10);
-  return cty + '|' + ev + '|' + day;
+  return ctry + '|' + ev + '|' + (anchor || day);   /* 有锚点用锚点（同事件强聚合），无锚点退日期 */
 }
 /* 入库后计算印证数（近2天同签名独立来源数+1），写回本条 data_json */
-/* 立场证据链用的：标题事发国表 + 事件词（2026-08-28） */
-const _SIG_COUNTRIES = ['尼泊尔','巴基斯坦','阿富汗','伊朗','伊拉克','叙利亚','也门','沙特','以色列','巴勒斯坦','乌克兰','俄罗斯','缅甸','泰国','越南','老挝','柬埔寨','马来西亚','印度尼西亚','菲律宾','新加坡','孟加拉国','斯里兰卡','印度','哈萨克斯坦','乌兹别克斯坦','塔吉克斯坦','吉尔吉斯斯坦','土库曼斯坦','蒙古','韩国','日本','朝鲜','埃及','利比亚','阿尔及利亚','突尼斯','摩洛哥','苏丹','南苏丹','埃塞俄比亚','索马里','肯尼亚','坦桑尼亚','乌干达','卢旺达','刚果','尼日利亚','加纳','马里','尼日尔','乍得','喀麦隆','布基纳法索','赞比亚','津巴布韦','安哥拉','莫桑比克','南非','几内亚','墨西哥','巴西','阿根廷','智利','秘鲁','哥伦比亚','委内瑞拉','玻利维亚','厄瓜多尔','古巴','海地','巴拿马','美国','加拿大','英国','法国','德国','意大利','西班牙','葡萄牙','荷兰','比利时','瑞士','瑞典','挪威','芬兰','丹麦','奥地利','希腊','波兰','塞尔维亚','匈牙利','罗马尼亚','捷克','保加利亚','澳大利亚','新西兰','Nepal','Pakistan','Afghanistan','Iran','Iraq','Syria','Yemen','Saudi','Israel','Ukraine','Russia','Myanmar','Thailand','Vietnam','Laos','Cambodia','Malaysia','Indonesia','Philippines','Bangladesh','Sri Lanka','India','Kazakhstan','Uzbekistan','Ethiopia','Somalia','Kenya','Nigeria','Ghana','Mali','Niger','Chad','Cameroon','South Africa','Mexico','Brazil','Argentina','Chile','Peru','Colombia','Venezuela','Ecuador','Bolivia','Haiti','Panama'];
-const _SIG_EVENT_RE = /死亡|遇难|身亡|伤亡|洪水|地震|袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|抗议|示威|制裁|坠机|沉船|山火|台风|飓风|killed|dead|flood|earthquake|attack|bomb|kidnap|clash|protest|sanction|coup|crash/i;
 async function _markCorroboration(id, it) {
   try {
     const sig = it._eventSig;
@@ -2651,24 +2660,28 @@ async function _markCorroboration(id, it) {
     /* 2026-08-28 立场证据链（94源工程包核心思想）：
      * 同事件被 ≥2 个不同 stance（G政府/I独立/N非营利/W西方/C中国官方）的源报道
      * → stance_verified=true（多立场交叉验证，防单一叙事源带偏，高告警通道门槛）。
-     * 2026-08-28 修正：_eventSig 的国别是"来源国"——同一事件不同国来源签名不同（尼泊尔洪水
-     * 在 TASS/Andina/论坛报 签名分别为 RU/PE/TH），跨源立场配对永远失败。此处改用
-     * 标题内"事发国"重算签名配对（标题必含事发国名，如"尼泊尔洪水死亡469人"）。 */
+     * 签名 v3 落地后直接用 _eventSig（事发国+事件词+锚点）精确配对；
+     * 兼容 v2 存量：标题含同国+同事件词的条目也纳入（JS 侧事件词交集判定）。 */
     try {
-      const title = String(it.title || '') + ' ' + String(it.title_zh || '');
-      const c = _SIG_COUNTRIES.find(x => title.indexOf(x) >= 0);
-      const em = title.match(_SIG_EVENT_RE);
-      if (c && em) {
-        const sig2 = c + '|' + em[0];
-        const { rows: srows } = await query(
-          `SELECT DISTINCT data_json->>'stance' st FROM intel_data WHERE collect_time >= $1 AND data_json->>'stance' IS NOT NULL AND (title LIKE '%' || $2 || '%' OR data_json->>'title_zh' LIKE '%' || $2 || '%')`,
-          [since, c]
-        );
-        const stances = srows.map(r => r.st).filter(Boolean);
-        if (stances.length >= 2) {
-          await query(`UPDATE intel_data SET data_json = jsonb_set(jsonb_set(data_json, '{stance_set}', $1::jsonb), '{stance_verified}', 'true') WHERE id = $2`,
-            [JSON.stringify(stances), id]);
-        }
+      const sig = String(it._eventSig || '');
+      const ctry = sig.split('|')[0] || '';
+      const evWords = (sig.split('|')[1] || '').split('+').filter(Boolean);
+      if (!ctry || !evWords.length) return;
+      const { rows: cand } = await query(
+        `SELECT data_json->>'stance' st, data_json->>'_eventSig' sig2, title FROM intel_data
+         WHERE collect_time >= $1 AND data_json->>'stance' IS NOT NULL AND title LIKE '%' || $2 || '%'`,
+        [since, ctry]
+      );
+      const stances = new Set();
+      cand.forEach(r => {
+        const sameSig = r.sig2 === sig;
+        const t = String(r.title || '');
+        const evHit = evWords.some(w => t.toLowerCase().indexOf(w) >= 0 || t.indexOf(w) >= 0);
+        if ((sameSig || evHit) && r.st) stances.add(r.st);
+      });
+      if (stances.size >= 2) {
+        await query(`UPDATE intel_data SET data_json = jsonb_set(jsonb_set(data_json, '{stance_set}', $1::jsonb), '{stance_verified}', 'true') WHERE id = $2`,
+          [JSON.stringify(Array.from(stances)), id]);
       }
     } catch (e2) {}
   } catch (e) {}
@@ -4305,6 +4318,14 @@ const CATEGORY_PACKS = {
   }
 };
 let _categoryBalanceBusyUntil = 0;
+/* 类别均衡质量闸（2026-08-28 用户指令：数据质量整治）：
+ * ① 事件要素词表——泛新闻/体育赛况/路况播报（"Gilas Pilipinas lineup""Motiva tapa buracos"类）
+ *   无任何可感事件信号，不产生情报价值，不入库；
+ * ② 非拉丁外文未翻译——孟加拉/乌克兰/罗马尼亚语等翻译链成功率低，翻译失败即拒绝
+ *   （落库即中文铁律：不可读外文标题对中文预警平台是垃圾数据）。 */
+const _CAT_EVENT_RE = /死亡|遇难|身亡|伤亡|失踪|受伤|袭击|攻击|爆炸|枪击|交火|冲突|炮击|空袭|绑架|劫持|扣押|逮捕|拘留|制裁|管制|封禁|禁令|反倾销|政变|抗议|示威|骚乱|罢工|洪水|地震|海啸|台风|飓风|山火|干旱|塌方|溃坝|坠机|失事|沉船|火灾|疫情|撤离|撤侨|断供|停产|停运|封锁|中断|危机|紧张|对峙|通胀|贬值|违约|债务|破产|衰退|汇率|暴跌|暴涨|断网|宕机|漏洞|黑客|勒索|数据泄露|间谍|泄密|贿赂|腐败|丑闻|审判|判决|调查|指控|宵禁|边界|争端|选举|killed|dead|death|casualt|attack|bomb|blast|shoot|clash|conflict|kidnap|hostage|seiz|detain|arrest|sanction|embargo|tariff|coup|protest|riot|strike|unrest|flood|earthquake|typhoon|hurricane|wildfire|landslide|collapse|crash|outbreak|evacuat|crisis|inflation|devalu|default|bankrupt|recession|hacked|breach|ransom|spy|corrupt|scandal|investigat|indict|curfew|dispute|elect/i;
+const _NONLATIN_RE = /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0E00-\u0E7F\u1200-\u137F\u0590-\u05FF\u10A0-\u10FF]/; /* 西里尔/阿拉伯/梵文系(含孟加拉)/泰文/埃塞/希伯来/格鲁吉亚 */
+
 async function _runCategoryBalance() {
   if (Date.now() < _categoryBalanceBusyUntil) return;
   _categoryBalanceBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
@@ -4353,6 +4374,10 @@ async function _runCategoryBalance() {
         if (!_isFreshEnough(it)) { rejected++; continue; }
         if (!_dominantQuotaOk(it)) { rejected++; continue; }
         if (!_ruUaQuotaOk(it)) { rejected++; continue; }
+        /* 质量闸①：无事件要素的泛新闻不入库 */
+        if (!_CAT_EVENT_RE.test(ctext)) { rejected++; continue; }
+        /* 质量闸②：非拉丁外文（孟加拉/西里尔等）翻译失败 → 拒绝（落库即中文铁律） */
+        if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; continue; }
         try {
           it._eventSig = _eventSignature(it); _tagAssets(it);
           const _lv = _normLevelForStore(it); it.level_norm = _lv;
