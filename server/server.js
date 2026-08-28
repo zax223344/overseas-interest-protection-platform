@@ -570,6 +570,41 @@ async function _generateDailyReport(dateKey) {
   return { date: dateKey, total, html, summary };
 }
 
+/* ===== 非预警数据池（2026-08-28 用户指令：所有采集数据必须可见）=====
+ * 采集到的数据被任何闸门拦截（旧闻/重复/国内/低质/单源未印证…）不再静默消失，
+ * 一律写入 intel_sidepool，前端「非预警数据池」功能区可视化 + 支持人工提升入库。
+ * 表启动即建。 */
+let _sidepoolReady = false;
+async function _ensureSidepool() {
+  if (_sidepoolReady) return;
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS intel_sidepool (
+      id BIGSERIAL PRIMARY KEY,
+      reason TEXT, source_tag TEXT, data_type TEXT,
+      title TEXT, title_zh TEXT, url TEXT, country TEXT,
+      data_json JSONB, blocked_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_sidepool_blocked ON intel_sidepool(blocked_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_sidepool_url ON intel_sidepool(url)`);
+    _sidepoolReady = true;
+  } catch (e) { console.warn('[SIDEPOOL] 建表失败:', e.message); }
+}
+const _sidepoolSeen = new Set();
+async function _sidepool(it, reason, tag) {
+  try {
+    const u = String(it.url || '').trim();
+    if (u) { const k = u.toLowerCase().replace(/[?#].*$/, '');
+      if (_sidepoolSeen.has(k)) return; _sidepoolSeen.add(k);
+      if (_sidepoolSeen.size > 5000) _sidepoolSeen.clear(); }
+    await _ensureSidepool();
+    await query(
+      `INSERT INTO intel_sidepool (reason, source_tag, data_type, title, title_zh, url, country, data_json)
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE NOT EXISTS (SELECT 1 FROM intel_sidepool WHERE url=$6 AND blocked_at >= NOW() - INTERVAL '3 days')`,
+      [reason, tag || '', it.data_type || '', String(it.title || '').slice(0, 300), String(it.title_zh || '').slice(0, 300), u || '', String(it.country || it.country_cn || '').slice(0, 60), JSON.stringify({ ...(it || {}), _blockReason: reason })]
+    );
+  } catch (e) { /* 池写失败不阻塞主链路 */ }
+}
+
 /* ===== 数据完整性巡检哨兵（2026-08-14 用户指令：要面对实战单位，杜绝灌水/复活复发）=====
  * 每 30 分钟自动巡检当日数据，发现问题自动清洗并日志告警：
  *  1. 标题重复率 > 3%（前端灌水/通道异常的早期信号）→ 自动去重（同题留最早）
@@ -2191,8 +2226,12 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   if (existing.has(u)) return { ok: false, code: ['url-dup'] };
   /* 删除墓碑：用户删过的数据永不再入（2026-08-22 铁律） */
   if (await _isTombstoned(it)) { _gateAudit('入库闸', 'tombstoned', it.title); return { ok: false, code: ['tombstoned'] }; }
-  /* 国内硬拦截：必须在所有通道生效 */
-  if (globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
+  /* 国内硬拦截：必须在所有通道生效
+   * 2026-08-28 豁免修正：cnsec 哨兵条目定义上即"海外涉华人员安全事件"（interestLinked+chinaRelated 双标），
+   * 中文媒体报道的海外受害新闻（如"中国公民在尼日利亚被绑架"）此前被误判国内新闻拦杀——
+   * CNSEC 9 候选 3 条被此闸误杀、涉华人员条目 7 天仅 22 条的根因。 */
+  const _cnsecExempt = it._cnsecWatch === true || it._sourceType === 'cnsec_watch';
+  if (!_cnsecExempt && globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
   }
   /* 标题自动补全：残缺标题先补全，而不是直接拦截 */
@@ -2213,8 +2252,14 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
 
   /* 多源印证：事件发生超过 6 小时后仍未被其他独立信源报道，视为不可信旧闻/单一信源噪音，暂不入库
    * 2026-08-25 豁免：白名单公众号（wechat_oa，含搜狗/profile_ext/镜像站三通道）是用户亲选的专业安全信源，
-   * 独家首发内容永远等不到"多源印证"——刚果金上加丹加案 24h 内全网仅 2 家报道。保留 24h 时效闸（_isFreshEnough 另处执行）。 */
-  if (it._sourceType !== 'wechat_oa' && it._sourceType !== 'wechat_lead') {
+   * 独家首发内容永远等不到"多源印证"——刚果金上加丹加案 24h 内全网仅 2 家报道。保留 24h 时效闸（_isFreshEnough 另处执行）。
+   * 2026-08-28 体检修正：①核心重点类目（恐袭/绑架/涉华受害/骚乱）全豁免——用户明示这些是采集核心，
+   *   6h 单源窗口恰恰杀掉的就是这类"事发当天少源报道"的高价值情报（CORE-THREAT 47候选0入库真凶）；
+   *  ②被拦条目写 _gate_audit 流水，不再静默消失（"采到的数据看不见"根因之一）。 */
+  const _corePriority = it._cnsecWatch === true || it._sourceType === 'cnsec_watch'
+    || it._sourceType === 'core_threat_watch' || it._sourceType === 'consular_watch'
+    || _isCorePriorityText(it);
+  if (!_corePriority && it._sourceType !== 'wechat_oa' && it._sourceType !== 'wechat_lead') {
     const age = _getEventAgeMs(it);
     if (age > CORROBORATION_WINDOW_MS) {
       const corroborated = await _hasCorroboration(sig, 48);
@@ -2226,6 +2271,13 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   }
 
   return { ok: true, code, sig, cek };
+}
+/* 核心重点类目判定（2026-08-28 用户指令：恐袭/恐组动态/绑架/骚乱群体性事件/涉华负面/涉华矿业 为采集核心） */
+function _isCorePriorityText(it) {
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.desc || '').slice(0, 300);
+  return /绑架|劫持|人质|赎金|恐袭|恐怖袭击|恐怖组织|武装袭击|自杀式|爆炸装置|骚乱|群体性事件|暴乱|打砸| riot|kidnap|hostage|ransom|terror attack|suicide bomb|mass abduct/i.test(t)
+    || (/中国公民|中方人员|中国工人|中国工程师|中国留学生|华人|华侨|中资|中企|Chinese (?:citizen|worker|engineer|nationals?)/i.test(t) && /被袭|遇袭|遭袭|遇害|身亡|遇难|被杀|死亡|失踪|被拘|被捕|扣押|袭击|绑架|抢劫|遇难|抗议|示威|驱逐|制裁|审查|关停|冲突|纠纷|罢工|绑架案/i.test(t))
+    || /矿业|矿场|矿区|金矿|铜矿|锂矿|铁矿|钴矿|镍矿|中资矿|mine|mining (?:company|site|licence|concession)/i.test(t) && /中国|中资|中企|Chinese|China/i.test(t);
 }
 function _preInsertCommit(it, existing, titleKeys, eventSigs, gateResult) {
   const u = it.url || it.title;
@@ -2934,11 +2986,15 @@ async function _ingestLinkedItems(items, tag, note) {
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
         });
+        /* 2026-08-28：被拦条目入非预警数据池（url/标题重复除外——同条已有库内版本，入池即刷屏） */
+        if (!gate.code.includes('url-dup') && !gate.code.includes('title-dup') && !gate.code.includes('title-zh-dup') && !gate.code.includes('entity-dup')) {
+          _sidepool(it, gate.code.join(','), tag);
+        }
         continue;
       }
-      if (!_isFreshEnough(it)) { skippedStale++; continue; }
-      if (!_ruUaQuotaOk(it)) { skippedRuUa++; continue; }
-      if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; _sidepool(it, 'stale-over24h', tag); continue; }
+      if (!_ruUaQuotaOk(it)) { skippedRuUa++; _sidepool(it, 'ruua-quota', tag); continue; }
+      if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; _sidepool(it, 'dominant-quota', tag); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
         _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv;
@@ -4692,8 +4748,8 @@ async function _runTerrorAttacks() {
       if (!u) continue;
       if (existing.has(u)) { skippedDup++; continue; }
       if (_isDupTitle(titleKeys, it)) { skippedDupTitle++; continue; }
-      if (!_isFreshEnough(it)) { skippedStale++; continue; }
-      if (!_ruUaQuotaOk(it)) { skippedRuUa++; continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; _sidepool(it, 'stale-over24h', 'TERROR'); continue; }
+      if (!_ruUaQuotaOk(it)) { skippedRuUa++; _sidepool(it, 'ruua-quota', 'TERROR'); continue; }
       try {
         it._eventSig = _eventSignature(it);
         _tagAssets(it); it.level_norm = it.level || 'yellow';
@@ -6049,6 +6105,61 @@ app.post('/api/translate/mymemory-key', async (req, res) => {
 app.post('/api/intel/enrich', (req, res) => _handleIntelEnrich(req, res));
 
 /* 公开读取：态势情报为公开 OSINT，无需登录即可读取；写入/审核/删除仍受 JWT 保护 */
+/* ===== 非预警数据池 API（2026-08-28）===== */
+app.get('/api/intel/sidepool', async (req, res) => {
+  try {
+    await _ensureSidepool();
+    const days = Math.min(7, parseInt(req.query.days || '1', 10) || 1);
+    const reason = String(req.query.reason || '').trim();
+    const limit = Math.min(300, parseInt(req.query.limit || '100', 10) || 100);
+    const since = `blocked_at >= NOW() - INTERVAL '${days} days'`;
+    const stats = await query(`
+      SELECT reason, COUNT(*) n FROM intel_sidepool WHERE ${since} GROUP BY 1 ORDER BY n DESC`);
+    const byTag = await query(`
+      SELECT source_tag, COUNT(*) n FROM intel_sidepool WHERE ${since} GROUP BY 1 ORDER BY n DESC LIMIT 15`);
+    let rows = [];
+    if (reason !== '__stats_only__') {
+      const r = await query(`
+        SELECT id, reason, source_tag, data_type, title, title_zh, url, country, blocked_at
+        FROM intel_sidepool WHERE ${since} ${reason ? 'AND reason = $1' : ''}
+        ORDER BY blocked_at DESC LIMIT ${limit}`, reason ? [reason] : []);
+      rows = r.rows;
+    }
+    const totalRow = await query(`SELECT COUNT(*) n FROM intel_sidepool WHERE ${since}`);
+    res.json({ ok: true, days, total: totalRow.rows[0].n, byReason: stats.rows, byTag: byTag.rows, items: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+/* 人工提升：把被拦条目移入正式库（分析师复核后认为有价值的） */
+app.post('/api/intel/sidepool/promote', async (req, res) => {
+  try {
+    await _ensureSidepool();
+    const id = parseInt((req.body || {}).id, 10);
+    if (!id) return res.status(400).json({ error: '缺少 id' });
+    const { rows } = await query(`SELECT * FROM intel_sidepool WHERE id=$1`, [id]);
+    if (!rows.length) return res.status(404).json({ error: '条目不存在' });
+    const sp = rows[0];
+    let it = sp.data_json || {};
+    it.title = sp.title || it.title; it.title_zh = sp.title_zh || it.title_zh;
+    it.url = sp.url || it.url; it.country = sp.country || it.country;
+    it._promoted = true; it._promotedFrom = sp.reason;
+    it._eventSig = _eventSignature(it); _tagAssets(it);
+    const _lv = _normLevelForStore(it); it.level_norm = _lv;
+    const _dt = (it._forceDataType && it.data_type) ? it.data_type : (_classifyIntelType(it) || 'osint_intel');
+    await query(
+      `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'approved')`,
+      [_dt, it.title || '', it.country || '', it.location || '', it.event_date || it.date || '', _lv, it.content || '', it.source || '非预警池提升', JSON.stringify(it)]
+    );
+    await query(`DELETE FROM intel_sidepool WHERE id=$1`, [id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/intel/sidepool/:id', async (req, res) => {
+  try {
+    await query(`DELETE FROM intel_sidepool WHERE id=$1`, [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/intel/:type', async (req, res) => {
   try {
     const { type } = req.params;
@@ -6060,6 +6171,7 @@ app.get('/api/intel/:type', async (req, res) => {
     res.json(result.rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time, collect_time: r.collect_time })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
 
 /* 前端同步入口闸门（2026-08-14 重大修复）：前端 datasources 引擎曾把同一条情报
  * 按数据源轮换署名反复 POST（同一标题最多 15 份副本，含已被用户删除的旧闻复活）。

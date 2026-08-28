@@ -3932,6 +3932,7 @@ const VIEW_MAP={
   forecast:{t:'预测预警',b:'分析工具 / 预测预警（未来预判 · 智能推演）'},
   analysis:{t:'研判简报',b:'分析工具 / 研判简报（周期研判 · 每日简报）'},
   datacenter:{t:'数据中心',b:'数据管理 / 数据中心'},
+  sidepool:{t:'非预警数据池',b:'数据管理 / 非预警数据池'},
   settings:{t:'系统设置',b:'系统 / 系统设置'},
   threatorgs:{t:'威胁组织',b:'监测中心 / 威胁组织'},
   autoalert:{t:'自动预警',b:'监测中心 / 自动预警'},
@@ -14780,6 +14781,7 @@ function navigateTo(v){
     if(v==='forecast'){setTimeout(function(){try{FORECAST.init();}catch(e){console.error('FORECAST.init错误:',e);}},0);}
     if(v==='foresee'){setTimeout(function(){try{if(typeof FORESEE!=='undefined')FORESEE.init();}catch(e){console.error('FORESEE.init错误:',e);}},0);}
     if(v==='datacenter'){setTimeout(function(){try{DATACENTER.init();}catch(e){console.error('DATACENTER.init错误:',e);}},0);}
+    if(v==='sidepool'){setTimeout(function(){try{if(typeof SIDEPOOL!=='undefined')SIDEPOOL.init();}catch(e){console.error('SIDEPOOL.init错误:',e);}},0);}
     if(v==='settings'){setTimeout(function(){try{SETTINGS.init();}catch(e){console.error('SETTINGS.init错误:',e);}},0);}
     if(v==='threatorgs'){setTimeout(function(){try{if(typeof THREATS!=='undefined')THREATS.render();}catch(e){console.error('THREATS.render错误:',e);}},0);}
     if(v==='autoalert'){setTimeout(function(){try{if(typeof AUTOALERT!=='undefined')AUTOALERT.init();}catch(e){console.error('AUTOALERT.init错误:',e);}},0);}

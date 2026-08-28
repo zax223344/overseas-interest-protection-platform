@@ -1132,7 +1132,20 @@ const TERROR_HIGH_RISK_COUNTRIES = [
   { iso:'ETH', cn:'埃塞俄比亚', prio:2 }
 ];
 
-const _TERROR_ATTACK_RE = /terror|terrorist|attack|kidnap|kidnapped|kidnapping|abduct|abducted|abduction|hostage|blast|explosion|bombing|suicide|armed|militant|insurgent|extremist|ISIS|ISIL|Taliban|Boko Haram|Al-Shabaab|Al-Qaeda|AQIM|Ansar|gunmen|shooting|massacre|ambush|raid|assault|ransom|暴力|袭击|恐袭|绑架|绑架案|劫持|劫持案|爆炸|枪击|武装|极端组织|塔利班|博科圣地|索马里青年党|基地组织|伊斯兰国|ISIS|恐怖袭击|自杀式|人质|伏击|突袭|屠杀|斩首|处决|赎金/i;
+const _TERROR_ATTACK_RE = /terror|terrorist|kidnap|kidnapped|kidnapping|abduct|abducted|abduction|hostage|blast|explosion|bombing|suicide bomb|suicide attack|suicide blast|militant|insurgent|extremist|ISIS|ISIL|Taliban|Boko Haram|Al-Shabaab|Al-Qaeda|AQIM|Ansar|gunmen|massacre|ambush|ransom|behead|executed|暴力|袭击|恐袭|绑架|绑架案|劫持|劫持案|爆炸|枪击|极端组织|塔利班|博科圣地|索马里青年党|基地组织|伊斯兰国|恐怖袭击|自杀式|人质|伏击|突袭|屠杀|斩首|处决|赎金/i;
+/* 2026-08-28 体检收紧：删去 attack|attack|armed|shooting|raid|assault|suicide 等泛词——
+ * 英文媒体把政治抨击(political attack)、警方案件、板球赛况都写成这些词，
+ * 实测混入"读书会/烟花悲剧/比利时农夫/电影审查"等非恐袭新闻污染 terror_events。
+ * 泛词疑似的条目需暴力语境共现才放行（_hasViolenceContext）。 */
+const _VIOLENCE_CONTEXT_RE = /kill|killed|dead|death|died|wound|injur|casualt|victim|bomb|blast|explosion|gun|shoot|shot|bullet|mortar|shell|drone|missile|IED|improvised|suicide|slain|behead|corpse|尸体|伤亡|死亡|遇难|身亡|炸|枪|炮|无人机|导弹|袭击者|武装人员/i;
+function _isTerrorLike(txt) {
+  const t = String(txt || '');
+  if (!t) return false;
+  if (_TERROR_ATTACK_RE.test(t)) return true;
+  /* 泛词路径：attack/armed/raid/assault/shooting 必须与暴力后果共现 */
+  if (/\b(attack|attacks|attacked|armed|raid|raided|assault|shooting|suicide)\b/i.test(t) && _VIOLENCE_CONTEXT_RE.test(t)) return true;
+  return false;
+}
 
 /* 绑架案专项正则（全球，不限中国要素） */
 const _KIDNAP_RE = /kidnap|kidnapped|kidnapping|abduct|abducted|abduction|hostage|ransom|绑架|绑架案|劫持|劫持案|人质|赎金/i;
@@ -1167,7 +1180,7 @@ async function scrapeTerrorAttacks(opts) {
         for (const a of arts || []) {
           if (!a.url) continue;
           const txt = (a.title || '');
-          if (!_TERROR_ATTACK_RE.test(txt)) continue;
+          if (!_isTerrorLike(txt)) continue;
           /* 涉华要素判定 */
           const hasChina = /中国|Chinese|China|Beijing|中资|中企|华人|华侨|一带一路|Belt and Road|BRI/i.test(txt);
           /* 预警等级：直接涉及中国=红色，高危国家=橙色，一般=黄色 */
@@ -1199,7 +1212,7 @@ async function scrapeTerrorAttacks(opts) {
         for (const it of parsed) {
           if (!_isRssFresh(it.pubDate)) continue;
           const txt = (it.title || '') + ' ' + (it.description || '');
-          if (!_TERROR_ATTACK_RE.test(txt)) continue;
+          if (!_isTerrorLike(txt)) continue;
           const hasChina = /中国|Chinese|China|Beijing|中资|中企|华人|华侨|一带一路|Belt and Road|BRI/i.test(txt);
           let level = 'yellow';
           if (hasChina) level = 'red';

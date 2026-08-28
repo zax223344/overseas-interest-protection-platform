@@ -795,6 +795,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="datasources" onclick="navigateTo('datasources')"><span class="ic">🛰️</span><span class="lb">数据源库</span><span class="badge zero" id="sb-ds-count">0</span></div>
 <div class="sb-item" data-view="wechat" onclick="navigateTo('wechat')"><span class="ic">📮</span><span class="lb">公众号采集</span><span class="badge zero" id="sb-wechat-count">0</span></div>
 <div class="sb-item" data-view="datacenter" onclick="navigateTo('datacenter')"><span class="ic">🗄️</span><span class="lb">数据中心</span><span class="badge zero" id="sb-dc-count">0</span></div>
+<div class="sb-item" data-view="sidepool" onclick="navigateTo('sidepool')"><span class="ic">🌊</span><span class="lb">非预警数据池</span><span class="badge zero" id="sb-sp-count">0</span></div>
 <div class="sb-group">系统</div>
 <div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
 <div class="sb-item" data-view="role" onclick="navigateTo('role')"><span class="ic">🛡️</span><span class="lb">角色分级</span></div>
@@ -1005,6 +1006,8 @@ select.intel-input{cursor:pointer}
 <div class="view" id="view-datasources"></div>
 <!-- VIEW: WECHAT 公众号采集（wechat.js 整视图渲染） -->
 <div class="view" id="view-wechat"><div id="wechat-content"></div></div>
+<!-- VIEW: 非预警数据池（sidepool.js 整视图渲染） -->
+<div class="view" id="view-sidepool"><div id="sidepool-content"></div></div>
 <div class="view" id="view-datacenter">
 <div class="stat-grid" id="dc-stats"></div>
 
@@ -1115,6 +1118,7 @@ function closeMobileMenu(){
 <script src="scraper.js?v=53"></script>
 <!-- 天地图/本地矢量底图统一封装，所有 Leaflet 地图共用 -->
 <script src="local-basemap.js?v=2"></script>
+<script src="sidepool.js?v=1"></script>
 <script src="app.js?v=252"></script>
 <script src="distribute.js?v=36"></script>
 <script src="datasources.js?v=25"></script>

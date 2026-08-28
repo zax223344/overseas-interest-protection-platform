@@ -30,7 +30,7 @@
     situation:'态势总览', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
     intel:'情报影像中心', assets:'企业资产', alerts:'预警中心', autoalert:'自动预警',
     matrix:'风险矩阵', forecast:'预测预警', analysis:'研判简报', aireport:'AI情报分析报告', explain:'可解释审计',
-    role:'角色分级', datasources:'数据源库', datacenter:'数据中心', settings:'系统设置', dailyreport:'每日简报',
+    role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池', settings:'系统设置', dailyreport:'每日简报',
     wechat:'公众号采集'
   };
 
@@ -49,6 +49,7 @@
     { key: 'command', label: '指挥调度', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'threatorgs', label: '威胁组织', roles: ['mfa','mofcom','mps'] },
     { key: 'datacenter', label: '数据中心', roles: ['mfa','mofcom','mps'] },
+    { key: 'sidepool', label: '非预警数据池', roles: ['mfa','mofcom','mps'] },
     { key: 'datasources', label: '数据源库', roles: ['mfa','mofcom','mps'] },
     { key: 'wechat', label: '公众号采集', roles: ['mfa','mofcom','mps'] },
     { key: 'matrix', label: '风险矩阵', roles: ['mfa','mofcom','mps','enterprise'] },
