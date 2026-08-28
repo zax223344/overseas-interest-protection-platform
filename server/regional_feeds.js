@@ -314,12 +314,22 @@ const GN_QUERIES = [
   { key: 'investment', q: 'China investment OR infrastructure OR railway OR port OR mining OR trade', focus: '中资经贸' }
 ];
 const GOOGLE_NEWS_SOURCES = [];
+/* 2026-08-29 根因修复（Task #465 国别审计）：gl/ceid 参数只偏置不限定，
+ * 通用 OR 查询（attack OR conflict...）返回的是全球新闻，入库时被"事件地点校准"
+ * 改写国别——实测 GoogleNews·哈萨克斯坦·安全冲突 的条目被标为海地、阿富汗源被标为伊朗，
+ * 沙特/印尼/哈萨克等 TIER1 弱国覆盖形同虚设。查询词前缀英文国名做地理锚定。 */
+const _REGION_EN = new Intl.DisplayNames(['en'], { type: 'region' });
+/* 别名修正：Intl 生成的个别名称含连字符/括注会干扰 GNews 查询解析 */
+const _REGION_ALIAS = { CD: 'Congo', CG: 'Congo', TW: 'Taiwan', HK: 'Hong Kong', MO: 'Macau' };
 for (const [iso, cn, region] of GN_COUNTRIES) {
+  let en = _REGION_ALIAS[iso] || '';
+  if (!en) { try { en = _REGION_EN.of(iso) || ''; } catch (e) {} }
   for (const t of GN_QUERIES) {
+    const q = en ? '(' + en + ') ' + t.q : t.q;
     GOOGLE_NEWS_SOURCES.push({
       cn, iso, region,
       name: 'GoogleNews·' + cn + '·' + t.focus,
-      url: 'https://news.google.com/rss/search?q=' + encodeURIComponent(t.q) + '&hl=en-US&gl=' + iso + '&ceid=' + encodeURIComponent(iso + ':en'),
+      url: 'https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-US&gl=' + iso + '&ceid=' + encodeURIComponent(iso + ':en'),
       type: 'query', lang: 'en', focus: t.focus
     });
   }

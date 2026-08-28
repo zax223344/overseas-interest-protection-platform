@@ -11,6 +11,14 @@
  *   ③ 走既有闸门入库，data_type=security_events，挂 consular_tags
  * 铁律：撤侨/中国公民遇袭条目命中红区铁律直接红色。 */
 'use strict';
+/* GDELT seendate(20260829T120000Z) → ISO 统一转换（2026-08-29 Task #465 排雷：
+   原始 seendate 无人解析，被 stale-single-source 闸当无日期旧闻误杀） */
+const _sdIso = (a) => {
+  if (a.publish_time || a.publishedAt) return a.publish_time || a.publishedAt;
+  if (!a.seendate) return a.pubDate || '';
+  const iso = String(a.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
+  return iso !== String(a.seendate) ? iso : (a.pubDate || a.seendate || '');
+};
 const crawler = require('./crawler');
 const netx = require('./netx');
 /* RSS/HTML 直取（2026-08-28）：netx.smartFetch + Response.text() + 竞速兜底 */
@@ -114,7 +122,7 @@ async function runConsularWatch(opts) {
     (arts || []).forEach(a => {
       out.push({
         title: a.title || '', content: a.description || a.content || '', url: a.url || a.link || '',
-        publish_time: a.publish_time || a.publishedAt || a.seendate || a.pubDate || '',
+        publish_time: _sdIso(a),
         source: a.source || a.domain || 'GDELT', country: a.country || '', _sourceType: 'consular_watch'
       });
     });

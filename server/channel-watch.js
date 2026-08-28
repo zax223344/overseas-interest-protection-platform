@@ -9,6 +9,14 @@
  *   ③ 出口数据挂通道标签（channel_tags）走既有闸门入库，data_type=infrastructure
  * 铁律：零模拟，全部真实抓取；条目必须命中通道+安全信号双要素。 */
 'use strict';
+/* GDELT seendate(20260829T120000Z) → ISO 统一转换（2026-08-29 Task #465 排雷：
+   原始 seendate 无人解析，被 stale-single-source 闸当无日期旧闻误杀） */
+const _sdIso = (a) => {
+  if (a.publish_time || a.publishedAt) return a.publish_time || a.publishedAt;
+  if (!a.seendate) return a.pubDate || '';
+  const iso = String(a.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
+  return iso !== String(a.seendate) ? iso : (a.pubDate || a.seendate || '');
+};
 const crawler = require('./crawler');
 /* GDELT 单查询 30s 硬竞速：复杂查询偶发挂起，绝不让单次检索阻塞哨兵轮次 */
 const _gdelt = (q, o) => Promise.race([
@@ -95,7 +103,7 @@ async function runChannelWatch(opts) {
       (arts || []).forEach(a => {
         out.push({
           title: a.title || '', content: '', url: a.url || a.link || '',
-          publish_time: a.publish_time || a.publishedAt || a.seendate || '',
+          publish_time: _sdIso(a),
           source: a.source || a.domain || 'GDELT', country: a.country || '', _sourceType: 'channel_watch', _viaGdelt: true
         });
       });

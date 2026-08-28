@@ -6,6 +6,14 @@
  * 通道复用已验证模式：GDELT（crawler.gdeltSearch 节流）+ GNews（_gnewsRss 串行+重试）。
  * ============================================================ */
 'use strict';
+/* GDELT seendate(20260829T120000Z) → ISO 统一转换（2026-08-29 Task #465 排雷：
+   原始 seendate 无人解析，被 stale-single-source 闸当无日期旧闻误杀） */
+const _sdIso = (a) => {
+  if (a.publish_time || a.publishedAt) return a.publish_time || a.publishedAt;
+  if (!a.seendate) return a.pubDate || '';
+  const iso = String(a.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
+  return iso !== String(a.seendate) ? iso : (a.pubDate || a.seendate || '');
+};
 const netx = require('./netx');
 const scrapers = require('./scrapers');
 const crawler = require('./crawler');
@@ -73,7 +81,7 @@ async function runCoreThreatWatch(opts) {
       (arts || []).forEach(a => {
         out.push({
           title: a.title || '', content: '', url: a.url || a.link || '',
-          publish_time: a.publish_time || a.publishedAt || a.seendate || '',
+          publish_time: _sdIso(a),
           source: a.source || a.domain || 'GDELT', country: a.country || '',
           _sourceType: 'core_threat_watch', _viaGdelt: true
         });

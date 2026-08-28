@@ -14,6 +14,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const { query, testConnection } = require('./db');
+const netx = require('./netx'); /* 出网出口层统一 smartFetch（2026-08-29 补引入：原代码 6297 行已使用却未 require，隐性 ReferenceError） */
 const scrapers = require('./scrapers');
 const crawler = require('./crawler');
 const agentkey = require('./agentkey');
@@ -36,6 +37,7 @@ const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（�
 const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维度②：外交部安全提醒/撤侨/领保案件，30分钟一轮） */
 const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专项哨兵（2026-08-28：涉华受害/政变/外资审查等弱类补强，10分钟一轮） */
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
+const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -2296,6 +2298,32 @@ app.post('/api/core-threat/sweep', async (req, res) => {
   finally { _coreThreatBusyUntil = 0; }
 });
 
+/* ===== 重点项目与TIER1弱国哨兵手动触发端点（2026-08-29） ===== */
+app.post('/api/project-watch/sweep', async (req, res) => {
+  try {
+    if (Date.now() < _projectWatchBusyUntil) return res.json({ ok: false, error: '上一轮重点项目哨兵尚未结束，请稍候' });
+    const r = await projectWatch.runProjectWatch({ maxPerQuery: 15 });
+    const items = r.items || [];
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 4); } catch (e) {}
+      items.forEach(it => {
+        try { ENTITY.enrich(it); it.interestLinked = true; } catch (e) {}
+        const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+        if (/绑架|劫持|kidnap|hostage|abduct|袭击|遇袭|attacked|bomb|爆炸|枪击/i.test(t)) it.data_type = 'security_events';
+        else if (/制裁|实体清单|sanction|entity list|出口管制|export control/i.test(t)) it.data_type = 'sanctions_data';
+        else if (/债务|违约|debt|default|退出|withdraw|暂停|suspend|审查|review/i.test(t)) it.data_type = 'economic_risk';
+        else it.data_type = 'infrastructure';
+        it._forceDataType = true; it._sourceType = 'project_watch';
+        if (!it.category) it.category = '重点项目监控';
+      });
+      const res2 = await _ingestLinkedItems(items, 'PROJECT-WATCH-MANUAL', '');
+      return res.json({ ok: true, count: items.length, inserted: (res2 && res2.inserted) || 0 });
+    }
+    res.json({ ok: true, count: 0, inserted: 0 });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  finally { _projectWatchBusyUntil = 0; }
+});
+
 /* ===== 特种兵爬虫（一键全网深抓：涉华负面 + 各国媒体 + 社交平台） =====
  *  ?all=1        -> 执行预设任务（全部关键词 × 搜索引擎/社交 + 各国媒体 feed）
  *  ?q=keyword    -> 自定义关键词精准深抓
@@ -2736,6 +2764,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    *  ②被拦条目写 _gate_audit 流水，不再静默消失（"采到的数据看不见"根因之一）。 */
   const _corePriority = it._cnsecWatch === true || it._sourceType === 'cnsec_watch'
     || it._sourceType === 'core_threat_watch' || it._sourceType === 'consular_watch'
+    || it._sourceType === 'project_watch' /* 2026-08-29：重点项目动态是采集核心（审计维度③），
+      项目新闻多为小众单源（CPEC 工作组会议全网 1-2 家），6h 印证窗口恰恰杀掉的就是这类高价值项目情报 */
     || _isCorePriorityText(it);
   if (!_corePriority && it._sourceType !== 'wechat_oa' && it._sourceType !== 'wechat_lead') {
     const age = _getEventAgeMs(it);
@@ -4924,6 +4954,36 @@ const CATEGORY_PACKS = {
   }
 };
 let _categoryBalanceBusyUntil = 0;
+/* 类别均衡 GNews 原子查询包（2026-08-29 Task #465 审计修复：PM2 日志实测类别均衡器
+ * 连续多轮「抓取 0 入库 0」——GDELT 复杂查询大量挂起（30s 竞速空转），弱类永远补不上。
+ * GNews 原子查询已验证稳定（英文+原子词铁律），改为第一通道，GDELT/AP 降为兜底。 */
+const CAT_GNEWS_PACKS = {
+  economic_risk: ['Pakistan economy crisis', 'Sri Lanka default', 'Nigeria inflation', 'Egypt currency', 'Argentina recession'],
+  cyber_security: ['ransomware attack', 'cyberattack Africa', 'Nigeria cybercrime', 'Pakistan hacking', 'data breach bank'],
+  political_events: ['Bangladesh protest', 'Sudan coup', 'Myanmar protest', 'Kenya protest', 'Thailand political crisis'],
+  public_health: ['cholera outbreak', 'dengue outbreak', 'Sudan famine', 'Afghanistan polio', 'measles outbreak Africa'],
+  legal_compliance: ['Chinese company lawsuit', 'Chinese firm fined', 'Chinese workers court', 'mining license revoked'],
+  infrastructure: ['pipeline explosion', 'railway accident', 'port shutdown', 'power plant failure', 'bridge collapse'],
+  social_unrest: ['factory strike', 'mining protest', 'Bangladesh riot', 'fuel protest', 'transport strike']
+};
+/* GNews RSS 原子查询（串行+重试×2，并发即限流——与哨兵同款铁律） */
+async function _catGnewsRss(q, max) {
+  const _once = () => Promise.race([
+    netx.smartFetch('https://news.google.com/rss/search?q=' + encodeURIComponent(q + ' when:1d') + '&hl=en-US&gl=US&ceid=US:en',
+      { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+      .then(r => (r && r.ok) ? r.text() : null).catch(() => null),
+    new Promise(res => setTimeout(() => res(null), 14000))
+  ]);
+  try {
+    let text = await _once();
+    for (let r = 0; !text && r < 2; r++) { await new Promise(s => setTimeout(s, 2000)); text = await _once(); }
+    if (!text) return [];
+    return (scrapers.parseRss(text) || []).slice(0, max || 12).map(it => ({
+      title: it.title || '', content: it.description || '', url: it.link || '',
+      publish_time: it.pubDate || '', source: 'Google News', country: ''
+    }));
+  } catch (e) { return []; }
+}
 /* 类别均衡质量闸（2026-08-28 用户指令：数据质量整治）：
  * ① 事件要素词表——泛新闻/体育赛况/路况播报（"Gilas Pilipinas lineup""Motiva tapa buracos"类）
  *   无任何可感事件信号，不产生情报价值，不入库；
@@ -4953,7 +5013,19 @@ async function _runCategoryBalance() {
       const pack = CATEGORY_PACKS[ct];
       const q = pack.queries[cyc % pack.queries.length];
       let arts = [];
-      try { arts = await crawler.gdeltSearch(q, { timespan: '1d', maxrecords: 15 }); } catch (e) { console.warn('[CAT-BAL] 查询失败:', ct, e.message); }
+      /* ① GNews 原子查询优先（每轮 2 条轮换，串行防限流）——2026-08-29 修复 */
+      const gpk = CAT_GNEWS_PACKS[ct];
+      if (gpk && gpk.length) {
+        const gq2 = [0, 2].map(i => gpk[(cyc + i) % gpk.length]);
+        for (const gq of gq2) {
+          try { const g = await _catGnewsRss(gq, 12); if (g.length) arts = arts.concat(g); } catch (e) {}
+        }
+      }
+      /* ② GDELT 兜底（简单查询也常挂起，30s 竞速在内层） */
+      if (!arts.length) {
+        try { arts = await crawler.gdeltSearch(q, { timespan: '1d', maxrecords: 15 }); } catch (e) { console.warn('[CAT-BAL] 查询失败:', ct, e.message); }
+      }
+      /* ③ AP 最终兜底 */
       if (!arts.length) {
         try { const apq = q.replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
           arts = await crawler.apSearch(apq, { maxrecords: 12, pages: 1 }); } catch (e) {}
@@ -5132,6 +5204,38 @@ async function _runCoreThreatSentinel() {
   finally { _ctSentinelBusyUntil = 0; }
 }
 
+/* ===== 重点项目与 TIER1 弱国哨兵调度（2026-08-29 Task #465 采集质量审计）=====
+ * 审计实测：BRI/重点项目命中 2 条/7d(0.1%)，沙特/印尼/哈萨克 TIER1 十余条，
+ * 刚果(金)/吉布提/秘鲁/老挝/阿尔及利亚/阿联酋/希腊/巴拿马 8 个 TIER2 重点国零覆盖。
+ * 每 30 分钟一轮：项目关键词矩阵 + 项目→国别权威映射，条目强制 data_type 按内容分类。 */
+let _projectWatchBusyUntil = 0;
+async function _runProjectWatch() {
+  if (Date.now() < _projectWatchBusyUntil) return;
+  _projectWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await projectWatch.runProjectWatch({ maxPerQuery: 10 });
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      try { ENTITY.enrich(it); it.interestLinked = true; } catch (e) {}
+      const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+      /* 强制 data_type：项目安全事件优先 */
+      if (/绑架|劫持|kidnap|hostage|abduct|袭击|遇袭|attacked|bomb|爆炸|枪击/i.test(t)) it.data_type = 'security_events';
+      else if (/制裁|实体清单|sanction|entity list|出口管制|export control/i.test(t)) it.data_type = 'sanctions_data';
+      else if (/债务|违约|debt|default|退出|withdraw|暂停|suspend|审查|review/i.test(t)) it.data_type = 'economic_risk';
+      else if (/中断|停运|停产|halt|disrupt|damage|破坏|坍塌|事故|accident/i.test(t)) it.data_type = 'infrastructure';
+      else it.data_type = 'infrastructure'; /* 项目动态默认基础设施类（港口/铁路/矿山运营） */
+      it._forceDataType = true;
+      it._sourceType = 'project_watch';
+      if (!it.category) it.category = '重点项目监控';
+    });
+    const res = await _ingestLinkedItems(items, 'PROJECT-WATCH', '');
+    if (res && res.inserted) console.log('[PROJECT-WATCH] ✅ 新入库重点项目情报 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[PROJECT-WATCH] 采集失败:', e.message); }
+  finally { _projectWatchBusyUntil = 0; }
+}
+
 /* ===== 94源工程包采集器调度（2026-08-28 用户提供 WORKBUDDY-INSTRUCTION 工程包）=====
  * 每 30 分钟：11 个实测活源直采（中国新闻网/巴联社/塔斯社/尼日利亚双源/巴西双源/秘鲁安第斯通讯社/
  * BBC/BangkokPost/半岛）+ 死源 GNews site: 复活轮换（Reuters/AP/SCMP/Dawn/Kazinform 等）。
@@ -5264,6 +5368,9 @@ function startGlobalMediaCron() {
   // 94源工程包采集器（2026-08-28：多立场源证据链），启动380s后首跑
   setTimeout(_runSourcesCollector, 380000);
   setInterval(_runSourcesCollector, 15 * 60 * 1000); /* 2026-08-28 时效提速：30min→15min */
+  // 重点项目与TIER1弱国哨兵（2026-08-29 审计补强：BRI/项目命中+零覆盖重点国），启动8分钟后首跑
+  setTimeout(_runProjectWatch, 8 * 60 * 1000);
+  setInterval(_runProjectWatch, 30 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min */
@@ -6595,6 +6702,11 @@ async function _translateListToZhParallel(list, concurrency) {
   const tasks = [];
   list.forEach(function (it) {
     if (!it || typeof it !== 'object') return;
+    /* 2026-08-29 审计修复：中文源标题（中新网/新华社/公众号镜像）本来就无需翻译，
+       _looksForeign=false 使其跳过全部翻译逻辑 → title_zh 永远为空（近7天 200 条无中文标题主因，
+       前端 COALESCE 回退虽可显示，但涉华判定/去重键/导出全链路依赖 title_zh 字段）。直接回填。 */
+    const _t = String(it.title || '').trim();
+    if (_t && !it.title_zh && !_looksForeign(_t)) it.title_zh = _t;
     if (_looksForeign(it.title)) tasks.push({ it: it, field: 'title' });
     if (_looksForeign(it.content) && String(it.content || '').length > 20) tasks.push({ it: it, field: 'content' });
   });
