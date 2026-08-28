@@ -1032,169 +1032,6 @@ async function _serverAlertGen() {
 setInterval(_serverAlertGen, 3 * 60 * 1000);
 setTimeout(_serverAlertGen, 30 * 1000);
 
-/* ===== 异动信号引擎（2026-08-28 服务端三件之一）=====
- * 口径：类别×国家日计数基线（近 7 天，活跃库 intel_data + 归档库 intel_archive 合并全覆盖），
- * 与今日计数对比，超阈值生成"风险升温信号"：
- *   · 有效基线（近 7 天总量 ≥ 3）：今日 ≥ 4 条且 ≥ 日均 1.8 倍 → 升温
- *   · 无基线：今日 ≥ 6 条 → 突发簇
- * 分级：倍数≥4.5 且今日≥10 且 TIER1/COSRI公共安全≥8 → 红；倍数≥3 且今日≥8 → 橙；其余黄。
- * 优质信号（利益关联分≥10，与预警中心同源规则）写入预警中心共享库（ANOM- 前缀，当日幂等）。
- * GET /api/anomaly/signals → 最近一次检测结果（>10min 自动重测）
- * GET /api/anomaly/detect  → 强制立即检测并返回结果 */
-const _ANOM_CAT_LABELS = {
-  terror_events: '恐怖事件', security_events: '安全事件', military_conflicts: '武装冲突',
-  political_events: '政治事件', natural_disasters: '自然灾害', public_health: '公共卫生',
-  sanctions_data: '制裁措施', social_unrest: '社会动荡', infrastructure: '基础设施',
-  geopolitical_intel: '地缘情报', economic_risk: '经济风险', legal_compliance: '法律合规',
-  cyber_security: '网络安全'
-};
-/* 预警队列 type 字段沿用 _serverAlertGen 同一映射，保证前端等级/类型过滤器兼容 */
-const _ANOM_ALERT_TYPE = {
-  terror_events: '安全风险', security_events: '安全风险', military_conflicts: '安全风险',
-  political_events: '政治风险', natural_disasters: '自然环境风险', public_health: '安全风险',
-  sanctions_data: '经济风险', social_unrest: '社会文化风险', infrastructure: '运营风险',
-  geopolitical_intel: '地缘战略风险', economic_risk: '经济风险', legal_compliance: '法律合规',
-  cyber_security: '网络安全'
-};
-let _anomalyState = { at: null, signals: [], scanned: 0, pushed: 0 };
-async function _runAnomalyWatch() {
-  try {
-    /* 本地自然日 0 点作边界（禁用 CURRENT_DATE——PG 会话时区可能非中国时区） */
-    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const weekAgo = new Date(dayStart.getTime() - 7 * 86400000);
-    /* 基线：近 7 天（不含今日）类别×国家计数（活跃库+归档库合并） */
-    const hist = await query(`
-      SELECT data_type t, country c, COUNT(*)::int n FROM (
-        SELECT data_type, country, collect_time, audit_status FROM intel_data
-        UNION ALL
-        SELECT data_type, country, collect_time, audit_status FROM intel_archive
-      ) u
-      WHERE collect_time >= $1 AND collect_time < $2 AND audit_status='approved'
-      GROUP BY 1,2`, [weekAgo, dayStart]);
-    const base = {};
-    for (const r of hist.rows) {
-      const k = r.t + '|' + r.c;
-      base[k] = (base[k] || 0) + r.n;
-    }
-    /* 今日计数 */
-    const tod = await query(
-      `SELECT data_type t, country c, COUNT(*)::int n FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' GROUP BY 1,2`,
-      [dayStart]
-    );
-    /* 今日样例标题（供信号详情展示，真实入库数据） */
-    const tit = await query(
-      `SELECT data_type t, country c, COALESCE(NULLIF(data_json->>'title_zh',''),title) AS title_zh FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' ORDER BY collect_time DESC LIMIT 600`,
-      [dayStart]
-    );
-    const sampleMap = {};
-    for (const r of tit.rows) {
-      const k = r.t + '|' + r.c;
-      if (!sampleMap[k]) sampleMap[k] = [];
-      if (sampleMap[k].length < 5) sampleMap[k].push(r.title_zh || r.title);
-    }
-    const now = new Date();
-    const p = n => String(n).padStart(2, '0');
-    const tk = now.getFullYear() + p(now.getMonth() + 1) + p(now.getDate());
-    const ts = now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes());
-    const signals = [];
-    let scanned = 0;
-    for (const r of tod.rows) {
-      const cn = String(r.c || '').trim();
-      if (!cn || cn === '中国' || cn === '未知' || cn === '全球') continue;
-      scanned++;
-      const k = r.t + '|' + cn;
-      const total7 = base[k] || 0;
-      const avg = total7 / 7;
-      const today = r.n;
-      let ratio = 0, kind = '';
-      if (total7 >= 3) {
-        ratio = today / avg;
-        if (today >= 4 && ratio >= 1.8) kind = '升温';
-      } else if (today >= 6) {
-        kind = '突发';
-      }
-      if (!kind) continue;
-      const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
-      const cosriS = INTEREST_BASE.COUNTRY_RISK_INDICATORS ? INTEREST_BASE.COUNTRY_RISK_INDICATORS.scores[cn] : null;
-      let level = 'yellow';
-      if (ratio >= 4.5 && today >= 10 && (tier === 'TIER1' || (cosriS && cosriS.security >= 8))) level = 'red';
-      else if (ratio >= 3 && today >= 8) level = 'orange';
-      const score = level === 'red' ? Math.min(85, 61 + Math.round(ratio))
-        : Math.min(60, Math.round(26 + ratio * 9 + Math.min(12, today)));
-      const zone = score >= 61 ? 'red' : score >= 46 ? 'orange' : 'yellow';
-      const catLabel = _ANOM_CAT_LABELS[r.t] || r.t;
-      const samples = (sampleMap[k] || []).slice(0, 5).map(s => String(s).slice(0, 60));
-      const ratioTxt = kind === '突发' ? '无基线' : (Math.round(ratio * 10) / 10) + '倍';
-      const title = '【风险' + kind + '】' + cn + '·' + catLabel + '情报量异动：7日均 ' + (Math.round(avg * 10) / 10) + ' → 今日 ' + today + ' 条' + (kind === '升温' ? '（' + ratioTxt + '）' : '');
-      const desc = ('近 7 天该方向日均值 ' + (Math.round(avg * 10) / 10) + ' 条，今日已入库 ' + today + ' 条' +
-        (kind === '升温' ? '，环比 ' + ratioTxt + '，超出异动阈值（1.8 倍）' : '，近 7 天无基线记录，属突发聚集') +
-        '。样例：' + samples.join('；')).slice(0, 300);
-      const ckey = (cn + String(r.t)).replace(/[^\u4e00-\u9fa5a-z0-9]/gi, '').slice(0, 24);
-      const alert = {
-        id: 'ANOM-' + tk + '-' + ckey,
-        alert_no: 'CN-SEC-' + tk + '-A' + String(signals.length + 1).padStart(4, '0'),
-        title, title_zh: title,
-        desc,
-        time: ts, level, type: _ANOM_ALERT_TYPE[r.t] || '安全风险',
-        country: cn, source: '异动信号引擎', url: '',
-        status: 'active', interestLinked: true,
-        chinaRelated: /中国|华人|中资|中企|中方|涉华|CPEC|一带一路/i.test(title + desc),
-        publishedAt: now.toISOString(),
-        risk_score: score, risk_zone: zone,
-        risk_rationale: '基于近 7 天类别×国家入库基线的统计异动（' + kind + '，今日 ' + today + ' vs 日均 ' + (Math.round(avg * 10) / 10) + '）',
-        zone_action: level === 'red' ? '立即核查该国项目/人员暴露，启动应急联络'
-          : level === 'orange' ? '加密监测频次，通知该国项目组加强防范'
-            : '保持关注，核实是否单源聚集导致',
-        _riskVersion: 3, _anomaly: true,
-        anomaly: { kind, today, avg: Math.round(avg * 10) / 10, ratio: Math.round(ratio * 10) / 10, samples }
-      };
-      signals.push({
-        country: cn, type: r.t, typeLabel: catLabel, tier, kind,
-        today, avg: Math.round(avg * 10) / 10, ratio: Math.round(ratio * 10) / 10,
-        level, risk_score: score, samples, alert
-      });
-    }
-    signals.sort((a, b) => (b.ratio || 99) - (a.ratio || 99) || b.today - a.today);
-    const top = signals.slice(0, 15);
-    /* 优质信号进预警中心共享库（与 _serverAlertGen 同源合并 + 幂等去重 + 利益关联哨兵同规则） */
-    let pushed = 0;
-    try {
-      if (top.length) {
-        const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
-        const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
-        const haveIds = new Set(alerts.map(a => String((a && a.id) || '')));
-        const added = [];
-        for (const s of top) {
-          const sc = _alertInterestScore(s.alert);
-          s.interestScore = sc.score; s.interestHits = sc.hits;
-          s.alert._interestScore = sc.score; s.alert._interestHits = sc.hits;
-          if (haveIds.has(s.alert.id)) { s.inAlert = true; continue; }
-          if (sc.score >= 10) { added.unshift(s.alert); haveIds.add(s.alert.id); s.inAlert = true; pushed++; }
-        }
-        if (added.length) {
-          const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
-          await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
-          console.log('[ANOMALY] 风险异动信号写入预警中心 ' + added.length + ' 条 / 共检出 ' + signals.length + ' 项（扫描 ' + scanned + ' 个方向）');
-        }
-      }
-    } catch (e) { console.warn('[ANOMALY] 预警写入失败:', e.message); }
-    _anomalyState = { at: new Date().toISOString(), signals: top, total: signals.length, scanned, pushed };
-  } catch (e) { console.warn('[ANOMALY] 异动检测异常:', e.message); }
-}
-setInterval(_runAnomalyWatch, 30 * 60 * 1000);
-setTimeout(_runAnomalyWatch, 4 * 60 * 1000);
-app.get('/api/anomaly/signals', async (req, res) => {
-  try {
-    const stale = !_anomalyState.at || (Date.now() - new Date(_anomalyState.at).getTime() > 10 * 60 * 1000);
-    if (stale) await _runAnomalyWatch();
-    res.json(_anomalyState);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/anomaly/detect', async (req, res) => {
-  try { await _runAnomalyWatch(); res.json(_anomalyState); }
-  catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 async function _alertValueSentinel() {
   try {
     const r = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
@@ -1781,206 +1618,6 @@ app.get('/api/intel/ids', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/* COSRI 国别风险画像（2026-08-28 中海安对标 + 国别档案落地）
- * 口径：interest-base.js 中 50 国 × 4 维（政治/经济/社会/公共安全）研究底数
- * GET /api/cosri              → 全部 50 国 + 4 维 + 元数据
- * GET /api/cosri/:country     → 单国画像（4 维 + 近 30 天事件 + 命中项目 + 命中人员 + 行动指引）
- * GET /api/cosri/top?dim=...  → 某维 top 排名（默认 security）
- */
-app.get('/api/cosri', async (req, res) => {
-  try {
-    const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
-    const list = Object.keys(ind.scores).map(cn => {
-      const s = ind.scores[cn];
-      const overall = Math.round(((s.political + s.economic + s.social + s.security) / 4) * 10) / 10;
-      const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
-      const projects = INTEREST_BASE.KEY_PROJECTS ? INTEREST_BASE.KEY_PROJECTS.filter(p => p.country === cn) : [];
-      return { country: cn, ...s, overall, tier, projectCount: projects.length };
-    });
-    res.json({ asOf: ind.asOf, dims: ind.dims, dimNames: ind.dimNames, total: list.length, countries: list });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/cosri/top', async (req, res) => {
-  try {
-    const dim = String(req.query.dim || 'security');
-    if (!['political','economic','social','security'].includes(dim)) return res.status(400).json({ error: 'dim 仅支持 political/economic/social/security' });
-    const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
-    const list = Object.keys(ind.scores).map(cn => ({ country: cn, value: ind.scores[cn][dim] })).sort((a,b)=>b.value-a.value);
-    res.json({ dim, name: ind.dimNames[dim], top: list });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/cosri/:country', async (req, res) => {
-  try {
-    /* Express 默认对 path 段做 URL 解码，req.params.country 即原始 UTF-8 国家名 */
-    const cn = String(req.params.country || '').trim();
-    const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
-    const s = ind.scores[cn];
-    if (!s) return res.status(404).json({ error: '国家不在 COSRI 库（覆盖 50 国）', got: cn });
-    const overall = Math.round(((s.political + s.economic + s.social + s.security) / 4) * 10) / 10;
-    const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
-    const projects = INTEREST_BASE.KEY_PROJECTS ? INTEREST_BASE.KEY_PROJECTS.filter(p => p.country === cn) : [];
-    /* 近 30 天真实事件（intel_data 中 country 命中 + audit=approved） */
-    let recent = [];
-    try {
-      const r = await query(
-        `SELECT id, title, COALESCE(NULLIF(data_json->>'title_zh',''),title) AS title_zh,
-                data_type, collect_time, severity AS event_severity
-         FROM intel_data
-         WHERE audit_status='approved' AND country=$1
-           AND collect_time >= NOW() - INTERVAL '30 days'
-         ORDER BY collect_time DESC LIMIT 200`,
-        [cn]
-      );
-      recent = r.rows.map(x => ({
-        id: x.id, title: x.title_zh || x.title, type: x.data_type,
-        time: x.collect_time, severity: x.event_severity
-      }));
-    } catch (e) { /* DB 不可用降级为空 */ }
-    /* 行动指引：根据四维分自动生成 */
-    const guide = _buildCountryGuide(cn, s, recent, projects);
-    res.json({
-      asOf: ind.asOf, country: cn, dims: ind.dims, dimNames: ind.dimNames,
-      scores: s, overall, tier,
-      projects, recentEvents: recent, recentCount: recent.length, guide
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-function _buildCountryGuide(cn, s, recent, projects) {
-  const tips = [];
-  if (s.security >= 8) tips.push('公共安全高风险（≥8）：避免非必要出行，外出须 2 人同行、保持通讯畅通、登记行程');
-  if (s.political >= 8) tips.push('政治高风险：避免集会与敏感地区；与使领馆保持联系；预备护照+备用身份证');
-  if (s.economic >= 8) tips.push('经济高风险：关注汇率/制裁/项目合规；保留资金出境备案；保险条款覆盖政治险');
-  if (s.social >= 8) tips.push('社会高风险：尊重本地风俗；夜间避免外出；预设应急撤离路线');
-  if (s.security >= 9 || s.political >= 9) tips.push('红色等级：评估撤人/停项目可行性；启动 24h 定点联络+保险升级');
-  if (recent.length >= 10) tips.push(`近 30 天有 ${recent.length} 条事件记录，建议研判升级/保持预警推送`);
-  if (projects.length === 0) tips.push('暂无中资项目暴露；属一般关注');
-  else tips.push(`有 ${projects.length} 个中资项目（${projects.map(p=>p.name).slice(0,3).join('、')}），需重点盯防`);
-  if (tips.length === 0) tips.push('低风险：常规关注，无需特别响应');
-  return tips;
-}
-
-/* ===== 采集漏斗统计（2026-08-28 服务端三件之二）=====
- * 全链路真实口径（零模拟）：拦截（数据池今日·持久化 + 入库闸审计·重启以来内存）→
- * 成功入库（intel_data 今日）→ 生成预警（datahub_store 队列今日）。
- * 每级附明细（原因分布/类别分布/通道分布/等级分布 + 样例标题），前端可点开。
- * GET /api/funnel/today */
-app.get('/api/funnel/today', async (req, res) => {
-  try {
-    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const p = n => String(n).padStart(2, '0');
-    const dayKey = dayStart.getFullYear() + '-' + p(dayStart.getMonth() + 1) + '-' + p(dayStart.getDate());
-    /* 入库级 */
-    const stored = await query(`SELECT COUNT(*)::int c FROM intel_data WHERE collect_time >= $1`, [dayStart]);
-    const byType = await query(`SELECT data_type k, COUNT(*)::int c FROM intel_data WHERE collect_time >= $1 GROUP BY 1 ORDER BY c DESC`, [dayStart]);
-    const byChannel = await query(`SELECT COALESCE(NULLIF(data_json->>'_sourceType',''),'未标注') k, COUNT(*)::int c FROM intel_data WHERE collect_time >= $1 GROUP BY 1 ORDER BY c DESC`, [dayStart]);
-    const storedN = stored.rows[0].c;
-    /* 拦截级：数据池今日（持久化真实数据） */
-    const sidepool = await query(`SELECT reason k, COUNT(*)::int c FROM intel_sidepool WHERE blocked_at >= $1 GROUP BY 1 ORDER BY c DESC`, [dayStart]);
-    const sideSamples = await query(`SELECT reason k, COALESCE(NULLIF(title_zh,''),title) t FROM intel_sidepool WHERE blocked_at >= $1 ORDER BY blocked_at DESC LIMIT 60`, [dayStart]);
-    const poolDetail = {};
-    sidepool.rows.forEach(r => { poolDetail[r.k] = r.c; });
-    const poolSamples = {};
-    sideSamples.rows.forEach(r => {
-      (poolSamples[r.k] = poolSamples[r.k] || []).push(r.t);
-    });
-    Object.keys(poolSamples).forEach(k => { if (poolSamples[k].length > 4) poolSamples[k].length = 4; });
-    const poolN = sidepool.rows.reduce((s, r) => s + r.c, 0);
-    /* 拦截级：入库闸审计（内存，重启以来；预警生成阶段的拒绝归预警级，不算入库前拦截） */
-    const gateDetail = {}, genReject = {};
-    Object.keys(_GATE_AUDIT.by).forEach(k => {
-      if (k.indexOf('预警生成') === 0) genReject[k] = _GATE_AUDIT.by[k];
-      else gateDetail[k] = _GATE_AUDIT.by[k];
-    });
-    const gateSamples = _GATE_AUDIT.samples;
-    const gateN = Object.keys(gateDetail).reduce((s, k) => s + gateDetail[k], 0);
-    /* 预警级 */
-    let alertToday = 0, anomToday = 0; const byLevel = {};
-    try {
-      const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
-      const arr = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
-      arr.forEach(a => {
-        if (!a) return;
-        if (String(a.time || '').slice(0, 10) === dayKey) {
-          alertToday++;
-          byLevel[a.level] = (byLevel[a.level] || 0) + 1;
-          if (a._anomaly) anomToday++;
-        }
-      });
-    } catch (e) { /* 预警库不可用时降级为 0 */ }
-    res.json({
-      date: dayKey, generatedAt: new Date().toISOString(),
-      stages: [
-        {
-          key: 'blocked', name: '闸门拦截', count: poolN + gateN,
-          poolToday: poolN, gateSinceRestart: gateN,
-          detail: poolDetail, gateDetail, samples: poolSamples, gateSamples,
-          source: 'intel_sidepool 今日（持久化） + 入库闸审计（重启以来·内存）'
-        },
-        {
-          key: 'stored', name: '成功入库', count: storedN,
-          byType: byType.rows, byChannel: byChannel.rows,
-          source: 'intel_data 今日（audit 含 approved）'
-        },
-        {
-          key: 'alerts', name: '生成预警', count: alertToday,
-          byLevel, anomaly: anomToday, gateRejections: genReject,
-          source: 'datahub_store 预警队列 · time 为今日'
-        }
-      ],
-      gateAuditSince: _GATE_AUDIT.since
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* ===== 归档库检索（2026-08-28 服务端三件之三）=====
- * intel_archive 滚动归档（活跃库仅留 7 天，更早数据可查不丢）。
- * GET /api/archive/search?country=&type=&q=&since=&until=&page=&limit=
- * 明细：标题命中的中文标题优先（归档行 title_zh 为空时回落 data_json->>'title_zh'） */
-app.get('/api/archive/search', async (req, res) => {
-  try {
-    await query(`CREATE TABLE IF NOT EXISTS intel_archive (LIKE intel_data INCLUDING ALL)`);
-    const { country, type, q, since, until } = req.query;
-    const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
-    const limit = Math.min(100, Math.max(5, parseInt(req.query.limit || '20', 10) || 20));
-    const where = [], args = [];
-    if (country) { args.push(String(country)); where.push('country = $' + args.length); }
-    if (type) { args.push(String(type)); where.push('data_type = $' + args.length); }
-    if (since) { args.push(since + ' 00:00:00'); where.push('collect_time >= $' + args.length + '::timestamptz'); }
-    if (until) { args.push(until + ' 23:59:59'); where.push('collect_time <= $' + args.length + '::timestamptz'); }
-    if (q) { args.push('%' + String(q) + '%'); where.push('(title ILIKE $' + args.length + ' OR COALESCE(NULLIF(data_json->>\'title_zh\',\'\'),\'\') ILIKE $' + args.length + ')'); }
-    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const total = await query('SELECT COUNT(*)::int c FROM intel_archive ' + w, args);
-    const rows = await query(
-      `SELECT id, data_type, title, country, source, collect_time,
-              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS display_title,
-              data_json->>'url' AS url
-       FROM intel_archive ${w}
-       ORDER BY collect_time DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`, args);
-    /* 同口径统计（含全库总量/时间跨度，供面板头部展示） */
-    const [stType, stCountry, stAll] = await Promise.all([
-      query('SELECT data_type k, COUNT(*)::int c FROM intel_archive ' + w + ' GROUP BY 1 ORDER BY c DESC LIMIT 20', args),
-      query(`SELECT COALESCE(NULLIF(country,''),'未知') k, COUNT(*)::int c FROM intel_archive ${w} GROUP BY 1 ORDER BY c DESC LIMIT 12`, args),
-      query('SELECT COUNT(*)::int c, MIN(collect_time) mn, MAX(collect_time) mx FROM intel_archive', [])
-    ]);
-    res.json({
-      date: new Date().toISOString(), page, limit,
-      total: total.rows[0].c,
-      rows: rows.rows.map(r => ({
-        id: r.id, type: r.data_type, title: r.display_title || r.title,
-        country: r.country, source: r.source, time: r.collect_time, url: r.url || ''
-      })),
-      stats: {
-        byType: stType.rows, byCountry: stCountry.rows,
-        totalAll: stAll.rows[0].c, minTime: stAll.rows[0].mn, maxTime: stAll.rows[0].mx
-      }
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
 /* 指挥调度闭环状态（2026-08-13 体检 P1-4）：事件/工单/复盘服务端持久化，
  * 单文档状态存储，前端全量读写，本地 IndexedDB 作离线兜底 */
 app.get('/api/command/state', async (req, res) => {
@@ -2130,20 +1767,14 @@ app.get('/api/scrape', async (req, res) => {
     if (source) {
       const items = await scrapers.scrapeSource(source);
       try { await _translateListToZhParallel(items || [], 6); } catch (e) { console.warn('[SCRAPE:source] 翻译异常(保留原文):', e.message); }
-      /* 2026-08-29 墓碑出口闸（伦敦使馆旧闻复活根因③）：已删除的旧闻绝不再回流前端采集池 */
-      const _kept = [];
-      for (const it of (items || [])) { if (await _isTombstoned(it)) _gateAudit('出口闸', 'tombstoned', it.title); else _kept.push(it); }
-      return res.json({ source, items: _kept });
+      return res.json({ source, items: items || [] });
     }
     if (category) {
       const items = await scrapers.scrapeCategory(category);
       /* 关联判定：给前端自动采集引擎提供 interestLinked 标记，避免入池数据无关联标志 */
       (items || []).forEach(function(it) { try { ENTITY.enrich(it); } catch (e) {} });
       try { await _translateListToZhParallel(items || [], 6); } catch (e) { console.warn('[SCRAPE:category] 翻译异常(保留原文):', e.message); }
-      /* 2026-08-29 墓碑出口闸：删除过的旧文直接滤除，不进前端 realPool */
-      const _kept2 = [];
-      for (const it of (items || [])) { if (await _isTombstoned(it)) _gateAudit('出口闸', 'tombstoned', it.title); else _kept2.push(it); }
-      return res.json({ category, items: _kept2 });
+      return res.json({ category, items: items || [] });
     }
     if (all) {
       const data = await scrapers.scrapeAll();
@@ -2186,18 +1817,6 @@ app.get('/api/scrape', async (req, res) => {
         Object.keys(out).forEach(function (c) { (out[c] || []).forEach(function (it) { _allItems.push(it); }); });
         await _translateListToZhParallel(_allItems, 6);
       } catch (e) { console.warn('[SCRAPE] 全量翻译异常(保留原文):', e.message); }
-      /* 2026-08-29 墓碑出口闸：全量结果滤除已删除旧文（前端 realPool 主要补给源之一） */
-      try {
-        const _tb = await _getTombstones();
-        let _blocked = 0;
-        Object.keys(out).forEach(function (c) {
-          out[c] = (out[c] || []).filter(function (it) {
-            if (_tombMatchSync(_tb, it)) { _blocked++; _gateAudit('出口闸', 'tombstoned', it.title); return false; }
-            return true;
-          });
-        });
-        if (_blocked) console.log('[SCRAPE] 墓碑出口闸拦截 ' + _blocked + ' 条已删除旧文');
-      } catch (e) {}
       return res.json({ ok: true, data: out });
     }
     return res.json({ ok: true, sources: Object.keys(scrapers.SCRAPE_SOURCES) });
@@ -2310,10 +1929,7 @@ app.get('/api/crawl', async (req, res) => {
       const cn = items.filter(it => it.chinaNegative).length;
       /* 降级存储：将真实爬取的公开 OSINT 数据写入服务端文件缓存，供无 PostgreSQL 时的公开态势通道使用 */
       await _translateListToZh(items); _mergePublicCache('osint_intel', items);
-      /* 2026-08-29 墓碑出口闸：已删除旧文不回流前端（伦敦使馆旧闻复活根因③） */
-      const _kept = [];
-      for (const it of items) { if (await _isTombstoned(it)) _gateAudit('出口闸', 'tombstoned', it.title); else _kept.push(it); }
-      return res.json({ ok: true, mode: 'all', count: _kept.length, chinaNegative: cn, items: _kept });
+      return res.json({ ok: true, mode: 'all', count: items.length, chinaNegative: cn, items });
     }
     if (q) {
       const items = await crawler.crawlQuery(q);
@@ -2424,27 +2040,11 @@ async function _getTombstones() {
   await _ensureTombstoneTable();
   try {
     const { rows } = await query(`SELECT tkey, url FROM intel_tombstones`);
-    /* 2026-08-29 死键修复：库里 332 条墓碑中 328 条是历史写入方留下的
-     * t:<原始标题>/u:<原始URL> 前缀键——带标点、带前缀，与 _isTombstoned 的
-     * 归一化比对永不相等 → 全部是死键，删除形同虚设（伦敦使馆旧闻复活根因①）。
-     * 读取时统一归一化：u: → urls 集；t: → 归一化标题键；c: → 核心实体键原样。 */
-    const tkeys = new Set(), urls = new Set();
-    for (const r of rows) {
-      const raw = String(r.url || '').trim();
-      if (raw) urls.add(raw.replace(/\/+$/, '').toLowerCase());
-      const k = String(r.tkey || '');
-      if (!k) continue;
-      if (k.startsWith('u:')) {
-        const u = k.slice(2).trim();
-        if (u) urls.add(u.replace(/\/+$/, '').toLowerCase());
-      } else if (k.startsWith('t:')) {
-        const nk = _normTitleKey(k.slice(2));
-        if (nk.length >= 6) tkeys.add(nk);
-      } else {
-        tkeys.add(k); /* 无前缀归一化键（现行格式）与 c: 核心实体键（2026-08-29 起） */
-      }
-    }
-    _tombCache = { t: Date.now(), tkeys, urls };
+    _tombCache = {
+      t: Date.now(),
+      tkeys: new Set(rows.map(r => r.tkey).filter(Boolean)),
+      urls: new Set(rows.map(r => String(r.url || '').replace(/\/+$/, '').toLowerCase()).filter(Boolean))
+    };
   } catch (e) {}
   return _tombCache;
 }
@@ -2454,13 +2054,6 @@ async function _addTombstone(title, titleZh, url) {
   const k1 = _normTitleKey(title), k2 = _normTitleKey(titleZh);
   if (k1.length >= 6) keys.push(k1);
   if (k2.length >= 6 && k2 !== k1) keys.push(k2);
-  /* 2026-08-29 变体级墓碑（伦敦使馆旧闻复活根因②）：同一文章经不同翻译通道
-   * 措辞漂移（"对伦敦新的中国大型大使馆"vs"伦敦新中国巨型大使馆"），
-   * 归一化标题键对不上 → 复活。补核心实体键（国家+组织+数字+事件动词），
-   * 同文变体稳定命中；宁误杀不放过（用户铁律：删掉的数据永远不再进来）。 */
-  const c1 = _coreEntityKey(title), c2 = _coreEntityKey(titleZh);
-  if (c1 && c1.length >= 6) keys.push('c:' + c1);
-  if (c2 && c2.length >= 6 && c2 !== c1) keys.push('c:' + c2);
   if (!keys.length && !url) return;
   try {
     const rowsToInsert = keys.length ? keys : [''];
@@ -2472,22 +2065,15 @@ async function _addTombstone(title, titleZh, url) {
     console.log('[TOMBSTONE] 已立墓碑: ' + String(title || titleZh || url || '').slice(0, 60));
   } catch (e) { console.warn('[TOMBSTONE] 写入失败:', e.message); }
 }
-/* 墓碑命中（同步版）：PUT 写入闸等同步过滤场景先 await _getTombstones() 拿缓存再调用 */
-function _tombMatchSync(tb, it) {
-  if (!tb || (!tb.tkeys.size && !tb.urls.size)) return false;
-  const t = it || {};
-  const u = String(t.url || t.link || '').replace(/\/+$/, '').toLowerCase();
+async function _isTombstoned(it) {
+  const tb = await _getTombstones();
+  if (!tb.tkeys.size && !tb.urls.size) return false;
+  const u = String(it.url || '').replace(/\/+$/, '').toLowerCase();
   if (u && tb.urls.has(u)) return true;
-  const k1 = _normTitleKey(t.title), k2 = _normTitleKey(t.title_zh);
+  const k1 = _normTitleKey(it.title), k2 = _normTitleKey(it.title_zh);
   if (k1.length >= 6 && tb.tkeys.has(k1)) return true;
   if (k2.length >= 6 && tb.tkeys.has(k2)) return true;
-  const c1 = _coreEntityKey(t.title), c2 = _coreEntityKey(t.title_zh);
-  if (c1 && c1.length >= 6 && tb.tkeys.has('c:' + c1)) return true;
-  if (c2 && c2.length >= 6 && tb.tkeys.has('c:' + c2)) return true;
   return false;
-}
-async function _isTombstoned(it) {
-  return _tombMatchSync(await _getTombstones(), it);
 }
 function _coreEntityKey(t) {
   /* 提取标题中的国家、组织、数字、核心名词，用于识别"洗稿式重复" */
@@ -5386,11 +4972,6 @@ app.get('/api/media', async (req, res) => {
     }
     let items = (_mediaCache.items || []).slice();
     if (country) items = items.filter(it => it.country_cn === country || it.country_iso === country);
-    /* 2026-08-29 墓碑出口闸：全球媒体通道同样滤除已删除旧文 */
-    try {
-      const _tb = await _getTombstones();
-      items = items.filter(it => { if (_tombMatchSync(_tb, it)) { _gateAudit('出口闸', 'tombstoned', it.title); return false; } return true; });
-    } catch (e) {}
     const lim = Math.min(500, parseInt(limit || '200', 10) || 200);
     return res.json({ ok: true, count: items.length, items: items.slice(0, lim) });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6961,76 +6542,18 @@ app.delete('/api/intel/:id', authMiddleware, async (req, res) => {
 });
 
 /* 前端删除落碑接口（2026-08-22）：前端预警的 id 未必是服务器行 id，
- * 前端删除时把 标题+译文标题+链接 POST 过来——立碑 + 全库清除命中行。
- * 2026-08-29 终局删除升级（伦敦使馆旧闻"删都删不掉"根因⑤）：
- *  旧版只 DELETE intel_data 精确匹配行——译文措辞漂移即漏删，且
- *  归档库/拦截池/预警队列/文件缓存全不清，旧文从任一残留处复活。
- *  现按墓碑键（归一化标题+URL+核心实体键）JS 侧模糊匹配，五库全清。 */
+ * 前端删除时把 标题+译文标题+链接 POST 过来——立碑 + 顺手清掉库里现存的同标题/同链接行。 */
 app.post('/api/intel-tombstone', authMiddleware, async (req, res) => {
   try {
     const b = req.body || {};
     const t = String(b.title || '').trim(), tz = String(b.title_zh || '').trim(), u = String(b.url || '').trim();
     if (!t && !tz && !u) return res.status(400).json({ error: 'title/title_zh/url 至少给一个' });
-    /* 2026-08-29 英文原标题同碑：采集器先见英文原文后译中文，译文措辞漂移会让
-     * 中文标题键失效；英文原标题是同一文章跨通道/跨译文的最稳指纹。
-     * 从活跃库+归档库现存同文行收割 title_en 一并立碑。 */
-    try {
-      const { rows: enRows } = await query(
-        `SELECT DISTINCT data_json->>'title_en' AS ten FROM intel_data
-         WHERE (($1 <> '' AND title = $1) OR ($2 <> '' AND data_json->>'title_zh' = $2) OR ($3 <> '' AND data_json->>'url' = $3)) AND NULLIF(data_json->>'title_en','') IS NOT NULL
-         UNION
-         SELECT DISTINCT data_json->>'title_en' AS ten FROM intel_archive
-         WHERE (($1 <> '' AND title = $1) OR ($2 <> '' AND data_json->>'title_zh' = $2) OR ($3 <> '' AND data_json->>'url' = $3)) AND NULLIF(data_json->>'title_en','') IS NOT NULL`,
-        [t, tz, u]);
-      for (const r of enRows) { if (r.ten) await _addTombstone(r.ten, '', ''); }
-    } catch (e) { console.warn('[TOMBSTONE] 英文标题收割失败:', e.message); }
     await _addTombstone(t, tz, u);
-    const tb = await _getTombstones();
-    const removed = { intel_data: 0, intel_archive: 0, intel_sidepool: 0, alerts: 0, cache: 0 };
-    const _hit = it => _tombMatchSync(tb, it) || (u && String((it && (it.url || it.link)) || '') === u);
-    /* ① 活跃库 intel_data（含译文变体模糊匹配） */
-    try {
-      const { rows } = await query(`SELECT id, title, data_json FROM intel_data`);
-      const ids = rows.filter(r => _hit({ title: r.title, title_zh: (r.data_json || {}).title_zh, url: (r.data_json || {}).url })).map(r => r.id);
-      if (ids.length) { const d = await query(`DELETE FROM intel_data WHERE id = ANY($1)`, [ids]); removed.intel_data = d.rowCount || 0; }
-    } catch (e) { console.warn('[TOMBSTONE] 清 intel_data 失败:', e.message); }
-    /* ② 归档库 intel_archive（滚动归档会把已删行搬进归档，旧版从不清理） */
-    try {
-      const { rows } = await query(`SELECT id, title, data_json FROM intel_archive`);
-      const ids = rows.filter(r => _hit({ title: r.title, title_zh: (r.data_json || {}).title_zh, url: (r.data_json || {}).url })).map(r => r.id);
-      if (ids.length) { const d = await query(`DELETE FROM intel_archive WHERE id = ANY($1)`, [ids]); removed.intel_archive = d.rowCount || 0; }
-    } catch (e) { console.warn('[TOMBSTONE] 清 intel_archive 失败:', e.message); }
-    /* ③ 拦截池 intel_sidepool */
-    try {
-      const { rows } = await query(`SELECT id, title, title_zh, url FROM intel_sidepool`);
-      const ids = rows.filter(r => _hit({ title: r.title, title_zh: r.title_zh, url: r.url })).map(r => r.id);
-      if (ids.length) { const d = await query(`DELETE FROM intel_sidepool WHERE id = ANY($1)`, [ids]); removed.intel_sidepool = d.rowCount || 0; }
-    } catch (e) { console.warn('[TOMBSTONE] 清 intel_sidepool 失败:', e.message); }
-    /* ④ 预警队列 datahub alerts（权威合并会保留 72h，不清则前端每次重载复活） */
-    try {
-      const cur = await query(`SELECT data_json FROM datahub_store WHERE collection='alerts'`);
-      const arr = (cur.rows.length && Array.isArray(cur.rows[0].data_json)) ? cur.rows[0].data_json : [];
-      const kept = arr.filter(a => a && !_hit(a));
-      if (kept.length !== arr.length) {
-        await query(`INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ('alerts',$1,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$1, updated_at=NOW()`, [JSON.stringify(kept)]);
-        removed.alerts = arr.length - kept.length;
-      }
-    } catch (e) { console.warn('[TOMBSTONE] 清预警队列失败:', e.message); }
-    /* ⑤ 公开文件缓存（.cache/*.json，无 PG 时前端公开通道的数据源） */
-    try {
-      const files = (fs.existsSync(CACHE_DIR) ? fs.readdirSync(CACHE_DIR) : []).filter(f => f.endsWith('.json') && !f.startsWith('_'));
-      for (const f of files) {
-        const fp = path.join(CACHE_DIR, f);
-        try {
-          const arr = JSON.parse(fs.readFileSync(fp, 'utf8'));
-          if (!Array.isArray(arr) || !arr.length) continue;
-          const kept = arr.filter(it => it && !_hit(it));
-          if (kept.length !== arr.length) { fs.writeFileSync(fp, JSON.stringify(kept), 'utf8'); removed.cache += arr.length - kept.length; }
-        } catch (e2) {}
-      }
-    } catch (e) { console.warn('[TOMBSTONE] 清缓存失败:', e.message); }
-    console.log('[TOMBSTONE] 终局删除: ' + JSON.stringify(removed) + ' | ' + String(t || tz || u).slice(0, 50));
-    res.json({ ok: true, removed });
+    const d = await query(
+      `DELETE FROM intel_data WHERE ($1 <> '' AND title = $1) OR ($2 <> '' AND data_json->>'title_zh' = $2) OR ($2 <> '' AND title = $2) OR ($3 <> '' AND data_json->>'url' = $3)`,
+      [t, tz, u]
+    );
+    res.json({ ok: true, removed: d.rowCount || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -7116,14 +6639,8 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
         }
       } catch (e) {}
       const before = data.length;
-      /* 2026-08-29 墓碑写入闸（伦敦使馆旧闻复活根因④）：上面的"旧闻不盖新戳"对照
-       * 依赖 intel_data 存留行——而删除恰恰把对照证据删光，导致已删旧文盖新戳长驱直入。
-       * 墓碑表才是删除的持久证据，任何客户端写入一律先查墓碑。 */
-      let _tbPut = null;
-      try { _tbPut = await _getTombstones(); } catch (e) {}
       data = data.filter(a => {
         if (!a) return false;
-        if (_tbPut && _tombMatchSync(_tbPut, a)) { _gateAudit('写入闸', 'tombstoned', a.title); return false; }
         const txt = String(a.title || '') + String(a.title_zh || '');
         if (!a.url && _POST_BLOCK_RE.test(txt)) { _gateAudit('写入闸', 'blacklist', a.title); return false; }
         const pt = pgTime[String(a.id)];
@@ -7160,10 +6677,6 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
           if (clientIds.has(String(a.id || ''))) return false; /* 客户端已带同 id 新副本 */
           const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
           if (t && now2 - t > 72 * 3600 * 1000) return false; /* 超 72h 不保留 */
-          /* 2026-08-29 删除保留豁免（根因④）：客户端删除后本地列表不含该条，
-           * 权威合并却把它当"服务端独有、72h 内"保留——删除的预警 72h 内反复回灌复活。
-           * 墓碑命中的一律不保留。 */
-          if (_tbPut && _tombMatchSync(_tbPut, a)) { _gateAudit('写入闸', 'tomb-keep', a.title); return false; }
           return true;
         });
         for (const a of preserved.concat(data)) {

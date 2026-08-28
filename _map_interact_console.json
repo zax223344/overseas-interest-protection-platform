@@ -1,0 +1,802 @@
+[
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23749"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 中国尼泊尔山洪暴发，98人死亡，数百人失踪-AL.com | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23674"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 尼泊尔-中国边境发生大规模山洪暴发后，数百人失踪，许多人担心死亡- WKOW | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23630"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 在尼泊尔和中国发生山洪暴发后，至少有98人死亡，300多名游客失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔和中国发生山洪暴发，至少75人死亡，数百人失踪 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 尼泊尔和中国发生山洪暴发，至少75人死亡，数百人失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23664"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 中国尼泊尔山洪暴发，至少98人死亡，数百人失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔-中国边境遭遇大规模山洪暴发，数百名游客失踪 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 尼泊尔-中国边境遭遇大规模山洪暴发，数百名游客失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23706"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 俄远东天然气化工项目火灾死亡人数升至7人 新华社符拉迪沃斯托克8月26日电（记者孙萍）位于俄罗斯远东 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 山体滑坡席卷中国-尼泊尔边境造成重大伤亡-南华早报 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 山体滑坡席卷中国-尼泊尔边境造成重大伤亡-南华早报 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23704"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 在尼泊尔和中国的山洪暴发后，至少有98人死亡，数百人失踪- PBS | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23776"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23775"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 巴尔塞纳提出法案，将环境正义置于墨西哥法律的核心 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 巴尔塞纳提出法案，将环境正义置于墨西哥法律的核心 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 警方调查与英格兰保龄球手被捕有关的袭击指控"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23730"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 警方调查与英格兰保龄球手被捕有关的袭击指控 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23710"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23670"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: Situationer: Unanswered questions linger | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: Situationer: Unanswered questions linger hours aft | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 无利益关联不入预警中心(已停用): 研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关- Gizmodo"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关- Gizmodo"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23726"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关- Gizmodo | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 日本驻伊朗冲突与外交特使"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23693"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 日本驻伊朗冲突与外交特使 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗冲突如何影响住房需求- HousingWire"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23677"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 伊朗冲突如何影响住房需求- HousingWire | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 无利益关联不入预警中心(已停用): 14名新生儿在巴基斯坦首都医院火灾中丧生"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 14名新生儿在巴基斯坦首都医院火灾中丧生"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23663"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 14名新生儿在巴基斯坦首都医院火灾中丧生 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 乌克兰在冲突中肯定会失败-克里姆林宫"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23609"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 乌克兰在冲突中肯定会失败-克里姆林宫 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23669"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23660"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23659"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23658"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 14名婴儿在伊斯兰堡的Pims Gyphilian病房火灾中丧生 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 14名婴儿在伊斯兰堡的Pims Gyphilian病房火灾中丧生 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 无利益关联不入预警中心(已停用): 海地帮派袭击：对警察失败的愤怒-法国24"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 海地帮派袭击：对警察失败的愤怒-法国24"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23621"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 海地帮派袭击：对警察失败的愤怒-法国24 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 乌克兰冲突：英国允许乌克兰SCALP EG生产"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23613"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 乌克兰冲突：英国允许乌克兰SCALP EG生产 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 基苏穆记者网络谴责对报道荷马湾集会的记者的袭击 | reason=domestic-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 气候变化会成为欧洲的下一个公共财政危机吗？ | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 巴基斯坦驳斥印度恐怖主义指控为宣传 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 视频显示了以色列占领军袭击了塔赫一家后留下的破坏 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 以色列占领军在袭击Dima Amin博士在被占领的西岸拉马拉的家后将她绑架。 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 警方称，孟买海军水手在自杀前杀死了妻子和两个孩子 | reason=topic-noise"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 《看不见的危机：四场战争如何造就一场粮食危机》 | reason=china-domestic"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 心脏移植挽救了40岁的心脏病发作后，他的心脏功能在15% | reason=topic-noise"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 索科托袭击：“我的孩子差点死了”-新妈妈讲述了苦难 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: &#8216;人们欺骗的幻想破灭：Kashmera在Govinda-Sunita | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 阿富汗喀布尔一学校门前发生爆炸 多人受伤 新华社喀布尔8月17日电（记者李昂）阿 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 巴基斯坦拒绝将其与在印度境内活动的“恐怖主义”团伙联系起来的指控 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: ISPR揭露印度试图通过高度戏剧化的纪录片歪曲事实 | reason=domestic-edu-tech-noise"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: Mihir Ahuja，萨费德萨加尔的光头，在1921年拍摄：G-部队是如此之高 | reason=domestic-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 索马里：海盗劫持商船 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 索马里海盗劫持一艘驶往首都的油轮 | 2026-08-18"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: Twisha Sharma死亡：AIIMS德里发现“没有伤害暗示攻击” | reason=domestic-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 在阿富汗大使馆，塔利班外交官纪念“胜利日”5周年 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: Ukum攻击：Aondoakaa要求采取紧急行动，Benue厌倦了计算尸体 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 制止对记者的攻击 | reason=domestic-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[AUTOSYNC] 分发 20 条"
+  },
+  {
+    "type": "warning",
+    "text": "[TRANSLATOR] 在线翻译失败，降级内置词典: 请求超时(15s)"
+  },
+  {
+    "type": "warning",
+    "text": "[TRANSLATOR] 在线翻译失败，降级内置词典: signal timed out"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 白宫抨击CNN记者质疑特朗普助手 | reason=domestic-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 九人在Zamfara的部队挫败绑架中获救 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 俄罗斯劫持赫尔松平民 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 部队在Zamfara挫败大规模绑架企图，救援9 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 特朗普威胁要轰炸阿曼，如果它妨碍伊朗交易的话https://www.scmp.c | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 库什纳：我们有重建加沙的计划，但在非军事化发生之前，我们不会允许加沙重建 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 乌克兰第49独立突击营“Karpatska Sich”的士兵向一个罗斯的地下室投 | 2026-07-04"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 美国遣返3名逃犯在墨西哥面临指控 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 据悉，今天17时25分，乌克兰空军宣布，“Banderol”游荡性弹药正前往 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 特朗普：被释放的传教士人质回到美国 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 一名巴勒斯坦裔美国人在定居者的围困下回到他在约旦河西岸的家 | reason=foreign-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 两名涉嫌绑架者在贝努埃追捕受害者时被捕 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 军队加强了Kebbe的安全，发誓不会为Lakurawa提供安全避难所 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: Jumma Khan Fateh在塔利班面前放下武器 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 水危机，创造了一个蓬勃发展的业务在博梅特 | reason=domestic-irrelevant"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 上一篇：Mathare绑架：证人保护老板被传唤 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 伊斯兰堡突袭揭露涉及外国公民的色情球拍 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 超过24小时旧闻不入最新预警: 索马里海盗劫持货船 | 2026-08-17"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 英国将庆祝第一个恐怖主义受害者和幸存者国家日。 | reason=domestic-edu-tech-noise"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 拦截非海外利益安全条目: 部队在Zamfara挫败大规模绑架 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[AUTOSYNC] 分发 20 条"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 蓝色提示级不入预警中心: 俄罗斯正在升级混合攻击，欧洲没有答案"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST ✓] 实时分发: 据报道，尼泊尔与中国边境发生山洪暴发后，数百人失踪 (尼泊尔 / yellow)"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 俄乌无涉华关联不入预警中心: 伊朗战争接近乌克兰式的僵局，航运老板说"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 蓝色提示级不入预警中心: 乌克兰授予马斯克奖章，因为它寻求Starlink批准"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 蓝色提示级不入预警中心: 黄金，航班，加密货币：美国誓言要追求的不仅仅是伊朗的石油"
+  },
+  {
+    "type": "log",
+    "text": "[INGEST-GATE] 蓝色提示级不入预警中心: 叙利亚库尔德人领导的民兵组织解散，以推动美国支持的政府"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23749"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 中国尼泊尔山洪暴发，98人死亡，数百人失踪-AL.com | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23674"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 尼泊尔-中国边境发生大规模山洪暴发后，数百人失踪，许多人担心死亡- WKOW | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23630"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 在尼泊尔和中国发生山洪暴发后，至少有98人死亡，300多名游客失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔和中国发生山洪暴发，至少75人死亡，数百人失踪 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 尼泊尔和中国发生山洪暴发，至少75人死亡，数百人失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23664"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 中国尼泊尔山洪暴发，至少98人死亡，数百人失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔-中国边境遭遇大规模山洪暴发，数百名游客失踪 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 尼泊尔-中国边境遭遇大规模山洪暴发，数百名游客失踪 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23706"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 俄远东天然气化工项目火灾死亡人数升至7人 新华社符拉迪沃斯托克8月26日电（记者孙萍）位于俄罗斯远东 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 山体滑坡席卷中国-尼泊尔边境造成重大伤亡-南华早报 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 山体滑坡席卷中国-尼泊尔边境造成重大伤亡-南华早报 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23704"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 在尼泊尔和中国的山洪暴发后，至少有98人死亡，数百人失踪- PBS | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23776"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23775"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 巴尔塞纳提出法案，将环境正义置于墨西哥法律的核心 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 巴尔塞纳提出法案，将环境正义置于墨西哥法律的核心 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 警方调查与英格兰保龄球手被捕有关的袭击指控"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23730"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 警方调查与英格兰保龄球手被捕有关的袭击指控 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23710"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23670"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: Situationer: Unanswered questions linger | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: Situationer: Unanswered questions linger hours aft | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 无利益关联不入预警中心(已停用): 研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关- Gizmodo"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关- Gizmodo"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23726"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 研究发现，糖替代品木糖醇与心脏病发作、中风和死亡的高风险有关- Gizmodo | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 日本驻伊朗冲突与外交特使"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23693"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 日本驻伊朗冲突与外交特使 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗冲突如何影响住房需求- HousingWire"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23677"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 伊朗冲突如何影响住房需求- HousingWire | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 无利益关联不入预警中心(已停用): 14名新生儿在巴基斯坦首都医院火灾中丧生"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 14名新生儿在巴基斯坦首都医院火灾中丧生"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23663"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 14名新生儿在巴基斯坦首都医院火灾中丧生 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 乌克兰在冲突中肯定会失败-克里姆林宫"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23609"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 乌克兰在冲突中肯定会失败-克里姆林宫 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23669"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23660"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23659"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23658"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 拦截非海外利益安全条目: 14名婴儿在伊斯兰堡的Pims Gyphilian病房火灾中丧生 | reason=domestic-junk"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 14名婴儿在伊斯兰堡的Pims Gyphilian病房火灾中丧生 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 无利益关联不入预警中心(已停用): 海地帮派袭击：对警察失败的愤怒-法国24"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 海地帮派袭击：对警察失败的愤怒-法国24"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23621"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 海地帮派袭击：对警察失败的愤怒-法国24 | LIVE_ALERTS: 18→18"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] 蓝色提示级不入预警中心(已停用): 乌克兰冲突：英国允许乌克兰SCALP EG生产"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-GATE] ID重复拦截: 23613"
+  },
+  {
+    "type": "log",
+    "text": "[LIVE-DIAG] 被拦截: 乌克兰冲突：英国允许乌克兰SCALP EG生产 | LIVE_ALERTS: 18→18"
+  }
+]

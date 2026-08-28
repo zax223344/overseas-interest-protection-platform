@@ -1,0 +1,335 @@
+trial create 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4IiwidXNlcm5hbWUiOiJ0ZXN0X3B3Xzg0MTMxMyIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzg3ODQxMzEzLCJleHAiOjE3ODg0NDYxMTN9.uA5utD5MxqvJFQ6TUImmpIh_6V2YMR2Nh5q8
+login 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4IiwidXNlcm5hbWUiOiJ0ZXN0X3B3Xzg0MTMxMyIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzg3ODQxMzEzLCJleHAiOjE3ODg0NDYxMTN9.uA5utD5MxqvJFQ6TUImmpIh_6V2YMR2Nh5q8
+ui login
+[console log] [EMERGENCY-PURGE] 全量清洗: 删除 0 条, keys=
+[console log] [GLOBAL_MEDIA] loaded 2286 sources
+[console log] [APIClient] 初始化完成, 后端地址: http://127.0.0.1:3000
+[console log] [APIClient] 后端在线 (PostgreSQL 已连接)
+[console log] [OK] navigateTo 已定义，类型: function
+[console log] [initApp] 内存状态已重置: LIVE_ALERTS=0
+[console log] [initApp] 蓝色级别清理完成: ALERTS=0 EVENTS=0 TERROR_EVENTS=0
+[console log] [DBCenter] 版本变更:  → 22.0，重建数据库
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: BLA袭击瓜达尔港检查站，中资项目就地避险 | 2026-07-07
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 青年党袭击酒店，距中国使馆500米 | 2026-07-05
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: M23逼近戈马，300余名中方人员紧急撤离 | 2026-07-04
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 喀土穆中资项目营地遭炮击，2名中方人员受伤 | 2026-06-30
+[console log] [INGEST-GATE] 拦截非海外利益安全条目: 果敢同盟军攻占木姐口岸，中缅贸易中断 | reason=china-domestic
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: ISKP发布针对中国公民威胁视频 | 2026-06-29
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: JNIM连环袭击逼近中资矿区 | 2026-06-25
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 中资铁路项目营地遭抢劫 | 2026-06-20
+[console log] [INGEST-GATE] 拦截非海外利益安全条目: 中资渔业公司码头遭黑帮封锁 | reason=china-domestic
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 比索暴跌致中资项目美元汇出冻结 | 2026-06-10
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 大罢工致中资成衣厂停工 | 2026-06-08
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 军政府审查中资铀矿合作项目 | 2026-06-05
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: BLA绑架处决劳工，中巴经济走廊安全堪忧 | 2026-05-28
+[console log] [INGEST-GATE] 拦截非海外利益安全条目: 里拉暴跌致中资项目成本飙升 | reason=china-domestic
+[console log] [INGEST-GATE] 拦截非海外利益安全条目: 华为5G设备被禁，面临3亿美元损失 | reason=foreign-irrelevant
+[console log] [ENTERPRISE_DB] Initialized v1.0 with 37 projects
+[console log] [MIGRATE] 采集库→数据中心 去重并入 15 条
+[console log] [SEED-ALL] 归集 0 条，过滤 15 条 {系统预警库: Object, 系统事件库: Object, 实时情报流: Object, 涉华安全事件库: Object}
+[console log] [PURGE] 已清除 localStorage 旧假数据键
+[console log] [initApp] 完成，SITUATION.init 已异步启动
+[console log] [LIVE] ===== 实时情报引擎启动 ===== (token:已登录)
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 尼泊尔-中国边境山洪暴发后至少160人死亡，数百人失踪
+[console log] [INGEST ✓] 实时分发: 尼泊尔-中国边境山洪暴发后至少160人死亡，数百人失踪 (尼泊尔 / orange)
+[console log] [INGEST DEDUP] 事件级去重跳过: 中国尼泊尔山洪暴发，至少160人死亡，更多人失踪
+[console log] [INGEST DEDUP] 事件级去重跳过: 在尼泊尔和中国，至少有160人在喜马拉雅边境地区的山洪暴发中丧生。尼泊尔当局说，
+[console log] [INGEST DEDUP] 事件级去重跳过: 中国尼泊尔山洪暴发，98人死亡，数百人失踪-AL.com
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔-中国边境发生大规模山洪暴发后，数百人失踪，许多人担心死亡- WKOW
+[console log] [INGEST DEDUP] 事件级去重跳过: 在尼泊尔和中国发生山洪暴发后，至少有98人死亡，300多名游客失踪
+[console log] [INGEST DEDUP] 事件级去重跳过: 中国尼泊尔山洪暴发，至少98人死亡，数百人失踪
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 阿穆尔天然气化工厂发生大火，6名中国公民死亡，9人失踪，1名俄罗斯人死亡-唤醒新
+[console log] [INGEST ✓] 实时分发: 阿穆尔天然气化工厂发生大火，6名中国公民死亡，9人失踪，1名 (俄罗斯 / orange)
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 希拉里克林顿说，印度，中国可以帮助特朗普通过外交解决西亚冲突
+[console log] [INGEST ✓] 实时分发: 希拉里克林顿说，印度，中国可以帮助特朗普通过外交解决西亚冲突 (印度 / yellow)
+[console log] [INGEST DEDUP] 事件级去重跳过: 俄远东天然气化工项目火灾死亡人数升至7人 新华社符拉迪沃斯托克8月26日电（记者
+[console log] [INGEST DEDUP] 事件级去重跳过: 在尼泊尔和中国的山洪暴发后，至少有98人死亡，数百人失踪- PBS
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 一名地区官员被控在造成97人死亡的渡轮灾难中杀人
+[console log] [INGEST ✓] 实时分发: 一名地区官员被控在造成97人死亡的渡轮灾难中杀人 (津巴布韦 / orange)
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 保霍尔马斯巴特的渡轮旅行因哈巴加特而取消
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 在利雅得工厂火灾中丧生的9名孟加拉国人的尸体抵达
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 马拉维人在SA的非正常死亡引起了警报
+[console log] [INGEST ✓] 实时分发: 马拉维人在SA的非正常死亡引起了警报 (南非 / orange)
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 巴基斯坦结束伊朗-美国冲突的“新”建议-聚焦外交政策
+[console log] [INGEST ✓] 实时分发: 巴基斯坦结束伊朗-美国冲突的“新”建议-聚焦外交政策 (巴基斯坦 / yellow)
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔山洪死亡人数增至162人
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 霍尔木兹海峡油轮被不明炮弹击中后起火
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 巴基斯坦婴儿病房火灾的破坏显示
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 叙利亚会不会成为以土冲突的焦点？
+[console log] [INGEST ✓] 实时分发: 叙利亚会不会成为以土冲突的焦点？ (叙利亚 / yellow)
+[console log] [INGEST DEDUP] 事件级去重跳过: 巴基斯坦医院托儿所发生火灾，造成14名新生儿死亡
+[console log] [INGEST ✓] 实时分发: 奎达卡奇拉克地区：枪击后发现受折磨尸体--俾路支省脉动 (巴基斯坦 / orange)
+[console log] [INGEST-GATE] 无利益关联不入预警中心: CYMEPA呼吁公民参与METAVASEA调查
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 霍尔木兹海峡航运量略有上升
+[console log] [INGEST-GATE] 无利益关联不入预警中心: 特朗普表示，由于伊朗承认紧张局势，他并不急于谈判
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 苏丹港囚犯暂停绝食至周日
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC非洲
+[console log] [INGEST ✓] 实时分发: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡” (全球 / yellow)
+[console log] [INGEST-GATE] 无利益关联不入预警中心: Oladipo的死亡，媒体行业的痛苦损失- Tinubu，Sanwo-Olu，U
+[console log] [INGEST DEDUP] 事件级去重跳过: 巴基斯坦调查人员访问医院托儿所，火灾造成14名新生儿死亡
+[console log] [INGEST ✓] 实时分发: 上午回顾：Atiku-Tinubu冲突扩大，Dangote威 (尼日利亚 / yellow)
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: CAAM官员在斗湖的RXZ撞车后死亡
+[console log] [INGEST ✓] 实时分发: CAAM官员在斗湖的RXZ撞车后死亡 (马来西亚 / orange)
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: “未知射弹”击中油轮，在霍尔木兹引起火灾：英国海事局
+[console log] [INGEST-GATE] 无利益关联不入预警中心: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个正常运作的海峡&apos;
+[console log] [INGEST DEDUP] 事件级去重跳过: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 根据与阿曼的潜在协议，伊朗不允许任何军用船只进入霍尔木兹
+[console log] [INGEST DEDUP] 事件级去重跳过: 世界哀悼巴基斯坦医院火灾造成14名新生儿死亡
+[console log] [INGEST ✓] 实时分发: 英国第二季度旅游达到新的高度，尽管伊朗冲突-航空周 (伊朗 / yellow)
+[console log] [INGEST DEDUP] 事件级去重跳过: 目击者说，巴基斯坦医院的门“关闭”，火灾造成14名婴儿死亡
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 在最近的老虎袭击死亡事件中，TN的Gudalur奶牛死亡引发了新的恐慌-新印度快
+[console log] [INGEST ✓] 实时分发: 在最近的老虎袭击死亡事件中，TN的Gudalur奶牛死亡引发 (印度 / orange)
+[console log] [INGEST DEDUP] 事件级去重跳过: 总理塔里克哀悼尼泊尔山洪暴发的死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: “我不着急”：特朗普表示，他对伊朗重返谈判“没有时间表”
+[console log] [INGEST ✓] 实时分发: 安保人员抗议Osun民意调查未支付职务津贴 (尼日利亚 / yellow)
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 韩国寻求在新蓝图下加速航运的绿色转型
+[console log] [INGEST-GATE] 无利益关联不入预警中心: 阿尔及利亚野火死亡人数上升至12人
+[console log] [INGEST DEDUP] 事件级去重跳过: 澳航利润降至四年来最低，因为伊朗冲突后航空燃料成本攀升
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: 索科托袭击：士兵杀死几个土匪，发动空中行动
+[console log] [INGEST ✓] 实时分发: 索科托袭击：士兵杀死几个土匪，发动空中行动 (尼日利亚 / yellow)
+[console log] [INGEST DEDUP] 事件级去重跳过: 随着伊朗冲突的继续，海军计划扩大航母部署，CNO，MCPON说- USNI新闻
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 伊朗阿曼拟在霍尔木兹建安全通道 ， 伊朗副外长 ： 重开海峡 ， 美国必须纠错并
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 旅游业将在今年剩余时间保持弹性
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 美国盟友警告说，尽管特朗普声称，霍尔木兹仍被开采
+[console log] [INGEST ✓] 实时分发: 伊朗在霍尔木兹海峡袭击另一艘船。美国自1979年以来首次历史 (美国 / yellow)
+[console log] [INGEST-GATE] 俄乌无涉华关联不入预警中心: 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的
+[console log] [INGEST DEDUP] ALERTS 已存在同标题记录，合并: EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO
+[console log] [INGEST ✓] 实时分发: EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度-  (伊朗 / yellow)
+[console log] [INGEST DEDUP] 事件级去重跳过: 警方调查与英格兰保龄球手被捕有关的袭击指控
+[console log] [INGEST-GATE] 蓝色提示级不入预警中心: 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻
+[console log] [INGEST DEDUP] 事件级去重跳过: 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 14名新生儿在巴基斯坦首都医院火灾中丧生 | 2026-08-26
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作 | 2026-08-26
+[console log] [INGEST DEDUP] 事件级去重跳过: 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯 | 2026-08-26
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击 | 2026-08-26
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 海地帮派袭击：对警察失败的愤怒-法国24 | 2026-08-26
+[console log] [INGEST-GATE] 超过24小时旧闻不入最新预警: 乌克兰冲突：英国允许乌克兰SCALP EG生产 | 2026-08-26
+[console log] [INGEST DEDUP] 事件级去重跳过: 乌克兰在冲突中肯定会失败-克里姆林宫
+[console log] [RISK_FUSION] 数据入库触发融合: 281条匹配
+[console log] [INIT] 公开态势缓存加载: 64 条
+[console log] [AUTOSYNC] 分发 20 条
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔山洪死亡人数增至177人
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔山洪造成至少162人死亡 数百人失联
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔山洪死亡人数增至177人
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔山洪死亡人数升至165人
+[console log] [AUTOSYNC] 分发 20 条
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔-中国边境附近的泥石流造成至少157人死亡- WRAL | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 尼泊尔-中国边境附近的泥石流造成至少157人死亡- WRAL | LIVE_ALERTS: 0→0
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔-中国边境山洪暴发后至少160人死亡，数百人失踪
+[console log] [LIVE #1] ✓ 尼泊尔-中国边境山洪暴发后至少160人死亡，数百人失踪
+[console log] [LIVE-GATE] 拦截超24h旧闻: 中国尼泊尔山洪暴发，至少160人死亡，更多人失踪
+[console log] [LIVE-DIAG] 被拦截: 中国尼泊尔山洪暴发，至少160人死亡，更多人失踪 | LIVE_ALERTS: 1→1
+[console log] [LIVE-GATE] 24h模糊去重合并(ALERTS): 在尼泊尔和中国，至少有160人在喜马拉雅边境地区的山洪暴发中丧生。尼泊尔当局说，在尼泊尔，至少有157人死亡，403人失踪。在中国，至少有265人失踪。-facebook.com
+[console log] [LIVE-DIAG] 被拦截: 在尼泊尔和中国，至少有160人在喜马拉雅边境地区的山洪暴发中丧生。尼泊尔当局说，在尼泊尔，至少有15 | LIVE_ALERTS: 1→1
+[console log] [INGEST DEDUP] 事件级去重跳过: 中国尼泊尔山洪暴发，98人死亡，数百人失踪-AL.com
+[console log] [LIVE #2] ✓ 中国尼泊尔山洪暴发，98人死亡，数百人失踪-AL.com
+[console log] [LIVE-GATE] 拦截超24h旧闻: 尼泊尔-中国边境发生大规模山洪暴发后，数百人失踪，许多人担心死亡- WKOW
+[console log] [LIVE-DIAG] 被拦截: 尼泊尔-中国边境发生大规模山洪暴发后，数百人失踪，许多人担心死亡- WKOW | LIVE_ALERTS: 2→2
+[console log] [LIVE-GATE] 拦截超24h旧闻: 在尼泊尔和中国发生山洪暴发后，至少有98人死亡，300多名游客失踪
+[console log] [LIVE-DIAG] 被拦截: 在尼泊尔和中国发生山洪暴发后，至少有98人死亡，300多名游客失踪 | LIVE_ALERTS: 2→2
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔和中国发生山洪暴发，至少75人死亡，数百人失踪 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 尼泊尔和中国发生山洪暴发，至少75人死亡，数百人失踪 | LIVE_ALERTS: 2→2
+[console log] [LIVE-GATE] 拦截超24h旧闻: 中国尼泊尔山洪暴发，至少98人死亡，数百人失踪
+[console log] [LIVE-DIAG] 被拦截: 中国尼泊尔山洪暴发，至少98人死亡，数百人失踪 | LIVE_ALERTS: 2→2
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 尼泊尔-中国边境遭遇大规模山洪暴发，数百名游客失踪 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 尼泊尔-中国边境遭遇大规模山洪暴发，数百名游客失踪 | LIVE_ALERTS: 2→2
+[console log] [INGEST DEDUP] 事件级去重跳过: 阿穆尔天然气化工厂发生大火，6名中国公民死亡，9人失踪，1名俄罗斯人死亡-唤醒新
+[console log] [LIVE #3] ✓ 阿穆尔天然气化工厂发生大火，6名中国公民死亡，9人失踪，1名俄罗斯人死亡-唤醒新加坡
+[console log] [INGEST DEDUP] 事件级去重跳过: 希拉里克林顿说，印度，中国可以帮助特朗普通过外交解决西亚冲突
+[console log] [LIVE #4] ✓ 希拉里克林顿说，印度，中国可以帮助特朗普通过外交解决西亚冲突
+[console log] [LIVE-GATE] 拦截超24h旧闻: 俄远东天然气化工项目火灾死亡人数升至7人 新华社符拉迪沃斯托克8月26日电（记者
+[console log] [LIVE-DIAG] 被拦截: 俄远东天然气化工项目火灾死亡人数升至7人 新华社符拉迪沃斯托克8月26日电（记者孙萍）位于俄罗斯远东 | LIVE_ALERTS: 4→4
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 山体滑坡席卷中国-尼泊尔边境造成重大伤亡-南华早报 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 山体滑坡席卷中国-尼泊尔边境造成重大伤亡-南华早报 | LIVE_ALERTS: 4→4
+[console log] [LIVE-GATE] 拦截超24h旧闻: 在尼泊尔和中国的山洪暴发后，至少有98人死亡，数百人失踪- PBS
+[console log] [LIVE-DIAG] 被拦截: 在尼泊尔和中国的山洪暴发后，至少有98人死亡，数百人失踪- PBS | LIVE_ALERTS: 4→4
+[console log] [INGEST DEDUP] 事件级去重跳过: 一名地区官员被控在造成97人死亡的渡轮灾难中杀人
+[console log] [LIVE #5] ✓ 一名地区官员被控在造成97人死亡的渡轮灾难中杀人
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 现场：尼泊尔山体滑坡至少造成160人死亡，400名游客失踪 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 现场：尼泊尔山体滑坡至少造成160人死亡，400名游客失踪 | LIVE_ALERTS: 5→5
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 保霍尔马斯巴特的渡轮旅行因哈巴加特而取消
+[console log] [INGEST DEDUP] 事件级去重跳过: 保霍尔马斯巴特的渡轮旅行因哈巴加特而取消
+[console log] [LIVE #6] ✓ 保霍尔马斯巴特的渡轮旅行因哈巴加特而取消
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 在利雅得工厂火灾中丧生的9名孟加拉国人的尸体抵达
+[console log] [INGEST DEDUP] 事件级去重跳过: 在利雅得工厂火灾中丧生的9名孟加拉国人的尸体抵达
+[console log] [LIVE #7] ✓ 在利雅得工厂火灾中丧生的9名孟加拉国人的尸体抵达
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 马拉维人在SA的非正常死亡引起了警报
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 马拉维人在SA的非正常死亡引起了警报
+[console log] [INGEST DEDUP] 事件级去重跳过: 马拉维人在SA的非正常死亡引起了警报
+[console log] [LIVE #8] ✓ 马拉维人在SA的非正常死亡引起了警报
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 巴基斯坦结束伊朗-美国冲突的“新”建议-聚焦外交政策
+[console log] [INGEST DEDUP] 事件级去重跳过: 巴基斯坦结束伊朗-美国冲突的“新”建议-聚焦外交政策
+[console log] [LIVE #9] ✓ 巴基斯坦结束伊朗-美国冲突的“新”建议-聚焦外交政策
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 尼泊尔山洪死亡人数增至162人
+[console log] [INGEST DEDUP] 事件级去重跳过: 尼泊尔山洪死亡人数增至162人
+[console log] [LIVE #10] ✓ 尼泊尔山洪死亡人数增至162人
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: “NAB调查，滥用办公室”：Azaz Syed提出了有关领导PIMS火灾调查的官 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: “NAB调查，滥用办公室”：Azaz Syed提出了有关领导PIMS火灾调查的官员的问题 | LIVE_ALERTS: 10→10
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 霍尔木兹海峡油轮被不明炮弹击中后起火
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 霍尔木兹海峡油轮被不明炮弹击中后起火
+[console log] [INGEST DEDUP] 事件级去重跳过: 霍尔木兹海峡油轮被不明炮弹击中后起火
+[console log] [LIVE #11] ✓ 霍尔木兹海峡油轮被不明炮弹击中后起火
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 巴基斯坦婴儿病房火灾的破坏显示
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 巴基斯坦婴儿病房火灾的破坏显示
+[console log] [INGEST DEDUP] 事件级去重跳过: 巴基斯坦婴儿病房火灾的破坏显示
+[console log] [LIVE #12] ✓ 巴基斯坦婴儿病房火灾的破坏显示
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 叙利亚会不会成为以土冲突的焦点？
+[console log] [INGEST DEDUP] 事件级去重跳过: 叙利亚会不会成为以土冲突的焦点？
+[console log] [LIVE #13] ✓ 叙利亚会不会成为以土冲突的焦点？
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 巴基斯坦医院托儿所发生火灾，造成14名新生儿死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: 巴基斯坦医院托儿所发生火灾，造成14名新生儿死亡
+[console log] [LIVE #14] ✓ 巴基斯坦医院托儿所发生火灾，造成14名新生儿死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: 奎达卡奇拉克地区：枪击后发现受折磨尸体--俾路支省脉动
+[console log] [LIVE #15] ✓ 奎达卡奇拉克地区：枪击后发现受折磨尸体--俾路支省脉动
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): CYMEPA呼吁公民参与METAVASEA调查
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): CYMEPA呼吁公民参与METAVASEA调查
+[console log] [INGEST DEDUP] 事件级去重跳过: CYMEPA呼吁公民参与METAVASEA调查
+[console log] [LIVE #16] ✓ CYMEPA呼吁公民参与METAVASEA调查
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 霍尔木兹海峡航运量略有上升
+[console log] [INGEST DEDUP] 事件级去重跳过: 霍尔木兹海峡航运量略有上升
+[console log] [LIVE #17] ✓ 霍尔木兹海峡航运量略有上升
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 特朗普表示，由于伊朗承认紧张局势，他并不急于谈判
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 特朗普表示，由于伊朗承认紧张局势，他并不急于谈判
+[console log] [INGEST DEDUP] 事件级去重跳过: 特朗普表示，由于伊朗承认紧张局势，他并不急于谈判
+[console log] [LIVE #18] ✓ 特朗普表示，由于伊朗承认紧张局势，他并不急于谈判
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 苏丹港囚犯暂停绝食至周日
+[console log] [INGEST DEDUP] 事件级去重跳过: 苏丹港囚犯暂停绝食至周日
+[console log] [LIVE #19] ✓ 苏丹港囚犯暂停绝食至周日
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC非洲
+[console log] [INGEST DEDUP] 事件级去重跳过: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC非洲
+[console log] [LIVE #20] ✓ 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC非洲
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): Oladipo的死亡，媒体行业的痛苦损失- Tinubu，Sanwo-Olu，U
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): Oladipo的死亡，媒体行业的痛苦损失- Tinubu，Sanwo-Olu，U
+[console log] [INGEST DEDUP] 事件级去重跳过: Oladipo的死亡，媒体行业的痛苦损失- Tinubu，Sanwo-Olu，U
+[console log] [LIVE #21] ✓ Oladipo的死亡，媒体行业的痛苦损失- Tinubu，Sanwo-Olu，Uzodimma
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 巴基斯坦调查人员访问医院托儿所，火灾造成14名新生儿死亡
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 巴基斯坦调查人员访问医院托儿所，火灾造成14名新生儿死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: 巴基斯坦调查人员访问医院托儿所，火灾造成14名新生儿死亡
+[console log] [LIVE #22] ✓ 巴基斯坦调查人员访问医院托儿所，火灾造成14名新生儿死亡
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 上午回顾：Atiku-Tinubu冲突扩大，Dangote威胁石油出口，其他头条
+[console log] [LIVE-GATE] 24h模糊去重合并(ALERTS): 上午回顾：Atiku-Tinubu冲突扩大，Dangote威胁石油出口，其他头条新闻
+[console log] [LIVE-DIAG] 被拦截: 上午回顾：Atiku-Tinubu冲突扩大，Dangote威胁石油出口，其他头条新闻 | LIVE_ALERTS: 22→22
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): CAAM官员在斗湖的RXZ撞车后死亡
+[console log] [LIVE-GATE] 24h模糊去重合并(ALERTS): CAAM官员在斗湖的RXZ撞车后死亡
+[console log] [LIVE-DIAG] 被拦截: CAAM官员在斗湖的RXZ撞车后死亡 | LIVE_ALERTS: 22→22
+[console log] [INGEST DEDUP] 事件级去重跳过: “未知射弹”击中油轮，在霍尔木兹引起火灾：英国海事局
+[console log] [LIVE #23] ✓ “未知射弹”击中油轮，在霍尔木兹引起火灾：英国海事局
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 油轮袭击测试了特朗普声称霍尔木兹海峡是一个正常运作的海峡&apos;
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 油轮袭击测试了特朗普声称霍尔木兹海峡是一个正常运作的海峡&apos;
+[console log] [INGEST DEDUP] 事件级去重跳过: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个正常运作的海峡&apos;
+[console log] [LIVE #24] ✓ 油轮袭击测试了特朗普声称霍尔木兹海峡是一个正常运作的海峡&apos;
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC
+[console log] [INGEST DEDUP] 事件级去重跳过: 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC
+[console log] [LIVE #25] ✓ 油轮袭击测试了特朗普声称霍尔木兹海峡是一个“正常运作的海峡”- CNBC
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 根据与阿曼的潜在协议，伊朗不允许任何军用船只进入霍尔木兹
+[console log] [INGEST DEDUP] 事件级去重跳过: 根据与阿曼的潜在协议，伊朗不允许任何军用船只进入霍尔木兹
+[console log] [LIVE #26] ✓ 根据与阿曼的潜在协议，伊朗不允许任何军用船只进入霍尔木兹
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 世界哀悼巴基斯坦医院火灾造成14名新生儿死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: 世界哀悼巴基斯坦医院火灾造成14名新生儿死亡
+[console log] [LIVE #27] ✓ 世界哀悼巴基斯坦医院火灾造成14名新生儿死亡
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 英国第二季度旅游达到新的高度，尽管伊朗冲突-航空周
+[console log] [INGEST DEDUP] 事件级去重跳过: 英国第二季度旅游达到新的高度，尽管伊朗冲突-航空周
+[console log] [LIVE #28] ✓ 英国第二季度旅游达到新的高度，尽管伊朗冲突-航空周
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 目击者说，巴基斯坦医院的门“关闭”，火灾造成14名婴儿死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: 目击者说，巴基斯坦医院的门“关闭”，火灾造成14名婴儿死亡
+[console log] [LIVE #29] ✓ 目击者说，巴基斯坦医院的门“关闭”，火灾造成14名婴儿死亡
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 在最近的老虎袭击死亡事件中，TN的Gudalur奶牛死亡引发了新的恐慌-新印度快
+[console log] [LIVE-GATE] 24h模糊去重合并(ALERTS): 在最近的老虎袭击死亡事件中，TN的Gudalur奶牛死亡引发了新的恐慌-新印度快报
+[console log] [LIVE-DIAG] 被拦截: 在最近的老虎袭击死亡事件中，TN的Gudalur奶牛死亡引发了新的恐慌-新印度快报 | LIVE_ALERTS: 29→29
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 总理塔里克哀悼尼泊尔山洪暴发的死亡
+[console log] [INGEST DEDUP] 事件级去重跳过: 总理塔里克哀悼尼泊尔山洪暴发的死亡
+[console log] [LIVE #30] ✓ 总理塔里克哀悼尼泊尔山洪暴发的死亡
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): “我不着急”：特朗普表示，他对伊朗重返谈判“没有时间表”
+[console log] [INGEST DEDUP] 事件级去重跳过: “我不着急”：特朗普表示，他对伊朗重返谈判“没有时间表”
+[console log] [LIVE #31] ✓ “我不着急”：特朗普表示，他对伊朗重返谈判“没有时间表”
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 迷迭香Koech死亡：KCB拒绝评论工作动态，肯尼亚人敦促善待家人 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 迷迭香Koech死亡：KCB拒绝评论工作动态，肯尼亚人敦促善待家人 | LIVE_ALERTS: 31→31
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 安保人员抗议Osun民意调查未支付职务津贴
+[console log] [INGEST DEDUP] 事件级去重跳过: 安保人员抗议Osun民意调查未支付职务津贴
+[console log] [LIVE #32] ✓ 安保人员抗议Osun民意调查未支付职务津贴
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 韩国寻求在新蓝图下加速航运的绿色转型
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 韩国寻求在新蓝图下加速航运的绿色转型
+[console log] [INGEST DEDUP] 事件级去重跳过: 韩国寻求在新蓝图下加速航运的绿色转型
+[console log] [LIVE #33] ✓ 韩国寻求在新蓝图下加速航运的绿色转型
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 阿尔及利亚野火死亡人数上升至12人
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 阿尔及利亚野火死亡人数上升至12人
+[console log] [INGEST DEDUP] 事件级去重跳过: 阿尔及利亚野火死亡人数上升至12人
+[console log] [LIVE #34] ✓ 阿尔及利亚野火死亡人数上升至12人
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 澳航利润降至四年来最低，因为伊朗冲突后航空燃料成本攀升
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 澳航利润降至四年来最低，因为伊朗冲突后航空燃料成本攀升
+[console log] [INGEST DEDUP] 事件级去重跳过: 澳航利润降至四年来最低，因为伊朗冲突后航空燃料成本攀升
+[console log] [LIVE #35] ✓ 澳航利润降至四年来最低，因为伊朗冲突后航空燃料成本攀升
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 索科托袭击：士兵杀死几个土匪，发动空中行动
+[console log] [INGEST DEDUP] 事件级去重跳过: 索科托袭击：士兵杀死几个土匪，发动空中行动
+[console log] [LIVE #36] ✓ 索科托袭击：士兵杀死几个土匪，发动空中行动
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 随着伊朗冲突的继续，海军计划扩大航母部署，CNO，MCPON说- USNI新闻
+[console log] [INGEST DEDUP] 事件级去重跳过: 随着伊朗冲突的继续，海军计划扩大航母部署，CNO，MCPON说- USNI新闻
+[console log] [LIVE #37] ✓ 随着伊朗冲突的继续，海军计划扩大航母部署，CNO，MCPON说- USNI新闻
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 特朗普宣布在伊朗的“使命完成”，因为冲突在拖延-发言人评论 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 特朗普宣布在伊朗的“使命完成”，因为冲突在拖延-发言人评论 | LIVE_ALERTS: 37→37
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗阿曼拟在霍尔木兹建安全通道 ， 伊朗副外长 ： 重开海峡 ， 美国必须纠错并
+[console log] [INGEST DEDUP] 事件级去重跳过: 伊朗阿曼拟在霍尔木兹建安全通道 ， 伊朗副外长 ： 重开海峡 ， 美国必须纠错并
+[console log] [LIVE #38] ✓ 伊朗阿曼拟在霍尔木兹建安全通道 ， 伊朗副外长 ： 重开海峡 ， 美国必须纠错并履行此前承诺
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 旅游业将在今年剩余时间保持弹性
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 旅游业将在今年剩余时间保持弹性
+[console log] [INGEST DEDUP] 事件级去重跳过: 旅游业将在今年剩余时间保持弹性
+[console log] [LIVE #39] ✓ 旅游业将在今年剩余时间保持弹性
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 美国盟友警告说，尽管特朗普声称，霍尔木兹仍被开采
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 美国盟友警告说，尽管特朗普声称，霍尔木兹仍被开采
+[console log] [INGEST DEDUP] 事件级去重跳过: 美国盟友警告说，尽管特朗普声称，霍尔木兹仍被开采
+[console log] [LIVE #40] ✓ 美国盟友警告说，尽管特朗普声称，霍尔木兹仍被开采
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗在霍尔木兹海峡袭击另一艘船。美国自1979年以来首次历史性地停止伊朗石油出口
+[console log] [INGEST DEDUP] 事件级去重跳过: 伊朗在霍尔木兹海峡袭击另一艘船。美国自1979年以来首次历史性地停止伊朗石油出口
+[console log] [LIVE #41] ✓ 伊朗在霍尔木兹海峡袭击另一艘船。美国自1979年以来首次历史性地停止伊朗石油出口
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的
+[console log] [INGEST DEDUP] 事件级去重跳过: 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的
+[console log] [LIVE #42] ✓ 联合国表示，乌克兰在LPR袭击公共汽车后，对平民的袭击是不可接受的
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO
+[console log] [LIVE-GATE] 24h模糊去重合并(ALERTS): EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO
+[console log] [LIVE-DIAG] 被拦截: EGA在伊朗袭击后重启Al Taweelah冶炼厂的季度- KITCO | LIVE_ALERTS: 42→42
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 巴尔塞纳提出法案，将环境正义置于墨西哥法律的核心 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 巴尔塞纳提出法案，将环境正义置于墨西哥法律的核心 | LIVE_ALERTS: 42→42
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 警方调查与英格兰保龄球手被捕有关的袭击指控
+[console log] [INGEST DEDUP] 事件级去重跳过: 警方调查与英格兰保龄球手被捕有关的袭击指控
+[console log] [LIVE #43] ✓ 警方调查与英格兰保龄球手被捕有关的袭击指控
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻
+[console log] [INGEST DEDUP] 事件级去重跳过: 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻
+[console log] [LIVE #44] ✓ 伊朗警告说，根据与阿曼的潜在协议，霍尔木兹的军舰禁令以及其他中东新闻
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解
+[console log] [INGEST DEDUP] 事件级去重跳过: 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解
+[console log] [LIVE #45] ✓ 9人死亡，6人受伤：我们对乌克兰在LPR袭击客车的了解
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: Situationer: Unanswered questions linger | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: Situationer: Unanswered questions linger hours aft | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 拦截非海外利益安全条目: 14名婴儿在伊斯兰堡的Pims Gyphilian病房火灾中丧生 | reason=domestic-junk
+[console log] [LIVE-DIAG] 被拦截: 14名婴儿在伊斯兰堡的Pims Gyphilian病房火灾中丧生 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 无利益关联不入预警中心(已停用): 14名新生儿在巴基斯坦首都医院火灾中丧生
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 14名新生儿在巴基斯坦首都医院火灾中丧生
+[console log] [LIVE-GATE] 拦截超24h旧闻: 14名新生儿在巴基斯坦首都医院火灾中丧生
+[console log] [LIVE-DIAG] 被拦截: 14名新生儿在巴基斯坦首都医院火灾中丧生 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作
+[console log] [LIVE-GATE] 拦截超24h旧闻: 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作
+[console log] [LIVE-DIAG] 被拦截: 伊朗高级消息人士称，伊朗和阿曼仍在就霍尔木兹海峡雅阁开展工作 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社
+[console log] [LIVE-GATE] 拦截超24h旧闻: 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社
+[console log] [LIVE-DIAG] 被拦截: 卡塔尔谴责尼日利亚中部袭击事件-卡塔尔通讯社 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯
+[console log] [LIVE-GATE] 拦截超24h旧闻: 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯
+[console log] [LIVE-DIAG] 被拦截: 埃及国家如何利用苏丹的冲突贸易获利-新阿拉伯 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击
+[console log] [LIVE-GATE] 拦截超24h旧闻: 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击
+[console log] [LIVE-DIAG] 被拦截: 阿联酋谴责对南苏丹琼莱州联合国维和部队的袭击 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 海地帮派袭击：对警察失败的愤怒-法国24
+[console log] [LIVE-GATE] 拦截超24h旧闻: 海地帮派袭击：对警察失败的愤怒-法国24
+[console log] [LIVE-DIAG] 被拦截: 海地帮派袭击：对警察失败的愤怒-法国24 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 乌克兰冲突：英国允许乌克兰SCALP EG生产
+[console log] [LIVE-GATE] 拦截超24h旧闻: 乌克兰冲突：英国允许乌克兰SCALP EG生产
+[console log] [LIVE-DIAG] 被拦截: 乌克兰冲突：英国允许乌克兰SCALP EG生产 | LIVE_ALERTS: 45→45
+[console log] [LIVE-GATE] 蓝色提示级不入预警中心(已停用): 乌克兰在冲突中肯定会失败-克里姆林宫
+[console log] [LIVE-GATE] 拦截超24h旧闻: 乌克兰在冲突中肯定会失败-克里姆林宫
+[console log] [LIVE-DIAG] 被拦截: 乌克兰在冲突中肯定会失败-克里姆林宫 | LIVE_ALERTS: 45→45
+[console log] [LIVE] 第2次: 共75行 → 新入数据中心 0 条(待审核), 分发预警 45 条, 拦截 30 条, LIVE_ALERTS=45
+[console log] [AUTOSYNC] 分发 20 条
+sit-alerts rows: 8, live-items: 0, focus clickable: 4
+saved C:\Users\28737\Desktop\新建文件夹\_screenshot_situation_v3.png
