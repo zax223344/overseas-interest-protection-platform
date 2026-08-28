@@ -1618,6 +1618,86 @@ app.get('/api/intel/ids', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* COSRI 国别风险画像（2026-08-28 中海安对标 + 国别档案落地）
+ * 口径：interest-base.js 中 50 国 × 4 维（政治/经济/社会/公共安全）研究底数
+ * GET /api/cosri              → 全部 50 国 + 4 维 + 元数据
+ * GET /api/cosri/:country     → 单国画像（4 维 + 近 30 天事件 + 命中项目 + 命中人员 + 行动指引）
+ * GET /api/cosri/top?dim=...  → 某维 top 排名（默认 security）
+ */
+app.get('/api/cosri', async (req, res) => {
+  try {
+    const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
+    const list = Object.keys(ind.scores).map(cn => {
+      const s = ind.scores[cn];
+      const overall = Math.round(((s.political + s.economic + s.social + s.security) / 4) * 10) / 10;
+      const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
+      const projects = INTEREST_BASE.KEY_PROJECTS ? INTEREST_BASE.KEY_PROJECTS.filter(p => p.country === cn) : [];
+      return { country: cn, ...s, overall, tier, projectCount: projects.length };
+    });
+    res.json({ asOf: ind.asOf, dims: ind.dims, dimNames: ind.dimNames, total: list.length, countries: list });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/cosri/top', async (req, res) => {
+  try {
+    const dim = String(req.query.dim || 'security');
+    if (!['political','economic','social','security'].includes(dim)) return res.status(400).json({ error: 'dim 仅支持 political/economic/social/security' });
+    const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
+    const list = Object.keys(ind.scores).map(cn => ({ country: cn, value: ind.scores[cn][dim] })).sort((a,b)=>b.value-a.value);
+    res.json({ dim, name: ind.dimNames[dim], top: list });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/cosri/:country', async (req, res) => {
+  try {
+    /* Express 默认对 path 段做 URL 解码，req.params.country 即原始 UTF-8 国家名 */
+    const cn = String(req.params.country || '').trim();
+    const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
+    const s = ind.scores[cn];
+    if (!s) return res.status(404).json({ error: '国家不在 COSRI 库（覆盖 50 国）', got: cn });
+    const overall = Math.round(((s.political + s.economic + s.social + s.security) / 4) * 10) / 10;
+    const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
+    const projects = INTEREST_BASE.KEY_PROJECTS ? INTEREST_BASE.KEY_PROJECTS.filter(p => p.country === cn) : [];
+    /* 近 30 天真实事件（intel_data 中 country 命中 + audit=approved） */
+    let recent = [];
+    try {
+      const r = await query(
+        `SELECT id, title, title_zh, data_type, collect_time, event_severity
+         FROM intel_data
+         WHERE audit_status='approved' AND country=$1
+           AND collect_time >= NOW() - INTERVAL '30 days'
+         ORDER BY collect_time DESC LIMIT 200`,
+        [cn]
+      );
+      recent = r.rows.map(x => ({
+        id: x.id, title: x.title_zh || x.title, type: x.data_type,
+        time: x.collect_time, severity: x.event_severity
+      }));
+    } catch (e) { /* DB 不可用降级为空 */ }
+    /* 行动指引：根据四维分自动生成 */
+    const guide = _buildCountryGuide(cn, s, recent, projects);
+    res.json({
+      asOf: ind.asOf, country: cn, dims: ind.dims, dimNames: ind.dimNames,
+      scores: s, overall, tier,
+      projects, recentEvents: recent, recentCount: recent.length, guide
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+function _buildCountryGuide(cn, s, recent, projects) {
+  const tips = [];
+  if (s.security >= 8) tips.push('公共安全高风险（≥8）：避免非必要出行，外出须 2 人同行、保持通讯畅通、登记行程');
+  if (s.political >= 8) tips.push('政治高风险：避免集会与敏感地区；与使领馆保持联系；预备护照+备用身份证');
+  if (s.economic >= 8) tips.push('经济高风险：关注汇率/制裁/项目合规；保留资金出境备案；保险条款覆盖政治险');
+  if (s.social >= 8) tips.push('社会高风险：尊重本地风俗；夜间避免外出；预设应急撤离路线');
+  if (s.security >= 9 || s.political >= 9) tips.push('红色等级：评估撤人/停项目可行性；启动 24h 定点联络+保险升级');
+  if (recent.length >= 10) tips.push(`近 30 天有 ${recent.length} 条事件记录，建议研判升级/保持预警推送`);
+  if (projects.length === 0) tips.push('暂无中资项目暴露；属一般关注');
+  else tips.push(`有 ${projects.length} 个中资项目（${projects.map(p=>p.name).slice(0,3).join('、')}），需重点盯防`);
+  if (tips.length === 0) tips.push('低风险：常规关注，无需特别响应');
+  return tips;
+}
+
 /* 指挥调度闭环状态（2026-08-13 体检 P1-4）：事件/工单/复盘服务端持久化，
  * 单文档状态存储，前端全量读写，本地 IndexedDB 作离线兜底 */
 app.get('/api/command/state', async (req, res) => {

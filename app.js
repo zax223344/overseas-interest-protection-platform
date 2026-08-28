@@ -3974,7 +3974,7 @@ const VIEW_MAP={
 const VIEW_MERGE_ALIAS={
   autoalert:'alerts',
   analysis:'reports', aireport:'reports',
-  matrix:'country', forecast:'country', assets:'country',
+  matrix:'country', forecast:'country', assets:'country', cosri:'country',
   datasources:'datapool', wechat:'datapool',
   datacenter:'datagov', sidepool:'datagov', explain:'datagov',
   role:'settings'
@@ -3991,6 +3991,7 @@ const VIEW_MERGE_TABS={
   country:[
     {k:'matrix',label:'📊 风险矩阵'},
     {k:'forecast',label:'🔮 预测推演'},
+    {k:'cosri',label:'🌐 COSRI 风险画像'},
     {k:'assets',label:'🏢 企业资产'}
   ],
   datapool:[
@@ -4091,6 +4092,7 @@ function runViewInit(v){
       else if(v==='monitor'){ MONITOR.init(); }
       else if(v==='assets'){ ASSETS.init(); }
       else if(v==='alerts'){ AVIEW.init(); }
+      else if(v==='cosri'){ if(typeof COSRI_VIEW!=='undefined')COSRI_VIEW.init(); }
       else if(v==='matrix'){ RISK_FUSION.fuse(); if(typeof MATRIX!=='undefined')MATRIX.init(); }
       else if(v==='forecast'){ FORECAST.init(); }
       else if(v==='datacenter'){ DATACENTER.init(); }
@@ -4110,6 +4112,119 @@ function runViewInit(v){
 }
 installViewMerge();
 document.addEventListener('DOMContentLoaded',installViewMerge);
+
+/* ============================================================
+ * COSRI_VIEW — 国别风险画像（2026-08-28 中海安对标 + 国别档案落地）
+ * 数据源：/api/cosri（50 国 × 4 维政治/经济/社会/公共安全研究底数）
+ * 功能：四维排名榜 + 4 维榜切换 + 单国画像（4 维条形 + 项目 + 30 天事件 + 行动指引）
+ * ============================================================ */
+const COSRI_VIEW={
+  _data:null, _dim:'overall', _selected:null, _initing:false,
+  _colors:{'political':'#ff3d7f','economic':'#ffcc00','social':'#00d4ff','security':'#ff3355','overall':'#00ff9f'},
+  init(){
+    if(this._initing) return;
+    this._initing=true;
+    var self=this;
+    var host=document.getElementById('cosri-content');
+    if(!host) return;
+    host.innerHTML=
+      '<div class="card"><div class="card-tt"><span class="ic">🌐</span>COSRI 国别风险画像 · 中国海外安全研究四维底数</div>'+
+      '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">'+
+        '<span style="font-size:12px;color:var(--text2)">排序维度：</span>'+
+        '<span class="dc-tab'+(this._dim==='overall'?' active':'')+'" data-dim="overall" style="cursor:pointer">综合</span>'+
+        '<span class="dc-tab'+(this._dim==='security'?' active':'')+'" data-dim="security" style="cursor:pointer">🛡️ 公共安全</span>'+
+        '<span class="dc-tab'+(this._dim==='political'?' active':'')+'" data-dim="political" style="cursor:pointer">🏛️ 政治</span>'+
+        '<span class="dc-tab'+(this._dim==='economic'?' active':'')+'" data-dim="economic" style="cursor:pointer">💰 经济</span>'+
+        '<span class="dc-tab'+(this._dim==='social'?' active':'')+'" data-dim="social" style="cursor:pointer">👥 社会</span>'+
+        '<span style="margin-left:auto;font-size:11px;color:var(--text3)">口径：2025 研判底数 · 50 国 · 综合=四维均值</span>'+
+      '</div>'+
+      '<div id="cosri-rank"></div>'+
+      '<div id="cosri-detail"></div></div>';
+    Array.prototype.forEach.call(host.querySelectorAll('.dc-tab[data-dim]'), function(b){
+      b.addEventListener('click', function(){
+        self._dim=b.getAttribute('data-dim');
+        self._render();
+      });
+    });
+    this._load();
+  },
+  _load(){
+    var self=this;
+    fetch('/api/cosri').then(function(r){return r.json();}).then(function(d){
+      self._data=d; self._render();
+    }).catch(function(e){
+      var host=document.getElementById('cosri-rank');
+      if(host) host.innerHTML='<div style="padding:24px;text-align:center;color:var(--orange)">加载 COSRI 失败：'+e.message+'</div>';
+    });
+  },
+  _bar(val,max){var w=Math.min(100,(val/max)*100);return '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:linear-gradient(90deg,#00d4ff,#00ff9f)"></div></div>';},
+  _render(){
+    if(!this._data) return;
+    var self=this;
+    var list=this._data.countries.slice().sort(function(a,b){return b[this._dim]-a[this._dim];}.bind(this));
+    var host=document.getElementById('cosri-rank');
+    /* 顶级前 10 醒目 + 全部可点击展开 */
+    var top=list.slice(0,10);
+    var rest=list.slice(10);
+    var colorOf=this._dim==='overall'?'#00ff9f':(this._colors[this._dim]||'#00d4ff');
+    function row(c, i){
+      var v=c[self._dim];
+      var tierBadge=c.tier==='TIER1'?'<span class="badge b-red" style="font-size:9px;margin-left:4px">TIER1</span>':c.tier==='TIER2'?'<span class="badge b-orange" style="font-size:9px;margin-left:4px">TIER2</span>':c.tier==='TIER3'?'<span class="badge b-blue" style="font-size:9px;margin-left:4px">TIER3</span>':'';
+      return '<tr data-cn="'+c.country+'" style="cursor:pointer;border-bottom:1px solid var(--border)" onclick="COSRI_VIEW.select(\''+c.country.replace(/'/g,"\\'")+'\')">'+
+        '<td style="padding:6px 8px;color:var(--text3);font-size:11px;width:30px">'+(i+1)+'</td>'+
+        '<td style="padding:6px 8px"><b style="color:var(--text1)">'+c.country+'</b>'+tierBadge+(c.projectCount?' <span style="font-size:10px;color:var(--cyan)">· '+c.projectCount+'项目</span>':'')+'</td>'+
+        '<td style="padding:6px 4px;width:60%;min-width:200px"><div style="display:flex;align-items:center;gap:8px">'+self._bar(v,10)+'<span style="font-size:12px;font-weight:700;color:'+colorOf+';width:30px;text-align:right">'+v+'</span></div></td>'+
+        '<td style="padding:6px 8px;font-size:10px;color:var(--text3)">政'+c.political+' 经'+c.economic+' 社'+c.social+' 安'+c.security+'</td>'+
+      '</tr>';
+    }
+    var html='<div class="table-wrap" style="max-height:380px;overflow-y:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:var(--bg2)"><th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">#</th><th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">国家</th><th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">风险分</th><th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">四维明细</th></tr></thead><tbody>';
+    html+=top.map(function(c,i){return row(c,i);}).join('');
+    if(rest.length){ html+='<tr><td colspan="4" style="padding:4px 8px;background:var(--bg2);font-size:10px;color:var(--text3);text-align:center">以下 '+rest.length+' 国 风险较低 ▼ 点击展开</td></tr>'; html+=rest.map(function(c,i){return row(c,i+10);}).join(''); }
+    html+='</tbody></table></div>';
+    host.innerHTML=html;
+    /* 保留已选 */
+    if(this._selected) this._renderDetail();
+  },
+  select(cn){
+    this._selected=cn;
+    Array.prototype.forEach.call(document.querySelectorAll('#cosri-rank tr[data-cn]'), function(tr){
+      tr.style.background=tr.getAttribute('data-cn')===cn?'rgba(0,212,255,0.08)':'';
+    });
+    this._renderDetail();
+  },
+  _renderDetail(){
+    var cn=this._selected;
+    var host=document.getElementById('cosri-detail');
+    if(!cn||!host){ if(host) host.innerHTML=''; return; }
+    host.innerHTML='<div style="margin-top:14px;padding:12px;background:var(--bg2);border-radius:8px;text-align:center;color:var(--text2)">正在加载 '+cn+' 画像…</div>';
+    var self=this;
+    fetch('/api/cosri/'+encodeURIComponent(cn)).then(function(r){return r.json();}).then(function(d){
+      if(d.error){ host.innerHTML='<div style="padding:14px;color:var(--orange)">'+d.error+'</div>'; return; }
+      var dimBars=['political','economic','social','security'].map(function(k){
+        var v=d.scores[k], name=d.dimNames[k], color=self._colors[k];
+        return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span style="width:80px;font-size:12px;color:var(--text2)">'+name+'</span>'+self._bar(v,10)+'<span style="font-size:13px;font-weight:700;color:'+color+';width:30px;text-align:right">'+v+'</span></div>';
+      }).join('');
+      var tierBadge=d.tier==='TIER1'?'<span class="badge b-red" style="margin-left:8px">TIER1 重点</span>':d.tier==='TIER2'?'<span class="badge b-orange" style="margin-left:8px">TIER2 关注</span>':d.tier==='TIER3'?'<span class="badge b-blue" style="margin-left:8px">TIER3 一般</span>':'';
+      var projs=d.projects.length?d.projects.map(function(p){return '<span class="badge" style="background:rgba(0,212,255,0.15);color:var(--cyan);margin:2px">'+p.name+' <span style="opacity:0.6;font-size:9px">('+p.cat+')</span></span>';}).join(''):'<span style="color:var(--text3)">无中资项目</span>';
+      var events=d.recentEvents.length?d.recentEvents.slice(0,8).map(function(e){
+        var t=new Date(e.time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+        return '<div style="padding:6px 10px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center"><span style="font-size:10px;color:var(--text3);min-width:90px">'+t+'</span><span style="font-size:11px;color:var(--orange);min-width:60px">'+e.type+'</span><span style="flex:1;font-size:12px">'+(e.title||'').slice(0,80)+'</span></div>';
+      }).join(''):'<div style="padding:12px;color:var(--text3);text-align:center">近 30 天暂无入库事件</div>';
+      var guide=d.guide.map(function(g){return '<div style="padding:6px 10px;background:rgba(255,204,0,0.08);border-left:3px solid var(--orange);margin-bottom:4px;border-radius:0 6px 6px 0;font-size:12px;line-height:1.6">'+g+'</div>';}).join('');
+      host.innerHTML=
+        '<div class="card" style="margin-top:14px;border:1px solid var(--cyan);box-shadow:0 0 20px rgba(0,212,255,0.1)"><div class="card-tt"><span class="ic">🎯</span>'+cn+' 国别画像 '+tierBadge+
+          '<span style="margin-left:auto;font-size:11px;color:var(--text3)">综合 '+d.overall+' · '+d.asOf+'</span></div>'+
+        '<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">'+
+          '<div><div class="card-tt"><span class="ic">📊</span>COSRI 四维评分</div>'+dimBars+
+            '<div style="margin-top:10px;padding:8px;background:var(--bg3);border-radius:6px;font-size:11px;color:var(--text2)">综合 = ('+d.scores.political+'+'+d.scores.economic+'+'+d.scores.social+'+'+d.scores.security+') / 4 = '+d.overall+'</div></div>'+
+          '<div><div class="card-tt"><span class="ic">🏗️</span>中资项目暴露 ('+d.projects.length+')</div><div style="display:flex;flex-wrap:wrap">'+projs+'</div>'+
+            '<div class="card-tt mt-12"><span class="ic">🎯</span>行动指引 ('+d.guide.length+')</div>'+guide+'</div>'+
+        '</div>'+
+        '<div class="card-tt mt-12"><span class="ic">📅</span>近 30 天入库事件 ('+d.recentCount+')</div>'+events+
+        '</div>';
+    });
+  }
+};
 
 /* 研判简报页签切换（周期研判 / 每日简报 合并视图） */
 function switchAnalysisTab(t){
