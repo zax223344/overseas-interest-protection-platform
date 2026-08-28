@@ -135,6 +135,8 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 .tb-stat .dot{width:6px;height:6px;border-radius:50%;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.5;box-shadow:0 0 4px var(--cyan)}}
+/* ===== 一分钟循环轮换进度条（2026-08-28：焦点/最新预警面板持续变化心跳） ===== */
+@keyframes rotbar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 /* ===== 实时情报流面板：时间轴卡片 ===== */
 .live-item{position:relative;display:flex;gap:8px;padding:7px 8px 7px 4px;margin-bottom:5px;border-radius:6px;cursor:pointer;background:rgba(0,212,255,0.04);transition:background .15s;overflow:hidden}
 .live-item:hover{background:rgba(0,212,255,0.1)}
@@ -1123,7 +1125,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=1"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=255"></script>
+<script src="app.js?v=256"></script>
 <script src="distribute.js?v=37"></script>
 <script src="datasources.js?v=25"></script>
 <script src="threats.js?v=7"></script>

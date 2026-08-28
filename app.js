@@ -7509,8 +7509,13 @@ const SITUATION={
     this._enhanceHomePanels();
     this.fetchDailyStats();
     if(!this._dailyStatsTimer) this._dailyStatsTimer=setInterval(function(){SITUATION.fetchDailyStats();}, 30000);
-    /* 全球态势焦点面板每分钟自动刷新 */
-    if(!this._intelPanelsTimer) this._intelPanelsTimer=setInterval(function(){SITUATION.renderIntelPanels();}, 60000);
+    /* ===== 一分钟循环引擎（2026-08-28 用户指令：全球态势焦点/最新预警面板必须不断变化） =====
+     * 旧问题：①焦点面板每 60s 重绘但内容是确定性"TOP 列表"，数据不更新画面就一层不变；
+     * ②最新预警的自动翻页计时器每次 renderLiveStats 都被 clearInterval 重建，数据刷新频繁时
+     *   倒计时永远走不完 60s，翻页从未真正触发。
+     * 新机制：单一引擎每 60s 推进轮转指针（焦点面板换一批真实数据 + 最新预警自动翻页），
+     * 并以 1s 心跳驱动秒级时钟与轮换倒计时，面板肉眼可见地持续跳动。 */
+    this._minuteCycleStart();
   },
   _dailyStats:{ total:0, china:0, chinaNegative:0, targetTotal:500, targetChinaMin:80, targetChinaMax:100, targetChinaNegativeMin:50 },
   fetchDailyStats(){
@@ -7722,6 +7727,7 @@ const SITUATION={
       var la=sortedAlerts.slice(start,start+pageSize);
       /* 头部：等级筛选 + 涉华优先开关 + 页码 + 刷新 */
       var lvChip=function(v,l,c){var on=self._laLevel===v;return '<span onclick="SITUATION._laLevel=\''+v+'\';SITUATION._alertPage=0;SITUATION.renderLiveStats()" style="cursor:pointer;padding:2px 7px;border-radius:5px;font-size:9px;border:1px solid '+(on?c:'var(--border)')+';color:'+(on?c:'var(--text3)')+';background:'+(on?'rgba(0,212,255,0.08)':'transparent')+'">'+l+'</span>';};
+      var _remain=Math.max(0,Math.ceil(((this._cycleAnchor||Date.now())+60000-Date.now())/1000));
       var alertHtml='<div style="margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">'+
         '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:4px">'+
           '<span style="font-size:11px;font-weight:800;color:var(--text)">🚨 最新预警</span>'+
@@ -7729,7 +7735,7 @@ const SITUATION={
           '<span onclick="SITUATION._laCnOnly=!SITUATION._laCnOnly;SITUATION._alertPage=0;SITUATION.renderLiveStats()" title="只看涉我海外利益预警" style="cursor:pointer;padding:2px 7px;border-radius:5px;font-size:9px;border:1px solid '+(this._laCnOnly?'var(--cyan)':'var(--border)')+';color:'+(this._laCnOnly?'var(--cyan)':'var(--text3)')+';background:'+(this._laCnOnly?'rgba(0,212,255,0.10)':'transparent')+';font-weight:700">🇨🇳 涉华优先</span>'+
           '<button class="btn sm" style="font-size:9px;padding:2px 8px;margin-left:auto" onclick="SITUATION.refreshAlertsPage()">🔄</button>'+
         '</div>'+
-        '<div style="font-size:9px;color:var(--text3)">第 '+(this._alertPage%totalPages+1)+'/'+totalPages+' 页 · 在监 '+sortedAlerts.length+' 条 · 覆盖 '+new Set(sortedAlerts.map(function(a){return a.country||'其他';})).size+' 国 · 涉华负面→涉华→高危走廊→其他 优先</div>'+
+        '<div style="font-size:9px;color:var(--text3)">第 '+(this._alertPage%totalPages+1)+'/'+totalPages+' 页 · 在监 '+sortedAlerts.length+' 条 · 覆盖 '+new Set(sortedAlerts.map(function(a){return a.country||'其他';})).size+' 国 · 涉华负面→涉华→高危走廊→其他 优先 · <span id="la-countdown" style="color:var(--cyan);font-weight:700">⟳ '+_remain+'s</span></div>'+
       '</div>';
       /* 卡片：价值分 + 命中维度标签 + 五要素 + 涉我海外利益/高危走廊标记 + 时间/状态 */
       la.forEach(function(a){
@@ -7782,15 +7788,44 @@ const SITUATION={
       this._panelSentinel();
     }catch(e){}
   },
-  /* 最新预警分页轮播：每1分钟自动切换 */
+  /* 最新预警分页轮播：并入一分钟循环引擎（旧独立计时器被数据刷新反复重置，翻页从未触发） */
   _startAlertRotation(){
-    if(this._alertRotationTimer)clearInterval(this._alertRotationTimer);
+    this._minuteCycleStart();
+  },
+  /* ===== 一分钟循环引擎（2026-08-28）=====
+   * 只启动一次、永不重建：数据变化触发的任何重绘都不会重置倒计时。
+   * 每 60s：焦点面板轮转指针 +1（换一批真实数据）、最新预警自动翻页。
+   * 每 1s：秒级时钟 + 轮换倒计时（面板"不停在变"的可见心跳）。 */
+  _minuteCycleStart(){
+    if(this._minuteCycleTimer) return;
     var self=this;
-    this._alertRotationTimer=setInterval(function(){
-      if(document.hidden)return;
-      self._alertPage=(self._alertPage||0)+1;
-      self.renderLiveStats();
-    },60000); /* 1分钟 */
+    this._cycleAnchor=Date.now();
+    this._minuteCycleTimer=setInterval(function(){
+      if(document.hidden) return;
+      self._cycleAnchor=Date.now();
+      self._focusRot=(self._focusRot||0)+1;      /* 焦点面板：换一批 */
+      self._alertPage=(self._alertPage||0)+1;    /* 最新预警：翻一页 */
+      try{ self.renderIntelPanels(); }catch(e){}
+      try{ self.renderLiveStats(); }catch(e){}
+    },60000);
+    if(!this._heartTimer){
+      this._heartTimer=setInterval(function(){
+        if(document.hidden) return;
+        try{ self._tickClocks(); }catch(e){}
+      },1000);
+    }
+  },
+  /* 每秒心跳：更新焦点面板秒级时钟 + 两面板的轮换倒计时 */
+  _tickClocks(){
+    var now=new Date();
+    var pad=function(n){return String(n).padStart(2,'0');};
+    var fc=document.getElementById('focus-clock');
+    if(fc) fc.textContent=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+    var remain=Math.max(0,Math.ceil(((this._cycleAnchor||Date.now())+60000-Date.now())/1000));
+    var cd=document.getElementById('focus-countdown');
+    if(cd) cd.textContent='⟳ '+remain+'s';
+    var cd2=document.getElementById('la-countdown');
+    if(cd2) cd2.textContent='⟳ '+remain+'s 后自动轮换';
   },
   /* 手动刷新最新预警 */
   refreshAlertsPage(){
@@ -7804,6 +7839,15 @@ const SITUATION={
   renderIntelPanels(){
     var liveEl=document.getElementById('globe-intel-live');
     if(!liveEl) return;
+    /* 轮转窗口（2026-08-28 一分钟循环）：候选池扩容，每分钟换一批真实数据，
+     * 面板持续变化——不是造假数据，是同一池子的滚动展示 */
+    var rot=this._focusRot||0;
+    var _win=function(pool,n){
+      pool=pool||[];
+      if(pool.length<=n) return pool.slice();
+      var s=rot%pool.length;
+      return pool.slice(s,s+n).concat(pool.slice(0,Math.max(0,n-(pool.length-s)))).slice(0,n);
+    };
     /* --- 数据准备 --- */
     var red=0,orange=0,yellow=0,cnN=0;
     try{
@@ -7812,11 +7856,13 @@ const SITUATION={
         if(typeof GATE!=='undefined'&&GATE.isChinaRelatedStrict?GATE.isChinaRelatedStrict((a.title||'')+(a.title_zh||'')):/中国|中资|中企|中方|华人|一带一路|涉华|Chinese|China|CPEC/i.test((a.title||'')+(a.title_zh||'')))cnN++;
       });
     }catch(e){}
-    var focus=[], watchN=0;
+    var focus=[], watchN=0, focusPoolLen=0;
     try{
       if(typeof FORESEE!=='undefined'){
         var d=FORESEE.compute();
-        focus=d.high.concat(d.watch).slice(0,5);
+        var focusPool=(d.high||[]).concat(d.watch||[]).slice(0,12); /* 池扩容 5→12 */
+        focusPoolLen=focusPool.length;
+        focus=_win(focusPool,5);
         watchN=d.high.length+d.watch.length;
       }
     }catch(e){}
@@ -7828,8 +7874,11 @@ const SITUATION={
       });
       topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(topAlerts,'fuzzy'):topAlerts;
       topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(topAlerts,1):topAlerts;
-      topAlerts=topAlerts.slice(0,4);
+      topAlerts=topAlerts.slice(0,12); /* 池扩容 4→12，每分钟轮播 4 条 */
     }catch(e){}
+    /* 轮播窗口：每分钟从 12 条池子里换 4 条展示 */
+    var topPoolLen=topAlerts.length;
+    topAlerts=_win(topAlerts,4);
     /* 全球态势焦点面板内跨子面板国别去重：最高价值预警已出现的国家，不再进入实时情报流 */
     var usedCountries={};
     try{
@@ -7839,12 +7888,18 @@ const SITUATION={
       });
     }catch(e){}
     var now=new Date();
-    var hh=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    var _p2=function(n){return String(n).padStart(2,'0');};
+    var hh=_p2(now.getHours())+':'+_p2(now.getMinutes());
+    var ss=_p2(now.getSeconds());
+    var _remain=Math.max(0,Math.ceil(((this._cycleAnchor||Date.now())+60000-Date.now())/1000));
     /* --- 渲染 --- */
     var h='<div class="panel-tt" style="cursor:grab"><span class="panel-drag-handle">\u283F</span>'+
       '<span class="live-tt">\uD83C\uDFAF 全球态势焦点</span>'+
-      '<span class="live-count">'+hh+'</span>'+
+      '<span id="focus-countdown" title="每分钟自动轮换一批情报（真实数据滚动展示）" style="font-size:9px;color:var(--cyan);font-weight:700">⟳ '+_remain+'s</span>'+
+      '<span class="live-count" id="focus-clock" title="秒级实时时钟">'+hh+':'+ss+'</span>'+
       '<span class="panel-toggle" title="折叠/展开">−</span></div>';
+    /* 60s 轮换进度条：面板"持续更新"的可见心跳 */
+    h+='<div style="height:2px;margin:0 10px 4px;background:rgba(0,212,255,0.12);border-radius:1px;overflow:hidden"><div style="height:100%;width:100%;transform-origin:left center;background:linear-gradient(90deg,var(--cyan),#00ff9f);animation:rotbar 60s linear forwards"></div></div>';
     h+='<div class="panel-body">';
     /* 今日态势总温 */
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:10px;margin-bottom:8px;padding:6px 8px;background:var(--bg2);border-radius:6px">'+
@@ -7869,8 +7924,8 @@ const SITUATION={
       }).join('');
       return '<div style="display:flex;gap:5px;flex-wrap:wrap;font-size:9px;margin-bottom:8px;align-items:center"><span style="color:var(--text3);font-weight:700">🛰️ 高危走廊:</span>'+items+'</div>';
     })();
-    /* 升温国家 TOP5 */
-    h+='<div style="font-size:10px;font-weight:700;color:var(--orange);margin-bottom:4px">🔺 风险升温国家</div>';
+    /* 升温国家 TOP5（池 12 国轮播） */
+    h+='<div style="font-size:10px;font-weight:700;color:var(--orange);margin-bottom:4px">🔺 风险升温国家'+(focusPoolLen>5?'<span style="font-size:8px;color:var(--text3);font-weight:400"> · 轮播 '+(rot%focusPoolLen+1)+'/'+focusPoolLen+'</span>':'')+'</div>';
     if(focus.length){
       focus.forEach(function(r){
         var deltaTxt=r.delta>0?('↑+'+r.delta):(r.delta<0?('↓'+r.delta):'→');
@@ -7884,8 +7939,8 @@ const SITUATION={
     }else{
       h+='<div style="padding:6px;font-size:10px;color:var(--text3)">当前无重点升温国家——全域平稳</div>';
     }
-    /* 高价值预警 TOP4 */
-    h+='<div style="font-size:10px;font-weight:700;color:var(--red);margin:8px 0 4px">🎯 最高价值预警</div>';
+    /* 高价值预警（池 12 条每分钟轮播 4 条） */
+    h+='<div style="font-size:10px;font-weight:700;color:var(--red);margin:8px 0 4px">🎯 高价值预警'+(topPoolLen>4?'<span style="font-size:8px;color:var(--text3);font-weight:400"> · 轮播 '+(rot%topPoolLen+1)+'/'+topPoolLen+'</span>':'')+'</div>';
     if(topAlerts.length){
       topAlerts.forEach(function(a){
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
@@ -7900,15 +7955,18 @@ const SITUATION={
     }else{
       h+='<div style="padding:6px;font-size:10px;color:var(--text3)">今日暂无高价值预警</div>';
     }
-    /* 实时情报流列表（2026-08-20：让 liveItems 指标可见，同时给态势总览一个实时滚动切片） */
-    h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px">📡 实时情报流</div>';
+    /* 实时情报流列表（2026-08-20：让 liveItems 指标可见，同时给态势总览一个实时滚动切片；
+     * 2026-08-28 池扩容 5→15，每分钟轮播 5 条） */
     var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
     /* 事件级去重：同一事件多来源/多进展只留最新一条，避免同一火灾/制裁/袭击反复刷屏 */
     liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(liveSlice,'fuzzy'):liveSlice;
     /* 全球态势焦点面板内跨子面板国别去重 */
     liveSlice=liveSlice.filter(function(a){ var c=(typeof AVIEW!=='undefined'&&AVIEW._eventKeyFuzzy)?(AVIEW._eventKeyFuzzy(a).split('|')[0]||a.country||''):(a.country||''); return !usedCountries[c]; });
     liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(liveSlice,1):liveSlice;
-    liveSlice=liveSlice.slice(0,5);
+    liveSlice=liveSlice.slice(0,15); /* 池扩容 5→15 */
+    var livePoolLen=liveSlice.length;
+    liveSlice=_win(liveSlice,5);
+    h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px">📡 实时情报流'+(livePoolLen>5?'<span style="font-size:8px;color:var(--text3);font-weight:400"> · 轮播 '+(rot%livePoolLen+1)+'/'+livePoolLen+'</span>':'')+'</div>';
     if(liveSlice.length){
       liveSlice.forEach(function(a){
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
