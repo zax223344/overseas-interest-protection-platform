@@ -2898,6 +2898,31 @@ function _isFreshEnough(it) {
   /* 铁律收尾：三种途径都拿不到日期的新闻，时效不可验证 → 一律拦截（原"放行"是旧闻漏网主通道，
    * 2026-08-25 实测近 3 天 43% 入库条目无任何日期字段） */
   if (!dated) return false;
+
+  /* ===== 当天数据铁律（2026-08-28 用户指令：当天只采当天数据，除非非常重要）=====
+   * 实测各通道当天率仅 14-41%（昨天的新闻跨零点后仍满足 24h 窗口）。
+   * 收紧：事件时间非今天的 → 必须是"重要类"才放行：
+   * ① 核心威胁（涉华受害/恐袭/绑架/海盗/政变/制裁清单等十类）
+   * ② 红橙级（涉华严重事件）
+   * ③ 白名单公众号（用户亲选信源，发布日期即准绳——已在上方 trustPubDate）
+   * 其余旧数据一律拦截（进非预警数据池可复核）。 */
+  try {
+    const _evStr = String(it._extractedEventDate || it.event_date || it.publish_time || it.publishedAt || it.pubDate || it.date || '');
+    if (_evStr) {
+      const _ev = new Date(_evStr);
+      if (!isNaN(_ev.getTime())) {
+        const _today = new Date(); _today.setHours(0, 0, 0, 0);
+        const _isToday = _ev.getTime() >= _today.getTime();
+        if (!_isToday) {
+          const _important = _tagCoreThreat(it).length > 0
+            || it.level === 'red' || it.level === 'orange'
+            || it._sourceType === 'wechat_oa' || it._sourceType === 'wechat_lead';
+          if (!_important) return false;
+          it._staleButImportant = true;   /* 标记：重要旧闻，展示时注明事件日期 */
+        }
+      }
+    }
+  } catch (e) {}
   return true;
 }
 
