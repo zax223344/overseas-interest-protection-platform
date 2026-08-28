@@ -1032,6 +1032,169 @@ async function _serverAlertGen() {
 setInterval(_serverAlertGen, 3 * 60 * 1000);
 setTimeout(_serverAlertGen, 30 * 1000);
 
+/* ===== 异动信号引擎（2026-08-28 服务端三件之一）=====
+ * 口径：类别×国家日计数基线（近 7 天，活跃库 intel_data + 归档库 intel_archive 合并全覆盖），
+ * 与今日计数对比，超阈值生成"风险升温信号"：
+ *   · 有效基线（近 7 天总量 ≥ 3）：今日 ≥ 4 条且 ≥ 日均 1.8 倍 → 升温
+ *   · 无基线：今日 ≥ 6 条 → 突发簇
+ * 分级：倍数≥4.5 且今日≥10 且 TIER1/COSRI公共安全≥8 → 红；倍数≥3 且今日≥8 → 橙；其余黄。
+ * 优质信号（利益关联分≥10，与预警中心同源规则）写入预警中心共享库（ANOM- 前缀，当日幂等）。
+ * GET /api/anomaly/signals → 最近一次检测结果（>10min 自动重测）
+ * GET /api/anomaly/detect  → 强制立即检测并返回结果 */
+const _ANOM_CAT_LABELS = {
+  terror_events: '恐怖事件', security_events: '安全事件', military_conflicts: '武装冲突',
+  political_events: '政治事件', natural_disasters: '自然灾害', public_health: '公共卫生',
+  sanctions_data: '制裁措施', social_unrest: '社会动荡', infrastructure: '基础设施',
+  geopolitical_intel: '地缘情报', economic_risk: '经济风险', legal_compliance: '法律合规',
+  cyber_security: '网络安全'
+};
+/* 预警队列 type 字段沿用 _serverAlertGen 同一映射，保证前端等级/类型过滤器兼容 */
+const _ANOM_ALERT_TYPE = {
+  terror_events: '安全风险', security_events: '安全风险', military_conflicts: '安全风险',
+  political_events: '政治风险', natural_disasters: '自然环境风险', public_health: '安全风险',
+  sanctions_data: '经济风险', social_unrest: '社会文化风险', infrastructure: '运营风险',
+  geopolitical_intel: '地缘战略风险', economic_risk: '经济风险', legal_compliance: '法律合规',
+  cyber_security: '网络安全'
+};
+let _anomalyState = { at: null, signals: [], scanned: 0, pushed: 0 };
+async function _runAnomalyWatch() {
+  try {
+    /* 本地自然日 0 点作边界（禁用 CURRENT_DATE——PG 会话时区可能非中国时区） */
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const weekAgo = new Date(dayStart.getTime() - 7 * 86400000);
+    /* 基线：近 7 天（不含今日）类别×国家计数（活跃库+归档库合并） */
+    const hist = await query(`
+      SELECT data_type t, country c, COUNT(*)::int n FROM (
+        SELECT data_type, country, collect_time, audit_status FROM intel_data
+        UNION ALL
+        SELECT data_type, country, collect_time, audit_status FROM intel_archive
+      ) u
+      WHERE collect_time >= $1 AND collect_time < $2 AND audit_status='approved'
+      GROUP BY 1,2`, [weekAgo, dayStart]);
+    const base = {};
+    for (const r of hist.rows) {
+      const k = r.t + '|' + r.c;
+      base[k] = (base[k] || 0) + r.n;
+    }
+    /* 今日计数 */
+    const tod = await query(
+      `SELECT data_type t, country c, COUNT(*)::int n FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' GROUP BY 1,2`,
+      [dayStart]
+    );
+    /* 今日样例标题（供信号详情展示，真实入库数据） */
+    const tit = await query(
+      `SELECT data_type t, country c, COALESCE(NULLIF(data_json->>'title_zh',''),title) AS title_zh FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' ORDER BY collect_time DESC LIMIT 600`,
+      [dayStart]
+    );
+    const sampleMap = {};
+    for (const r of tit.rows) {
+      const k = r.t + '|' + r.c;
+      if (!sampleMap[k]) sampleMap[k] = [];
+      if (sampleMap[k].length < 5) sampleMap[k].push(r.title_zh || r.title);
+    }
+    const now = new Date();
+    const p = n => String(n).padStart(2, '0');
+    const tk = now.getFullYear() + p(now.getMonth() + 1) + p(now.getDate());
+    const ts = now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes());
+    const signals = [];
+    let scanned = 0;
+    for (const r of tod.rows) {
+      const cn = String(r.c || '').trim();
+      if (!cn || cn === '中国' || cn === '未知' || cn === '全球') continue;
+      scanned++;
+      const k = r.t + '|' + cn;
+      const total7 = base[k] || 0;
+      const avg = total7 / 7;
+      const today = r.n;
+      let ratio = 0, kind = '';
+      if (total7 >= 3) {
+        ratio = today / avg;
+        if (today >= 4 && ratio >= 1.8) kind = '升温';
+      } else if (today >= 6) {
+        kind = '突发';
+      }
+      if (!kind) continue;
+      const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
+      const cosriS = INTEREST_BASE.COUNTRY_RISK_INDICATORS ? INTEREST_BASE.COUNTRY_RISK_INDICATORS.scores[cn] : null;
+      let level = 'yellow';
+      if (ratio >= 4.5 && today >= 10 && (tier === 'TIER1' || (cosriS && cosriS.security >= 8))) level = 'red';
+      else if (ratio >= 3 && today >= 8) level = 'orange';
+      const score = level === 'red' ? Math.min(85, 61 + Math.round(ratio))
+        : Math.min(60, Math.round(26 + ratio * 9 + Math.min(12, today)));
+      const zone = score >= 61 ? 'red' : score >= 46 ? 'orange' : 'yellow';
+      const catLabel = _ANOM_CAT_LABELS[r.t] || r.t;
+      const samples = (sampleMap[k] || []).slice(0, 5).map(s => String(s).slice(0, 60));
+      const ratioTxt = kind === '突发' ? '无基线' : (Math.round(ratio * 10) / 10) + '倍';
+      const title = '【风险' + kind + '】' + cn + '·' + catLabel + '情报量异动：7日均 ' + (Math.round(avg * 10) / 10) + ' → 今日 ' + today + ' 条' + (kind === '升温' ? '（' + ratioTxt + '）' : '');
+      const desc = ('近 7 天该方向日均值 ' + (Math.round(avg * 10) / 10) + ' 条，今日已入库 ' + today + ' 条' +
+        (kind === '升温' ? '，环比 ' + ratioTxt + '，超出异动阈值（1.8 倍）' : '，近 7 天无基线记录，属突发聚集') +
+        '。样例：' + samples.join('；')).slice(0, 300);
+      const ckey = (cn + String(r.t)).replace(/[^\u4e00-\u9fa5a-z0-9]/gi, '').slice(0, 24);
+      const alert = {
+        id: 'ANOM-' + tk + '-' + ckey,
+        alert_no: 'CN-SEC-' + tk + '-A' + String(signals.length + 1).padStart(4, '0'),
+        title, title_zh: title,
+        desc,
+        time: ts, level, type: _ANOM_ALERT_TYPE[r.t] || '安全风险',
+        country: cn, source: '异动信号引擎', url: '',
+        status: 'active', interestLinked: true,
+        chinaRelated: /中国|华人|中资|中企|中方|涉华|CPEC|一带一路/i.test(title + desc),
+        publishedAt: now.toISOString(),
+        risk_score: score, risk_zone: zone,
+        risk_rationale: '基于近 7 天类别×国家入库基线的统计异动（' + kind + '，今日 ' + today + ' vs 日均 ' + (Math.round(avg * 10) / 10) + '）',
+        zone_action: level === 'red' ? '立即核查该国项目/人员暴露，启动应急联络'
+          : level === 'orange' ? '加密监测频次，通知该国项目组加强防范'
+            : '保持关注，核实是否单源聚集导致',
+        _riskVersion: 3, _anomaly: true,
+        anomaly: { kind, today, avg: Math.round(avg * 10) / 10, ratio: Math.round(ratio * 10) / 10, samples }
+      };
+      signals.push({
+        country: cn, type: r.t, typeLabel: catLabel, tier, kind,
+        today, avg: Math.round(avg * 10) / 10, ratio: Math.round(ratio * 10) / 10,
+        level, risk_score: score, samples, alert
+      });
+    }
+    signals.sort((a, b) => (b.ratio || 99) - (a.ratio || 99) || b.today - a.today);
+    const top = signals.slice(0, 15);
+    /* 优质信号进预警中心共享库（与 _serverAlertGen 同源合并 + 幂等去重 + 利益关联哨兵同规则） */
+    let pushed = 0;
+    try {
+      if (top.length) {
+        const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
+        const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+        const haveIds = new Set(alerts.map(a => String((a && a.id) || '')));
+        const added = [];
+        for (const s of top) {
+          const sc = _alertInterestScore(s.alert);
+          s.interestScore = sc.score; s.interestHits = sc.hits;
+          s.alert._interestScore = sc.score; s.alert._interestHits = sc.hits;
+          if (haveIds.has(s.alert.id)) { s.inAlert = true; continue; }
+          if (sc.score >= 10) { added.unshift(s.alert); haveIds.add(s.alert.id); s.inAlert = true; pushed++; }
+        }
+        if (added.length) {
+          const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
+          await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
+          console.log('[ANOMALY] 风险异动信号写入预警中心 ' + added.length + ' 条 / 共检出 ' + signals.length + ' 项（扫描 ' + scanned + ' 个方向）');
+        }
+      }
+    } catch (e) { console.warn('[ANOMALY] 预警写入失败:', e.message); }
+    _anomalyState = { at: new Date().toISOString(), signals: top, total: signals.length, scanned, pushed };
+  } catch (e) { console.warn('[ANOMALY] 异动检测异常:', e.message); }
+}
+setInterval(_runAnomalyWatch, 30 * 60 * 1000);
+setTimeout(_runAnomalyWatch, 4 * 60 * 1000);
+app.get('/api/anomaly/signals', async (req, res) => {
+  try {
+    const stale = !_anomalyState.at || (Date.now() - new Date(_anomalyState.at).getTime() > 10 * 60 * 1000);
+    if (stale) await _runAnomalyWatch();
+    res.json(_anomalyState);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/anomaly/detect', async (req, res) => {
+  try { await _runAnomalyWatch(); res.json(_anomalyState); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 async function _alertValueSentinel() {
   try {
     const r = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
@@ -1662,7 +1825,8 @@ app.get('/api/cosri/:country', async (req, res) => {
     let recent = [];
     try {
       const r = await query(
-        `SELECT id, title, title_zh, data_type, collect_time, event_severity
+        `SELECT id, title, COALESCE(NULLIF(data_json->>'title_zh',''),title) AS title_zh,
+                data_type, collect_time, severity AS event_severity
          FROM intel_data
          WHERE audit_status='approved' AND country=$1
            AND collect_time >= NOW() - INTERVAL '30 days'
@@ -1697,6 +1861,125 @@ function _buildCountryGuide(cn, s, recent, projects) {
   if (tips.length === 0) tips.push('低风险：常规关注，无需特别响应');
   return tips;
 }
+
+/* ===== 采集漏斗统计（2026-08-28 服务端三件之二）=====
+ * 全链路真实口径（零模拟）：拦截（数据池今日·持久化 + 入库闸审计·重启以来内存）→
+ * 成功入库（intel_data 今日）→ 生成预警（datahub_store 队列今日）。
+ * 每级附明细（原因分布/类别分布/通道分布/等级分布 + 样例标题），前端可点开。
+ * GET /api/funnel/today */
+app.get('/api/funnel/today', async (req, res) => {
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const p = n => String(n).padStart(2, '0');
+    const dayKey = dayStart.getFullYear() + '-' + p(dayStart.getMonth() + 1) + '-' + p(dayStart.getDate());
+    /* 入库级 */
+    const stored = await query(`SELECT COUNT(*)::int c FROM intel_data WHERE collect_time >= $1`, [dayStart]);
+    const byType = await query(`SELECT data_type k, COUNT(*)::int c FROM intel_data WHERE collect_time >= $1 GROUP BY 1 ORDER BY c DESC`, [dayStart]);
+    const byChannel = await query(`SELECT COALESCE(NULLIF(data_json->>'_sourceType',''),'未标注') k, COUNT(*)::int c FROM intel_data WHERE collect_time >= $1 GROUP BY 1 ORDER BY c DESC`, [dayStart]);
+    const storedN = stored.rows[0].c;
+    /* 拦截级：数据池今日（持久化真实数据） */
+    const sidepool = await query(`SELECT reason k, COUNT(*)::int c FROM intel_sidepool WHERE blocked_at >= $1 GROUP BY 1 ORDER BY c DESC`, [dayStart]);
+    const sideSamples = await query(`SELECT reason k, COALESCE(NULLIF(title_zh,''),title) t FROM intel_sidepool WHERE blocked_at >= $1 ORDER BY blocked_at DESC LIMIT 60`, [dayStart]);
+    const poolDetail = {};
+    sidepool.rows.forEach(r => { poolDetail[r.k] = r.c; });
+    const poolSamples = {};
+    sideSamples.rows.forEach(r => {
+      (poolSamples[r.k] = poolSamples[r.k] || []).push(r.t);
+    });
+    Object.keys(poolSamples).forEach(k => { if (poolSamples[k].length > 4) poolSamples[k].length = 4; });
+    const poolN = sidepool.rows.reduce((s, r) => s + r.c, 0);
+    /* 拦截级：入库闸审计（内存，重启以来；预警生成阶段的拒绝归预警级，不算入库前拦截） */
+    const gateDetail = {}, genReject = {};
+    Object.keys(_GATE_AUDIT.by).forEach(k => {
+      if (k.indexOf('预警生成') === 0) genReject[k] = _GATE_AUDIT.by[k];
+      else gateDetail[k] = _GATE_AUDIT.by[k];
+    });
+    const gateSamples = _GATE_AUDIT.samples;
+    const gateN = Object.keys(gateDetail).reduce((s, k) => s + gateDetail[k], 0);
+    /* 预警级 */
+    let alertToday = 0, anomToday = 0; const byLevel = {};
+    try {
+      const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
+      const arr = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+      arr.forEach(a => {
+        if (!a) return;
+        if (String(a.time || '').slice(0, 10) === dayKey) {
+          alertToday++;
+          byLevel[a.level] = (byLevel[a.level] || 0) + 1;
+          if (a._anomaly) anomToday++;
+        }
+      });
+    } catch (e) { /* 预警库不可用时降级为 0 */ }
+    res.json({
+      date: dayKey, generatedAt: new Date().toISOString(),
+      stages: [
+        {
+          key: 'blocked', name: '闸门拦截', count: poolN + gateN,
+          poolToday: poolN, gateSinceRestart: gateN,
+          detail: poolDetail, gateDetail, samples: poolSamples, gateSamples,
+          source: 'intel_sidepool 今日（持久化） + 入库闸审计（重启以来·内存）'
+        },
+        {
+          key: 'stored', name: '成功入库', count: storedN,
+          byType: byType.rows, byChannel: byChannel.rows,
+          source: 'intel_data 今日（audit 含 approved）'
+        },
+        {
+          key: 'alerts', name: '生成预警', count: alertToday,
+          byLevel, anomaly: anomToday, gateRejections: genReject,
+          source: 'datahub_store 预警队列 · time 为今日'
+        }
+      ],
+      gateAuditSince: _GATE_AUDIT.since
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ===== 归档库检索（2026-08-28 服务端三件之三）=====
+ * intel_archive 滚动归档（活跃库仅留 7 天，更早数据可查不丢）。
+ * GET /api/archive/search?country=&type=&q=&since=&until=&page=&limit=
+ * 明细：标题命中的中文标题优先（归档行 title_zh 为空时回落 data_json->>'title_zh'） */
+app.get('/api/archive/search', async (req, res) => {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS intel_archive (LIKE intel_data INCLUDING ALL)`);
+    const { country, type, q, since, until } = req.query;
+    const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(5, parseInt(req.query.limit || '20', 10) || 20));
+    const where = [], args = [];
+    if (country) { args.push(String(country)); where.push('country = $' + args.length); }
+    if (type) { args.push(String(type)); where.push('data_type = $' + args.length); }
+    if (since) { args.push(since + ' 00:00:00'); where.push('collect_time >= $' + args.length + '::timestamptz'); }
+    if (until) { args.push(until + ' 23:59:59'); where.push('collect_time <= $' + args.length + '::timestamptz'); }
+    if (q) { args.push('%' + String(q) + '%'); where.push('(title ILIKE $' + args.length + ' OR COALESCE(NULLIF(data_json->>\'title_zh\',\'\'),\'\') ILIKE $' + args.length + ')'); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const total = await query('SELECT COUNT(*)::int c FROM intel_archive ' + w, args);
+    const rows = await query(
+      `SELECT id, data_type, title, country, source, collect_time,
+              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS display_title,
+              data_json->>'url' AS url
+       FROM intel_archive ${w}
+       ORDER BY collect_time DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`, args);
+    /* 同口径统计（含全库总量/时间跨度，供面板头部展示） */
+    const [stType, stCountry, stAll] = await Promise.all([
+      query('SELECT data_type k, COUNT(*)::int c FROM intel_archive ' + w + ' GROUP BY 1 ORDER BY c DESC LIMIT 20', args),
+      query(`SELECT COALESCE(NULLIF(country,''),'未知') k, COUNT(*)::int c FROM intel_archive ${w} GROUP BY 1 ORDER BY c DESC LIMIT 12`, args),
+      query('SELECT COUNT(*)::int c, MIN(collect_time) mn, MAX(collect_time) mx FROM intel_archive', [])
+    ]);
+    res.json({
+      date: new Date().toISOString(), page, limit,
+      total: total.rows[0].c,
+      rows: rows.rows.map(r => ({
+        id: r.id, type: r.data_type, title: r.display_title || r.title,
+        country: r.country, source: r.source, time: r.collect_time, url: r.url || ''
+      })),
+      stats: {
+        byType: stType.rows, byCountry: stCountry.rows,
+        totalAll: stAll.rows[0].c, minTime: stAll.rows[0].mn, maxTime: stAll.rows[0].mx
+      }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 
 /* 指挥调度闭环状态（2026-08-13 体检 P1-4）：事件/工单/复盘服务端持久化，
  * 单文档状态存储，前端全量读写，本地 IndexedDB 作离线兜底 */

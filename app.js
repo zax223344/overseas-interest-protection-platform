@@ -3939,10 +3939,10 @@ const VIEW_MAP={
   datapool:{t:'数据中枢',b:'数据管理 / 数据中枢（数据源库 · 公众号采集）'},
   intel:{t:'情报影像中心',b:'监测中心 / 情报影像中心'},
   monitor:{t:'风险监测',b:'监测中心 / 风险监测'},
-  alerts:{t:'预警中心',b:'监测中心 / 预警中心'},
+  alerts:{t:'预警中心',b:'监测中心 / 预警中心（实时队列 · 智能联动 · 异动信号）'},
   country:{t:'国别档案',b:'分析研判 / 国别档案（风险矩阵 · 预测推演 · 企业资产）'},
   reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（研判简报 · AI分析报告）'},
-  datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 可解释审计）'},
+  datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
   threatorgs:{t:'威胁组织',b:'监测中心 / 威胁组织'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
@@ -3956,6 +3956,9 @@ const VIEW_MAP={
   assets:{t:'国别档案 · 企业资产',b:'分析研判 / 国别档案 / 企业资产'},
   datacenter:{t:'数据治理 · 数据中心',b:'数据管理 / 数据治理 / 数据中心'},
   sidepool:{t:'数据治理 · 非预警数据池',b:'数据管理 / 数据治理 / 非预警数据池'},
+  funnel:{t:'数据治理 · 采集漏斗',b:'数据管理 / 数据治理 / 采集漏斗'},
+  archive:{t:'数据治理 · 归档检索',b:'数据管理 / 数据治理 / 归档检索'},
+  anomaly:{t:'预警中心 · 异动信号',b:'监测中心 / 预警中心 / 异动信号'},
   explain:{t:'数据治理 · 可解释审计',b:'数据管理 / 数据治理 / 可解释审计'},
   autoalert:{t:'预警中心 · 智能联动预警',b:'监测中心 / 预警中心 / 智能联动预警'},
   role:{t:'系统设置 · 角色分级',b:'系统 / 系统设置 / 角色与信息分级'}
@@ -3972,17 +3975,18 @@ const VIEW_MAP={
  * 系统设置 = 设置 + 角色分级(role)
  * ============================================================ */
 const VIEW_MERGE_ALIAS={
-  autoalert:'alerts',
+  autoalert:'alerts', anomaly:'alerts',
   analysis:'reports', aireport:'reports',
   matrix:'country', forecast:'country', assets:'country', cosri:'country',
   datasources:'datapool', wechat:'datapool',
-  datacenter:'datagov', sidepool:'datagov', explain:'datagov',
+  datacenter:'datagov', sidepool:'datagov', funnel:'datagov', archive:'datagov', explain:'datagov',
   role:'settings'
 };
 const VIEW_MERGE_TABS={
   alerts:[
     {k:'alerts',label:'🚨 实时预警队列'},
-    {k:'autoalert',label:'⚡ 智能联动预警'}
+    {k:'autoalert',label:'⚡ 智能联动预警'},
+    {k:'anomaly',label:'📈 异动信号'}
   ],
   reports:[
     {k:'analysis',label:'📋 研判简报'},
@@ -4001,6 +4005,8 @@ const VIEW_MERGE_TABS={
   datagov:[
     {k:'datacenter',label:'🗄️ 数据中心'},
     {k:'sidepool',label:'🌊 非预警数据池'},
+    {k:'funnel',label:'🔻 采集漏斗'},
+    {k:'archive',label:'📚 归档检索'},
     {k:'explain',label:'🔍 可解释审计'}
   ],
   settings:[
@@ -4097,6 +4103,9 @@ function runViewInit(v){
       else if(v==='forecast'){ FORECAST.init(); }
       else if(v==='datacenter'){ DATACENTER.init(); }
       else if(v==='sidepool'){ if(typeof SIDEPOOL!=='undefined')SIDEPOOL.init(); }
+      else if(v==='funnel'){ if(typeof FUNNEL_VIEW!=='undefined')FUNNEL_VIEW.init(); }
+      else if(v==='archive'){ if(typeof ARCHIVE_VIEW!=='undefined')ARCHIVE_VIEW.init(); }
+      else if(v==='anomaly'){ if(typeof ANOMALY_VIEW!=='undefined')ANOMALY_VIEW.init(); }
       else if(v==='settings'){ SETTINGS.init(); }
       else if(v==='threatorgs'){ if(typeof THREATS!=='undefined')THREATS.render(); }
       else if(v==='autoalert'){ if(typeof AUTOALERT!=='undefined')AUTOALERT.init(); }
@@ -4224,6 +4233,354 @@ const COSRI_VIEW={
         '</div>';
     });
   }
+};
+
+/* ============================================================
+ * ANOMALY_VIEW — 异动信号（2026-08-28 服务端三件之一）
+ * 数据源：/api/anomaly/signals（类别×国家 7 日基线 vs 今日，超阈值=升温/突发）
+ * 优质信号已由服务端写入预警中心共享库（ANOM- 前缀）
+ * ============================================================ */
+const ANOMALY_VIEW={
+  _data:null, _sel:-1,
+  init(){
+    var self=this;
+    var host=document.getElementById('anomaly-content');
+    if(!host) return;
+    host.innerHTML=
+      '<div class="card"><div class="card-tt"><span class="ic">📈</span>风险异动信号 · 类别×国家基线环比监测</div>'+
+      '<div id="anomaly-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>'+
+      '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">'+
+        '<span class="dc-tab" id="anomaly-refresh" style="cursor:pointer">🔄 立即检测</span>'+
+        '<span id="anomaly-meta" style="font-size:11px;color:var(--text3)">加载中…</span></div>'+
+      '<div id="anomaly-list"></div><div id="anomaly-detail"></div></div>';
+    document.getElementById('anomaly-refresh').onclick=function(){ self._load(true); };
+    this._load(false);
+  },
+  _load(force){
+    var self=this;
+    var el=document.getElementById('anomaly-meta');
+    if(el) el.textContent=force?'正在检测（基线比对中）…':'加载中…';
+    fetch('/api/anomaly/'+(force?'detect':'signals')).then(function(r){return r.json();}).then(function(d){
+      self._data=d; self._sel=-1; self._render();
+    }).catch(function(e){
+      var host=document.getElementById('anomaly-list');
+      if(host) host.innerHTML='<div style="padding:24px;text-align:center;color:var(--orange)">异动检测失败：'+e.message+'</div>';
+    });
+  },
+  _bar(ratio){
+    var w=Math.min(100,(ratio/5)*100);
+    var c=ratio>=3?'#ff3355':ratio>=1.8?'#ffcc00':'#00d4ff';
+    return '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:'+c+'"></div></div>';
+  },
+  _lvlBadge(l){
+    if(l==='red') return '<span class="badge b-red">红</span>';
+    if(l==='orange') return '<span class="badge b-orange">橙</span>';
+    return '<span class="badge b-yellow">黄</span>';
+  },
+  _render(){
+    if(!this._data) return;
+    var self=this, d=this._data;
+    var meta=document.getElementById('anomaly-meta');
+    if(meta) meta.textContent='最近检测：'+(d.at?new Date(d.at).toLocaleString('zh-CN'):'—')+' · 扫描 '+((d.scanned||0))+' 个方向';
+    var st=document.getElementById('anomaly-stats');
+    if(st){
+      var maxR=0; (d.signals||[]).forEach(function(s){ if((s.ratio||0)>maxR)maxR=s.ratio; });
+      st.innerHTML=
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:var(--cyan)">'+(d.signals||[]).length+'</div><div class="stat-l">触发异动信号</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v">'+(d.scanned||0)+'</div><div class="stat-l">监测方向（类别×国家）</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:'+(maxR>=3?'#ff3355':'#ffcc00')+'">'+(maxR?maxR+' 倍':'—')+'</div><div class="stat-l">最高环比倍数</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:var(--green)">'+(d.pushed||0)+'</div><div class="stat-l">已推送预警中心</div></div>';
+    }
+    var list=document.getElementById('anomaly-list');
+    var sigs=d.signals||[];
+    if(!sigs.length){
+      list.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3)">当前各方向情报量均在 7 日基线正常区间内，暂无异动信号<div style="font-size:11px;margin-top:6px">判定口径：有效基线（7 天总量≥3）今日≥4 条且≥日均 1.8 倍=升温；无基线今日≥6 条=突发</div></div>';
+      var det=document.getElementById('anomaly-detail'); if(det) det.innerHTML='';
+      return;
+    }
+    var html='<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:var(--bg2)">'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">#</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">国家/方向</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">今日/7日均</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">环比倍数</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">等级</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">状态</th></tr></thead><tbody>';
+    sigs.forEach(function(s,i){
+      var tierBadge=s.tier==='TIER1'?' <span class="badge b-red" style="font-size:9px">TIER1</span>':s.tier==='TIER2'?' <span class="badge b-orange" style="font-size:9px">TIER2</span>':'';
+      var inAlert=s.inAlert?'<span style="color:var(--green);font-size:11px">已进预警中心</span>':'<span style="color:var(--text3);font-size:11px">仅监测'+((s.interestScore!=null)?'（关联分 '+s.interestScore+'）':'')+'</span>';
+      html+='<tr data-i="'+i+'" style="cursor:pointer;border-bottom:1px solid var(--border)">'+
+        '<td style="padding:6px 8px;color:var(--text3);font-size:11px;width:28px">'+(i+1)+'</td>'+
+        '<td style="padding:6px 8px"><b style="color:var(--text1)">'+s.country+'</b>'+tierBadge+'<span style="font-size:10px;color:var(--text3)"> · '+s.typeLabel+'</span></td>'+
+        '<td style="padding:6px 8px;font-size:12px"><b style="color:'+(s.today>=8?'#ff3355':'var(--orange)')+'">'+s.today+'</b><span style="color:var(--text3)"> / '+(s.avg||0)+'</span></td>'+
+        '<td style="padding:6px 4px;width:28%;min-width:140px"><div style="display:flex;align-items:center;gap:8px">'+self._bar(s.ratio||0)+'<span style="font-size:12px;font-weight:700;width:52px;text-align:right;color:'+(s.ratio>=3?'#ff3355':s.ratio>=1.8?'#ffcc00':'var(--cyan)')+'">'+(s.ratio?s.ratio+'倍':'突发')+'</span></div></td>'+
+        '<td style="padding:6px 8px">'+self._lvlBadge(s.level)+'</td>'+
+        '<td style="padding:6px 8px">'+inAlert+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+    list.innerHTML=html;
+    Array.prototype.forEach.call(list.querySelectorAll('tr[data-i]'),function(tr){
+      tr.onclick=function(){ self.select(parseInt(tr.getAttribute('data-i'),10)); };
+    });
+    if(this._sel>=0&&sigs[this._sel]) this._renderDetail();
+  },
+  select(i){
+    this._sel=i;
+    Array.prototype.forEach.call(document.querySelectorAll('#anomaly-list tr[data-i]'),function(tr){
+      tr.style.background=parseInt(tr.getAttribute('data-i'),10)===i?'rgba(0,212,255,0.08)':'';
+    });
+    this._renderDetail();
+  },
+  _renderDetail(){
+    var s=(this._data&&this._data.signals||[])[this._sel];
+    var host=document.getElementById('anomaly-detail');
+    if(!s||!host){ if(host) host.innerHTML=''; return; }
+    var samples=(s.samples||[]).map(function(t){
+      return '<div style="padding:5px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2)">· '+t+'</div>';
+    }).join('')||'<div style="padding:10px;color:var(--text3)">无样例</div>';
+    host.innerHTML=
+      '<div class="card" style="margin-top:14px;border:1px solid var(--cyan);box-shadow:0 0 20px rgba(0,212,255,0.1)"><div class="card-tt"><span class="ic">🎯</span>'+s.country+' · '+s.typeLabel+' 异动详情 '+this._lvlBadge(s.level)+
+      '<span style="margin-left:auto;font-size:11px;color:var(--text3)">赋分 '+s.risk_score+'</span></div>'+
+      '<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">'+
+        '<div>'+
+          '<div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">'+
+            '<div><div style="font-size:10px;color:var(--text3)">今日入库</div><div style="font-size:22px;font-weight:700;color:'+(s.today>=8?'#ff3355':'var(--orange)')+'">'+s.today+' 条</div></div>'+
+            '<div><div style="font-size:10px;color:var(--text3)">7 日日均</div><div style="font-size:22px;font-weight:700;color:var(--cyan)">'+(s.avg||0)+' 条</div></div>'+
+            '<div><div style="font-size:10px;color:var(--text3)">环比倍数</div><div style="font-size:22px;font-weight:700;color:'+(s.ratio>=3?'#ff3355':s.ratio>=1.8?'#ffcc00':'var(--cyan)')+'">'+(s.ratio?s.ratio+' 倍':'突发（无基线）')+'</div></div>'+
+          '</div>'+
+          '<div style="padding:8px 10px;background:rgba(255,204,0,0.08);border-left:3px solid var(--orange);border-radius:0 6px 6px 0;font-size:12px;line-height:1.7;color:var(--text2)">'+
+            (s.kind==='升温'?'该方向今日情报量达 7 日均值的 '+s.ratio+' 倍，超出异动阈值（1.8 倍），风险呈升温态势。':'近 7 天无基线记录，今日集中入库 '+s.today+' 条，属突发聚集，需核实是否单源刷量或事件爆发。')+
+            (s.alert&&s.alert.risk_rationale?'<br>'+s.alert.risk_rationale:'')+
+          '</div>'+
+          (s.alert?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,255,159,0.06);border-left:3px solid var(--green);border-radius:0 6px 6px 0;font-size:12px;color:var(--text2)">处置建议：'+s.alert.zone_action+'</div>':'')+
+        '</div>'+
+        '<div><div class="card-tt"><span class="ic">📰</span>今日样例标题（真实入库数据）</div><div style="max-height:200px;overflow-y:auto">'+samples+'</div></div>'+
+      '</div></div>';
+  }
+};
+
+/* ============================================================
+ * FUNNEL_VIEW — 采集漏斗（2026-08-28 服务端三件之二）
+ * 数据源：/api/funnel/today（拦截→入库→预警，全链路真实口径，每级可点开明细）
+ * ============================================================ */
+const FUNNEL_VIEW={
+  _data:null, _open:{},
+  init(){
+    var self=this;
+    var host=document.getElementById('funnel-content');
+    if(!host) return;
+    host.innerHTML='<div class="card"><div class="card-tt"><span class="ic">🔻</span>采集漏斗 · 拦截 → 入库 → 预警 全链路</div>'+
+      '<div id="funnel-meta" style="font-size:11px;color:var(--text3);margin-bottom:12px">加载中…</div>'+
+      '<div id="funnel-stages"></div></div>';
+    this._load();
+  },
+  _load(){
+    var self=this;
+    fetch('/api/funnel/today').then(function(r){return r.json();}).then(function(d){
+      self._data=d; self._render();
+    }).catch(function(e){
+      var host=document.getElementById('funnel-stages');
+      if(host) host.innerHTML='<div style="padding:24px;text-align:center;color:var(--orange)">漏斗加载失败：'+e.message+'</div>';
+    });
+  },
+  _render(){
+    if(!this._data) return;
+    var self=this, d=this._data;
+    var meta=document.getElementById('funnel-meta');
+    if(meta) meta.textContent=d.date+' 口径 · 生成于 '+new Date(d.generatedAt).toLocaleTimeString('zh-CN')+' · 点击各级展开明细';
+    var host=document.getElementById('funnel-stages');
+    if(!host) return;
+    var max=1; d.stages.forEach(function(s){ if(s.count>max)max=s.count; });
+    var colors={blocked:'#ff3355',stored:'#00d4ff',alerts:'#00ff9f'};
+    var html='';
+    d.stages.forEach(function(s){
+      var w=Math.max(6,Math.round((s.count/max)*100));
+      var c=colors[s.key]||'#00d4ff';
+      var open=!!self._open[s.key];
+      html+=
+      '<div style="margin-bottom:10px">'+
+        '<div onclick="FUNNEL_VIEW.toggle(\''+s.key+'\')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">'+
+          '<span style="font-size:13px;font-weight:700;color:var(--text1);min-width:72px">'+s.name+'</span>'+
+          '<div style="flex:1;height:26px;background:var(--bg3);border-radius:13px;overflow:hidden;position:relative">'+
+            '<div style="width:'+w+'%;height:100%;background:linear-gradient(90deg,'+c+'33,'+c+');transition:width .4s"></div>'+
+            '<span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:14px;font-weight:700;color:#fff">'+s.count+' 条</span>'+
+          '</div>'+
+          '<span style="font-size:11px;color:var(--text3)">'+(open?'▲ 收起':'▼ 明细')+'</span>'+
+        '</div>';
+      if(open) html+=self._detail(s);
+      html+='</div>';
+    });
+    /* 转化率（真实口径：入库/(入库+今日拦截池)，预警/入库） */
+    var blocked=0,stored=0,alerts=0,pool=0;
+    d.stages.forEach(function(s){ if(s.key==='blocked'){blocked=s.count;pool=s.poolToday||0;} if(s.key==='stored')stored=s.count; if(s.key==='alerts')alerts=s.count; });
+    var inRate=stored+pool>0?Math.round(stored/(stored+pool)*100):null;
+    var alRate=stored>0?Math.round(alerts/stored*100):null;
+    /* 预警由 _serverAlertGen 每3分钟回看 24h 数据生成（含昨日剩余），跨日时段会出现预警量>入库量，
+     * 显示时附带"含昨日回看"说明，避免领导误判数据质量。 */
+    var alRateNote = alRate!=null && alRate > 100 ? ' 含昨日回看（24h 窗口）' : '';
+    html+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">'+
+      (inRate!=null?'<div style="padding:8px 14px;background:var(--bg2);border-radius:8px;font-size:12px;color:var(--text2)">今日通过率（入库/(入库+数据池拦截)）：<b style="color:var(--cyan)">'+inRate+'%</b></div>':'')+
+      (alRate!=null?'<div style="padding:8px 14px;background:var(--bg2);border-radius:8px;font-size:12px;color:var(--text2)">预警转化率（预警/入库）：<b style="color:var(--green)">'+alRate+'%</b>'+alRateNote+'</div>':'')+
+      '<div style="padding:8px 14px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3)">拦截口径：数据池今日（持久化）+ 入库闸审计（重启以来·内存，含重复/旧闻等不落池拦截）</div>'+
+    '</div>';
+    host.innerHTML=html;
+  },
+  toggle(k){ this._open[k]=!this._open[k]; this._render(); },
+  _kvTable(obj,limit){
+    var ks=Object.keys(obj||{}).sort(function(a,b){return obj[b]-obj[a];}).slice(0,limit||12);
+    if(!ks.length) return '<div style="padding:8px;color:var(--text3);font-size:11px">无记录</div>';
+    var max=obj[ks[0]]||1;
+    return ks.map(function(k){
+      var w=Math.round(obj[k]/max*100);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">'+
+        '<span style="font-size:11px;color:var(--text2);min-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+k+'</span>'+
+        '<div style="flex:1;height:10px;background:var(--bg3);border-radius:5px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:var(--cyan)"></div></div>'+
+        '<span style="font-size:11px;color:var(--text1);font-weight:700;min-width:32px;text-align:right">'+obj[k]+'</span></div>';
+    }).join('');
+  },
+  _rowsTable(rows){
+    if(!rows||!rows.length) return '<div style="padding:8px;color:var(--text3);font-size:11px">无记录</div>';
+    var max=rows[0].c||1;
+    return rows.map(function(r){
+      var w=Math.round(r.c/max*100);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">'+
+        '<span style="font-size:11px;color:var(--text2);min-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.k+'</span>'+
+        '<div style="flex:1;height:10px;background:var(--bg3);border-radius:5px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:var(--cyan)"></div></div>'+
+        '<span style="font-size:11px;color:var(--text1);font-weight:700;min-width:32px;text-align:right">'+r.c+'</span></div>';
+    }).join('');
+  },
+  _detail(s){
+    if(s.key==='blocked'){
+      var poolSamp=Object.keys(s.samples||{}).map(function(k){
+        return '<div style="margin-bottom:6px"><div style="font-size:11px;color:var(--orange);margin-bottom:2px">'+k+' · 样例</div>'+
+          (s.samples[k]||[]).map(function(t){return '<div style="font-size:11px;color:var(--text3);padding:1px 0 1px 10px">· '+String(t).slice(0,60)+'</div>';}).join('')+'</div>';
+      }).join('');
+      return '<div style="padding:12px;background:var(--bg2);border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;margin-bottom:10px">'+
+        '<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">'+
+        '<div><div class="card-tt" style="font-size:12px"><span class="ic">🚧</span>数据池拦截分布（今日·持久化）</div>'+this._kvTable(s.detail)+
+          '<div style="font-size:10px;color:var(--text3);margin-top:6px">合计 '+s.poolToday+' 条 · 详情见「非预警数据池」页签</div></div>'+
+        '<div><div class="card-tt" style="font-size:12px"><span class="ic">🛡️</span>入库闸审计（重启以来·内存）</div>'+this._kvTable(s.gateDetail,14)+
+          '<div style="font-size:10px;color:var(--text3);margin-top:6px">含重复/旧闻/黑名单等不落池拦截 · 服务重启后从零累计</div>'+
+          (poolSamp?'<div style="max-height:120px;overflow-y:auto;margin-top:8px">'+poolSamp+'</div>':'')+
+        '</div></div></div>';
+    }
+    if(s.key==='stored'){
+      return '<div style="padding:12px;background:var(--bg2);border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;margin-bottom:10px">'+
+        '<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">'+
+        '<div><div class="card-tt" style="font-size:12px"><span class="ic">📦</span>按情报类别</div>'+this._rowsTable(s.byType)+'</div>'+
+        '<div><div class="card-tt" style="font-size:12px"><span class="ic">🛰️</span>按采集通道（_sourceType）</div>'+this._rowsTable(s.byChannel)+'</div>'+
+        '</div></div>';
+    }
+    if(s.key==='alerts'){
+      return '<div style="padding:12px;background:var(--bg2);border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;margin-bottom:10px">'+
+        '<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">'+
+        '<div><div class="card-tt" style="font-size:12px"><span class="ic">🚨</span>按预警等级</div>'+this._kvTable(s.byLevel)+'</div>'+
+        '<div><div class="card-tt" style="font-size:12px"><span class="ic">📈</span>异动信号与生成拦截</div>'+
+          '<div style="padding:4px 0"><span style="font-size:22px;font-weight:700;color:var(--orange)">'+(s.anomaly||0)+'</span><span style="font-size:11px;color:var(--text3)"> 条异动信号预警（ANOM- 前缀）</span></div>'+
+          '<div class="card-tt" style="font-size:11px;margin-top:6px"><span class="ic">🚫</span>预警生成被拒（重启以来·内存）</div>'+this._kvTable(s.gateRejections,10)+
+          '<div style="font-size:10px;color:var(--text3);margin-top:4px">已入库但未达预警生成标准（国内/低利益关联/俄乌无关联等）</div></div>'+
+        '</div></div>';
+    }
+    return '';
+  }
+};
+
+/* ============================================================
+ * ARCHIVE_VIEW — 归档检索（2026-08-28 服务端三件之三）
+ * 数据源：/api/archive/search（intel_archive 滚动归档：活跃库仅留 7 天，更早可查不丢）
+ * ============================================================ */
+const ARCHIVE_VIEW={
+  _data:null, _page:1, _q:'', _country:'', _type:'', _since:'', _until:'',
+  init(){
+    var self=this;
+    var host=document.getElementById('archive-content');
+    if(!host) return;
+    var typeOpts=['','terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','economic_risk','legal_compliance','cyber_security'].map(function(t){
+      var n={terror_events:'恐怖事件',security_events:'安全事件',military_conflicts:'武装冲突',political_events:'政治事件',natural_disasters:'自然灾害',public_health:'公共卫生',sanctions_data:'制裁措施',social_unrest:'社会动荡',infrastructure:'基础设施',geopolitical_intel:'地缘情报',economic_risk:'经济风险',legal_compliance:'法律合规',cyber_security:'网络安全'}[t];
+      return '<option value="'+t+'"'+(self._type===t?' selected':'')+'>'+(t?(n||t):'全类别')+'</option>';
+    }).join('');
+    host.innerHTML=
+      '<div class="card"><div class="card-tt"><span class="ic">📚</span>归档库检索 · 滚动归档（活跃库仅留 7 天，更早数据可查不丢）</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+        '<input id="ar-q" placeholder="关键词（标题，中英皆可）" value="'+this._q.replace(/"/g,'&quot;')+'" style="flex:2;min-width:180px;padding:7px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:12px">'+
+        '<input id="ar-country" placeholder="国家（精确，如：巴基斯坦）" value="'+this._country.replace(/"/g,'&quot;')+'" style="flex:1;min-width:150px;padding:7px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:12px">'+
+        '<select id="ar-type" style="padding:7px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:12px">'+typeOpts+'</select>'+
+        '<input id="ar-since" type="date" value="'+this._since+'" style="padding:7px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:12px">'+
+        '<span style="color:var(--text3);font-size:11px">至</span>'+
+        '<input id="ar-until" type="date" value="'+this._until+'" style="padding:7px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:12px">'+
+        '<span class="dc-tab" id="ar-search" style="cursor:pointer">🔍 检索</span>'+
+      '</div>'+
+      '<div id="ar-stats"></div>'+
+      '<div id="ar-results"></div>'+
+      '<div id="ar-pager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:12px"></div></div>';
+    document.getElementById('ar-search').onclick=function(){ self._page=1; self._readForm(); self._load(); };
+    [ 'ar-q','ar-country' ].forEach(function(id){ document.getElementById(id).onkeydown=function(ev){ if(ev.key==='Enter'){ self._page=1; self._readForm(); self._load(); } }; });
+    this._load();
+  },
+  _readForm(){
+    this._q=document.getElementById('ar-q').value.trim();
+    this._country=document.getElementById('ar-country').value.trim();
+    this._type=document.getElementById('ar-type').value;
+    this._since=document.getElementById('ar-since').value;
+    this._until=document.getElementById('ar-until').value;
+  },
+  _load(){
+    var self=this;
+    var res=document.getElementById('ar-results');
+    if(res) res.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3)">检索中…</div>';
+    var qs=new URLSearchParams({page:String(this._page),limit:'20',q:this._q,country:this._country,type:this._type,since:this._since,until:this._until});
+    fetch('/api/archive/search?'+qs.toString()).then(function(r){return r.json();}).then(function(d){
+      self._data=d; self._render();
+    }).catch(function(e){
+      if(res) res.innerHTML='<div style="padding:24px;text-align:center;color:var(--orange)">归档检索失败：'+e.message+'</div>';
+    });
+  },
+  _render(){
+    if(!this._data) return;
+    var self=this, d=this._data;
+    var st=d.stats||{};
+    var stHost=document.getElementById('ar-stats');
+    if(stHost){
+      var byC=(st.byCountry||[]).slice(0,8).map(function(r){return '<span class="badge" style="background:var(--bg2);color:var(--text2);margin:2px;cursor:pointer" onclick="ARCHIVE_VIEW._qCountry(\''+String(r.k).replace(/'/g,"\\'")+'\')">'+r.k+' '+r.c+'</span>';}).join('');
+      stHost.innerHTML='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+        '<div class="stat-card" style="flex:1;min-width:130px"><div class="stat-v" style="color:var(--cyan)">'+(d.total||0)+'</div><div class="stat-l">本条件命中</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:130px"><div class="stat-v">'+(st.totalAll||0)+'</div><div class="stat-l">归档库总量</div></div>'+
+        '<div class="stat-card" style="flex:2;min-width:200px"><div class="stat-v" style="font-size:13px;line-height:1.7">'+(st.minTime?new Date(st.minTime).toLocaleDateString('zh-CN'):'—')+' ~ '+(st.maxTime?new Date(st.maxTime).toLocaleDateString('zh-CN'):'—')+'</div><div class="stat-l">归档时间跨度</div></div>'+
+      '</div>'+(byC?'<div style="margin-bottom:8px"><span style="font-size:11px;color:var(--text3)">国别 TOP（点击检索）：</span>'+byC+'</div>':'');
+    }
+    var host=document.getElementById('ar-results');
+    if(!host) return;
+    if(!d.rows||!d.rows.length){
+      host.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3)">归档库无命中记录<div style="font-size:11px;margin-top:6px">当前归档来自活跃库 7 天前滚动迁移，历史深度随系统运行累积</div></div>';
+    } else {
+      var html='<div class="table-wrap" style="max-height:480px;overflow-y:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:var(--bg2)">'+
+        '<th style="text-align:left;padding:7px 8px;font-size:11px;color:var(--text2)">归档时间</th>'+
+        '<th style="text-align:left;padding:7px 8px;font-size:11px;color:var(--text2)">国家</th>'+
+        '<th style="text-align:left;padding:7px 8px;font-size:11px;color:var(--text2)">类别</th>'+
+        '<th style="text-align:left;padding:7px 8px;font-size:11px;color:var(--text2)">标题</th>'+
+        '<th style="text-align:left;padding:7px 8px;font-size:11px;color:var(--text2)">来源</th></tr></thead><tbody>';
+      d.rows.forEach(function(r){
+        var t=new Date(r.time).toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+        html+='<tr style="border-bottom:1px solid var(--border)">'+
+          '<td style="padding:6px 8px;font-size:11px;color:var(--text3);white-space:nowrap">'+t+'</td>'+
+          '<td style="padding:6px 8px;font-size:12px;color:var(--text1);white-space:nowrap">'+(r.country||'—')+'</td>'+
+          '<td style="padding:6px 8px;font-size:11px;color:var(--cyan);white-space:nowrap">'+(r.type||'—')+'</td>'+
+          '<td style="padding:6px 8px;font-size:12px;color:var(--text2)">'+(r.url?'<a href="'+r.url+'" target="_blank" style="color:var(--text2);text-decoration:none" onmouseover="this.style.color=\'var(--cyan)\'" onmouseout="this.style.color=\'var(--text2)\'">'+String(r.title).slice(0,90)+'</a>':String(r.title).slice(0,90))+'</td>'+
+          '<td style="padding:6px 8px;font-size:11px;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.source||'—')+'</td></tr>';
+      });
+      html+='</tbody></table></div>';
+      host.innerHTML=html;
+    }
+    var pager=document.getElementById('ar-pager');
+    if(pager){
+      var pages=Math.max(1,Math.ceil((d.total||0)/(d.limit||20)));
+      pager.innerHTML=
+        '<span class="dc-tab'+(this._page<=1?' dim':'')+'" style="cursor:'+(this._page<=1?'default':'pointer')+';'+(this._page<=1?'opacity:.4':'')+'" onclick="ARCHIVE_VIEW._pageTo('+(this._page-1)+')">‹ 上一页</span>'+
+        '<span style="font-size:12px;color:var(--text2)">第 '+this._page+' / '+pages+' 页 · 共 '+(d.total||0)+' 条</span>'+
+        '<span class="dc-tab'+(this._page>=pages?' dim':'')+'" style="cursor:'+(this._page>=pages?'default':'pointer')+';'+(this._page>=pages?'opacity:.4':'')+'" onclick="ARCHIVE_VIEW._pageTo('+(this._page+1)+')">下一页 ›</span>';
+    }
+  },
+  _qCountry(cn){ this._country=cn; this._page=1; this.init(); },
+  _pageTo(pg){ if(pg<1) return; this._page=pg; this._load(); }
 };
 
 /* 研判简报页签切换（周期研判 / 每日简报 合并视图） */
