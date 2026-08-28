@@ -3936,25 +3936,180 @@ var AUDIT={
 const VIEW_MAP={
   situation:{t:'态势总览',b:'态势感知 / 态势总览'},
   myfocus:{t:'我的关注',b:'态势感知 / 我的工作台'},
-  datasources:{t:'数据源库',b:'数据中枢 / 数据源库'},
-  wechat:{t:'公众号采集',b:'数据管理 / 公众号采集'},
+  datapool:{t:'数据中枢',b:'数据管理 / 数据中枢（数据源库 · 公众号采集）'},
   intel:{t:'情报影像中心',b:'监测中心 / 情报影像中心'},
   monitor:{t:'风险监测',b:'监测中心 / 风险监测'},
-  assets:{t:'企业资产',b:'监测中心 / 企业资产'},
   alerts:{t:'预警中心',b:'监测中心 / 预警中心'},
-  matrix:{t:'风险矩阵',b:'分析工具 / 风险矩阵'},
-  forecast:{t:'预测预警',b:'分析工具 / 预测预警（未来预判 · 智能推演）'},
-  analysis:{t:'研判简报',b:'分析工具 / 研判简报（周期研判 · 每日简报）'},
-  datacenter:{t:'数据中心',b:'数据管理 / 数据中心'},
-  sidepool:{t:'非预警数据池',b:'数据管理 / 非预警数据池'},
-  settings:{t:'系统设置',b:'系统 / 系统设置'},
+  country:{t:'国别档案',b:'分析研判 / 国别档案（风险矩阵 · 预测推演 · 企业资产）'},
+  reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（研判简报 · AI分析报告）'},
+  datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 可解释审计）'},
+  settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
   threatorgs:{t:'威胁组织',b:'监测中心 / 威胁组织'},
-  autoalert:{t:'自动预警',b:'监测中心 / 自动预警'},
-  aireport:{t:'AI情报分析报告',b:'监测中心 / AI情报分析报告'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
-  explain:{t:'可解释审计',b:'分析工具 / 可解释性与审计'},
-  role:{t:'角色分级',b:'系统 / 角色与信息分级'}
+  /* —— 以下为合并前的旧键：VIEW_MERGE_ALIAS 自动跳转到伞形视图，VIEW_MAP 保留供兼容 —— */
+  datasources:{t:'数据中枢 · 数据源库',b:'数据管理 / 数据中枢 / 数据源库'},
+  wechat:{t:'数据中枢 · 公众号采集',b:'数据管理 / 数据中枢 / 公众号采集'},
+  analysis:{t:'情报报告中心 · 研判简报',b:'分析研判 / 情报报告中心 / 研判简报'},
+  aireport:{t:'情报报告中心 · AI分析报告',b:'分析研判 / 情报报告中心 / AI分析报告'},
+  matrix:{t:'国别档案 · 风险矩阵',b:'分析研判 / 国别档案 / 风险矩阵'},
+  forecast:{t:'国别档案 · 预测推演',b:'分析研判 / 国别档案 / 预测推演'},
+  assets:{t:'国别档案 · 企业资产',b:'分析研判 / 国别档案 / 企业资产'},
+  datacenter:{t:'数据治理 · 数据中心',b:'数据管理 / 数据治理 / 数据中心'},
+  sidepool:{t:'数据治理 · 非预警数据池',b:'数据管理 / 数据治理 / 非预警数据池'},
+  explain:{t:'数据治理 · 可解释审计',b:'数据管理 / 数据治理 / 可解释审计'},
+  autoalert:{t:'预警中心 · 智能联动预警',b:'监测中心 / 预警中心 / 智能联动预警'},
+  role:{t:'系统设置 · 角色分级',b:'系统 / 系统设置 / 角色与信息分级'}
 };
+
+/* ============================================================
+ * 功能区合并引擎（2026-08-28 信息架构重组）
+ * 伞形视图 = 一个职责一个家；旧视图键全兼容跳转
+ * 预警中心 = 实时队列 + 智能联动(autoalert)
+ * 情报报告中心 = 研判简报(analysis) + AI报告(aireport)
+ * 国别档案 = 风险矩阵(matrix) + 预测推演(forecast) + 企业资产(assets)
+ * 数据中枢 = 数据源库(datasources) + 公众号采集(wechat)
+ * 数据治理 = 数据中心(datacenter) + 非预警数据池(sidepool) + 可解释审计(explain)
+ * 系统设置 = 设置 + 角色分级(role)
+ * ============================================================ */
+const VIEW_MERGE_ALIAS={
+  autoalert:'alerts',
+  analysis:'reports', aireport:'reports',
+  matrix:'country', forecast:'country', assets:'country',
+  datasources:'datapool', wechat:'datapool',
+  datacenter:'datagov', sidepool:'datagov', explain:'datagov',
+  role:'settings'
+};
+const VIEW_MERGE_TABS={
+  alerts:[
+    {k:'alerts',label:'🚨 实时预警队列'},
+    {k:'autoalert',label:'⚡ 智能联动预警'}
+  ],
+  reports:[
+    {k:'analysis',label:'📋 研判简报'},
+    {k:'aireport',label:'🤖 AI情报分析报告'}
+  ],
+  country:[
+    {k:'matrix',label:'📊 风险矩阵'},
+    {k:'forecast',label:'🔮 预测推演'},
+    {k:'assets',label:'🏢 企业资产'}
+  ],
+  datapool:[
+    {k:'datasources',label:'🛰️ 数据源库'},
+    {k:'wechat',label:'📮 公众号采集'}
+  ],
+  datagov:[
+    {k:'datacenter',label:'🗄️ 数据中心'},
+    {k:'sidepool',label:'🌊 非预警数据池'},
+    {k:'explain',label:'🔍 可解释审计'}
+  ],
+  settings:[
+    {k:'settings',label:'⚙️ 系统设置'},
+    {k:'role',label:'🛡️ 角色与信息分级'}
+  ]
+};
+
+/* 安装合并：把旧视图容器移入伞形容器并变成 subview + 插页签栏 */
+function installViewMerge(){
+  if(window.__viewMergeInstalled) return;
+  window.__viewMergeInstalled=true;
+  var content=document.getElementById('content');
+  if(!content||!document.getElementById('view-alerts')) return;
+  /* 1. 新建四个伞形容器 */
+  ['reports','country','datapool','datagov'].forEach(function(u){
+    if(!document.getElementById('view-'+u)){
+      var el=document.createElement('div');
+      el.className='view'; el.id='view-'+u;
+      content.appendChild(el);
+    }
+  });
+  /* 2. 既有伞形（alerts/settings）：原内容包一层 subview */
+  ['alerts','settings'].forEach(function(u){
+    var host=document.getElementById('view-'+u);
+    if(!host||document.getElementById('sv-'+u)) return;
+    var wrap=document.createElement('div');
+    wrap.className='subview active'; wrap.id='sv-'+u;
+    while(host.firstChild) wrap.appendChild(host.firstChild);
+    host.appendChild(wrap);
+  });
+  /* 3. 旧视图容器移入伞形，class view→subview */
+  Object.keys(VIEW_MERGE_ALIAS).forEach(function(child){
+    var u=VIEW_MERGE_ALIAS[child];
+    var el=document.getElementById('view-'+child);
+    var host=document.getElementById('view-'+u);
+    if(!el||!host||el===host) return;
+    el.classList.remove('view'); el.classList.add('subview');
+    host.appendChild(el);
+  });
+  /* 4. 页签栏插到每个伞形最前 */
+  Object.keys(VIEW_MERGE_TABS).forEach(function(u){
+    var host=document.getElementById('view-'+u);
+    if(!host||document.getElementById('mtabs-'+u)) return;
+    var bar=document.createElement('div');
+    bar.className='dc-tabs'; bar.id='mtabs-'+u; bar.style.marginBottom='12px';
+    VIEW_MERGE_TABS[u].forEach(function(t,i){
+      var d=document.createElement('div');
+      d.className='dc-tab'+(i===0?' active':'');
+      d.textContent=t.label;
+      d.onclick=function(){ navigateTo(t.k); };
+      bar.appendChild(d);
+    });
+    host.insertBefore(bar,host.firstChild);
+  });
+  /* 5. 默认只显示每个伞形的第一个 subview */
+  Object.keys(VIEW_MERGE_TABS).forEach(function(u){
+    var tabs=VIEW_MERGE_TABS[u];
+    tabs.forEach(function(t,i){
+      var el=document.getElementById(t.k===u?('sv-'+u):('view-'+t.k));
+      if(el) el.classList.toggle('active',i===0);
+    });
+  });
+}
+/* 页签切换：激活 subview + 运行对应视图的 init */
+function switchViewTab(u,t){
+  var tabs=VIEW_MERGE_TABS[u]; if(!tabs) return false;
+  /* 未命中页签（如直接进伞形键）：回落到第一个页签 */
+  var has=tabs.some(function(x){return x.k===t;});
+  if(!has) t=tabs[0].k;
+  tabs.forEach(function(x){
+    var el=document.getElementById(x.k===u?('sv-'+u):('view-'+x.k));
+    if(!el) return;
+    if(x.k===t){ el.classList.add('active'); } else { el.classList.remove('active'); }
+  });
+  var bar=document.getElementById('mtabs-'+u);
+  if(bar){ Array.prototype.forEach.call(bar.children,function(c,i){ c.classList.toggle('active',!!(tabs[i]&&tabs[i].k===t)); }); }
+  /* 数据源浮层：仅数据源库页签显示 */
+  try{ if(typeof DATASOURCES!=='undefined'){ if(u==='datapool'&&t==='datasources'){ DATASOURCES.init(); } else { DATASOURCES.hide(); } } }catch(e){}
+  return true;
+}
+/* 各视图初始化钩子（从旧 navigateTo 抽出，按最终视图键调用） */
+function runViewInit(v){
+  setTimeout(function(){
+    try{
+      if(v==='situation'){ if(SITUATION._needsRefresh){SITUATION._needsRefresh=false;} SITUATION.init(); }
+      else if(v==='myfocus'){ if(typeof MYFOCUS!=='undefined')MYFOCUS.init(); }
+      else if(v==='intel'){ INTELCENTER.init(); }
+      else if(v==='monitor'){ MONITOR.init(); }
+      else if(v==='assets'){ ASSETS.init(); }
+      else if(v==='alerts'){ AVIEW.init(); }
+      else if(v==='matrix'){ RISK_FUSION.fuse(); if(typeof MATRIX!=='undefined')MATRIX.init(); }
+      else if(v==='forecast'){ FORECAST.init(); }
+      else if(v==='datacenter'){ DATACENTER.init(); }
+      else if(v==='sidepool'){ if(typeof SIDEPOOL!=='undefined')SIDEPOOL.init(); }
+      else if(v==='settings'){ SETTINGS.init(); }
+      else if(v==='threatorgs'){ if(typeof THREATS!=='undefined')THREATS.render(); }
+      else if(v==='autoalert'){ if(typeof AUTOALERT!=='undefined')AUTOALERT.init(); }
+      else if(v==='aireport'){ if(typeof AIREPORT!=='undefined')AIREPORT.init(); }
+      else if(v==='datasources'){ if(typeof DATASOURCES!=='undefined')DATASOURCES.init(); }
+      else if(v==='wechat'){ if(typeof WECHAT!=='undefined')WECHAT.init(); }
+      else if(v==='command'){ if(typeof COMMAND!=='undefined'){ if(!COMMAND._incidents)COMMAND.init(); else COMMAND.render(); } }
+      else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
+      else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
+      else if(v==='role'){ if(typeof ROLE_UI!=='undefined')ROLE_UI.render(); }
+    }catch(e){ console.error('runViewInit('+v+')错误:',e); }
+  },0);
+}
+installViewMerge();
+document.addEventListener('DOMContentLoaded',installViewMerge);
 
 /* 研判简报页签切换（周期研判 / 每日简报 合并视图） */
 function switchAnalysisTab(t){
@@ -14254,7 +14409,7 @@ const FORECAST={
   },
   switch(t){
     this.tab=t;
-    var tabs=['prediction','scenario','expert','stats'];
+    var tabs=['foresee','prediction','scenario','expert','stats'];
     document.querySelectorAll('#fc-tabs .dc-tab').forEach(function(e,i){e.classList.toggle('active',tabs[i]===t);});
     this.render();
   },
@@ -14911,43 +15066,34 @@ function navigateTo(v){
   /* 视图合并别名（2026-08-16）：foresee→forecast（预测预警）、dailyreport→analysis（研判简报） */
   if(v==='foresee')v='forecast';
   if(v==='dailyreport')v='analysis';
+  /* 功能区合并（2026-08-28）：旧键→伞形视图，如 autoalert→alerts、matrix→country */
+  installViewMerge();
+  var tab=v;
+  var u=VIEW_MERGE_ALIAS[v]||v;
+  /* 直接进入伞形键（如侧边栏点"国别档案"）：默认落到第一个页签 */
+  if(tab===u&&VIEW_MERGE_TABS[u]) tab=VIEW_MERGE_TABS[u][0].k;
   try{
     /* 移动端：导航后自动收起侧边栏（2026-08-21 汉堡菜单实测修复） */
     if(window.innerWidth<=768){const _sb=document.getElementById('sidebar');if(_sb)_sb.classList.remove('open');}
-    window._currentView = v; /* 记录当前视图，供实时数据自动重绘使用 */
+    window._currentView = tab; /* 记录当前视图（页签级键），供实时数据自动重绘使用 */
+    window._currentUmbrella = u;
     document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
-    const tv=document.getElementById('view-'+v);
+    const tv=document.getElementById('view-'+u);
     if(tv)tv.classList.add('active');
     document.querySelectorAll('.sb-item').forEach(x=>x.classList.remove('active'));
-    const si=document.querySelector('.sb-item[data-view="'+v+'"]');
+    const si=document.querySelector('.sb-item[data-view="'+u+'"]');
     if(si)si.classList.add('active');
-    const i=VIEW_MAP[v]||{t:v,b:v};
+    /* 标题：直接跳旧键时用旧键的细化标题；伞形键用伞形标题 */
+    const i=(tab!==u&&VIEW_MAP[tab])?VIEW_MAP[tab]:(VIEW_MAP[u]||{t:v,b:v});
     document.getElementById('pageTitle').textContent=i.t;
     document.getElementById('pageCrumb').textContent=i.b;
     const r=document.getElementById('content');if(r)r.scrollTop=0;
-    if(v==='situation'){setTimeout(function(){try{if(SITUATION._needsRefresh){SITUATION._needsRefresh=false;}SITUATION.init();}catch(e){console.error('SITUATION.init错误:',e);}},0);}
-    if(v==='myfocus'){setTimeout(function(){try{if(typeof MYFOCUS!=='undefined')MYFOCUS.init();}catch(e){console.error('MYFOCUS.init错误:',e);}},0);}
-    if(v==='intel'){setTimeout(function(){try{INTELCENTER.init();}catch(e){console.error('INTELCENTER.init错误:',e);}},0);}
-    if(v==='monitor'){setTimeout(function(){try{MONITOR.init();}catch(e){console.error('MONITOR.init错误:',e);}},0);}
-    if(v==='assets'){setTimeout(function(){try{ASSETS.init();}catch(e){console.error('ASSETS.init错误:',e);}},0);}
-    if(v==='alerts'){setTimeout(function(){try{AVIEW.init();}catch(e){console.error('AVIEW.init错误:',e);}},0);}
-    if(v==='matrix'){setTimeout(function(){try{MATRIX.init();}catch(e){console.error('MATRIX.init错误:',e);}},0);}
-    if(v==='forecast'){setTimeout(function(){try{FORECAST.init();}catch(e){console.error('FORECAST.init错误:',e);}},0);}
-    if(v==='foresee'){setTimeout(function(){try{if(typeof FORESEE!=='undefined')FORESEE.init();}catch(e){console.error('FORESEE.init错误:',e);}},0);}
-    if(v==='datacenter'){setTimeout(function(){try{DATACENTER.init();}catch(e){console.error('DATACENTER.init错误:',e);}},0);}
-    if(v==='sidepool'){setTimeout(function(){try{if(typeof SIDEPOOL!=='undefined')SIDEPOOL.init();}catch(e){console.error('SIDEPOOL.init错误:',e);}},0);}
-    if(v==='settings'){setTimeout(function(){try{SETTINGS.init();}catch(e){console.error('SETTINGS.init错误:',e);}},0);}
-    if(v==='threatorgs'){setTimeout(function(){try{if(typeof THREATS!=='undefined')THREATS.render();}catch(e){console.error('THREATS.render错误:',e);}},0);}
-    if(v==='autoalert'){setTimeout(function(){try{if(typeof AUTOALERT!=='undefined')AUTOALERT.init();}catch(e){console.error('AUTOALERT.init错误:',e);}},0);}
-    if(v==='aireport'){setTimeout(function(){try{if(typeof AIREPORT!=='undefined')AIREPORT.init();}catch(e){console.error('AIREPORT.init错误:',e);}},0);}
-    if(v==='dailyreport'){setTimeout(function(){try{if(typeof DAILY_REPORT!=='undefined')DAILY_REPORT.init();}catch(e){console.error('DAILY_REPORT.init错误:',e);}},0);}
-    if(v==='datasources'){setTimeout(function(){try{if(typeof DATASOURCES!=='undefined')DATASOURCES.init();}catch(e){console.error('DATASOURCES.init错误:',e);}},0);}
-    if(v==='wechat'){setTimeout(function(){try{if(typeof WECHAT!=='undefined')WECHAT.init();}catch(e){console.error('WECHAT.init错误:',e);}},0);}
-    if(v!=='datasources'){setTimeout(function(){try{if(typeof DATASOURCES!=='undefined')DATASOURCES.hide();}catch(e){}},0);}
-    if(v==='command'){setTimeout(function(){try{if(typeof COMMAND!=='undefined'){if(!COMMAND._incidents)COMMAND.init();else COMMAND.render();}}catch(e){console.error('COMMAND.render错误:',e);}},0);}
-    if(v==='analysis'){setTimeout(function(){try{if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body');}catch(e){console.error('ANALYSIS.render错误:',e);}},0);}
-    if(v==='explain'){setTimeout(function(){try{if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render();}catch(e){console.error('EXPLAINABILITY.render错误:',e);}},0);}
-    if(v==='role'){setTimeout(function(){try{if(typeof ROLE_UI!=='undefined')ROLE_UI.render();}catch(e){console.error('ROLE_UI.render错误:',e);}},0);}
+    /* 伞形视图：切换页签（含 subview 激活 + DATASOURCES 浮层控制） */
+    var hit=switchViewTab(u,tab);
+    /* 非伞形或页签未命中时的数据源浮层兜底 */
+    if(!hit&&!(u==='datapool'&&tab==='datasources')){ setTimeout(function(){try{if(typeof DATASOURCES!=='undefined')DATASOURCES.hide();}catch(e){}},0); }
+    /* 视图初始化钩子（统一入口） */
+    runViewInit(tab);
   }catch(e){
     console.error('[navigateTo] 错误:',e);
   }

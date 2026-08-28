@@ -9,9 +9,9 @@
 
   const ROLES = {
     mfa: { key: 'mfa', name: '外交部领事保护', icon: '🛂', defaultView: 'situation', focus: ['人员','领保案件','使领馆'], maxClearance: 'sensitive' },
-    mofcom: { key: 'mofcom', name: '商务部海外安全', icon: '🏭', defaultView: 'assets', focus: ['企业','项目','供应链'], maxClearance: 'sensitive' },
+    mofcom: { key: 'mofcom', name: '商务部海外安全', icon: '🏭', defaultView: 'country', focus: ['企业','项目','供应链'], maxClearance: 'sensitive' },
     mps: { key: 'mps', name: '公安部海保局', icon: '🛡️', defaultView: 'threatorgs', focus: ['威胁','案件','线索'], maxClearance: 'secret' },
-    enterprise: { key: 'enterprise', name: '中企海外安全', icon: '🏢', defaultView: 'assets', focus: ['本企业','项目风险','上级指令'], maxClearance: 'internal' }
+    enterprise: { key: 'enterprise', name: '中企海外安全', icon: '🏢', defaultView: 'country', focus: ['本企业','项目风险','上级指令'], maxClearance: 'internal' }
   };
 
   const CLEARANCE_LEVELS = [
@@ -28,10 +28,12 @@
 
   const VIEW_LABELS = {
     situation:'态势总览', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
-    intel:'情报影像中心', assets:'企业资产', alerts:'预警中心', autoalert:'自动预警',
-    matrix:'风险矩阵', forecast:'预测预警', analysis:'研判简报', aireport:'AI情报分析报告', explain:'可解释审计',
-    role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池', settings:'系统设置', dailyreport:'每日简报',
-    wechat:'公众号采集'
+    intel:'情报影像中心', alerts:'预警中心', country:'国别档案', reports:'情报报告中心',
+    datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
+    /* 合并前的旧键（兼容跳转用） */
+    autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报', aireport:'AI情报分析报告',
+    explain:'可解释审计', role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池',
+    dailyreport:'每日简报', wechat:'公众号采集', assets:'企业资产'
   };
 
   /* 各角色可见的侧边栏入口；未列出者默认按角色最大权限显示 */
@@ -39,24 +41,19 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','command','monitor','intel','assets','alerts','autoalert','matrix','forecast','analysis','aireport','explain','role','settings']
+    enterprise: ['situation','myfocus','command','monitor','intel','alerts','country','reports','datapool','datagov','settings']
   };
 
   const PERMISSION_MATRIX = [
     { key: 'situation', label: '态势总览', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'myfocus', label: '我的关注', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'alerts', label: '预警中心', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'assets', label: '企业资产', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'alerts', label: '预警中心（实时队列+智能联动）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'country', label: '国别档案（矩阵+推演+企业资产）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'command', label: '指挥调度', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'threatorgs', label: '威胁组织', roles: ['mfa','mofcom','mps'] },
-    { key: 'datacenter', label: '数据中心', roles: ['mfa','mofcom','mps'] },
-    { key: 'sidepool', label: '非预警数据池', roles: ['mfa','mofcom','mps'] },
-    { key: 'datasources', label: '数据源库', roles: ['mfa','mofcom','mps'] },
-    { key: 'wechat', label: '公众号采集', roles: ['mfa','mofcom','mps'] },
-    { key: 'matrix', label: '风险矩阵', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'forecast', label: '预测预警', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'analysis', label: '研判简报', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'explain', label: '可解释审计', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'datagov', label: '数据治理', roles: ['mfa','mofcom','mps'] },
+    { key: 'datapool', label: '数据中枢', roles: ['mfa','mofcom','mps'] },
+    { key: 'reports', label: '情报报告中心', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'settings', label: '系统设置', roles: ['mfa','mofcom','mps','enterprise'] }
   ];
 
