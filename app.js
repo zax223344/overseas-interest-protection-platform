@@ -3349,8 +3349,21 @@ var DATACENTER={
     if(!PERM.guard('删除数据记录'))return;
     var storeKey=row._store||this.currentTab; /* 虚拟要素分类：定位真实物理库 */
     allData=DBCenter.getAll(storeKey);
-    var realIdx=allData.findIndex(function(r){return r.id===row.id;});
+    var realIdx=allData.findIndex(function(r){return r.id===row.id});
     if(realIdx<0)return;
+    /* 2026-08-28 删了删不掉根因修复（用户实测：伦敦使馆旧闻删除后反复复活）：
+     * 旧版只删 DBCenter 前端缓存——服务器 intel_data 行还在，每 5 分钟
+     * _syncServerToDBCenter 同步回来即复活，且无墓碑、采集器可再抓。
+     * 现补齐服务器侧终局删除（同 deleteAlert 三路径之①②）。 */
+    try{
+      var _dt=String(row.title||''),_dtz=String(row.title_zh||'');
+      var _du=String(row.url||row.link||'');
+      if(typeof APIClient!=='undefined'&&APIClient._fetch){
+        APIClient._fetch('POST','/api/intel-tombstone',{title:_dt,title_zh:_dtz,url:_du}).catch(function(){});
+        var _dbid=(/^\d+$/.test(String(row.id||''))?row.id:(row._dbId||row.dbId||0));
+        if(_dbid)APIClient.deleteIntel(_dbid).catch(function(){});
+      }
+    }catch(e){}
     allData.splice(realIdx,1);
     DBCenter._w(storeKey,allData);
     DBCenter.addLog('删除'+storeKey+'记录: 1条');

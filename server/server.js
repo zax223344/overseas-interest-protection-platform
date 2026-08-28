@@ -1478,6 +1478,28 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+/* ===== 活跃库滚动归档（2026-08-28 用户痛点：伦敦使馆旧闻 5 天了一直存在，删了删不掉）=====
+ * 预警系统活跃库只保留近 7 天数据；更早的移入 intel_archive 归档表（可查不丢）。
+ * 旧数据滞留活跃库的三大害：①数据中心/情报中心翻页看到全是旧闻；
+ * ②同步链路每 5 分钟把旧数据灌回前端；③查询面变大性能劣化。 */
+async function _runRollingArchive() {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS intel_archive (LIKE intel_data INCLUDING ALL)`);
+    const r = await query(
+      `INSERT INTO intel_archive (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status, collect_time)
+       SELECT data_type, title, country, location, event_date, severity, description, source, data_json, audit_status, collect_time
+       FROM intel_data WHERE collect_time < NOW() - INTERVAL '7 days'`
+    );
+    const n = r.rowCount || 0;
+    if (n > 0) {
+      await query(`DELETE FROM intel_data WHERE collect_time < NOW() - INTERVAL '7 days'`);
+      console.log('[ARCHIVE] 滚动归档：' + n + ' 条超7天数据移入 intel_archive');
+    }
+  } catch (e) { console.warn('[ARCHIVE] 归档失败:', e.message); }
+}
+setInterval(_runRollingArchive, 6 * 60 * 60 * 1000);
+setTimeout(_runRollingArchive, 60 * 1000); /* 启动 60s 后先跑一次 */
+
 setInterval(_integrityWatchdog, 30 * 60 * 1000);setInterval(_integrityWatchdog, 30 * 60 * 1000);
 setTimeout(_integrityWatchdog, 90 * 1000); /* 启动 90s 后先跑一次 */
 
