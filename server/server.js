@@ -4845,6 +4845,8 @@ function startGlobalMediaCron() {
   setInterval(_runConsularWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min（用户指令：涉华受害是采集核心） */
   setTimeout(_runCoreThreatSentinel, 350000);  // 核心威胁专项哨兵（弱类补强），启动350s后首跑
   setInterval(_runCoreThreatSentinel, 10 * 60 * 1000);
+  setTimeout(_runTranslateRetry, 180000);      // 未翻译重试队列，启动180s后首跑
+  setInterval(_runTranslateRetry, 15 * 60 * 1000);
   // 94源工程包采集器（2026-08-28：多立场源证据链），启动380s后首跑
   setTimeout(_runSourcesCollector, 380000);
   setInterval(_runSourcesCollector, 15 * 60 * 1000); /* 2026-08-28 时效提速：30min→15min */
@@ -5755,7 +5757,73 @@ async function _translateAny(text) {
     const er = await _tryEdge([src.slice(0, 500)]);
     if (er && er[0] && _translationOk(src, er[0])) return er[0].trim();
   } catch (e) {}
+  /* 8) Google 翻译网页接口兜底（2026-08-28 翻译三问题整治实测：
+   * TranSmart 返回空/Baidu 54004 当日熔断/MyMemory 当日免费额度耗尽/Edge auth 404
+   * 全链失败时 NYSC 类条目未翻译入库的根因。translate.googleapis.com 免费无 Key，
+   * netx 代理可达，实测质量好："据报道，15名NYSC成员在从营地返回时在科吉被绑架"） */
+  try {
+    const gr = await _tryGoogleWebTranslate(src.slice(0, 450));
+    if (gr && _translationOk(src, gr)) return gr.trim();
+  } catch (e) {}
   return ''; /* 全部不合格 → 返回空，调用方保留原文并打 _untranslated 标记，绝不入库乱码 */
+}
+/* Google 翻译网页接口（translate_a/single，免费无 Key，走 netx 代理回退） */
+async function _tryGoogleWebTranslate(text) {
+  const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' };
+  const u = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' + encodeURIComponent(String(text || ''));
+  const resp = await netx.smartFetch(u, { timeout: 8000, headers: UA });
+  if (!resp || !resp.ok) return '';
+  const j = await resp.json();
+  const t = (j && j[0] && Array.isArray(j[0]) && j[0].map(x => (x && x[0]) || '').join('')) || '';
+  return t;
+}
+
+/* ===== 未翻译重试队列（2026-08-28 用户指令：翻译三问题整治）=====
+ * 翻译链高峰期全断（Baidu 54004 熔断/MyMemory 额度耗尽）时，条目带 _untranslated 入库。
+ * 本队列每 15 分钟扫描近 3 天未翻译条目重译——额度恢复/新兜底通道（Google web）可用即补齐。
+ * 同时治理"半翻译"：title_zh 混外文实义词的条目用 title_en 原文重译。 */
+let _retryTranslateBusyUntil = 0;
+async function _runTranslateRetry() {
+  if (Date.now() < _retryTranslateBusyUntil) return;
+  _retryTranslateBusyUntil = Date.now() + 10 * 60 * 1000;
+  try {
+    /* ① 完全未翻译：标题无中文且无 title_zh */
+    const untr = await query(
+      `SELECT id, title, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '3 days'
+       AND (data_json->>'title_zh' IS NULL OR data_json->>'title_zh' = '')
+       AND title !~ '[一-龥]' ORDER BY collect_time DESC LIMIT 30`);
+    let fixed = 0;
+    for (const r of untr.rows) {
+      const dj = r.data_json || {};
+      const zh = await _translateAnyCached(String(r.title || '').slice(0, 450));
+      if (zh && _translationOk(String(r.title || ''), zh)) {
+        dj.title_en = dj.title_en || r.title;
+        dj.title = zh.trim(); dj.title_zh = zh.trim();
+        dj.translated = true; delete dj._untranslated;
+        await query('UPDATE intel_data SET title=$1, data_json=$2 WHERE id=$3', [zh.trim(), JSON.stringify(dj), r.id]);
+        fixed++;
+      }
+    }
+    /* ② 半翻译：title_zh 有中文但含数字+外文实义词模式（机翻半成品） */
+    const half = await query(
+      `SELECT id, title, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '3 days'
+       AND data_json->>'title_zh' ~ '[一-龥]' AND data_json->>'title_zh' ~ '\\d+\\s+[A-Za-z]{4,}'
+       AND data_json->>'title_en' IS NOT NULL AND data_json->>'title_en' <> ''
+       ORDER BY collect_time DESC LIMIT 20`);
+    let refixed = 0;
+    for (const r of half.rows) {
+      const dj = r.data_json || {};
+      const raw = String(dj.title_en || '');
+      const zh = await _translateAnyCached(raw.slice(0, 450));
+      if (zh && _translationOk(raw, zh) && !/\\d+\\s+[A-Za-z]{4,}/.test(zh)) {
+        dj.title = zh.trim(); dj.title_zh = zh.trim();
+        await query('UPDATE intel_data SET title=$1, data_json=$2 WHERE id=$3', [zh.trim(), JSON.stringify(dj), r.id]);
+        refixed++;
+      }
+    }
+    if (fixed || refixed) console.log('[TRANSLATE-RETRY] 补译完成：未翻译 ' + fixed + ' 条 + 半翻译修复 ' + refixed + ' 条');
+  } catch (e) { console.warn('[TRANSLATE-RETRY] 失败:', e.message); }
+  finally { _retryTranslateBusyUntil = 0; }
 }
 /* 采集即译：把一批情报的标题+正文翻译成中文，落库即中文（原文留 title_en/content_en 溯源）。
  * 实战系统要求：入库数据全中文。仅对含外文(连续≥4字母且无中文)的字段翻译；已中文的跳过。
