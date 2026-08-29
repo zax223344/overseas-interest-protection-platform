@@ -3813,6 +3813,19 @@ async function _ingestLinkedItems(items, tag, note) {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; _sidepool(it, 'dominant-quota', tag); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
+         * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
+        if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
+          const _zhc = String(it.title || '');
+          const _zhp = zhPolish.polishTitle(_zhc);
+          const _zhr = zhRewrite.rewrite(_zhp, { country: it.country_cn || it.country });
+          if (_zhr && _zhr !== _zhc && _zhr.length >= 6) {
+            if (!it.title_en) it.title_en = _zhc;
+            it.title = _zhr; it.title_zh = _zhr;
+          }
+          it.zhq = zhRewrite.quality(it.title);
+          if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
+        }
         _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv;
         /* 专项采集器（如 core-threat-watch）已明确 data_type，不再被通用分类器覆盖 */
         let _dt = (it._forceDataType && it.data_type) ? it.data_type : _classifyIntelType(it);
@@ -4222,6 +4235,19 @@ async function _runChinaFocus() {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; bySource[src].dup++; continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
+         * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
+        if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
+          const _zhc = String(it.title || '');
+          const _zhp = zhPolish.polishTitle(_zhc);
+          const _zhr = zhRewrite.rewrite(_zhp, { country: it.country_cn || it.country });
+          if (_zhr && _zhr !== _zhc && _zhr.length >= 6) {
+            if (!it.title_en) it.title_en = _zhc;
+            it.title = _zhr; it.title_zh = _zhr;
+          }
+          it.zhq = zhRewrite.quality(it.title);
+          if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
+        }
         _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
@@ -4426,6 +4452,19 @@ async function _runChinaNegative() {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; bySource[src].dup++; continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
+         * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
+        if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
+          const _zhc = String(it.title || '');
+          const _zhp = zhPolish.polishTitle(_zhc);
+          const _zhr = zhRewrite.rewrite(_zhp, { country: it.country_cn || it.country });
+          if (_zhr && _zhr !== _zhc && _zhr.length >= 6) {
+            if (!it.title_en) it.title_en = _zhc;
+            it.title = _zhr; it.title_zh = _zhr;
+          }
+          it.zhq = zhRewrite.quality(it.title);
+          if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
+        }
         _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
@@ -4864,6 +4903,19 @@ async function _wechatIngest(items) {
       if (!_isFreshEnough(it)) { skippedStale++; if (skippedStale <= 3) console.log('[WECHAT] 时效拦截: ' + String(it.title || '').slice(0, 50)); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
+         * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
+        if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
+          const _zhc = String(it.title || '');
+          const _zhp = zhPolish.polishTitle(_zhc);
+          const _zhr = zhRewrite.rewrite(_zhp, { country: it.country_cn || it.country });
+          if (_zhr && _zhr !== _zhc && _zhr.length >= 6) {
+            if (!it.title_en) it.title_en = _zhc;
+            it.title = _zhr; it.title_zh = _zhr;
+          }
+          it.zhq = zhRewrite.quality(it.title);
+          if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
+        }
         _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
