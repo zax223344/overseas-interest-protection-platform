@@ -951,7 +951,13 @@ async function _serverAlertGen() {
     );
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
-    const alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+    let alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+    /* 2026-08-29 存量清扫：预警队列里的历史旧案回顾（1988 泛美103审判类）逐轮剔除，
+     * 与新生成否决同源判定——用户删不干净的这类旧案报道由生成器自动出清。 */
+    let _histSwept = 0;
+    if (alerts.some(a => a && _isHistoricalRetrospect(a))) {
+      alerts = alerts.filter(a => { if (a && _isHistoricalRetrospect(a)) { _histSwept++; return false; } return true; });
+    }
     /* 2026-08-26 赋分改革回填：版本化重算，确保红区硬约束修正后存量预警同步降级 */
     let backfilled = 0;
     for (const a of alerts) {
@@ -993,6 +999,8 @@ async function _serverAlertGen() {
       if (typeof scrapers !== 'undefined' && scrapers.chinaOverseasGate && !scrapers.chinaOverseasGate(_gtxt).pass) {
         _gateAudit('预警生成', 'domestic', it.title); continue;
       }
+      /* 历史旧案回顾否决（2026-08-29）：1988 泛美103审判推迟类旧案回顾报道不进预警中心 */
+      if (_isHistoricalRetrospect(it)) { _gateAudit('预警生成', 'historical', it.title); continue; }
       if (_srvAlertScore(it) < 10) { _gateAudit('预警生成', 'low-interest', it.title); continue; } /* 2026-08-17 用户指令：日产≥200 条预警，阈值 20→10 */
       const tkey = String(it.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
       if (!tkey || have.has(tkey)) continue;
@@ -1022,10 +1030,11 @@ async function _serverAlertGen() {
       have.add(tkey);
       haveIds.add(genId);
     }
-    if (added.length || backfilled) {
+    if (added.length || backfilled || _histSwept) {
       const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
       await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
-      console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条，共享库现有 ' + merged.length + ' 条');
+      console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条，共享库现有 ' + merged.length + ' 条'
+        + (_histSwept ? '，剔除历史旧案回顾 ' + _histSwept + ' 条' : ''));
       /* 真实预警触发时自动调用推送通道 */
       added.forEach(function (a) { _dispatchAlertPushes(a, 'new').catch(function (e) { console.warn('[PUSH] new alert dispatch error:', e.message); }); });
     }
@@ -2723,6 +2732,31 @@ function _stripHtmlFields(item) {
   });
   return item;
 }
+/* ===== 历史旧案回顾否决（2026-08-29 根因修复）=====
+ * 起因：1988 泛美103空难"审判推迟"报道（美联社/ EuroneWS）以 terror_events 橙色混进预警中心。
+ * 三层误判叠加：① 全球安全态势通道"爆炸案+利比亚重点国"放行（与中国无关联也进）；
+ * ② 时效闸只认新闻发布时间（报道是新的），看不到文中那个 1988；
+ * ③ R-A01 民航资产规则见"航班"就关联（泛美是美国航班）。
+ * 修复：标题含久远年份（≥10 年前）+ 案件/审判/纪念类词 → 判定为旧案回顾报道，非当前安全事件，
+ * 一票否决（入库闸 + 前端 POST 闸 + 预警生成闸三处生效，并对存量预警队列持续清扫）。
+ * 只看标题：正文常引用历史背景（"自 2001 年以来"），按正文判会大面积误杀当前事件。 */
+const _HIST_CASE_RE = /案|空难|坠机|爆炸案|恐袭案|审判|裁决|判决|定罪|无罪|翻案|追诉|引渡|悬案|解密|档案|周年|纪念|悼念|遇难者|幸存者|回顾|真相|tribunal|trial|verdict|convict|acquitt|retrial|indict|anniversary|memorial|commemorat|declassified|archives?|retrospect|cold case|bombing of|crash of|downing of|massacre of|flight \d+/i;
+/* 著名历史旧案专名表（无年份指代，标题不含年份也须否决）：
+ * 实测 2026-08-29 洛克比案 7 条变体（"洛克比爆炸案审判因新证据推迟"等）标题无年份漏网。
+ * 均为纯历史旧案专名，当前事件不会重名。 */
+const _HIST_FAMOUS_RE = /洛克比|lockerbie|泛美(?:航空)? ?103|pan am (?:flight )?103|9·11事件|9\.11事件|911事件|september 11 attack|慕尼黑惨案|munich massacre|别斯兰|beslan|MH370|马航370|马航MH370|俄克拉荷马城爆炸|oklahoma city bombing|东京地铁沙林|aum shinrikyo|沙林毒气/i;
+function _isHistoricalRetrospect(it) {
+  const t = String((it && it.title) || '') + ' ' + String((it && it.title_zh) || '');
+  if (t.trim().length < 8) return false;
+  if (_HIST_FAMOUS_RE.test(t)) return true; /* 历史旧案专名一票否决（无需年份） */
+  const years = t.match(/(?:19|20)\d{2}/g);
+  if (!years) return false;
+  const curYear = new Date().getFullYear();
+  const hasOld = years.some(y => { const n = parseInt(y, 10); return n >= 1900 && n <= curYear - 10; });
+  if (!hasOld) return false;
+  return _HIST_CASE_RE.test(t);
+}
+
 async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const code = [];
   if (!it) return { ok: false, code: ['no-item'] };
@@ -2732,6 +2766,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   if (existing.has(u)) return { ok: false, code: ['url-dup'] };
   /* 删除墓碑：用户删过的数据永不再入（2026-08-22 铁律） */
   if (await _isTombstoned(it)) { _gateAudit('入库闸', 'tombstoned', it.title); return { ok: false, code: ['tombstoned'] }; }
+  /* 历史旧案回顾一票否决（2026-08-29）：旧案审判/周年/解密回顾不是当前安全事件 */
+  if (_isHistoricalRetrospect(it)) { _gateAudit('入库闸', 'historical', it.title); return { ok: false, code: ['historical-retrospect'] }; }
   /* 国内硬拦截：必须在所有通道生效
    * 2026-08-28 豁免修正：cnsec 哨兵条目定义上即"海外涉华人员安全事件"（interestLinked+chinaRelated 双标），
    * 中文媒体报道的海外受害新闻（如"中国公民在尼日利亚被绑架"）此前被误判国内新闻拦杀——
@@ -3561,7 +3597,7 @@ async function _ingestLinkedItems(items, tag, note) {
       dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
     }
     console.log('[' + tag + '] urls=' + urls.length + ' existing=' + existing.size);
-    let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0;
+    let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0;
     let chinaInserted = 0, chinaNegativeInserted = 0;
     const titleKeys = await _getRecentTitleKeys();
     const eventSigs = await _getRecentEventSigs();
@@ -3575,6 +3611,7 @@ async function _ingestLinkedItems(items, tag, note) {
           else if (c === 'event-sig-dup') skippedEventSig++;
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
+          else if (c === 'historical-retrospect') skippedHistorical++;
         });
         /* 2026-08-28：被拦条目入非预警数据池（url/标题重复除外——同条已有库内版本，入池即刷屏） */
         if (!gate.code.includes('url-dup') && !gate.code.includes('title-dup') && !gate.code.includes('title-zh-dup') && !gate.code.includes('entity-dup')) {
@@ -3605,7 +3642,7 @@ async function _ingestLinkedItems(items, tag, note) {
     }
     _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted);
     _logDailyStats();
-    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
+    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
     return { inserted };
   } catch (e) {
     console.warn('[' + tag + '] PostgreSQL 入库异常（可能未启动），降级写入 osint_intel 文件缓存:', e.message);
@@ -6984,6 +7021,8 @@ async function _postGate(item) {
   if (_POST_BLOCK_RE.test(String(item.title || '') + ' ' + String(item.title_zh || ''))) { _gateAudit('入库闸', 'blocked-blacklist', item.title); return 'blocked'; }
   /* 删除墓碑：用户删过的数据永不再入（2026-08-22 铁律） */
   if (await _isTombstoned(item)) { _gateAudit('入库闸', 'tombstoned', item.title); return 'tombstoned'; }
+  /* 历史旧案回顾一票否决（2026-08-29）：与 _preInsertGate 同源判定 */
+  if (_isHistoricalRetrospect(item)) { _gateAudit('入库闸', 'historical', item.title); return 'historical'; }
   /* 精确标题去重（2026-08-16 用户铁律）：30 天内同标题（含译文标题）一律拒收——
    * 24h 窗口对"每天回灌一次"的旧缓存失效，精确同标题重发永远不可能是新事件 */
   try {
