@@ -3523,8 +3523,11 @@ function _isFreshEnough(it) {
 
   /* 2026-08-25 白名单公众号豁免：wechat_oa 通道（搜狗/profile_ext/镜像站）是用户亲选的专业安全信源，
    * 正文常引用 24~48h 前的事件（如刚果金上加丹加案 8-24 事发、8-25 报道），正文事件日期提取会把
-   * 刚发布的报道误判为旧闻全杀（实测镜像首跑 5/5 误杀）。对这类信源以发布日期为时效准绳。 */
-  const trustPubDate = it._sourceType === 'wechat_oa';
+   * 刚发布的报道误判为旧闻全杀（实测镜像首跑 5/5 误杀）。对这类信源以发布日期为时效准绳。
+   * 2026-08-30 增补 gap_scheduler：缺口调度器补的是国别/类别覆盖缺口，经济/制裁/政局类正文高频
+   * 回溯引用 1-2 天前的事件日期（"周三美联储宣布…"），事件日期提取把刚发布的报道全判旧闻——
+   * 实测 15 轮全 0 入库（超时拒主导，含发布仅 3h 的新鲜条目被正文旧日期误杀）。以发布时间为准绳。 */
+  const trustPubDate = it._sourceType === 'wechat_oa' || it._sourceType === 'gap_scheduler';
 
   /* 优先从标题+正文提取事件发生时间 */
   const evtDate = trustPubDate ? null : _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || new Date());
@@ -3591,7 +3594,9 @@ function _isFreshEnough(it) {
         if (!_isToday) {
           const _important = _tagCoreThreat(it).length > 0
             || it.level === 'red' || it.level === 'orange'
-            || it._sourceType === 'wechat_oa' || it._sourceType === 'wechat_lead';
+            || it._sourceType === 'wechat_oa' || it._sourceType === 'wechat_lead'
+            || it._sourceType === 'gap_scheduler'; /* 2026-08-30：缺口类别（制裁/经济/政局）事件多为前日，
+              目标矩阵要求 ≥30条/日；发布 24h 时效闸+库内查重双闸已保底，此处放行 */;
           if (!_important) return false;
           /* 库内已有该条判定：事件签名或标题指纹已见于库 → 拒收（同步近似用内存缓存，
            * 精确 DB 查重在 _preInsertGate 的 event-sig-dup/title-dup 双保险已执行） */
@@ -5312,6 +5317,8 @@ async function _runGapScheduler() {
       const batch = [];
       let cap = 0;
       for (const it of arts) {
+        it._sourceType = 'gap_scheduler'; /* 2026-08-30：必须在 _isFreshEnough 之前设置——
+          行内闸判 trustPubDate（发布时间为时效准绳）依赖此标记，晚设置导致 15 轮全 0 入库 */
         /* 事件词测「原标题 + 翻译后中文标题 + 摘要」：小语种（越南语/泰语）标题翻译成中文后
          * 中文事件词才能命中——此前只测原文，非英语国家的真实事件全被误杀（noEvent 误拒）。 */
         const ctext = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || '');
@@ -5323,7 +5330,6 @@ async function _runGapScheduler() {
         if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; rejBy.nonLatin++; continue; }
         assign(it);
         it.interestLinked = true;
-        it._sourceType = 'gap_scheduler';
         batch.push(it);
         cap++;
         if (cap >= 8) break;   /* 单缺口单轮回填上限，均衡铺开 */
