@@ -15676,7 +15676,8 @@ const FORECAST={
     document.querySelectorAll('#fc-tabs .dc-tab').forEach(function(e,i){e.classList.toggle('active',tabs[i]===t);});
     this.render();
   },
-  init(){this.switch('foresee');},
+  init(){this.switch(this.tab||'foresee');}, /* 2026-08-30 修复：保持当前页签——此前 init() 无条件 switch('foresee')，
+    实时数据自动重绘（app.js 2714/18799 两处 FORECAST.init()）会把用户切到"风险预测/情景推演"等的页签弹回"未来预判"，预测中心五个页签实际只能用第一个（用户实测"不能用"的 root cause） */
   render(){
     const el=document.getElementById('fc-content');
     if(this.tab==='foresee'){

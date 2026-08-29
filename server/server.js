@@ -877,6 +877,10 @@ function _gateAudit(gate, reason, title) {
     if (reason === 'stale-single-source' && (n <= 3 || n % 10 === 0)) {
       console.log('[GATE] stale-single-source #' + n + ': ' + String(title || '').slice(0, 80));
     }
+    /* 2026-08-30 语义查重拦截：低频落日志（用户点名的重复采集一类问题，需可观测） */
+    if (reason === 'event-sig-dup-sem' && (n <= 5 || n % 20 === 0)) {
+      console.log('[GATE] event-sig-dup-sem #' + n + ': ' + String(title || '').slice(0, 80));
+    }
   } catch (e) {}
 }
 app.get('/api/quality/gates', authMiddleware, (req, res) => {
@@ -2854,6 +2858,12 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
     const _crTxt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.desc || it.content || '');
     it.chinaRelated = !!(crawler.chinaRelated && crawler.chinaRelated(_crTxt));
   }
+  /* 2026-08-30 country 空值兜底：google_news 通道 46+ 条空国别（目标矩阵统计失真源）。
+   * 标题能提取到国名时填充（首个匹配国；多国标题取先命中者——宁可信标题不信空值）。 */
+  if (!String(it.country || '').trim()) {
+    const _sc = _SIG_COUNTRIES.find(x => String(it.title || '').indexOf(x) >= 0 || String(it.title_zh || '').indexOf(x) >= 0);
+    if (_sc) it.country = _sc;
+  }
   const u = it.url || it.title;
   if (!u) return { ok: false, code: ['no-url-title'] };
   if (existing.has(u)) return { ok: false, code: ['url-dup'] };
@@ -2884,6 +2894,10 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   /* 事件签名 */
   const sig = _eventSignature(it);
   if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
+  /* 语义级事件查重（2026-08-30 root-cause：跨措辞/跨通道/跨日变体绕过精确查重——
+   * 海地屠杀 47 死 5 天 20+ 版本 / 斯里兰卡中国公民谋杀案三版本分签的同类问题根治。
+   * 同事件已有 ≥2 独立源后全拒（保留前两源供多源印证），详见 _semanticEventDup 注释。 */
+  if (await _semanticEventDup(it)) return { ok: false, code: ['event-sig-dup'] };
   /* 事件簇产量帽（2026-08-29）：同国+同类事件当日变体超 12 条拒收（防单一事件刷屏） */
   if (!_eventClusterOk(it)) { _gateAudit('入库闸', 'event-flood', it.title); return { ok: false, code: ['event-flood'] }; }
   /* 类别结构帽（2026-08-29）：安全类当日占比>45%时，非涉华非重大安全类降池（让位弱类补缺） */
@@ -3422,7 +3436,7 @@ const _SIG_EVENT_RE = /死亡|遇难|身亡|伤亡|洪水|地震|袭击|爆炸|�
 function _eventSignature(it) {
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   const tl = t.toLowerCase();
-  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|flood|earthquake|袭击|爆炸|死亡|遇难|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾|洪水|地震|恐袭|劫持|政变/g;
+  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|flood|earthquake|murder|arrest|massacre|袭击|爆炸|死亡|遇难|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾|洪水|地震|恐袭|劫持|政变|谋杀|逮捕|被捕|屠杀|坠机|沉船|判决|释放/g;
   const evSet = new Set();
   let mm; while ((mm = evRe.exec(tl)) !== null) evSet.add(mm[0]);
   const ev = Array.from(evSet).sort().join('+') || '';
@@ -3463,6 +3477,88 @@ function _eventClusterOk(it) {
   const key = ctry + '|' + ev[0].toLowerCase();
   _evCluster.by[key] = (_evCluster.by[key] || 0) + 1;
   return _evCluster.by[key] <= EVENT_CLUSTER_DAILY_CAP;
+}
+/* ===== 语义级事件查重（2026-08-30 root-cause：跨措辞/跨通道/跨日变体绕过精确查重）=====
+ * 用户抓到的一类问题（非个案，两个铁证样本）：
+ * ① 海地帮派屠杀 47 死（08-26 事发）→ 08-26~08-30 被采 20+ 版本入库。各通道按检索国/
+ *    来源国生成签名（KR|绑架 / UZ|绑架 / USA|绑架 / AFG|死亡+绑架+袭击 / GHA|...），
+ *    签名等值查重永不命中；标题指纹对跨措辞变体失效；簇帽日重置对跨日翻炒无效。
+ * ② 斯里兰卡中国公民港口谋杀案 → 三版本签名分别是 |绑架|港口 / ||港口 / 伊朗||港口
+ *    （谋杀/逮捕不在事件词表 + country 污染成检索国 + google_news 空国别）。
+ * 修法：签名等值不中时，拉近 3 天「标题含同国名」候选行（语义层统一以标题提取国名为锚，
+ * 不信 it.country——检索国/来源国污染），JS 判定同事件：
+ *   事件词交集 ≥1 且（伤亡数字精确一致 或 实体锚交集 ≥2）→ 同事件
+ *   同事件且库内已有 ≥2 独立来源（按 URL 域名聚合，source 字段是聚合器名不可用）→ 拦截
+ * 设计边界：
+ *  - 保留前两源入库（多源印证机制依赖重复入库累计 corroboration，第三源起全拒）；
+ *  - 伤亡数字爬升（47→52）精确不一致 → 放行（有信息增量）；
+ *  - 首发当日多源变体不受影响（已有源数 <2）；
+ *  - 标题无国名：无锚不做语义查重（误伤风险大于收益）。 */
+const _semCandCache = new Map(); /* 国名 → {t, rows} 候选缓存 120s（轮内同国查询合并） */
+const _semInflight = new Map(); /* 国名 → {t, hosts: Map<域名, 条数>} 轮内已放行同事件源（补候选缓存盲区） */
+const _SEM_EV_RE = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|flood|earthquake|murder|arrest|massacre|袭击|爆炸|死亡|遇难|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾|洪水|地震|恐袭|劫持|政变|谋杀|逮捕|被捕|屠杀|坠机|沉船|判决|释放/gi;
+const _SEM_FAC_RE = /瓜达尔|霍尔木兹|红海|苏伊士|中巴经济走廊|CPEC|大使馆|使馆|清真寺|学校|医院|机场|港口|大学|教堂|市场|银行|联合国|中国公民|华人|中资|中国籍|中国工人|Gwadar|Hormuz|embassy|United Nations/gi;
+const _SEM_NUM_RE = /(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|killed|missing|injured|dead)/i;
+async function _semanticEventDup(it) {
+  try {
+    const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+    if (t.trim().length < 12) return false;
+    const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0);
+    if (!ctry) return false;
+    const evSet = new Set(); let mm;
+    while ((mm = _SEM_EV_RE.exec(t)) !== null) evSet.add(mm[0].toLowerCase());
+    const num = (t.match(_SEM_NUM_RE) || [])[1] || '';
+    if (!evSet.size && !num) return false;
+    const facSet = new Set();
+    while ((mm = _SEM_FAC_RE.exec(t)) !== null) facSet.add(mm[0].toLowerCase());
+    /* 候选缓存：轮内同国连续查重只打一次 DB */
+    let cand = _semCandCache.get(ctry);
+    if (!cand || Date.now() - cand.t > 120 * 1000) {
+      const { rows } = await query(
+        `SELECT title, COALESCE(NULLIF(data_json->>'title_zh',''), title) tzh, source, url FROM intel_data
+         WHERE collect_time > NOW() - INTERVAL '3 days' AND (title LIKE $1 OR data_json->>'title_zh' LIKE $1) LIMIT 300`,
+        ['%' + ctry + '%']);
+      cand = { t: Date.now(), rows: rows || [] };
+      _semCandCache.set(ctry, cand);
+      if (_semCandCache.size > 40) _semCandCache.clear(); /* 国名数有限，防御性清理 */
+    }
+    /* 轮内已放行同事件源（缓存盲区补偿：候选缓存 120s 不含刚入库的批内条目） */
+    let inflight = _semInflight.get(ctry);
+    if (!inflight || Date.now() - inflight.t > 120 * 1000) { inflight = { t: Date.now(), hosts: new Map() }; _semInflight.set(ctry, inflight); }
+    if (!cand.rows.length && !inflight.hosts.size) return false;
+    const evArr = Array.from(evSet), facArr = Array.from(facSet);
+    const _numBucket = n => (!n ? '' : (String(n).length >= 4 ? 'n4' : String(n).length === 3 ? 'n3' : 'n2'));
+    let sameEvent = 0; const domains = new Set();
+    const _hostOf = (u, s) => { try { return new URL(String(u || '')).hostname.replace(/^www\./, ''); } catch (e2) { return String(s || ''); } };
+    for (const r of cand.rows) {
+      const rt = String(r.title || '') + ' ' + String(r.tzh || '');
+      const rNum = (rt.match(_SEM_NUM_RE) || [])[1] || '';
+      const evHit = evArr.some(w => rt.toLowerCase().indexOf(w) >= 0);
+      const facHits = facArr.filter(w => rt.toLowerCase().indexOf(w) >= 0).length;
+      /* 判定同事件（2026-08-30 收紧：中尼洪灾死亡爬升 623→626→633 一天 15+ 条变体刷屏的教训——
+       * "数字精确一致"放行爬升变体。三判据：
+       * ① 数字精确一致+事件词交集；
+       * ② 数字同数量级桶（n2/n3/n4）+事件词交集+≥1 实体锚——死亡/失踪数爬升属同事件信息更新非新事件；
+       * ③ 无数字场景：事件词交集+实体锚交集≥2（涉华案件类）。 */
+      const same = (num && rNum === num && evHit)
+        || (num && rNum && _numBucket(num) === _numBucket(rNum) && evHit && facHits >= 1)
+        || (evHit && facHits >= 2 && (!num || !rNum || num === rNum));
+      if (same) { sameEvent++; const h = _hostOf(r.url, r.source); if (h) domains.add(h); }
+    }
+    /* 并入轮内已放行源，合并判定 */
+    let inflightSame = 0;
+    inflight.hosts.forEach((n, h) => { inflightSame += n; if (h) domains.add(h); });
+    const _myHost = _hostOf(it.url, it.source);
+    if (sameEvent + inflightSame >= 2 && domains.size >= 2) {
+      _gateAudit('入库闸', 'event-sig-dup-sem', it.title);
+      return true;
+    }
+    /* 放行且库内/轮内已有同事件 → 本条计入 inflight（它是既存同事件源之一） */
+    if (sameEvent + inflightSame >= 1 && _myHost) {
+      inflight.hosts.set(_myHost, (inflight.hosts.get(_myHost) || 0) + 1);
+    }
+    return false;
+  } catch (e) { return false; }
 }
 /* 入库后计算印证数（近2天同签名独立来源数+1），写回本条 data_json */
 async function _markCorroboration(id, it) {
