@@ -3099,7 +3099,11 @@ function _scoreRiskItem(it) {
   /* 2026-08-28 体检复盘扩充主体词：中国游客/中国女子/中国妇女/中国工程师/中国学生/中资企业员工；
    * 扩充受害谓词：被武装人员带走/被带走（绑架变体）、遇害/被杀害/被杀/被枪杀（暴力致死）、
    * 被逮捕换位宾语结构。误杀案例：刚果金中国公民被武装带走、泰国中国游客被绑架、韩留学生遇害。 */
-  const RED_ELIGIBLE_RE = /(?:中国公民|中方人员|中国工人|中国工程师|中国留学生|中国学生|中国游客|中国女子|中国妇女|中资企业员工|华人|华侨|华裔)[^，。；;]{0,25}(?:被袭|遭袭|受袭|遇袭|被袭击|被绑|遭绑架|被绑架|遭劫持|被劫持|被武装人员带走|被带走|被枪杀|被击毙|被杀害|遇害|被杀|遭杀害|遇刺|枪击)|(?:遭绑架|被绑架|绑架|劫持|袭击|袭击造成|杀害|枪杀|绑架了)[^，。；;]{0,30}(?:中国公民|中方人员|中国工人|中国工程师|中国留学生|中国学生|中国游客|中国女子|中国妇女|中资企业员工|华人|华侨|华裔)|撤侨|撤离[^，。；;]{0,20}中国公民|遣返[^，。；;]{0,20}中国公民|群体开枪|大规模枪击/i;
+  /* 2026-08-29 三部委审查根因修复：实测 9 个真实案例仅 1 命中——外文标题 6/6 全漏
+   * （正则无英文分支），中文死亡谓词缺失（"6名中国公民死亡"MISS）。
+   * 补：①中文谓词加 死亡|身亡|遇难|丧生|下落不明；②英文双向分支 Chinese+nationals/workers/
+   * citizens/engineers/tourists/students × kidnapped/abducted/killed/attacked/shot/evacuated。 */
+  const RED_ELIGIBLE_RE = /(?:中国公民|中方人员|中国工人|中国工程师|中国留学生|中国学生|中国游客|中国女子|中国妇女|中资企业员工|华人|华侨|华裔)[^，。；;]{0,25}(?:被袭|遭袭|受袭|遇袭|被袭击|被绑|遭绑架|被绑架|遭劫持|被劫持|被武装人员带走|被带走|被枪杀|被击毙|被杀害|遇害|被杀|遭杀害|遇刺|枪击|死亡|身亡|遇难|丧生|绑架|劫持|谋杀)|(?:遭绑架|被绑架|绑架|劫持|袭击|袭击造成|杀害|枪杀|绑架了|死亡|身亡|遇难)[^，。；;]{0,30}(?:中国公民|中方人员|中国工人|中国工程师|中国留学生|中国学生|中国游客|中国女子|中国妇女|中资企业员工|华人|华侨|华裔)|撤侨|撤离[^，。；;]{0,20}中国公民|遣返[^，。；;]{0,20}中国公民|群体开枪|大规模枪击|(?:chinese|china'?s?)[^,.!?;]{0,50}(?:nationals?|citizens?|workers?|engineers?|tourists?|students?|nationals|woman|man|people)[^,.!?;]{0,60}(?:kidnapp|abduct|attack|kill|shot|shoot|murder|dead|died|death|evacuat|injur)|(?:kidnapp|abduct|attack|kill|shot|shoot|murder|evacuat)[^,.!?;]{0,60}(?:chinese|china'?s?)[^,.!?;]{0,50}(?:nationals?|citizens?|workers?|engineers?|tourists?|students?|woman|man|people)|china[^,.!?;]{0,30}evacuat|evacuat[^,.!?;]{0,40}(?:chinese|china)/i;
   const redEligible = RED_ELIGIBLE_RE.test(t);
   if (score >= 61 && !redEligible) {
     hits.push({ rule: 'R-Z05', name: '红区硬约束：仅中国公民被袭击/绑架/撤侨/群体开枪可入红，压至橙区上沿', add: 60 - score });
@@ -4101,6 +4105,8 @@ const _CHINA_NEGATIVE_AP_QUERIES = [
   'South China Sea tensions', 'Taiwan Strait tensions',
   'BRI backlash protest', 'Huawei ban restriction', 'TikTok ban WeChat ban'
 ];
+/* 负面专线断粮哨兵计数器（P0-3） */
+let _negDryRounds = 0;
 async function _runChinaNegative() {
   if (Date.now() < _chinaNegativeBusyUntil) return;
   _chinaNegativeBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
@@ -4287,6 +4293,17 @@ async function _runChinaNegative() {
     _logDailyStats();
     const sec = ((Date.now() - t0) / 1000).toFixed(1);
     console.log('[CHINA NEGATIVE] 完成(' + sec + 's): 命中' + items.length + ' / 入库' + inserted + '（境外涉华负面' + negativeInserted + '）URL重复' + skippedDup + ' 标题/实体重复' + skippedDupTitle + ' 事件签名重复' + skippedEventSig + ' 国内数据' + skippedDomestic + ' 低质标题' + skippedBadTitle + ' 旧闻' + skippedStale + ' 俄乌配额' + skippedRuUa + ' 无url' + skippedNoUrl + ' | TOP: ' + sourceDetails);
+    /* ===== 2026-08-29 三部委审查 P0-3：负面专线断粮哨兵 =====
+     * 涉华负面信号 100% 依赖本通道（crawler 路径 chinaNegative() 是死判定），
+     * 专线静默失效 = 负面情报归零且无人知晓。连续 8 轮（约 8 分钟）零入库即告警+
+     * 重建去重指纹缓存（常见根因：缓存漂移误杀）；连续 20 轮（约 20 分钟）升级报错。 */
+    _negDryRounds = (negativeInserted > 0) ? 0 : (_negDryRounds + 1);
+    if (_negDryRounds === 8) {
+      console.warn('[CHINA NEGATIVE] ⚠️ 断粮哨兵：连续8轮零入库，重建去重指纹缓存（疑缓存漂移误杀）');
+      _titleKeyCache = { t: 0, set: new Set() };
+    } else if (_negDryRounds === 20) {
+      console.error('[CHINA NEGATIVE] 🚨 断粮告警：连续20轮（约20分钟）零涉华负面入库——专线疑似失效，须人工核查 RSS 源与闸门');
+    }
   } catch (e) { console.warn('[CHINA NEGATIVE] 采集失败:', e.message); }
   finally { _chinaNegativeBusyUntil = 0; }
 }
@@ -6303,7 +6320,45 @@ function _translationOk(src, dst) {
   return true;
 }
 
+/* ===== 2026-08-29 三部委审查 P1-4：轻度混排标题修复（专名级二次翻译）=====
+ * 实测 7 天 591 条(21%) 混排：「Pezeshkian说，尽管战争和制裁」——引擎对人名/机构
+ * 专名原样返回。_translationOk 只拦重度混排（≥3 英文词），轻度混排（1-2 个专名）放行。
+ * 修复：译文出口对英文片段单独二次翻译（片段级词典命中率高：Pezeshkian→佩泽什基安），
+ * 译不出则保留原样（专名保英文好于整句不译）。片段内存缓存，重复专名零外部调用。 */
+const _mixedFragCache = new Map(); /* 片段→译文，上限 5000 */
+function _isMixedZh(s) {
+  return /[\u4e00-\u9fa5]/.test(s) && /[A-Za-z]{3,}/.test(s);
+}
+async function _fixMixedZh(zh) {
+  if (!zh || !_isMixedZh(zh)) return zh;
+  try {
+    const frags = zh.match(/[A-Za-z][A-Za-z@.'-]*(?:\s+[A-Za-z][A-Za-z@.'-]*)?/g) || [];
+    let out = zh, fixed = 0;
+    for (const f of frags) {
+      const key = f.trim();
+      if (key.length < 3) continue; /* 缩写/短词不动（CPEC/UN 等专名缩写保留英文更专业） */
+      if (/^[A-Z0-9@.'-]{2,}$/.test(key.replace(/\s/g, ''))) continue; /* 全大写缩写不翻（COP17/ICE→"警察17/冰"误译） */
+      let t = _mixedFragCache.get(key);
+      if (t === undefined) {
+        t = '';
+        try {
+          const r = await _tryTranSmart(key);
+          if (r && /[\u4e00-\u9fa5]/.test(r) && !_isMixedZh(r)) t = r.trim();
+        } catch (e) {}
+        if (_mixedFragCache.size > 5000) _mixedFragCache.clear();
+        _mixedFragCache.set(key, t);
+      }
+      if (t) { out = out.split(f).join(t); fixed++; }
+    }
+    if (fixed) console.log('[TRANSLATE] 混排修复 ' + fixed + ' 片段: ' + String(zh).slice(0, 40) + ' → ' + String(out).slice(0, 40));
+    return out;
+  } catch (e) { return zh; }
+}
 async function _translateAny(text) {
+  const zh = await _translateAnyRaw(text);
+  return _fixMixedZh(zh);
+}
+async function _translateAnyRaw(text) {
   const baiduId = process.env.BAIDU_TRANSLATE_APPID;
   const baiduKey = process.env.BAIDU_TRANSLATE_KEY;
   const src = String(text || '');

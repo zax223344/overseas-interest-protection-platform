@@ -226,8 +226,11 @@ function _chinaNegativeGate(text, gate){
   if(gate && gate.reason && /topic-noise|domestic-junk|culture-business-junk|domestic-edu-tech-noise|china-domestic-incident|domestic-irrelevant/.test(gate.reason)) return false;
   if(!_CHINA_RELATED_RE.test(text)) return false;
   // 严格正则 + 词干兜底：覆盖制裁/冲突/袭击等词的复数/时态/派生形式
+  // 2026-08-29 三部委审查 P2-5：纯天灾词（earthquake/flood/typhoon/hurricane/pandemic/epidemic）
+  // 不再单独触发"涉华负面"（实测土库曼/乌兹别克本地天灾混入负面通道 159 条）。
+  // 中国公民海外遇难仍由 killed/dead/injured/missing 等受害词命中，不受影响。
   const hasNegativeSignal = _CHINA_NEGATIVE_KW_RE.test(text) ||
-    /\b(sanction|tariff|embargo|boycott|ban|restrict|investigat|crackdown|probe|fine|seizure|freeze|penalt|lawsuit|arbitration|claim|withdraw|terminat|cancel|suspend|delay|postpone|default|loss|layoff|bankrupt|attack|terrorist|kidnap|blast|shoot|violence|killed?|casualt|conflict|war|coup|riot|protest|demonstration|strike|xenophob|anti.china|anti.chinese|spy|espionage|surveillance|threat|critic|condemn|accus|blame|warn|confrontation|friction|dispute|divergence|tension|crisis|deteriorat|downgrade|expel|detain|sink|intercept|ram|crash|accident|disaster|fire|collapse|leak|pollution|poison|pandemic|epidemic|earthquake|flood|typhoon|hurricane|dumping|subsidy|blockade|coercion|decouple|containment|blacklist|exclusion|eviction|deportation|complaint|recession|plunge|slump|decline)(s|es|ed|ing|tion|tions|ment|ments|ion|ions|ure|ures|ive|ized|ised)?\b/i.test(text);
+    /\b(sanction|tariff|embargo|boycott|ban|restrict|investigat|crackdown|probe|fine|seizure|freeze|penalt|lawsuit|arbitration|claim|withdraw|terminat|cancel|suspend|delay|postpone|default|loss|layoff|bankrupt|attack|terrorist|kidnap|blast|shoot|violence|killed?|casualt|conflict|war|coup|riot|protest|demonstration|strike|xenophob|anti.china|anti.chinese|spy|espionage|surveillance|threat|critic|condemn|accus|blame|warn|confrontation|friction|dispute|divergence|tension|crisis|deteriorat|downgrade|expel|detain|sink|intercept|ram|crash|accident|disaster|fire|collapse|leak|pollution|poison|dumping|subsidy|blockade|coercion|decouple|containment|blacklist|exclusion|eviction|deportation|complaint|recession|plunge|slump|decline)(s|es|ed|ing|tion|tions|ment|ments|ion|ions|ure|ures|ive|ized|ised)?\b/i.test(text);
   if(!hasNegativeSignal) return false;
   // 境外涉华负面必须带真实境外要素（不能仅靠“中国”二字）或强海外利益信号，避免把纯国内负面新闻纳入
   const txt = String(text || '');

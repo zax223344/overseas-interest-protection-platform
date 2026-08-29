@@ -12664,6 +12664,7 @@ const AVIEW={
       var safeAid=aid.replace(/'/g,"\\'");
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
+        (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
         stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
@@ -12822,6 +12823,7 @@ const AVIEW={
       var safeAid=aid.replace(/'/g,"\\'");
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
+        (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
         stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
