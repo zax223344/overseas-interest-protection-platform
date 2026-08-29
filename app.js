@@ -6744,7 +6744,12 @@ var INTELCENTER={
   },
   init(){
     this._initData();
-    this.switch('gallery');
+    /* 2026-08-29 闪退根因：之前每次 init() 都 this.switch('gallery') 强切回影像图库，
+     * 而全局定时器（data 自动刷新）每 1-2 秒调一次 INTELCENTER.init()，
+     * 导致用户点 osint/analysis/timeline/geoint 后被秒级重置，视觉上"闪退"。
+     * 改为首次才默认 gallery，后续保留用户 tab 选择。 */
+    if(!this._initedOnce){ this._initedOnce=true; this.tab='gallery'; }
+    this.switch(this.tab);
     this.updateBadge();
   },
   updateBadge(){
@@ -6801,7 +6806,7 @@ var INTELCENTER={
       html+='<div class="stat-card"><div class="stat-ic" style="background:rgba(0,212,255,0.08);color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div></div></div>';
     });
     html+='</div>';
-    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F310}</span>\u5f00\u6e90\u60c5\u62a5\u6e90\u76d1\u6d4b <span style="font-size:10px;color:var(--text3);font-weight:400">\u2014 \u70b9\u51fb\u67e5\u770b\u6e90\u8be6\u60c5</span></div>';
+    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F310}</span>\u793e\u4ea4\u5a92\u4f53\u76d1\u6d4b <span style="font-size:10px;color:var(--text3);font-weight:400">\u2014 \u70b9\u51fb\u67e5\u770b\u6e90\u8be6\u60c5</span></div>';
     html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
     this._osintSources.forEach(function(s){
       html+='<div style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:.2s" onclick="INTELCENTER.showOsintSource(\''+s.name+'\')" onmouseover="this.style.borderColor=\''+s.color+'\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+
