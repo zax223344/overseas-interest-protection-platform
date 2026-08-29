@@ -1057,7 +1057,7 @@ const _ANOM_CAT_LABELS = {
   political_events: '政治事件', natural_disasters: '自然灾害', public_health: '公共卫生',
   sanctions_data: '制裁措施', social_unrest: '社会动荡', infrastructure: '基础设施',
   geopolitical_intel: '地缘情报', economic_risk: '经济风险', legal_compliance: '法律合规',
-  cyber_security: '网络安全'
+  cyber_security: '网络安全', osint_intel: '开源情报' /* 2026-08-29：此前漏映射，异动列表显示裸码 */
 };
 /* 预警队列 type 字段沿用 _serverAlertGen 同一映射，保证前端等级/类型过滤器兼容 */
 const _ANOM_ALERT_TYPE = {
@@ -1068,6 +1068,32 @@ const _ANOM_ALERT_TYPE = {
   cyber_security: '网络安全'
 };
 let _anomalyState = { at: null, signals: [], scanned: 0, pushed: 0 };
+/* 2026-08-29 国别码归一化（根因修复：sources_pack 通道落 ISO 两位码，"CN·地缘情报"混进异动监测
+ * + getTier('PK') 查不到梯队 + 前端显示裸码 PK/BR）。与 sources-collector.js 同源映射。 */
+const _ANOM_ISO2CN = {
+  CN:'中国', US:'美国', GB:'英国', FR:'法国', HK:'中国香港', MO:'中国澳门', TW:'中国台湾',
+  PK:'巴基斯坦', LK:'斯里兰卡', BD:'孟加拉国', ID:'印尼', VN:'越南', MY:'马来西亚', TH:'泰国',
+  MM:'缅甸', KH:'柬埔寨', LA:'老挝', KZ:'哈萨克斯坦', UZ:'乌兹别克斯坦', TJ:'塔吉克斯坦',
+  KG:'吉尔吉斯斯坦', RU:'俄罗斯', SA:'沙特', AE:'阿联酋', QA:'卡塔尔', IR:'伊朗', IQ:'伊拉克',
+  EG:'埃及', DZ:'阿尔及利亚', NG:'尼日利亚', ZA:'南非', CD:'刚果（金）', GN:'几内亚',
+  ET:'埃塞俄比亚', KE:'肯尼亚', MZ:'莫桑比克', AO:'安哥拉', DJ:'吉布提', BR:'巴西', PE:'秘鲁',
+  AR:'阿根廷', CL:'智利', MX:'墨西哥', BO:'玻利维亚', EC:'厄瓜多尔', DE:'德国', RS:'塞尔维亚',
+  HU:'匈牙利', GR:'希腊', CA:'加拿大', AU:'澳大利亚', PG:'巴布亚新几内亚', SB:'所罗门群岛',
+  JP:'日本', KR:'韩国', KP:'朝鲜', IN:'印度', TR:'土耳其', UA:'乌克兰', IL:'以色列', PS:'巴勒斯坦',
+  SD:'苏丹', LY:'利比亚', SO:'索马里', ML:'马里', NE:'尼日尔', TD:'乍得', SY:'叙利亚',
+  YE:'也门', LB:'黎巴嫩', JO:'约旦', MA:'摩洛哥', TN:'突尼斯', TZ:'坦桑尼亚', UG:'乌干达',
+  ZM:'赞比亚', ZW:'津巴布韦', MW:'马拉维', BW:'博茨瓦纳', NA:'纳米比亚', SN:'塞内加尔',
+  BF:'布基纳法索', CM:'喀麦隆', CI:'科特迪瓦', SG:'新加坡', PH:'菲律宾', MN:'蒙古',
+  PL:'波兰', BY:'白俄罗斯', RO:'罗马尼亚', CZ:'捷克', SK:'斯洛伐克', BG:'保加利亚',
+  FI:'芬兰', SE:'瑞典', NO:'挪威', DK:'丹麦', NL:'荷兰', BE:'比利时', CH:'瑞士',
+  AT:'奥地利', IT:'意大利', ES:'西班牙', PT:'葡萄牙', IE:'爱尔兰', NZ:'新西兰'
+};
+function _anomIso2cn(c) {
+  const s = String(c || '').trim();
+  if (!s) return '';
+  if (/[\u4e00-\u9fa5]/.test(s)) return s; /* 已是中文 */
+  return _ANOM_ISO2CN[s.toUpperCase()] || s; /* 未收录码原样返回（不丢方向） */
+}
 async function _runAnomalyWatch() {
   try {
     /* 本地自然日 0 点作边界（禁用 CURRENT_DATE——PG 会话时区可能非中国时区） */
@@ -1084,7 +1110,8 @@ async function _runAnomalyWatch() {
       GROUP BY 1,2`, [weekAgo, dayStart]);
     const base = {};
     for (const r of hist.rows) {
-      const k = r.t + '|' + r.c;
+      const cn0 = _anomIso2cn(r.c); /* 基线键同样归一化（码/中文统一，避免基线落空） */
+      const k = r.t + '|' + cn0;
       base[k] = (base[k] || 0) + r.n;
     }
     /* 今日计数 */
@@ -1099,7 +1126,7 @@ async function _runAnomalyWatch() {
     );
     const sampleMap = {};
     for (const r of tit.rows) {
-      const k = r.t + '|' + r.c;
+      const k = r.t + '|' + _anomIso2cn(r.c);
       if (!sampleMap[k]) sampleMap[k] = [];
       if (sampleMap[k].length < 5) sampleMap[k].push(r.title_zh || r.title);
     }
@@ -1110,8 +1137,10 @@ async function _runAnomalyWatch() {
     const signals = [];
     let scanned = 0;
     for (const r of tod.rows) {
-      const cn = String(r.c || '').trim();
-      if (!cn || cn === '中国' || cn === '未知' || cn === '全球') continue;
+      const cn = _anomIso2cn(r.c); /* ISO 码→中文（修复 getTier/COSRI 查不到 + 前端显示裸码） */
+      /* 2026-08-29 铁律：本平台监测海外异动，中国是行为主体永不是异动国——
+       * 中文"中国"与残留码 CN/CHN 全形式排除（此前码形态逃过过滤混进异动列表）。 */
+      if (!cn || cn === '中国' || cn === 'CN' || cn === 'CHN' || cn === '未知' || cn === '全球') continue;
       scanned++;
       const k = r.t + '|' + cn;
       const total7 = base[k] || 0;

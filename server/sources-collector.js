@@ -71,6 +71,35 @@ const SITE_REVIVE = [
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' };
 
+/* ===== 2026-08-29 国别码归一化（根因修复：异动信号出现 PK/CN/BR 裸码 + CN 混进异动监测）=====
+ * sources-registry 的 country 字段存 ISO 两位码，原样落库导致：
+ * ① 异动引擎"中国"过滤（按中文名匹配）失效 → "CN·地缘情报"混进异动监测（海外利益平台，中国是行为主体永不是异动国）；
+ * ② INTEREST_BASE.getTier('PK') 按中文名查梯队落空 → TIER 判定失真；
+ * ③ 前端直接渲染裸码。出口统一归一化为中文国名。 */
+const ISO2CN = {
+  CN:'中国', US:'美国', GB:'英国', FR:'法国', HK:'中国香港', MO:'中国澳门', TW:'中国台湾',
+  PK:'巴基斯坦', LK:'斯里兰卡', BD:'孟加拉国', ID:'印尼', VN:'越南', MY:'马来西亚', TH:'泰国',
+  MM:'缅甸', KH:'柬埔寨', LA:'老挝', KZ:'哈萨克斯坦', UZ:'乌兹别克斯坦', TJ:'塔吉克斯坦',
+  KG:'吉尔吉斯斯坦', RU:'俄罗斯', SA:'沙特', AE:'阿联酋', QA:'卡塔尔', IR:'伊朗', IQ:'伊拉克',
+  EG:'埃及', DZ:'阿尔及利亚', NG:'尼日利亚', ZA:'南非', CD:'刚果（金）', GN:'几内亚',
+  ET:'埃塞俄比亚', KE:'肯尼亚', MZ:'莫桑比克', AO:'安哥拉', DJ:'吉布提', BR:'巴西', PE:'秘鲁',
+  AR:'阿根廷', CL:'智利', MX:'墨西哥', BO:'玻利维亚', EC:'厄瓜多尔', DE:'德国', RS:'塞尔维亚',
+  HU:'匈牙利', GR:'希腊', CA:'加拿大', AU:'澳大利亚', PG:'巴布亚新几内亚', SB:'所罗门群岛',
+  JP:'日本', KR:'韩国', KP:'朝鲜', IN:'印度', TR:'土耳其', UA:'乌克兰', IL:'以色列', PS:'巴勒斯坦',
+  SD:'苏丹', LY:'利比亚', SO:'索马里', ML:'马里', NE:'尼日尔', TD:'乍得', SY:'叙利亚',
+  YE:'也门', LB:'黎巴嫩', JO:'约旦', MA:'摩洛哥', TN:'突尼斯', TZ:'坦桑尼亚', UG:'乌干达',
+  ZM:'赞比亚', ZW:'津巴布韦', MW:'马拉维', BW:'博茨瓦纳', NA:'纳米比亚', SN:'塞内加尔',
+  BF:'布基纳法索', CM:'喀麦隆', CI:'科特迪瓦', SG:'新加坡', PH:'菲律宾', MN:'蒙古',
+  PL:'波兰', BY:'白俄罗斯', RO:'罗马尼亚', CZ:'捷克', SK:'斯洛伐克', BG:'保加利亚',
+  FI:'芬兰', SE:'瑞典', NO:'挪威', DK:'丹麦', NL:'荷兰', BE:'比利时', CH:'瑞士',
+  AT:'奥地利', IT:'意大利', ES:'西班牙', PT:'葡萄牙', IE:'爱尔兰', NZ:'新西兰'
+};
+function iso2cn(c) {
+  if (!c) return '';
+  if (/[\u4e00-\u9fa5]/.test(String(c))) return String(c); /* 已是中文 */
+  return ISO2CN[String(c).toUpperCase()] || '';
+}
+
 async function _fetchText(url, ms) {
   return Promise.race([
     netx.smartFetch(url, { timeout: ms || 12000, headers: UA })
@@ -89,7 +118,12 @@ async function collectLiveRss(maxPerFeed) {
     const items = (scrapers.parseRss(text) || []).slice(0, maxPerFeed || 10);
     items.forEach(it => out.push({
       title: it.title || '', content: it.description || '', url: it.link || s.url,
-      publish_time: it.pubDate || '', source: s.name, country: s.country,
+      publish_time: it.pubDate || '', source: s.name,
+      /* 2026-08-29 国别归一化：ISO 码→中文；CN 源（中新网/新华网一带一路频道）中国是
+       * 报道主体永不是事发地，按标题/摘要提取事发国，提不到留空（不落"中国"）。 */
+      country: s.country === 'CN'
+        ? (scrapers.extractOverseasCountry((it.title || '') + ' ' + (it.description || '')) || '')
+        : iso2cn(s.country),
       stance: s.stance, risk_topics: s.risk_topics || [],
       _sourceType: 'sources_pack', _sourceId: s.id, region: s.region
     }));
@@ -122,7 +156,8 @@ async function collectSiteRevive(cyc, maxPerQuery) {
     items.forEach(it => out.push({
       title: it.title || '', content: it.description || '', url: it.link || '',
       publish_time: it.pubDate || '', source: meta.name || p.site,
-      country: p._c || meta.country || '', stance: meta.stance || 'I',
+      country: p._c || iso2cn(meta.country) || '', /* 2026-08-29：ISO 码→中文归一化 */
+      stance: meta.stance || 'I',
       risk_topics: meta.risk_topics || [],
       _sourceType: 'sources_pack', _sourceId: p.id, region: meta.region || ''
     }));

@@ -75,7 +75,13 @@ const COUNTRY_TIERS = {
     { cn: '莫桑比克', iso: 'MZ', interests: ['马普托大桥', ' LNG 项目'], risks: ['北部叛乱'] },
     { cn: '南非', iso: 'ZA', interests: ['德阿风电', '金融投资'], risks: ['电力危机', '治安犯罪'] },
     { cn: '安哥拉', iso: 'AO', interests: ['卡古路水电站', '石油贸易'], risks: ['汇率危机', '债务'] },
-    { cn: '苏丹', iso: 'SD', interests: ['石油合作'], risks: ['内战', '撤离风险'] }
+    { cn: '苏丹', iso: 'SD', interests: ['石油合作'], risks: ['内战', '撤离风险'] },
+    /* 2026-08-29 补萨赫勒四国：core-threat-watch 监测区（JNIM/ISGS 恐袭高发+中资矿业人员风险），
+     * 此前不在 54 国梯队 → 异动信号 tier 判定落空（"马里·恐怖事件"无梯队）。 */
+    { cn: '马里', iso: 'ML', interests: ['矿业勘探合作'], risks: ['JNIM 恐袭', '瓦格纳撤离后安全真空'] },
+    { cn: '布基纳法索', iso: 'BF', interests: ['矿业合作'], risks: ['JNIM/ISGS 恐袭', '局势恶化'] },
+    { cn: '尼日尔', iso: 'NE', interests: ['铀矿石油利益关联'], risks: ['军政权', 'ISGS 恐袭'] },
+    { cn: '毛里塔尼亚', iso: 'MR', interests: ['渔业合作', '矿业'], risks: ['萨赫勒恐袭外溢'] }
   ]
 };
 
