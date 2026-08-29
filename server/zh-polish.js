@@ -38,6 +38,7 @@ const MEDIA_EN = [
   'THISDAYLIVE', 'Devdiscourse', 'Newswire', 'africanews', 'Africanews',
   'CapitalFM', 'Capital FM', 'DAILY POST', 'Daily Trust', 'Vanguard', 'Punch',
   'Premium Times', 'The Cable', 'Channels TV', 'Arise TV', 'TVC News',
+  'BBC', 'CNN', 'Reuters', 'Al Jazeera', 'Bloomberg', 'DW', 'Al Arabiya',
 ];
 /* 域名尾巴（正则片段）：-nhk.or.jp / -tgnews.com.ng / -vijesti.me 等 */
 const DOMAIN_TAIL = '(?:\\.[a-z]{2,4}){1,2}';
