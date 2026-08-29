@@ -2764,6 +2764,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    *  ②被拦条目写 _gate_audit 流水，不再静默消失（"采到的数据看不见"根因之一）。 */
   const _corePriority = it._cnsecWatch === true || it._sourceType === 'cnsec_watch'
     || it._sourceType === 'core_threat_watch' || it._sourceType === 'consular_watch'
+    || it._sourceType === 'socmint_watch' /* 2026-08-29：社交媒体监测单源弱信号——早期预警价值恰在"无人印证"，
+      6h 印证窗口对社交帖系统性误杀；用户指令要求社交数据能进预警中心 */
     || it._sourceType === 'project_watch' /* 2026-08-29：重点项目动态是采集核心（审计维度③），
       项目新闻多为小众单源（CPEC 工作组会议全网 1-2 家），6h 印证窗口恰恰杀掉的就是这类高价值项目情报 */
     || _isCorePriorityText(it);
@@ -2799,6 +2801,14 @@ function _preInsertCommit(it, existing, titleKeys, eventSigs, gateResult) {
  * 旧闻（如 4 月的中粮巴西建厂、6 天前的联合国新闻）没有预警价值。
  * 能解析出发布日期且超过 48 小时 → 拦截；解析不出日期 → 放行（不误杀无日期源）。 */
 const FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+/* 2026-08-29 用户指令：社交媒体监测（socmint_watch）采集的库里没有的数据，时限放宽到 60 小时。
+ * 社交平台话题热度周期长于新闻（持续讨论 2-3 天常态），24h 闸对社交帖系统性误杀
+ * （实测单轮 165 条关联数据 147 条被"超时旧闻"拦掉，其中大量为 24-60h 活跃讨论）。
+ * URL/标题/事件签名去重闸仍在——库中已有的条目不会因窗口放宽重复入库。 */
+const SOCMINT_FRESH_WINDOW_MS = 60 * 60 * 60 * 1000;
+function _freshWindowFor(it) {
+  return (it && it._sourceType === 'socmint_watch') ? SOCMINT_FRESH_WINDOW_MS : FRESH_WINDOW_MS;
+}
 const CORROBORATION_WINDOW_MS = 6 * 60 * 60 * 1000; /* 6小时内单源可放行；超过6小时需多源印证
 
 /* ===== 俄乌冲突配额（2026-08-15 用户指令：俄乌每天不能超过 30 条，采重要的）=====
@@ -3311,7 +3321,7 @@ function _isFreshEnough(it) {
     it.event_date = it._extractedEventDate;           /* 入库时以事件发生时间为准 */
     if (!it.date) it.date = it._extractedEventDate;
     const age = Date.now() - evtDate.getTime();
-    if (age > FRESH_WINDOW_MS) return false;          /* 事件本身超过 24h → 旧闻 */
+    if (age > _freshWindowFor(it)) return false;    /* 事件超时效窗（社交60h/其余24h）→ 旧闻 */
     if (age < -12 * 60 * 60 * 1000) return false;     /* 未来事件（大于 12h） */
   }
 
@@ -3325,7 +3335,7 @@ function _isFreshEnough(it) {
     if (!isNaN(t.getTime())) {
       dated = true;
       const age = Date.now() - t.getTime();
-      if (age > FRESH_WINDOW_MS) return false;
+      if (age > _freshWindowFor(it)) return false;
       if (age < -12 * 60 * 60 * 1000) return false;
       /* 2026-08-25 要素补全：metadata 日期也可靠时回填 event_date（此前 94% 条目 event_date 为空） */
       if (!it.event_date) { it.event_date = t.toISOString(); if (!it.date) it.date = it.event_date; }
@@ -3338,7 +3348,7 @@ function _isFreshEnough(it) {
     if (ud) {
       dated = true;
       const age = Date.now() - ud.getTime();
-      if (age > FRESH_WINDOW_MS) return false;
+      if (age > _freshWindowFor(it)) return false;
       if (age < -12 * 60 * 60 * 1000) return false;
       it.publish_time = it.publish_time || ud.toISOString();   /* 补回日期，下游展示/统计可用 */
       if (!it.event_date) { it.event_date = ud.toISOString(); if (!it.date) it.date = it.event_date; }
@@ -7647,7 +7657,7 @@ const AUTO_ENGINE = {
     try {
       console.log(tag, 'starting...');
       const t0 = Date.now();
-      const r = await social.collectSocial({ limit: 15, perChannel: 15 });
+      const r = await social.collectSocial({ limit: 20, perChannel: 20 });
       const items = (r && r.items) || [];
       /* SOCMINT 结果统一格式化为 osint_intel 兼容结构 */
       const normalized = items.map(function(it) {
@@ -7681,7 +7691,8 @@ const AUTO_ENGINE = {
           audit_status: 'approved', /* 自动审核：系统采集即通过 */
           verified: false,
           _auto: true,
-          _social: true
+          _social: true,
+          _sourceType: 'socmint_watch' /* 2026-08-29：社交单源弱信号，纳入核心优先豁免（6h 印证窗口对单源社交帖过严） */
         };
       });
       /* 正文深度补全：社交条目优先抓 ext_url 原文外链，无外链的直接跳过（不抓评论区） */
@@ -7697,6 +7708,15 @@ const AUTO_ENGINE = {
       const sec = ((Date.now() - t0) / 1000).toFixed(1);
       console.log(tag, 'done in', sec + 's | fetched=' + normalized.length + ' linked=' + linked);
       await this._mergeToCache(normalized, 'collectSocial');
+      /* 2026-08-29 用户指令：社交媒体监测数据大量入库并进预警中心。
+       * 根因：此前每轮 ~100 条只写文件缓存（_mergePublicCache），
+       * PostgreSQL intel_data 里没有，预警生成器（_serverAlertGen 读 DB）永远看不到。
+       * 现在走 _ingestLinkedItems 既有闸门入库（24h 时效 / URL / 标题 / 事件签名
+       * 去重 / 国内噪声拦截全部生效），入库后 SRV- 预警自动生成。 */
+      try {
+        const r2 = await _ingestLinkedItems(normalized, 'SOCMINT-WATCH', '（社交媒体监测 ' + normalized.length + ' 条）');
+        console.log(tag, 'ingest:', JSON.stringify(r2));
+      } catch (e) { console.warn(tag, 'ingest failed:', e && e.message); }
       this._stats.socialRuns++;
       this._stats.totalFetched += normalized.length;
       this._stats.totalLinked += linked;

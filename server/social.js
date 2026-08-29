@@ -15,7 +15,8 @@
  *   · Telegram 公开频道 JSON 镜像       → 部分可用（镜像仅收录固定频道，实测 4 个可读）
  *   · Hacker News 全文检索 Algolia API  → 可用（科技/地缘议题讨论）
  *   · Telegram 官方预览 t.me/s/<频道>   → 不可用（t.me 网络层不可达，fetch failed）
- *   · X / Mastodon / Bluesky / Reddit / Nitter / YouTube / Substack → 网络层不可达
+ *   · Mastodon 话题时间线 API（2026-08-29 复测走代理可达）→ 可用（tag timeline 无需授权）★
+ *   · X / Bluesky / Reddit / Nitter / YouTube / Substack → 网络层不可达
  *   · VK                                 → 站点可达，newsfeed.search 需 access_token
  *   · 4chan 公开 API                     → 网络可达，但匿名版内容不可溯源、噪声与
  *                                          违规内容比例极高，经研判不作为情报源（不采用）
@@ -56,6 +57,17 @@ const LEMMY_INSTANCES = [
   { host: 'feddit.org', name: 'feddit.org' },
   { host: 'discuss.online', name: 'discuss.online' },
   { host: 'lemmy.world', name: 'lemmy.world' }
+];
+
+/* Mastodon：实测 tag timeline 可达（2026-08-29 复测，走 netx 代理回落 200 OK）
+ * 公共时间线（public timeline）需授权 422，但话题时间线（tag timeline）无需授权。
+ * 串行抓取规避实例限流。 */
+const MASTODON_INSTANCES = [
+  { host: 'mastodon.social', name: 'mastodon.social' }
+];
+const MASTODON_TAGS = [
+  'china', 'chinese', 'beltandroad', 'cpec', 'pakistan', 'myanmar',
+  'africa', 'kenya', 'nigeria', 'sudan', 'kazakhstan', 'silkroad'
 ];
 
 /* ============================================================
@@ -107,7 +119,7 @@ function _buildSocialQueries() {
     if (!k || seen[k]) continue;
     seen[k] = 1; uniq.push(out[i]);
   }
-  return uniq.slice(0, 36); /* 上限 36 条，覆盖企业+项目+国家+场景 */
+  return uniq.slice(0, 48); /* 2026-08-29 扩容：36→48，覆盖企业+项目+国家+场景（用户指令：大量扩大增量） */
 }
 const SOCIAL_QUERIES = _buildSocialQueries();
 
@@ -129,8 +141,8 @@ const SOCIAL_CHANNELS = [
     note: '通道预留：官方检索接口需付费授权，且本机出网环境不可达' },
   { id: 'facebook', name: 'Facebook / Meta', platform: 'Facebook', status: 'reserved', method: 'Graph API',
     note: '通道预留：需应用审核授权，公开检索接口已关闭' },
-  { id: 'mastodon', name: 'Mastodon 联邦宇宙', platform: 'Mastodon', status: 'unavailable', method: '实例公开时间线 API',
-    note: '不可用：mastodon.social / mstdn.social 等实例网络层不可达' },
+  { id: 'mastodon', name: 'Mastodon 联邦宇宙', platform: 'Mastodon', status: 'live', method: '话题时间线 API（/api/v1/timelines/tag/）',
+    note: '可用（2026-08-29 复测）：话题时间线无需授权，监控 ' + MASTODON_TAGS.length + ' 个话题标签；公共全站时间线需授权不采用' },
   { id: 'bluesky', name: 'Bluesky', platform: 'Bluesky', status: 'unavailable', method: 'AT Protocol 公开检索',
     note: '不可用：public.api.bsky.app 网络层不可达' },
   { id: 'reddit', name: 'Reddit', platform: 'Reddit', status: 'unavailable', method: '公开 JSON 检索',
@@ -265,8 +277,12 @@ async function fetchTelegram(ch, limit) {
  * 只取主题帖（story）：实测评论（comment）绝大多数为技术产品讨论，
  * 仅因文中出现 "China" 被召回，与我海外利益安全无关，属纯噪声，故不采集。 */
 async function fetchHackerNews(q, limit) {
+  /* 2026-08-29：限定最近 24h（created_at_i 时间窗）——按相关度召回的旧帖会被
+   * 入库 24h 时效闸全数拦掉（实测 176 条中 160 条超时旧闻），与其拉回来再扔，
+   * 不如直接在检索层只要新鲜帖，把配额留给能入库的条目。 */
+  const since = Math.floor(Date.now() / 1000) - 24 * 3600;
   const url = 'https://hn.algolia.com/api/v1/search_by_date?query=' + encodeURIComponent(q) +
-              '&tags=story&hitsPerPage=' + (limit || 20);
+              '&tags=story&numericFilters=created_at_i>' + since + '&hitsPerPage=' + (limit || 20);
   try {
     const r = await netx.smartFetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, timeout: 15000 });
     if (!r.ok) return { items: [], error: 'HTTP ' + r.status };
@@ -290,6 +306,43 @@ async function fetchHackerNews(q, limit) {
         platformName: 'Hacker News',
         author: h.author || '',
         engagement: { score: h.points || 0, comments: h.num_comments || 0 }
+      });
+    });
+    return { items: out, error: '' };
+  } catch (e) {
+    return { items: [], error: '网络不可达: ' + String(e.message || e).slice(0, 40) };
+  }
+}
+
+/* --- 通道 4：Mastodon 话题时间线（tag timeline，无需授权） ---
+ * 2026-08-29 实测复通：公共时间线 422 需授权，但 /api/v1/timelines/tag/<tag> 200 可达。
+ * 帖文 content 为 HTML，须解码实体+剥标签（含半中半英铁律的实体层防线）。 */
+async function fetchMastodon(tag, limit) {
+  const inst = MASTODON_INSTANCES[0];
+  const url = 'https://' + inst.host + '/api/v1/timelines/tag/' + encodeURIComponent(String(tag || '').trim()) +
+              '?limit=' + (limit || 20);
+  try {
+    const r = await netx.smartFetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, timeout: 15000 });
+    if (!r.ok) return { items: [], error: 'HTTP ' + r.status };
+    const j = await r.json();
+    if (!Array.isArray(j)) return { items: [], error: '响应非数组' };
+    const out = [];
+    j.forEach(t => {
+      /* reblog 转帖取原始帖；本地剔除纯媒体/纯链接贴 */
+      const post = t.reblog || t;
+      const body = _stripHtml(post.content || '');
+      if (_isJunk(body)) return;
+      const acct = (post.account && post.account.acct) || '';
+      out.push({
+        rawTitle: body.split(/[.。!！?？\n]/)[0].slice(0, 140) || body.slice(0, 140),
+        content: body.slice(0, 1200),
+        url: post.url || '',
+        source: 'Mastodon · #' + tag,
+        publishedAt: post.created_at || '',
+        channelTag: '#' + tag,
+        platformName: 'Mastodon',
+        author: acct,
+        engagement: { boosts: (post.reblogs_count || 0), favs: (post.favourites_count || 0) }
       });
     });
     return { items: out, error: '' };
@@ -381,20 +434,22 @@ async function collectSocial(opts) {
   const wantLemmy = opts.lemmy !== false;
   const wantTg = opts.telegram !== false;
   const wantHn = opts.hackernews !== false;
+  const wantMstdon = opts.mastodon !== false;
   const perChannel = opts.perChannel || opts.limit || 20;
   const qs = (opts.queries && opts.queries.length) ? opts.queries : SOCIAL_QUERIES;
   const report = [];
   const rawList = [];
 
-  /* Lemmy：按关键词逐条检索（串行，规避实例限流；采集用单实例+短超时保速度） */
+  /* Lemmy：按关键词逐条检索（串行，规避实例限流；采集用单实例+短超时保速度）
+   * 2026-08-29 扩容：单查询 20→30 条 */
   if (wantLemmy) {
     let n = 0, err = '';
     for (let i = 0; i < qs.length; i++) {
-      const r = await fetchLemmy(qs[i], 20, { maxInstances: 1, timeout: 12000 });
+      const r = await fetchLemmy(qs[i], 30, { maxInstances: 1, timeout: 12000 });
       r.items.forEach(x => rawList.push(x));
       n += r.items.length;
       if (r.error && r.error !== '无命中') err = r.error;
-      await _sleep(200);
+      await _sleep(150);
     }
     report.push({ channel: 'Lemmy 联邦社交网络', user: '(' + qs.length + ' 个关键词 × 1 实例)', fetched: n, error: err });
   }
@@ -410,15 +465,29 @@ async function collectSocial(opts) {
     }
   }
 
-  /* Hacker News：并发检索 */
+  /* Hacker News：并发检索（2026-08-29 扩容：15→25 条/词） */
   if (wantHn) {
-    const rs = await Promise.allSettled(qs.map(q => fetchHackerNews(q, 15)));
+    const rs = await Promise.allSettled(qs.map(q => fetchHackerNews(q, 25)));
     let n = 0, err = '';
     rs.forEach(x => {
       if (x.status === 'fulfilled') { x.value.items.forEach(y => rawList.push(y)); n += x.value.items.length; if (x.value.error) err = x.value.error; }
       else err = '请求失败';
     });
     report.push({ channel: 'Hacker News 全文检索', user: '(' + qs.length + ' 个关键词)', fetched: n, error: err });
+  }
+
+  /* Mastodon：话题时间线串行抓取（2026-08-29 新增通道） */
+  if (wantMstdon) {
+    const tags = (opts.mastodonTags && opts.mastodonTags.length) ? opts.mastodonTags : MASTODON_TAGS;
+    let n = 0, err = '';
+    for (let i = 0; i < tags.length; i++) {
+      const r = await fetchMastodon(tags[i], perChannel);
+      r.items.forEach(x => rawList.push(x));
+      n += r.items.length;
+      if (r.error) err = r.error;
+      await _sleep(300);
+    }
+    report.push({ channel: 'Mastodon 话题时间线', user: '(' + tags.length + ' 个标签 × ' + MASTODON_INSTANCES[0].host + ')', fetched: n, error: err });
   }
 
   const c = _collect(rawList);
@@ -460,6 +529,16 @@ async function searchSocial(q, opts) {
   report.push({ channel: 'Hacker News 全文检索', user: q, fetched: hn.items.length, error: hn.error || '' });
   hn.items.forEach(x => rawList.push(x));
 
+  /* Mastodon：取查询中首个长度≥3 的英文词作为话题标签（tag timeline 只支持单词） */
+  if (opts.mastodon !== false) {
+    const word = (q.match(/[A-Za-z]{3,}/) || [])[0];
+    if (word) {
+      const md = await fetchMastodon(word.toLowerCase(), limit);
+      report.push({ channel: 'Mastodon 话题时间线', user: '#' + word.toLowerCase(), fetched: md.items.length, error: md.error || '' });
+      md.items.forEach(x => rawList.push(x));
+    }
+  }
+
   /* Telegram 无公开全文检索接口 → 拉取重点频道近期消息后按关键词本地过滤 */
   if (opts.telegram !== false) {
     const kw = q.toLowerCase().split(/\s+/).filter(w => w.length > 2);
@@ -499,12 +578,14 @@ function socialHealth() {
     telegramChannels: TELEGRAM_CHANNELS,
     telegramUnavailable: TELEGRAM_UNAVAILABLE,
     lemmyInstances: LEMMY_INSTANCES,
+    mastodonInstances: MASTODON_INSTANCES,
+    mastodonTags: MASTODON_TAGS,
     queries: SOCIAL_QUERIES
   };
 }
 
 module.exports = {
   collectSocial, searchSocial, socialHealth,
-  fetchTelegram, fetchHackerNews, fetchLemmy,
-  SOCIAL_CHANNELS, TELEGRAM_CHANNELS, LEMMY_INSTANCES, SOCIAL_QUERIES
+  fetchTelegram, fetchHackerNews, fetchLemmy, fetchMastodon,
+  SOCIAL_CHANNELS, TELEGRAM_CHANNELS, LEMMY_INSTANCES, SOCIAL_QUERIES, MASTODON_TAGS
 };
