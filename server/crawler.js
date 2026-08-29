@@ -267,6 +267,9 @@ function normalizeItem(it){
     data_type: cat,
     platform: it.platform || '',
     chinaNegative: cn,
+    /* 双轨制根因修复：下游统计统一读 _chinaNegative（与 globalmedia/negtool 对齐），
+     * 此处双写防止单字段统计漏 crawler 路径的负面条目 */
+    _chinaNegative: cn,
     chinaRelated: cr,
     pubDate: it.pubDate || ''
   };
@@ -627,6 +630,7 @@ async function crawlWebOne(q, opts) {
       data_type: cat,
       platform: '开放网络检索',
       chinaNegative: cn,
+      _chinaNegative: cn,
       chinaRelated: cr,
       pubDate: pub,
       publishedAt: pub,
