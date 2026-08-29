@@ -2744,11 +2744,16 @@ const _HIST_CASE_RE = /案|空难|坠机|爆炸案|恐袭案|审判|裁决|判�
 /* 著名历史旧案专名表（无年份指代，标题不含年份也须否决）：
  * 实测 2026-08-29 洛克比案 7 条变体（"洛克比爆炸案审判因新证据推迟"等）标题无年份漏网。
  * 均为纯历史旧案专名，当前事件不会重名。 */
-const _HIST_FAMOUS_RE = /洛克比|lockerbie|泛美(?:航空)? ?103|pan am (?:flight )?103|9·11事件|9\.11事件|911事件|september 11 attack|慕尼黑惨案|munich massacre|别斯兰|beslan|MH370|马航370|马航MH370|俄克拉荷马城爆炸|oklahoma city bombing|东京地铁沙林|aum shinrikyo|沙林毒气/i;
+const _HIST_FAMOUS_RE = /洛克比|lockerbie|泛美(?:航空)? ?103|pan am (?:flight )?103|修道院门|修道院大门|abbey gate|9·11事件|9\.11事件|911事件|september 11 attack|慕尼黑惨案|munich massacre|别斯兰|beslan|MH370|马航370|马航MH370|俄克拉荷马城爆炸|oklahoma city bombing|东京地铁沙林|aum shinrikyo|沙林毒气/i;
+/* 相对时间回顾标记（2026-08-29 二次根因：修道院门爆炸案 5 周年系列报道，标题是"周年纪念日/
+ * 袭击后5年"式相对表述，无绝对年份，年份规则判不中） */
+const _HIST_RELATIVE_RE = /(?:\d+|一|二|两|三|四|五|六|七|八|九|十)\s*年(?:之)?[后後]|周年|后\s*(?:\d+|一|二|两|三|四|五|六|七|八|九|十)\s*年|years? (?:after|on|since|later)|anniversary|\d+\s*years? later/i;
+const _HIST_EVENT_RE = /案|空难|坠机|爆炸|恐袭|袭击|屠杀|惨案|遇难|attack|bombing|blast|massacre|crash|killing|strike/i;
 function _isHistoricalRetrospect(it) {
   const t = String((it && it.title) || '') + ' ' + String((it && it.title_zh) || '');
   if (t.trim().length < 8) return false;
   if (_HIST_FAMOUS_RE.test(t)) return true; /* 历史旧案专名一票否决（无需年份） */
+  if (_HIST_RELATIVE_RE.test(t) && _HIST_EVENT_RE.test(t)) return true; /* "N年后/周年"+袭击爆炸 → 周年回顾报道 */
   const years = t.match(/(?:19|20)\d{2}/g);
   if (!years) return false;
   const curYear = new Date().getFullYear();
