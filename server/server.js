@@ -17,6 +17,8 @@ const { query, testConnection } = require('./db');
 const netx = require('./netx'); /* 出网出口层统一 smartFetch（2026-08-29 补引入：原代码 6297 行已使用却未 require，隐性 ReferenceError） */
 const scrapers = require('./scrapers');
 const crawler = require('./crawler');
+const zhPolish = require('./zh-polish'); /* L1 中文译文抛光（2026-08-29 翻译质量改造：尾部媒体/URL/作者残留剥离+缩写全称+标点硬伤） */
+const zhRewrite = require('./title-rewrite'); /* L2 标题句式重写（2026-08-29 翻译质量改造：欧化语序/插入语/框架句重组，病句检测命中才动手） */
 const agentkey = require('./agentkey');
 const geoint = require('./geoint');
 const social = require('./social');
@@ -6519,7 +6521,7 @@ async function _fixMixedZh(zh) {
 }
 async function _translateAny(text) {
   const zh = await _translateAnyRaw(text);
-  return _fixMixedZh(zh);
+  return zhPolish.polish(_fixMixedZh(zh)); /* L1 抛光：实体/URL/emoji/标点/缩写（#483） */
 }
 async function _translateAnyRaw(text) {
   const baiduId = process.env.BAIDU_TRANSLATE_APPID;
@@ -6935,6 +6937,7 @@ function _extractElements(it) {
 }
 
 /* 媒体专名本地化（在国名本地化之上补充，仅作用于标题，避免污染正文） */
+let _ZHQ_LOG_N = 0; /* L4 低分样本日志计数（防刷屏，每进程最多 12 条） */
 const _MEDIA_ALIAS = {
   'La Repubblica': '共和报', 'Le Monde': '世界报', 'Le Figaro': '费加罗报',
   'Der Spiegel': '明镜周刊', 'Die Zeit': '时代周报', 'The Guardian': '卫报',
@@ -6987,6 +6990,25 @@ function _localizeTitleTail(it) {
   if (t2 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t2; it.title_zh = t2; r.media = 1; }
   const t3 = _localizeCities(it.title);
   if (t3 !== it.title) { if (!it.title_en) it.title_en = it.title; it.title = t3; it.title_zh = t3; r.city = 1; }
+  /* L1 标题抛光（#483）：中文源标题不经 _translateAny，也需剥尾部媒体/URL/emoji+标点硬伤 */
+  const t4 = zhPolish.polishTitle(it.title);
+  if (t4 && t4 !== it.title && t4.length >= 6) {
+    if (!it.title_en) it.title_en = it.title;
+    it.title = t4; it.title_zh = t4;
+  }
+  /* L2 句式重写（#484）：机翻欧化语序/插入语/框架句重组为中文自然语序（病句检测命中才动手） */
+  const _cnForRw = it.country_cn || (ENTITY && ENTITY.normalizeCountry ? ENTITY.normalizeCountry(it.country) : '') || '';
+  const t5 = zhRewrite.rewrite(it.title, { country: _cnForRw });
+  if (t5 && t5 !== it.title && t5.length >= 8) {
+    if (!it.title_en) it.title_en = it.title;
+    it.title = t5; it.title_zh = t5;
+  }
+  /* L4 可读性评分（#485）：度量入 data_json.zhq，低分采样日志（观察期不做硬阻塞） */
+  it.zhq = zhRewrite.quality(it.title);
+  if (it.zhq < 60 && _ZHQ_LOG_N < 12) {
+    _ZHQ_LOG_N++;
+    console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60));
+  }
   /* 正文同样本地化英文国家名，减少"中外文融合" */
   if (it.content && /[A-Za-z]{4,}/.test(it.content)) {
     const c1 = _localizeCountryNames(it.content);
