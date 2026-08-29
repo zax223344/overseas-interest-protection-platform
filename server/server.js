@@ -2795,6 +2795,13 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const code = [];
   if (!it) return { ok: false, code: ['no-item'] };
   _stripHtmlFields(it); /* 2026-08-25：入库前去标签（见上） */
+  /* chinaRelated 补判（2026-08-29 三部委审查 P2-3）：sources_pack/部分哨兵采集侧未设
+   * chinaRelated → 7 天 475 条 NULL(21%)，涉华统计口径漏算近四分之一。
+   * 入库闸统一补判（唯一权威点），任何通道漏设不再产生 NULL。判定与采集侧同源：crawler.chinaRelated。 */
+  if (it.chinaRelated === undefined || it.chinaRelated === null) {
+    const _crTxt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.desc || it.content || '');
+    it.chinaRelated = !!(crawler.chinaRelated && crawler.chinaRelated(_crTxt));
+  }
   const u = it.url || it.title;
   if (!u) return { ok: false, code: ['no-url-title'] };
   if (existing.has(u)) return { ok: false, code: ['url-dup'] };
@@ -2825,6 +2832,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   /* 事件签名 */
   const sig = _eventSignature(it);
   if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
+  /* 事件簇产量帽（2026-08-29）：同国+同类事件当日变体超 12 条拒收（防单一事件刷屏） */
+  if (!_eventClusterOk(it)) { _gateAudit('入库闸', 'event-flood', it.title); return { ok: false, code: ['event-flood'] }; }
 
   /* 多源印证：事件发生超过 6 小时后仍未被其他独立信源报道，视为不可信旧闻/单一信源噪音，暂不入库
    * 2026-08-25 豁免：白名单公众号（wechat_oa，含搜狗/profile_ext/镜像站三通道）是用户亲选的专业安全信源，
@@ -2881,15 +2890,21 @@ function _freshWindowFor(it) {
 }
 const CORROBORATION_WINDOW_MS = 6 * 60 * 60 * 1000; /* 6小时内单源可放行；超过6小时需多源印证
 
-/* ===== 俄乌冲突配额（2026-08-15 用户指令：俄乌每天不能超过 30 条，采重要的）=====
- * 旧版：内存计数 20 条/日，PM2 重启即清零，超量后一律硬拦。
- * 新版：① 配额 30 条/日；② 计数 DB 背书（5分钟缓存+异步刷新），重启不丢；
- * ③ 超配额后只放行"重要事件"（伤亡/重大/撤侨类），琐事不再进库；④ 涉华要素豁免保留。 */
+/* ===== 俄乌冲突配额（2026-08-15 建；2026-08-29 三部委审查 P1-2 收紧）=====
+ * 旧版：配额 30 条/日内无条件放行 → 实测 7 天入库 145 条(5.2%)，日均仅 ~20 条，
+ *       配额从未压满，闸形同虚设；大半是前线战报/歼敌战果/领导人日常会见类纯战况。
+ * 新版四层：
+ *  ① 涉华/中资关联 → 无条件放行（旧版只测 title，title_zh 涉华词漏判已修）；
+ *  ② 顶级事件（伤亡≥5人/核/撤侨/大规模）→ 无条件放行；
+ *  ③ 重要事件（伤亡/平民设施/能源设施/粮食走廊/制裁/和谈）→ 消耗 15 条/日配额；
+ *  ④ 纯战况琐事（战报更新/歼敌数/日常会见/宇航员等）→ 一律拒收，不看配额。 */
 let _ruUaCount = 0, _ruUaDate = '';
 let _ruUaDb = { date: '', n: 0, t: 0 };
-const RUUA_DAILY_CAP = 30;
+const RUUA_DAILY_CAP = 15;
 const _RUUA_RE = /乌克兰|俄罗斯|Ukraine|Ukrainian|Russia|Russian|Kyiv|Kiev|Moscow|Zelensky|Putin|Donetsk|Donbas|Kharkiv|Belgorod|Kherson|Zaporizhzhia|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯|顿涅茨克|赫尔松|TASS|Euromaidan/i;
-const _RUUA_IMPORTANT_RE = /死亡|遇难|身亡|伤亡|killed|dead|deaths|casualt|撤侨|evacuat|重大|大规模|mass |平民|civilian|儿童医院|学校|医院|核电站|核|nuclear|中国|中资|中企|华人|华侨|Chinese|China/i;
+const _RUUA_CN_RE = /中国|中资|中企|中方|华人|华侨|北京|Beijing|Chinese|China/i;
+/* 重要事件：有情报价值才消耗配额——伤亡/平民设施/能源炼油/粮食走廊/制裁和谈 */
+const _RUUA_IMPORTANT_RE = /死亡|遇难|身亡|丧生|伤亡|受伤|伤员|killed|dead|deaths|injur|casualt|平民|civilian|学校|医院|儿童|核|nuclear|粮食|谷物|港口|能源|石油|天然气|炼油|制裁|谈判|停火|和谈|和平|峰会|grain|port|refiner|oil|gas|energy|sanction|talks|ceasefire|peace|summit/i;
 function _isRuUaTopic(it) {
   return _RUUA_RE.test(String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.source || ''));
 }
@@ -3176,13 +3191,19 @@ function _ruUaQuotaOk(it) {
   const d = _todayKey();
   if (_ruUaDate !== d) { _ruUaDate = d; _ruUaCount = 0; }
   if (!_isRuUaTopic(it)) return true;
+  const txt = String(it.title || '') + ' ' + String(it.title_zh || '');
+  /* ① 涉华/中资关联：无条件放行（title+title_zh 双测，旧版漏 title_zh） */
+  if (_RUUA_CN_RE.test(txt)) { _ruUaCount++; return true; }
   /* DB 计数 5 分钟异步刷新（服务重启内存清零也不失控） */
   if (_ruUaDb.date !== d || Date.now() - _ruUaDb.t > 5 * 60 * 1000) { _ruUaDb.t = Date.now(); _ruUaRefreshDbCount(); }
+  /* ② 顶级事件：伤亡≥5人 / 核 / 撤侨 / 大规模 → 不受配额限制 */
+  const dm = txt.match(/(\d+)\s*(?:人|名)?\s*(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
+  if ((dm && parseInt(dm[1] || dm[2], 10) >= 5) || /撤侨|evacuat|核|nuclear|重大|大规模|mass /i.test(txt)) { _ruUaCount++; return true; }
+  /* ④ 纯战况琐事：无伤亡/无涉华/无战略要素 → 一律拒收（即使配额未满） */
+  if (!_RUUA_IMPORTANT_RE.test(txt)) return false;
+  /* ③ 重要事件：消耗 15 条/日配额 */
   const todayTotal = (_ruUaDb.date === d ? _ruUaDb.n : 0) + _ruUaCount;
-  if (/中国|Chinese|China|Beijing|中资|中企|华人/i.test(String(it.title || ''))) { _ruUaCount++; return true; } /* 涉华豁免 */
   if (todayTotal < RUUA_DAILY_CAP) { _ruUaCount++; return true; }
-  /* 超配额：只放行重要事件（伤亡/重大/核/平民设施），战况琐事拦截 */
-  if (_RUUA_IMPORTANT_RE.test(String(it.title || '') + ' ' + String(it.title_zh || ''))) { _ruUaCount++; return true; }
   return false;
 }
 /* ===== 高发国家日配额（2026-08-17 用户指令：采集全球均衡）=====
@@ -3315,8 +3336,12 @@ function _eventSignature(it) {
   const ev = Array.from(evSet).sort().join('+') || '';
   /* 事发国：标题优先（跨源一致），标题无国名才退化用条目国别 */
   const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || String(it.country_cn || it.country || '');
-  /* 主语锚点：伤亡数字 / 威胁组织 / 关键设施——同事件不同措辞的共同锚 */
-  const num = (t.match(/(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|killed|missing|injured|dead)/i) || [])[1] || '';
+  /* 主语锚点：伤亡数字 / 威胁组织 / 关键设施——同事件不同措辞的共同锚
+   * 2026-08-29 P1-3 数量级桶修正：同一事件死亡人数随救援进展持续更新（469→475→626），
+   * 精确数字当锚点会让每次更新都换签名绕过 event-sig-dup——中尼洪灾 7 天 141 条变体的根因。
+   * 改按数量级分桶（十位 n2/百位 n3/千位 n4），死亡人数爬升不再换签名。 */
+  const numRaw = (t.match(/(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|killed|missing|injured|dead)/i) || [])[1] || '';
+  const num = numRaw ? (numRaw.length >= 4 ? 'n4' : numRaw.length === 3 ? 'n3' : 'n2') : '';
   const org = (t.match(/塔利班|胡塞|博科|青年党|BLA|TTP|ISIS|伊斯兰国|基地组织|Taliban|Houthi|Hamas|Hezbollah/i) || [])[0] || '';
   const fac = (t.match(/瓜达尔|霍尔木兹|红海|苏伊士|中巴经济走廊|CPEC|大使馆|使馆|清真寺|学校|医院|机场|港口|Gwadar|Hormuz|embassy/i) || [])[0] || '';
   const anchor = [num, org, fac].filter(Boolean).join('/');
@@ -3324,6 +3349,28 @@ function _eventSignature(it) {
   const evtDate = _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || new Date());
   const day = evtDate ? evtDate.toISOString().slice(0, 10) : String(it.publish_time || it.publishedAt || '').slice(0, 10);
   return ctry + '|' + ev + '|' + (anchor || day);   /* 有锚点用锚点（同事件强聚合），无锚点退日期 */
+}
+/* ===== 事件簇产量帽（2026-08-29 三部委审查 P1-3 根因修复）=====
+ * 起因：中尼边境洪灾单一事件 7 天 141 条变体入库。根因链：
+ *  ① 事件签名锚点含具体伤亡数字——死亡人数 469→626 每次更新都换签名，绕过 event-sig-dup；
+ *  ② 伤亡≥5 豁免国家日配额——洪灾类重大伤亡条目全部免检；
+ *  ③ 单源帽治不了（最大源仅 6 条）——变体来自全球几十家媒体。
+ * 修法：按"事发国+事件词"建簇，当日变体超 12 条即拒收（首发及早期报道不受影响）。
+ * 事件仍在库中有充分覆盖（12 条/日），但不许单一事件把国家分布刷成一家独大。 */
+const EVENT_CLUSTER_DAILY_CAP = 12;
+const _evCluster = { date: '', by: {} };
+function _eventClusterOk(it) {
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+  if (t.trim().length < 8) return true;
+  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || String(it.country_cn || it.country || '');
+  if (!ctry) return true;
+  const ev = t.match(/洪水|地震|死亡|遇难|身亡|失踪|伤亡|袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|坠机|沉船|flood|earthquake|attack|bomb|kidnap|clash|coup|crash/i);
+  if (!ev) return true; /* 无事件词的常规报道不适用簇帽 */
+  const d = _todayKey();
+  if (_evCluster.date !== d) { _evCluster.date = d; _evCluster.by = {}; }
+  const key = ctry + '|' + ev[0].toLowerCase();
+  _evCluster.by[key] = (_evCluster.by[key] || 0) + 1;
+  return _evCluster.by[key] <= EVENT_CLUSTER_DAILY_CAP;
 }
 /* 入库后计算印证数（近2天同签名独立来源数+1），写回本条 data_json */
 async function _markCorroboration(id, it) {
@@ -3625,6 +3672,16 @@ async function _ingestLinkedItems(items, tag, note) {
   tag = tag || 'GLOBALMEDIA'; note = note || '';
   try {
     const linked = items.filter(it => it.interestLinked === true);
+    /* _sourceType 溯源铁律（2026-08-29 三部委审查 P2-4）：7 天 600 条(21%)无 _sourceType，
+     * 通道分布排查不可溯源。此处统一兜底——通道漏设时按采集器 tag 推导，不再产生空值。 */
+    const _TAG_TYPE = {
+      'GLOBALMEDIA': 'media', 'SOURCES-PACK': 'sources_pack', 'CORE-THREAT': 'core_threat_watch',
+      'CORE-THREAT-MANUAL': 'core_threat_watch', 'CHANNEL-WATCH': 'channel_watch', 'COMPLIANCE-WATCH': 'compliance_watch',
+      'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
+      'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
+      'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance'
+    };
+    linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
     if (!linked.length) return { inserted: 0 };
     const urls = linked.map(it => it.url).filter(Boolean);
@@ -3647,6 +3704,7 @@ async function _ingestLinkedItems(items, tag, note) {
           else if (c === 'url-dup') skippedDup++;
           else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
           else if (c === 'event-sig-dup') skippedEventSig++;
+          else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏（计数并入签名重复便于观察） */
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
           else if (c === 'historical-retrospect') skippedHistorical++;
@@ -4060,6 +4118,7 @@ async function _runChinaFocus() {
           else if (c === 'url-dup') skippedDup++;
           else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
           else if (c === 'event-sig-dup') skippedEventSig++;
+          else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏（计数并入签名重复便于观察） */
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
         });
@@ -4263,6 +4322,7 @@ async function _runChinaNegative() {
           else if (c === 'url-dup') skippedDup++;
           else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
           else if (c === 'event-sig-dup') skippedEventSig++;
+          else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏（计数并入签名重复便于观察） */
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
         });
@@ -4540,6 +4600,7 @@ async function _runBriFocus() {
             else if (c === 'url-dup') skippedDup++;
             else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
             else if (c === 'event-sig-dup') skippedEventSig++;
+            else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏 */
             else if (c === 'domestic-china') skippedDomestic++;
             else if (c === 'bad-title') skippedBadTitle++;
           });
@@ -4626,6 +4687,7 @@ async function _runCnMedia() {
             else if (c === 'url-dup') skippedDup++;
             else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
             else if (c === 'event-sig-dup') skippedEventSig++;
+            else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏 */
             else if (c === 'domestic-china') skippedDomestic++;
             else if (c === 'bad-title') skippedBadTitle++;
           });
@@ -4698,6 +4760,7 @@ async function _wechatIngest(items) {
           else if (c === 'url-dup') skippedDup++;
           else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
           else if (c === 'event-sig-dup') skippedEventSig++;
+          else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏（计数并入签名重复便于观察） */
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
         });
@@ -4938,8 +5001,12 @@ async function _runRegionBalance() {
         }
       });
       if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
-      const titleKeys = await _getRecentTitleKeys();
+      /* 2026-08-29 三部委审查 P2-4 根因重构：原自带 INSERT 循环绕过 _preInsertGate——
+       * 无 _sourceType（溯源不可查）、无 chinaRelated（统计盲区）、缺墓碑/旧案/标题质量/
+       * 事件签名/簇帽全套闸（垃圾标题曾落库）。通道专属前置过滤保留，入库统一走标准管线。 */
+      const titleKeysPre = await _getRecentTitleKeys();
       let regIns = 0;
+      const batch = [];
       for (const it of arts) {
         const text = String(it.title || '') + ' ' + String(it.content || it.description || '');
         if (_NOISE.test(text)) { rejected++; continue; }
@@ -4948,21 +5015,19 @@ async function _runRegionBalance() {
         /* 国别 × 风险/类别查询 = 海外利益暴露面信号（中资/华人/一带一路项目所在国的安全与风险事件），
            直接标记利益关联，不再重跑严格门禁（那会把没提"中国"二字的当地安全风险新闻掐掉）。 */
         it.interestLinked = true;
-        const u = it.url || it.title; if (!u) continue;
-        if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
+        it._sourceType = 'region_balance'; it._region = pack.name;
+        if (!it.source) it.source = '区域均衡·' + pack.name;
+        const u = it.url || it.title; if (!u) { rejected++; continue; }
+        if (_isDupTitle(titleKeysPre, it)) { rejected++; continue; }
         if (!_isFreshEnough(it)) { rejected++; continue; }
         if (!_dominantQuotaOk(it)) { rejected++; continue; }
-        try {
-          it._eventSig = _eventSignature(it); _tagAssets(it);
-          const _lv = _normLevelForStore(it); it.level_norm = _lv;
-          const _dt = _classifyIntelType(it); it.data_type = _dt;
-          await query(
-            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || ('区域均衡·' + pack.name), JSON.stringify(it), 'approved']
-          );
-          _addTitleKey(titleKeys, it); inserted++; regIns++;
-          if (regIns >= 10) break;   // 单区域单轮回填上限，均衡铺开
-        } catch (e) { /* URL 唯一冲突等 */ }
+        batch.push(it);
+        regIns++;
+        if (regIns >= 10) break;   // 单区域单轮回填上限，均衡铺开
+      }
+      if (batch.length) {
+        const res = await _ingestLinkedItems(batch, 'REGION-BAL', '（' + pack.name + '）');
+        inserted += (res && res.inserted) || 0;
       }
     }
     console.log('[REGION] 均衡采集(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 补 ' + targets.map(w => REGION_PACKS[w].name + '(' + regionN[w] + ')').join('+') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected);
@@ -5138,6 +5203,10 @@ async function _runCategoryBalance() {
       fetched += arts.length;
       if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
       let catIns = 0;
+      /* 2026-08-29 三部委审查 P2-4 根因重构：原自带 INSERT 循环绕过 _preInsertGate——
+       * 无 _sourceType、无 chinaRelated、缺墓碑/旧案/标题质量/事件签名/簇帽闸
+       * （「第469章：第469章…」垃圾标题曾落库）。前置过滤保留，入库统一走标准管线。 */
+      const batch = [];
       for (const it of arts) {
         it.interestLinked = true;
         const u = it.url || it.title; if (!u) continue;
@@ -5148,23 +5217,21 @@ async function _runCategoryBalance() {
             && !/海外|境外|驻外|一带一路|中资|中企|华人|华侨|使馆|撤侨|留学生|巴基斯坦|阿富汗|哈萨克斯坦|乌兹别克|吉尔吉斯|塔吉克|土库曼|孟加拉|斯里兰卡|尼泊尔|缅甸|泰国|越南|老挝|柬埔寨|马来西亚|新加坡|印尼|印度尼西亚|菲律宾|蒙古|伊朗|伊拉克|叙利亚|也门|沙特|阿联酋|土耳其|埃及|利比亚|苏丹|南苏丹|索马里|埃塞俄比亚|肯尼亚|坦桑尼亚|乌干达|卢旺达|刚果|尼日利亚|加纳|马里|尼日尔|乍得|喀麦隆|莫桑比克|赞比亚|津巴布韦|安哥拉|南非|阿尔及利亚|摩洛哥|突尼斯|俄罗斯|乌克兰|白俄罗斯|波兰|塞尔维亚|匈牙利|希腊|意大利|西班牙|葡萄牙|法国|德国|英国|荷兰|比利时|瑞士|瑞典|挪威|芬兰|丹麦|奥地利|捷克|罗马尼亚|保加利亚|美国|加拿大|墨西哥|巴西|阿根廷|智利|秘鲁|哥伦比亚|委内瑞拉|厄瓜多尔|玻利维亚|古巴|牙买加|海地|澳大利亚|新西兰|日本|韩国|朝鲜|印度|东帝汶|巴布亚|斐济/i.test(ctext)) { rejected++; continue; }
         if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
         if (!_isFreshEnough(it)) { rejected++; continue; }
-        if (!_dominantQuotaOk(it)) { rejected++; continue; }
-        if (!_ruUaQuotaOk(it)) { rejected++; continue; }
         /* 质量闸①：无事件要素的泛新闻不入库 */
         if (!_CAT_EVENT_RE.test(ctext)) { rejected++; continue; }
         /* 质量闸②：非拉丁外文（孟加拉/西里尔等）翻译失败 → 拒绝（落库即中文铁律） */
         if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; continue; }
-        try {
-          it._eventSig = _eventSignature(it); _tagAssets(it);
-          const _lv = _normLevelForStore(it); it.level_norm = _lv;
-          it.data_type = ct; /* 类别均衡器权威指定：不被通用分类器覆盖 */
-          await query(
-            `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [ct, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || ('类别均衡·' + pack.name), JSON.stringify(it), 'approved']
-          );
-          _addTitleKey(titleKeys, it); inserted++; catIns++;
-          if (catIns >= 8) break;
-        } catch (e) { /* URL 唯一冲突等 */ }
+        /* 标记类别权威指定 + 通道溯源，交给标准管线入库（时效/配额闸在 _ingestLinkedItems 内） */
+        it._sourceType = 'category_balance'; it._catBal = pack.name;
+        if (!it.source) it.source = '类别均衡·' + pack.name;
+        it._forceDataType = true; it.data_type = ct;
+        batch.push(it);
+        catIns++;
+        if (catIns >= 8) break;
+      }
+      if (batch.length) {
+        const res = await _ingestLinkedItems(batch, 'CAT-BAL', '（' + pack.name + '）');
+        inserted += (res && res.inserted) || 0;
       }
     }
     console.log('[CAT-BAL] 类别均衡(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 补 ' + targets.map(w => CATEGORY_PACKS[w].name + '(' + catN[w] + ')').join('+') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected);
@@ -7047,6 +7114,7 @@ app.post('/api/intel/sidepool/promote', async (req, res) => {
     it.title = sp.title || it.title; it.title_zh = sp.title_zh || it.title_zh;
     it.url = sp.url || it.url; it.country = sp.country || it.country;
     it._promoted = true; it._promotedFrom = sp.reason;
+    if (!it._sourceType) it._sourceType = 'sidepool_promote'; /* 2026-08-29 溯源铁律 */
     it._eventSig = _eventSignature(it); _tagAssets(it);
     const _lv = _normLevelForStore(it); it.level_norm = _lv;
     const _dt = (it._forceDataType && it.data_type) ? it.data_type : (_classifyIntelType(it) || 'osint_intel');
@@ -7141,6 +7209,7 @@ app.post('/api/intel/:type', authMiddleware, async (req, res) => {
     const { type } = req.params;
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
     const item = req.body;
+    if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
     const blocked = await _postGate(item);
     if (blocked) return res.json({ skipped: blocked });
     _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
@@ -7162,6 +7231,7 @@ app.post('/api/intel/:type/batch', authMiddleware, async (req, res) => {
     if (!Array.isArray(items)) return res.status(400).json({ error: '请提供数组' });
     let count = 0, skipped = 0;
     for (const item of items) {
+      if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
       const blocked = await _postGate(item);
       if (blocked) { skipped++; continue; }
       _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
