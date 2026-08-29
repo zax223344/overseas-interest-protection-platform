@@ -6027,6 +6027,12 @@ try {
   if (_tc && typeof _tc === 'object') _transCache = _tc;
 } catch (e) {}
 let _transCacheDirty = false;
+/* 启动清扫：批量剔除历史污染条目（[object Promise] 等），不等 _cacheGet 懒命中逐条自愈 */
+(function _transCachePurge() {
+  let purged = 0;
+  Object.keys(_transCache).forEach(k => { if (_isGarbage(_transCache[k])) { delete _transCache[k]; purged++; } });
+  if (purged) { console.log('[TRANS-CACHE] 启动清扫污染条目: ' + purged + ' 条'); _transCacheDirty = true; }
+})();
 function _transCacheSave() {
   if (!_transCacheDirty) return;
   try { fs.writeFileSync(_TRANS_CACHE_FILE, JSON.stringify(_transCache)); _transCacheDirty = false; } catch (e) {}
@@ -6038,6 +6044,9 @@ function _isGarbage(v) {
   if (/不清楚/.test(v)) return true;
   if (/^\?+$/.test(String(v).trim())) return true;
   if (/NOT TRANSLATED/i.test(v)) return true;
+  /* 2026-08-30 实锤排雷：缓存曾混入 "[object Promise]" 值（未 await 的翻译结果被 String 化），
+   * 命中后直接当译文入库——id=30872 标题/正文全变 [object Promise]。读自愈+写拦截双向防御。 */
+  if (/\[object [A-Za-z]/i.test(String(v).slice(0, 30))) return true;
   /* 乱码特征：不含中文，却含阿拉伯/叙利亚/科普特/希伯来组合符等本不应出现在中译文的区段（多为 UTF-8→latin1 双重误编码） */
   const hasCJK = /[一-鿿]/.test(v);
   if (!hasCJK && /[؀-ۿ֐-׿͢-ͯⴢ-⴯Ⲁ-⳿]/.test(v)) return true;
@@ -6573,7 +6582,9 @@ async function _fixMixedZh(zh) {
 }
 async function _translateAny(text) {
   const zh = await _translateAnyRaw(text);
-  return zhPolish.polish(_fixMixedZh(zh)); /* L1 抛光：实体/URL/emoji/标点/缩写（#483） */
+  /* 2026-08-30 排雷：_fixMixedZh 是 async 函数，漏 await 会把 Promise 传给 polish →
+   * String(Promise) = "[object Promise]" 被当译文入库+污染缓存（624 条）。必须 await。 */
+  return zhPolish.polish(await _fixMixedZh(zh));
 }
 async function _translateAnyRaw(text) {
   const baiduId = process.env.BAIDU_TRANSLATE_APPID;
