@@ -1047,7 +1047,11 @@ async function _serverAlertGen() {
       if (!tkey || have.has(tkey)) continue;
       const now = new Date();
       const p = n => String(n).padStart(2, '0');
-      const ts = now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes());
+      /* 2026-08-30 修复（用户铁证：逃跑条 08-29 20:17 入库，预警显示 08-30 00:21）：
+       * time 此前用生成时刻——24h 回看窗口内重新生成（或延迟生成）的预警会被盖上
+       * "当下"时间戳，昨天的情报看起来像今天新采集。一律用条目自身采集时间。 */
+      const ct = r.collect_time ? new Date(r.collect_time) : now;
+      const ts = ct.getFullYear() + '-' + p(ct.getMonth() + 1) + '-' + p(ct.getDate()) + ' ' + p(ct.getHours()) + ':' + p(ct.getMinutes());
       const typeMap = { terror_events: '安全风险', security_events: '安全风险', military_conflicts: '安全风险', political_events: '政治风险', natural_disasters: '自然环境风险', public_health: '安全风险', sanctions_data: '经济风险', social_unrest: '社会文化风险', infrastructure: '运营风险', geopolitical_intel: '地缘战略风险', economic_risk: '经济风险', legal_compliance: '法律合规', cyber_security: '网络安全' };
       const alert = {
         id: 'SRV-' + r.id,
@@ -3503,33 +3507,45 @@ async function _semanticEventDup(it) {
   try {
     const t = String(it.title || '') + ' ' + String(it.title_zh || '');
     if (t.trim().length < 12) return false;
-    const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0);
-    if (!ctry) return false;
     const evSet = new Set(); let mm;
     while ((mm = _SEM_EV_RE.exec(t)) !== null) evSet.add(mm[0].toLowerCase());
     const num = (t.match(_SEM_NUM_RE) || [])[1] || '';
     if (!evSet.size && !num) return false;
     const facSet = new Set();
     while ((mm = _SEM_FAC_RE.exec(t)) !== null) facSet.add(mm[0].toLowerCase());
-    /* 候选缓存：轮内同国连续查重只打一次 DB */
-    let cand = _semCandCache.get(ctry);
+    /* 2026-08-30 补洞（用户铁证：斯里兰卡港口城案三版本标题均无"斯里兰卡"字样，
+     * 原路径直接 return false 跳过查重）：标题无国名但含涉华实体锚（中国公民/华人/中资等）
+     * ——涉华实体本身即强锚（chinaOverseasGate 已前置把关，误伤风险低），
+     * 用实体词做候选查询键，语义判定照常执行。 */
+    let ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0);
+    const ckey = ctry || Array.from(facSet).find(w => /中国公民|华人|中资|中国籍|中国工人/.test(w)) || '';
+    if (!ckey) return false;
+    /* 候选缓存：轮内同键连续查重只打一次 DB（国名或涉华实体词） */
+    let cand = _semCandCache.get(ckey);
     if (!cand || Date.now() - cand.t > 120 * 1000) {
       const { rows } = await query(
         `SELECT title, COALESCE(NULLIF(data_json->>'title_zh',''), title) tzh, source, url FROM intel_data
          WHERE collect_time > NOW() - INTERVAL '3 days' AND (title LIKE $1 OR data_json->>'title_zh' LIKE $1) LIMIT 300`,
-        ['%' + ctry + '%']);
+        ['%' + ckey + '%']);
       cand = { t: Date.now(), rows: rows || [] };
-      _semCandCache.set(ctry, cand);
-      if (_semCandCache.size > 40) _semCandCache.clear(); /* 国名数有限，防御性清理 */
+      _semCandCache.set(ckey, cand);
+      if (_semCandCache.size > 40) _semCandCache.clear(); /* 键数有限，防御性清理 */
     }
     /* 轮内已放行同事件源（缓存盲区补偿：候选缓存 120s 不含刚入库的批内条目） */
-    let inflight = _semInflight.get(ctry);
-    if (!inflight || Date.now() - inflight.t > 120 * 1000) { inflight = { t: Date.now(), hosts: new Map() }; _semInflight.set(ctry, inflight); }
+    let inflight = _semInflight.get(ckey);
+    if (!inflight || Date.now() - inflight.t > 120 * 1000) { inflight = { t: Date.now(), hosts: new Map() }; _semInflight.set(ckey, inflight); }
     if (!cand.rows.length && !inflight.hosts.size) return false;
     const evArr = Array.from(evSet), facArr = Array.from(facSet);
     const _numBucket = n => (!n ? '' : (String(n).length >= 4 ? 'n4' : String(n).length === 3 ? 'n3' : 'n2'));
     let sameEvent = 0; const domains = new Set();
-    const _hostOf = (u, s) => { try { return new URL(String(u || '')).hostname.replace(/^www\./, ''); } catch (e2) { return String(s || ''); } };
+    /* 2026-08-30 聚合器域名治理：Google News/Bing 等聚合器 URL 掩盖真实出版方，
+     * 同事件 N 条聚合器变体只算 1 个"域名"，永不触发 ≥2 独立源拒收——重复采集刷屏的
+     * 又一根因。聚合器域名标记 AGG: 前缀，不参与独立源计数。 */
+    const _AGG_HOST_RE = /news\.google\.|google\.com\/rss|bing\.com|news\.yahoo\.|feedburner/i;
+    const _hostOf = (u, s) => {
+      try { const h = new URL(String(u || '')).hostname.replace(/^www\./, ''); return _AGG_HOST_RE.test(h) ? 'AGG:' + h : h; }
+      catch (e2) { const sv = String(s || ''); return _AGG_HOST_RE.test(sv) ? 'AGG:' + sv.slice(0, 30) : sv; }
+    };
     for (const r of cand.rows) {
       const rt = String(r.title || '') + ' ' + String(r.tzh || '');
       const rNum = (rt.match(_SEM_NUM_RE) || [])[1] || '';
@@ -3545,13 +3561,22 @@ async function _semanticEventDup(it) {
         || (evHit && facHits >= 2 && (!num || !rNum || num === rNum));
       if (same) { sameEvent++; const h = _hostOf(r.url, r.source); if (h) domains.add(h); }
     }
-    /* 并入轮内已放行源，合并判定 */
+    /* 并入轮内已放行源，合并判定（AGG: 聚合器域名不算独立源，从独立源集合中剔除） */
     let inflightSame = 0;
-    inflight.hosts.forEach((n, h) => { inflightSame += n; if (h) domains.add(h); });
+    inflight.hosts.forEach((n, h) => { inflightSame += n; if (h && h.indexOf('AGG:') !== 0) domains.add(h); });
     const _myHost = _hostOf(it.url, it.source);
-    if (sameEvent + inflightSame >= 2 && domains.size >= 2) {
-      _gateAudit('入库闸', 'event-sig-dup-sem', it.title);
-      return true;
+    const _indieDomains = new Set(Array.from(domains).filter(h => h.indexOf('AGG:') !== 0));
+    if (sameEvent + inflightSame >= 2) {
+      /* 拒收判据（两源印证只认真实出版方域名）：
+       * ① 已有 ≥2 独立真实源 → 全拒；
+       * ② 本条是聚合器变体（聚合器转载无独立源价值）→ 拒；
+       * ③ 本条真实域名与已入库独立源重复（同源再报道）→ 拒。
+       * 放行剩余唯一情形：本条带来新的真实域名且独立源数 <2（首/次独立源印证）。 */
+      const _myAgg = String(_myHost).indexOf('AGG:') === 0;
+      if (_indieDomains.size >= 2 || _myAgg || _indieDomains.has(_myHost)) {
+        _gateAudit('入库闸', 'event-sig-dup-sem', it.title);
+        return true;
+      }
     }
     /* 放行且库内/轮内已有同事件 → 本条计入 inflight（它是既存同事件源之一） */
     if (sameEvent + inflightSame >= 1 && _myHost) {
@@ -7784,6 +7809,32 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
         data = _partitionCore(_capAlertQueue(data.concat(preserved))).slice(0, 300);
         console.log('[DATAHUB] alerts 权威合并: 客户端 ' + clientKept + ' 条 + 服务端保留 ' + preserved.length + ' 条 → ' + data.length + ' 条');
       } catch (e) { console.warn('[DATAHUB] alerts 合并异常（回退全量覆盖）:', e.message); }
+    } else if (INTEL_TYPES.includes(collection) && collection !== 'collect_logs') {
+      /* 2026-08-30 情报集合写入去重（用户铁证：逃跑条在 terror_events 有 3 份拷贝，
+       * id 分别是真实 intel id 与两个 Date.now() 时间戳 id——客户端分发路径换 id 重复入集，
+       * 本地副本全量 PUT 回灌）。按标题指纹去重：真实 intel id 优先于时间戳 id。 */
+      try {
+        const _norm = s => String(s || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
+        const seen = new Map(); const out = [];
+        for (const x of data) {
+          if (!x) continue;
+          const k = _norm(x.title_zh || x.title);
+          if (!k) { out.push(x); continue; }
+          const myTs = /^1[78]\d{11}$/.test(String(x.id || ''));
+          if (!seen.has(k)) { seen.set(k, myTs); out.push(x); continue; }
+          const prevTs = seen.get(k);
+          if (myTs && !prevTs) continue; /* 本条时间戳 id，已有真实 id → 丢 */
+          if (!myTs && prevTs) { /* 本条真实 id，替换已收的时间戳 id 副本 */
+            seen.set(k, false);
+            const idx = out.findIndex(y => _norm(y.title_zh || y.title) === k);
+            if (idx >= 0) out.splice(idx, 1);
+            out.push(x); continue;
+          }
+          continue; /* 同类重复 → 丢 */
+        }
+        if (out.length !== data.length) console.log('[DATAHUB] ' + collection + ' 写入去重: ' + data.length + ' → ' + out.length + '（标题指纹）');
+        data = out;
+      } catch (e) {}
     }
     await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (collection) DO UPDATE SET data_json = $2, updated_at = NOW()', [collection, JSON.stringify(data)]);
     res.json({ success: true });
