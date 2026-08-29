@@ -381,9 +381,16 @@ const _CHINA_NEGATIVE_KW_RE = new RegExp(
 );
 
 function _isoToCn(iso) {
+  /* GDELT 返回的 sourcecountry 是英文国名（如 "Vietnam"/"Niger"），先按国名反查中文；
+   * 兼容旧 ISO 三字码（本表 GLOBAL_COUNTRIES.iso）。 */
+  const byEn = crawler.gdCnFromEn(iso);
+  if (byEn) return byEn;
   const f = GLOBAL_COUNTRIES.find(c => c.iso === iso);
   return f ? f.cn : (iso || '');
 }
+/* GDELT sourcecountry 查询码（2026-08-29 实测排雷）：GDELT 只认 FIPS 10-4 两字码或英文国名，
+ * ISO 码一律 Invalid 召回 0——统一从 crawler.GD_COUNTRIES 权威表取码，查不到再回退原 iso。 */
+function _gcode(c) { return crawler.gdCode(c && c.cn) || (c && c.iso) || ''; }
 /* GDELT 时间戳 20260802T134500Z → ISO（crawler.js 同名函数未导出，此处本地复用） */
 function _gdeltDate(s) {
   const m = String(s || '').match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
@@ -418,7 +425,7 @@ async function scrapeGlobalMedia(opts){
   const byCountry = {};
   for(const c of ordered){
     let arts = [];
-    try { arts = await scrapeCountry(c.iso, opts); } catch(e){ arts = []; }
+    try { arts = await scrapeCountry(_gcode(c), opts); } catch(e){ arts = []; }
     // 相关性闸门 + 维度标注
     const tagged = [];
     for(const a of (arts||[])){
@@ -1169,9 +1176,9 @@ async function scrapeTerrorAttacks(opts) {
     /* 通道1：GDELT 检索该国恐怖袭击/武装袭击 */
     try {
       const queries = [
-        'sourcecountry:' + c.iso + ' (terror OR attack OR kidnap OR blast OR explosion OR bombing OR militant OR insurgent)',
-        'sourcecountry:' + c.iso + ' (armed OR gunmen OR shooting OR ambush OR raid OR assault)',
-        'sourcecountry:' + c.iso + ' (ISIS OR Taliban OR "Boko Haram" OR "Al-Shabaab" OR "Al-Qaeda" OR extremist)'
+        'sourcecountry:' + _gcode(c) + ' (terror OR attack OR kidnap OR blast OR explosion OR bombing OR militant OR insurgent)',
+        'sourcecountry:' + _gcode(c) + ' (armed OR gunmen OR shooting OR ambush OR raid OR assault)',
+        'sourcecountry:' + _gcode(c) + ' (ISIS OR Taliban OR "Boko Haram" OR "Al-Shabaab" OR "Al-Qaeda" OR extremist)'
       ];
       const gdeltRes = await Promise.all(queries.map(q =>
         Promise.race([
@@ -1241,7 +1248,7 @@ async function scrapeTerrorAttacks(opts) {
       const KIDNAP_FOCUS = ['PHL','IDN','MYS','THA','VNM','MMR','KHM','LAO','NGA','MLI','NER','COD','SOM','KEN','ETH'];
       if (KIDNAP_FOCUS.includes(c.iso)) {
         const kidnapQueries = [
-          'sourcecountry:' + c.iso + ' (kidnap OR kidnapped OR kidnapping OR abduct OR abducted OR abduction OR hostage OR ransom)'
+          'sourcecountry:' + _gcode(c) + ' (kidnap OR kidnapped OR kidnapping OR abduct OR abducted OR abduction OR hostage OR ransom)'
         ];
         const kidnapRes = await Promise.all(kidnapQueries.map(q =>
           Promise.race([

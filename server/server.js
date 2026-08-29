@@ -930,9 +930,12 @@ function _capAlertQueue(list) {
     const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
     if (t && now - t > 72 * 3600 * 1000) continue;
     /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
-     * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。 */
+     * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。
+     * 2026-08-29 两区渲染（用户指令：预警中心有重点和核心）：核心区条目（is_core：
+     * 核心威胁/资产项目通道命中/红区/涉华中高危，详见 _alertIsCore）同样豁免国别帽。 */
     const isRed = a.risk_zone === 'red' || (a.risk_score != null && a.risk_score >= 61) || a.level === 'red';
-    if (!isRed) {
+    const isCore = isRed || a.is_core === true || !!a.core_threat_name;
+    if (!isCore) {
       const c = String(a.country || '未知').trim() || '未知';
       seen[c] = (seen[c] || 0) + 1;
       if (seen[c] > ALERT_QUEUE_COUNTRY_CAP) continue;
@@ -940,6 +943,31 @@ function _capAlertQueue(list) {
     out.push(a);
   }
   return out;
+}
+/* 预警两区渲染核心判定（2026-08-29 用户指令：预警中心有重点和核心）：
+ * 核心区 = ①十大核心威胁命中（涉华受害/恐袭/海盗/冲突/政变/制裁…）②命中中资资产/重点项目/海上通道
+ * ③红区（≥61 分）④橙区起（≥46 分）⑤涉华且带伤亡/绑架/撤侨等严重事件要素。
+ * 核心条目置顶展示且不占国别帽；其余按国别帽均衡铺底（态势区）。 */
+function _alertIsCore(x) {
+  try {
+    if (!x) return false;
+    if (x.is_core === true) return true;
+    if (x.risk_score != null && x.risk_score >= 46) return true;
+    if ((x.core_threat_tags && x.core_threat_tags.length) || (x.core_threat_name)) return true;
+    if ((x.asset_tags && x.asset_tags.length) || (x.interest_projects && x.interest_projects.length) || (x.channel_tags && x.channel_tags.length)) return true;
+    const t = String(x.title || '') + ' ' + String(x.title_zh || '');
+    if ((x.chinaRelated || x.chinaNegative) && /绑架|劫持|撤侨|遇袭|遭袭|被袭|身亡|遇难|遇害|被杀|失踪|枪击|爆炸|kidnap|abduct|evacuat|killed|bomb|blast/i.test(t)) return true;
+    for (const p of ASSET_PROFILES) { if (p.re.test(t)) return true; }
+    return false;
+  } catch (e) { return false; }
+}
+/* 两区渲染：核心区置顶（时间倒序）+ 态势区铺底（时间倒序） */
+function _partitionCore(list) {
+  const core = [], rest = [];
+  for (const a of list) { if (a && a.is_core === true) core.push(a); else rest.push(a); }
+  const byTimeDesc = (x, y) => String(y.time || y.publishedAt || '').localeCompare(String(x.time || x.publishedAt || ''));
+  core.sort(byTimeDesc); rest.sort(byTimeDesc);
+  return core.concat(rest);
 }
 async function _serverAlertGen() {
   try {
@@ -972,6 +1000,13 @@ async function _serverAlertGen() {
       } catch (e) {}
     }
     if (backfilled) console.log('[ALERT-GEN] 赋分改革回填 ' + backfilled + ' 条存量预警');
+    /* 2026-08-29 两区渲染回填：存量预警补 is_core 核心区标记（置顶 + 国别帽豁免依据） */
+    let coreBackfilled = 0;
+    for (const a of alerts) {
+      if (!a || a.is_core !== undefined) continue;
+      if (_alertIsCore(a)) { a.is_core = true; coreBackfilled++; }
+      else a.is_core = false;
+    }
     const have = new Set(alerts.map(a => String(a.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40)));
     const haveIds = new Set(alerts.map(a => String(a.id || '')));
     const added = [];
@@ -1024,17 +1059,25 @@ async function _serverAlertGen() {
         risk_zone: it.risk_zone || '',
         risk_rationale: it.risk_rationale || '',
         zone_action: it.zone_action || (it.risk_zone ? ZONE_ACTIONS[it.risk_zone] : '') || '',
+        /* 两区渲染（2026-08-29）：核心威胁字段下发 + 核心区标记（置顶 + 不占国别帽） */
+        core_threat: it.core_threat || '',
+        core_threat_name: it.core_threat_name || '',
+        core_threat_tags: it.core_threat_tags || [],
+        asset_tags: it.asset_tags || [],
+        interest_tier: it.interest_tier || '',
+        is_core: _alertIsCore(it),
         _riskVersion: 2
       };
       added.unshift(alert);
       have.add(tkey);
       haveIds.add(genId);
     }
-    if (added.length || backfilled || _histSwept) {
-      const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
+    if (added.length || backfilled || _histSwept || coreBackfilled) {
+      const merged = _partitionCore(_capAlertQueue(added.concat(alerts))).slice(0, 300);
       await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
-      console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条，共享库现有 ' + merged.length + ' 条'
-        + (_histSwept ? '，剔除历史旧案回顾 ' + _histSwept + ' 条' : ''));
+      console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条（核心区 ' + added.filter(a => a.is_core).length + '），共享库现有 ' + merged.length + ' 条'
+        + (_histSwept ? '，剔除历史旧案回顾 ' + _histSwept + ' 条' : '')
+        + (coreBackfilled ? '，核心区回填 ' + coreBackfilled + ' 条' : ''));
       /* 真实预警触发时自动调用推送通道 */
       added.forEach(function (a) { _dispatchAlertPushes(a, 'new').catch(function (e) { console.warn('[PUSH] new alert dispatch error:', e.message); }); });
     }
@@ -2319,6 +2362,13 @@ app.post('/api/wechat/leads-sweep', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ===== 缺口调度器手动触发端点（2026-08-29：全球均衡化/全类别化调优，PM2 日志看 [GAP-SCHED]） ===== */
+app.post('/api/gap-scheduler/run', (req, res) => {
+  if (Date.now() < _gapSchedBusyUntil) return res.json({ ok: false, error: '上一轮缺口调度尚未结束，请稍候' });
+  setTimeout(() => { _runGapScheduler(); }, 50);
+  res.json({ ok: true });
+});
+
 /* ===== 海外核心安全威胁一分钟哨兵手动触发端点（2026-08-27） ===== */
 app.post('/api/core-threat/sweep', async (req, res) => {
   try {
@@ -2834,6 +2884,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
   /* 事件簇产量帽（2026-08-29）：同国+同类事件当日变体超 12 条拒收（防单一事件刷屏） */
   if (!_eventClusterOk(it)) { _gateAudit('入库闸', 'event-flood', it.title); return { ok: false, code: ['event-flood'] }; }
+  /* 类别结构帽（2026-08-29）：安全类当日占比>45%时，非涉华非重大安全类降池（让位弱类补缺） */
+  if (!(await _catStructureOk(it))) { _gateAudit('入库闸', 'cat-structure', it.title); return { ok: false, code: ['cat-structure'] }; }
 
   /* 多源印证：事件发生超过 6 小时后仍未被其他独立信源报道，视为不可信旧闻/单一信源噪音，暂不入库
    * 2026-08-25 豁免：白名单公众号（wechat_oa，含搜狗/profile_ext/镜像站三通道）是用户亲选的专业安全信源，
@@ -3229,6 +3281,44 @@ function _dominantQuotaOk(it) {
   if (dm && parseInt(dm[1] || dm[2], 10) >= 5) return true;
   _domCounts.by[cap] = (_domCounts.by[cap] || 0) + 1;
   return _domCounts.by[cap] <= DOMINANT_DAILY_CAP[cap];
+}
+
+/* ===== 类别结构帽（2026-08-29 用户指令：全球均衡化、全类别化，采集有重点但不偏科）=====
+ * 7 天实测：安全类（恐袭/军事/地缘/社会动荡/治安）占 ~72%，新兴类（网络/卫生/基建/灾害）仅 ~11%。
+ * 当安全类当日占比 > 45%（且当日总量 ≥ 120，防凌晨冷启动误判）时，非涉华、非重大事件的
+ * 安全类新条目降 sidepool（reason=cat-structure），把入库席位让给缺口调度器补的弱类。
+ * 豁免（重点优先铁律）：①涉华条目（chinaRelated 或标题命中涉华词）永远放行；
+ * ②重大事件（伤亡≥5/绑架/劫持/撤侨/政变/核事故）放行；③非安全类条目不受限。 */
+const _SEC_STRUCT_TYPES = ['terror_events', 'military_conflicts', 'geopolitical_intel', 'social_unrest', 'security_events'];
+const SEC_STRUCT_SHARE_MAX = 0.45;
+const SEC_STRUCT_MIN_TOTAL = 120;
+let _catStructDb = { date: '', total: 0, sec: 0, t: 0 };
+async function _catStructRefresh() {
+  try {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const { rows } = await query(
+      'SELECT COUNT(*)::int total, COUNT(*) FILTER (WHERE data_type = ANY($1))::int sec FROM intel_data WHERE collect_time >= $2',
+      [_SEC_STRUCT_TYPES, dayStart]
+    );
+    if (rows && rows[0]) _catStructDb = { date: _todayKey(), total: rows[0].total || 0, sec: rows[0].sec || 0, t: Date.now() };
+  } catch (e) { /* DB 异常时不拦数据 */ }
+}
+async function _catStructureOk(it) {
+  try {
+    if (_catStructDb.date !== _todayKey() || Date.now() - _catStructDb.t > 10 * 60 * 1000) await _catStructRefresh();
+    if (_catStructDb.total < SEC_STRUCT_MIN_TOTAL) return true;
+    if (_catStructDb.sec / _catStructDb.total <= SEC_STRUCT_SHARE_MAX) return true;
+    /* 该条目将被归入的类别（与入库时同源判定）非安全类 → 不受限 */
+    const dt = (it._forceDataType && it.data_type) ? it.data_type : _classifyIntelType(it);
+    if (_SEC_STRUCT_TYPES.indexOf(dt) < 0) return true;
+    /* 涉华豁免（重点优先） */
+    const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '').slice(0, 300);
+    if (it.chinaRelated || /中国|中资|中企|中方|华人|华侨|中国公民|留学生|一带一路|Chinese|China|CPEC/i.test(t)) return true;
+    /* 重大事件豁免 */
+    const dm = t.match(/(\d+)\s*(?:人|名)?\s*(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
+    if ((dm && parseInt(dm[1] || dm[2], 10) >= 5) || /绑架|劫持|人质|撤侨|政变|核事故|核泄漏|kidnap|hostage|evacuat|coup d'état|\bcoup\b/i.test(t)) return true;
+    return false;
+  } catch (e) { return true; }
 }
 
 /* ===== 事件时间提取（2026-08-20 用户指令：不要只看标题生成时间，要从正文/标题提取事件发生时间）=====
@@ -3679,7 +3769,7 @@ async function _ingestLinkedItems(items, tag, note) {
       'CORE-THREAT-MANUAL': 'core_threat_watch', 'CHANNEL-WATCH': 'channel_watch', 'COMPLIANCE-WATCH': 'compliance_watch',
       'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
-      'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance'
+      'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler'
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
@@ -3692,7 +3782,7 @@ async function _ingestLinkedItems(items, tag, note) {
       dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
     }
     console.log('[' + tag + '] urls=' + urls.length + ' existing=' + existing.size);
-    let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0;
+    let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0, skippedCatStruct = 0;
     let chinaInserted = 0, chinaNegativeInserted = 0;
     const titleKeys = await _getRecentTitleKeys();
     const eventSigs = await _getRecentEventSigs();
@@ -3705,6 +3795,7 @@ async function _ingestLinkedItems(items, tag, note) {
           else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
           else if (c === 'event-sig-dup') skippedEventSig++;
           else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏（计数并入签名重复便于观察） */
+          else if (c === 'cat-structure') skippedCatStruct++; /* 类别结构帽：安全类超占比让位弱类 */
           else if (c === 'domestic-china') skippedDomestic++;
           else if (c === 'bad-title') skippedBadTitle++;
           else if (c === 'historical-retrospect') skippedHistorical++;
@@ -3738,7 +3829,7 @@ async function _ingestLinkedItems(items, tag, note) {
     }
     _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted);
     _logDailyStats();
-    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
+    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，类别结构帽 ' + skippedCatStruct + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
     return { inserted };
   } catch (e) {
     console.warn('[' + tag + '] PostgreSQL 入库异常（可能未启动），降级写入 osint_intel 文件缓存:', e.message);
@@ -4950,90 +5041,9 @@ const REGION_PACKS = {
     ]
   }
 };
-const _COUNTRY_TO_REGION = {};
-Object.keys(REGION_PACKS).forEach(k => REGION_PACKS[k].countries.forEach(c => { _COUNTRY_TO_REGION[c] = k; }));
-let _regionBalanceBusyUntil = 0;
-async function _runRegionBalance() {
-  if (Date.now() < _regionBalanceBusyUntil) return;
-  _regionBalanceBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
-  const t0 = Date.now();
-  const REGION_TARGET = 42;   // 单区域当日达标量，达标后不再补（自限，防过采）
-  /* 轻量噪声排除：体育/娱乐/民生攻略类（不重跑严格门禁，避免把当地安全风险新闻误掐） */
-  const _NOISE = /(football|soccer|cricket|NBA|tennis|olympic|world cup|champions league|celebrity|movie|album|concert|wedding|recipe|netflix|box office|球赛|足球|篮球|娱乐|明星|演唱会|综艺|美食|旅游攻略|旅游推荐)/i;
-  const _EXCLUDE = ['伊朗', '以色列', 'IR', 'IL'];   // 中东包明确排除伊以
-  try {
-    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const cnt = await query('SELECT country, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1', [dayStart]);
-    const regionN = {}; Object.keys(REGION_PACKS).forEach(k => regionN[k] = 0);
-    cnt.rows.forEach(r => { const rg = _COUNTRY_TO_REGION[r.country]; if (rg && regionN[rg] !== undefined) regionN[rg] += parseInt(r.n, 10); });
-    /* 仅补未达标的区域；全部达标则空闲，不重复过采 */
-    const targets = Object.keys(regionN).filter(k => regionN[k] < REGION_TARGET)
-      .sort((a, b) => regionN[a] - regionN[b]).slice(0, 4);
-    if (!targets.length) { console.log('[REGION] 各区域均已达标(' + REGION_TARGET + ')，本轮回填空闲'); return; }
-    const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
-    let inserted = 0, fetched = 0, rejected = 0;
-    for (const rg of targets) {
-      const pack = REGION_PACKS[rg];
-      /* 每区域本轮：2 条风险查询 + 1 条类别查询（轮换，避免组合爆炸） */
-      const ql = []; const nq = pack.queries.length, nc = (pack.catQueries || []).length;
-      const qi = cyc % nq;
-      ql.push(pack.queries[qi], pack.queries[(qi + 1) % nq]);
-      if (nc) ql.push(pack.catQueries[cyc % nc]);
-      let arts = [];
-      for (const q of ql) {
-        let a = [];
-        try { a = await crawler.gdeltSearch(q, { timespan: '1d', maxrecords: 12 }); } catch (e) { console.warn('[REGION] 查询失败:', q.slice(0, 28), e.message); }
-        /* GDELT 限流/无召回时回退 AP 站内检索（GDELT 对单 IP 有惩罚箱，不能单点依赖） */
-        if (!a.length) {
-          try { const apq = q.replace(/sourcecountry:\w+/g, '').replace(/[()"]/g, ' ').replace(/OR/g, ' ').replace(/\s+/g, ' ').trim();
-            a = await crawler.apSearch(apq, { maxrecords: 12, pages: 1 }); a.forEach(x => { x._viaAp = true; }); } catch (e) {}
-        }
-        if (a.length) arts = arts.concat(a);
-      }
-      fetched += arts.length;
-      /* 2026-08-25 修复：crawler.gdeltSearch 原始结果只有 seendate（20260823T220000Z 格式），
-       * _isFreshEnough 不读该字段 → 全部判"时效不可验证"拦截（本轮抓取29入库0的根因）。
-       * 此处统一映射为标准 ISO 日期字段。 */
-      arts.forEach(it => {
-        if (!it.publish_time && !it.publishedAt && !it.date && it.seendate) {
-          const iso = String(it.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
-          if (iso !== it.seendate) { it.publish_time = iso; it.publishedAt = iso; it.date = iso; }
-        }
-      });
-      if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
-      /* 2026-08-29 三部委审查 P2-4 根因重构：原自带 INSERT 循环绕过 _preInsertGate——
-       * 无 _sourceType（溯源不可查）、无 chinaRelated（统计盲区）、缺墓碑/旧案/标题质量/
-       * 事件签名/簇帽全套闸（垃圾标题曾落库）。通道专属前置过滤保留，入库统一走标准管线。 */
-      const titleKeysPre = await _getRecentTitleKeys();
-      let regIns = 0;
-      const batch = [];
-      for (const it of arts) {
-        const text = String(it.title || '') + ' ' + String(it.content || it.description || '');
-        if (_NOISE.test(text)) { rejected++; continue; }
-        const cc = (it.country || '') + ' ' + (it.country_cn || '');
-        if (_EXCLUDE.some(x => cc.indexOf(x) >= 0)) { rejected++; continue; }
-        /* 国别 × 风险/类别查询 = 海外利益暴露面信号（中资/华人/一带一路项目所在国的安全与风险事件），
-           直接标记利益关联，不再重跑严格门禁（那会把没提"中国"二字的当地安全风险新闻掐掉）。 */
-        it.interestLinked = true;
-        it._sourceType = 'region_balance'; it._region = pack.name;
-        if (!it.source) it.source = '区域均衡·' + pack.name;
-        const u = it.url || it.title; if (!u) { rejected++; continue; }
-        if (_isDupTitle(titleKeysPre, it)) { rejected++; continue; }
-        if (!_isFreshEnough(it)) { rejected++; continue; }
-        if (!_dominantQuotaOk(it)) { rejected++; continue; }
-        batch.push(it);
-        regIns++;
-        if (regIns >= 10) break;   // 单区域单轮回填上限，均衡铺开
-      }
-      if (batch.length) {
-        const res = await _ingestLinkedItems(batch, 'REGION-BAL', '（' + pack.name + '）');
-        inserted += (res && res.inserted) || 0;
-      }
-    }
-    console.log('[REGION] 均衡采集(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 补 ' + targets.map(w => REGION_PACKS[w].name + '(' + regionN[w] + ')').join('+') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected);
-  } catch (e) { console.warn('[REGION] 采集失败:', e.message); }
-  finally { _regionBalanceBusyUntil = 0; }
-}
+/* 2026-08-29：区域均衡器（_runRegionBalance）已由缺口调度器（_runGapScheduler）合并取代——
+ * 单一目标矩阵（国家梯队×类别）统一算缺口，不再按区域包盲补。REGION_PACKS 词库保留供检索复用。 */
+const _BAL_NOISE = /(football|soccer|cricket|NBA|tennis|olympic|world cup|champions league|celebrity|movie|album|concert|wedding|recipe|netflix|box office|球赛|足球|篮球|娱乐|明星|演唱会|综艺|美食|旅游攻略|旅游推荐)/i;
 
 /* ===== 类别均衡采集器（2026-08-28 用户指令：12 类全方位采集，不能只盯着恐袭）=====
  * 背景：实测 24h 类别分布 terror 142 / geopolitical 120 / 灾害 49 / 军事 46 一边倒，
@@ -5116,7 +5126,6 @@ const CATEGORY_PACKS = {
     ]
   }
 };
-let _categoryBalanceBusyUntil = 0;
 /* 类别均衡 GNews 原子查询包（2026-08-29 Task #465 审计修复：PM2 日志实测类别均衡器
  * 连续多轮「抓取 0 入库 0」——GDELT 复杂查询大量挂起（30s 竞速空转），弱类永远补不上。
  * GNews 原子查询已验证稳定（英文+原子词铁律），改为第一通道，GDELT/AP 降为兜底。 */
@@ -5155,88 +5164,176 @@ async function _catGnewsRss(q, max) {
 const _CAT_EVENT_RE = /死亡|遇难|身亡|伤亡|失踪|受伤|袭击|攻击|爆炸|枪击|交火|冲突|炮击|空袭|绑架|劫持|扣押|逮捕|拘留|制裁|管制|封禁|禁令|反倾销|政变|抗议|示威|骚乱|罢工|洪水|地震|海啸|台风|飓风|山火|干旱|塌方|溃坝|坠机|失事|沉船|火灾|疫情|撤离|撤侨|断供|停产|停运|封锁|中断|危机|紧张|对峙|通胀|贬值|违约|债务|破产|衰退|汇率|暴跌|暴涨|断网|宕机|漏洞|黑客|勒索|数据泄露|间谍|泄密|贿赂|腐败|丑闻|审判|判决|调查|指控|宵禁|边界|争端|选举|killed|dead|death|casualt|attack|bomb|blast|shoot|clash|conflict|kidnap|hostage|seiz|detain|arrest|sanction|embargo|tariff|coup|protest|riot|strike|unrest|flood|earthquake|typhoon|hurricane|wildfire|landslide|collapse|crash|outbreak|evacuat|crisis|inflation|devalu|default|bankrupt|recession|hacked|breach|ransom|spy|corrupt|scandal|investigat|indict|curfew|dispute|elect/i;
 const _NONLATIN_RE = /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0E00-\u0E7F\u1200-\u137F\u0590-\u05FF\u10A0-\u10FF]/; /* 西里尔/阿拉伯/梵文系(含孟加拉)/泰文/埃塞/希伯来/格鲁吉亚 */
 
-async function _runCategoryBalance() {
-  if (Date.now() < _categoryBalanceBusyUntil) return;
-  _categoryBalanceBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+/* ===== 缺口调度器（2026-08-29 用户指令：全球均衡化、全类别化，采集有重点、预警中心有核心）=====
+ * 合并取代区域/类别两个均衡器，统一为「目标矩阵 × 差额调度」闭环：
+ * ① 目标矩阵：国家梯队（TIER1 ≥12 条/国/日、TIER2 ≥6 条/国/日——54 国底数库利益密度分层）
+ *   × 12 大类别（每类 ≥30 条/日；地缘兜底类不设目标——未命中信号全归它，量永远最大）；
+ * ② 每轮统计当日入库矩阵，算缺口率（(目标-实际)/目标），优先补最空的格子（自限防过采）；
+ * ③ 国别缺口：GDELT sourcecountry:<FIPS 码> × 当前最缺类别事件词矩阵 定向采集（FIPS→英文国名双试 + AP 兜底）；
+ *   类别缺口：GNews 原子查询（CAT_GNEWS_PACKS，已验证稳定）→ GDELT → AP 三级兜底；
+ * ④ 全部走 _ingestLinkedItems 标准管线（_sourceType='gap_scheduler'，全套闸门生效），
+ *   涉华/重大事件由闸门豁免，绝不因结构调优误伤核心情报。 */
+const GAP_COUNTRY_TARGET = { TIER1: 12, TIER2: 6 };
+const GAP_CAT_TARGET = 30;
+const GAP_CAT_KEYWORDS = {
+  terror_events: '(attack OR bombing OR kidnapping OR militant)',
+  military_conflicts: '(airstrike OR shelling OR clashes OR offensive)',
+  geopolitical_intel: '(summit OR dispute OR tension OR diplomatic)',
+  sanctions_data: '(sanctions OR tariff OR embargo)',
+  political_events: '(protest OR coup OR election OR crisis)',
+  economic_risk: '(inflation OR debt OR default OR currency)',
+  social_unrest: '(riot OR strike OR demonstration OR curfew)',
+  security_events: '(shooting OR kidnapping OR crime OR murder)',
+  public_health: '(outbreak OR cholera OR epidemic OR famine)',
+  cyber_security: '(cyberattack OR ransomware OR hacking OR breach)',
+  legal_compliance: '(lawsuit OR arbitration OR fined OR court)',
+  natural_disasters: '(earthquake OR flood OR typhoon OR landslide)',
+  infrastructure: '(pipeline OR railway OR port OR blackout)'
+};
+/* GDELT sourcecountry 码制排雷（2026-08-29 实测定案）：GDELT DOC API 只认 FIPS 10-4 两字码或英文国名，
+ * ISO 两字码（VN）/三字码（VNM/PAK）一律返回 "Invalid/Unsupported Country." 召回 0。
+ * 国别码统一取 crawler.GD_COUNTRIES 权威表（与 core-threat-watch/globalmedia 同源），此处不再维护副本。 */
+/* 梯队国英文国名（AP 站内检索兜底用） */
+const GAP_COUNTRY_EN = {
+  '巴基斯坦': 'Pakistan', '俄罗斯': 'Russia', '哈萨克斯坦': 'Kazakhstan', '沙特阿拉伯': 'Saudi Arabia', '印度尼西亚': 'Indonesia',
+  '印度': 'India', '阿富汗': 'Afghanistan', '尼日利亚': 'Nigeria', '刚果（金）': 'DR Congo', '伊朗': 'Iran', '伊拉克': 'Iraq',
+  '越南': 'Vietnam', '泰国': 'Thailand', '马来西亚': 'Malaysia', '缅甸': 'Myanmar', '斯里兰卡': 'Sri Lanka', '吉布提': 'Djibouti',
+  '埃及': 'Egypt', '埃塞俄比亚': 'Ethiopia', '肯尼亚': 'Kenya', '几内亚': 'Guinea', '秘鲁': 'Peru', '巴西': 'Brazil',
+  '阿根廷': 'Argentina', '老挝': 'Laos', '柬埔寨': 'Cambodia', '孟加拉国': 'Bangladesh', '阿尔及利亚': 'Algeria',
+  '阿联酋': 'United Arab Emirates', '希腊': 'Greece', '巴拿马': 'Panama', '乌兹别克斯坦': 'Uzbekistan', '塔吉克斯坦': 'Tajikistan'
+};
+let _gapSchedBusyUntil = 0;
+async function _runGapScheduler() {
+  if (Date.now() < _gapSchedBusyUntil) return;
+  _gapSchedBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   const t0 = Date.now();
-  const CAT_TARGET = 30; /* 单类别当日达标量：12 类每类 ≥30 才算全方位覆盖 */
   try {
+    /* ① 当日 国别×类别 矩阵 */
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const cnt = await query('SELECT data_type, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1', [dayStart]);
-    const catN = {};
-    Object.keys(CATEGORY_PACKS).forEach(k => catN[k] = 0);
-    cnt.rows.forEach(r => { if (catN[r.data_type] !== undefined) catN[r.data_type] += parseInt(r.n, 10); });
-    const targets = Object.keys(catN).filter(k => catN[k] < CAT_TARGET)
-      .sort((a, b) => catN[a] - catN[b]).slice(0, 3);
-    if (!targets.length) { console.log('[CAT-BAL] 各类别均已达标(' + CAT_TARGET + ')，本轮回填空闲'); return; }
+    const cnt = await query('SELECT country, data_type, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1,2', [dayStart]);
+    const countryN = {}, catN = {};
+    cnt.rows.forEach(r => {
+      const c = String(r.country || '').trim(), ct = String(r.data_type || '');
+      const n = parseInt(r.n, 10) || 0;
+      if (c) countryN[c] = (countryN[c] || 0) + n;
+      if (ct) catN[ct] = (catN[ct] || 0) + n;
+    });
+    /* ② 国别缺口（双向子串聚合，兼容"刚果/刚果（金）"写法差异） */
+    const countryGaps = [];
+    for (const tier of ['TIER1', 'TIER2']) {
+      const target = GAP_COUNTRY_TARGET[tier];
+      for (const x of INTEREST_BASE.COUNTRY_TIERS[tier]) {
+        const n = Object.keys(countryN).reduce((s, k) => (k === x.cn || k.indexOf(x.cn) >= 0 || x.cn.indexOf(k) >= 0 ? s + countryN[k] : s), 0);
+        if (n < target) countryGaps.push({ cn: x.cn, iso: x.iso, tier, n, target, rate: (target - n) / target });
+      }
+    }
+    countryGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
+    const pickCountries = countryGaps.slice(0, 3);
+    /* ③ 类别缺口（缺口率排序） */
+    const catGaps = [];
+    for (const ct of Object.keys(GAP_CAT_KEYWORDS)) {
+      if (ct === 'geopolitical_intel') continue;
+      const n = catN[ct] || 0;
+      if (n < GAP_CAT_TARGET) catGaps.push({ ct, n, target: GAP_CAT_TARGET, rate: (GAP_CAT_TARGET - n) / GAP_CAT_TARGET });
+    }
+    catGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
+    const pickCats = catGaps.slice(0, 3);
+    if (!pickCountries.length && !pickCats.length) { console.log('[GAP-SCHED] 目标矩阵全达标，本轮空闲'); return; }
     const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
-    let inserted = 0, fetched = 0, rejected = 0;
-    const titleKeys = await _getRecentTitleKeys();
-    for (const ct of targets) {
-      const pack = CATEGORY_PACKS[ct];
-      const q = pack.queries[cyc % pack.queries.length];
-      let arts = [];
-      /* ① GNews 原子查询优先（每轮 2 条轮换，串行防限流）——2026-08-29 修复 */
-      const gpk = CAT_GNEWS_PACKS[ct];
-      if (gpk && gpk.length) {
-        const gq2 = [0, 2].map(i => gpk[(cyc + i) % gpk.length]);
-        for (const gq of gq2) {
-          try { const g = await _catGnewsRss(gq, 12); if (g.length) arts = arts.concat(g); } catch (e) {}
-        }
-      }
-      /* ② GDELT 兜底（简单查询也常挂起，30s 竞速在内层） */
-      if (!arts.length) {
-        try { arts = await crawler.gdeltSearch(q, { timespan: '1d', maxrecords: 15 }); } catch (e) { console.warn('[CAT-BAL] 查询失败:', ct, e.message); }
-      }
-      /* ③ AP 最终兜底 */
-      if (!arts.length) {
-        try { const apq = q.replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
-          arts = await crawler.apSearch(apq, { maxrecords: 12, pages: 1 }); } catch (e) {}
-      }
-      /* GDELT seendate → 标准日期（与区域均衡同源修复） */
+    let fetched = 0, inserted = 0, rejected = 0;
+    const titleKeysPre = await _getRecentTitleKeys();
+    /* GDELT seendate → 标准日期 + 翻译 + 实体富化（与两代均衡器同源） */
+    const _postFetch = async (arts) => {
       arts.forEach(it => {
         if (!it.publish_time && !it.publishedAt && !it.date && it.seendate) {
           const iso = String(it.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
           if (iso !== it.seendate) { it.publish_time = iso; it.publishedAt = iso; it.date = iso; }
         }
       });
-      fetched += arts.length;
       if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
-      let catIns = 0;
-      /* 2026-08-29 三部委审查 P2-4 根因重构：原自带 INSERT 循环绕过 _preInsertGate——
-       * 无 _sourceType、无 chinaRelated、缺墓碑/旧案/标题质量/事件签名/簇帽闸
-       * （「第469章：第469章…」垃圾标题曾落库）。前置过滤保留，入库统一走标准管线。 */
+    };
+    /* 通道前置过滤（轻量；全量闸门在 _ingestLinkedItems 内）——拒因分解入库率可观测 */
+    const rejBy = { noise: 0, noUrl: 0, dupTitle: 0, stale: 0, noEvent: 0, nonLatin: 0 };
+    const _filterBatch = (arts, assign) => {
       const batch = [];
+      let cap = 0;
       for (const it of arts) {
+        /* 事件词测「原标题 + 翻译后中文标题 + 摘要」：小语种（越南语/泰语）标题翻译成中文后
+         * 中文事件词才能命中——此前只测原文，非英语国家的真实事件全被误杀（noEvent 误拒）。 */
+        const ctext = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || '');
+        if (_BAL_NOISE.test(ctext)) { rejected++; rejBy.noise++; continue; }
+        const u = it.url || it.title; if (!u) { rejected++; rejBy.noUrl++; continue; }
+        if (_isDupTitle(titleKeysPre, it)) { rejected++; rejBy.dupTitle++; continue; }
+        if (!_isFreshEnough(it)) { rejected++; rejBy.stale++; if (rejBy.stale <= 2) console.log('[GAP-SCHED] 超时拒: ' + String(it.title || '').slice(0, 80) + ' | ' + String(it.publish_time || it.seendate || '')); continue; }
+        if (!_CAT_EVENT_RE.test(ctext)) { rejected++; rejBy.noEvent++; if (rejBy.noEvent <= 3) console.log('[GAP-SCHED] 无事件词拒: ' + String(it.title || '').slice(0, 80) + (it.title_zh ? ' | 译:' + String(it.title_zh).slice(0, 40) : ' | 未译')); continue; }
+        if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; rejBy.nonLatin++; continue; }
+        assign(it);
         it.interestLinked = true;
-        const u = it.url || it.title; if (!u) continue;
-        const ctext = String(it.title || '') + ' ' + String(it.content || it.description || '');
-        /* 国内噪声拦截（2026-08-28 实测教训：志邦家居中报混入 economic_risk）：
-         * 中文主体且无任何境外国名/海外利益标记 → 纯国内财经/证券/民生，不入海外利益情报库 */
-        if (/[\u4e00-\u9fa5]/.test(String(it.title || '')) && /中报|年报|季报|A股|涨停|跌停|上交所|深交所|北交所|证监会|中财网|东方财富|同花顺|证券时报|券商|基金净值|理财产品|存款利率|房贷|车险|社保缴费|公积金|医保报销|景区门票|中小学|期末考试|考研国家线|高考分数线|公务员省考|事业单位招聘|油价调整|天气预报|空气质量指数|交通限行|地铁延时|公交调线/.test(ctext)
-            && !/海外|境外|驻外|一带一路|中资|中企|华人|华侨|使馆|撤侨|留学生|巴基斯坦|阿富汗|哈萨克斯坦|乌兹别克|吉尔吉斯|塔吉克|土库曼|孟加拉|斯里兰卡|尼泊尔|缅甸|泰国|越南|老挝|柬埔寨|马来西亚|新加坡|印尼|印度尼西亚|菲律宾|蒙古|伊朗|伊拉克|叙利亚|也门|沙特|阿联酋|土耳其|埃及|利比亚|苏丹|南苏丹|索马里|埃塞俄比亚|肯尼亚|坦桑尼亚|乌干达|卢旺达|刚果|尼日利亚|加纳|马里|尼日尔|乍得|喀麦隆|莫桑比克|赞比亚|津巴布韦|安哥拉|南非|阿尔及利亚|摩洛哥|突尼斯|俄罗斯|乌克兰|白俄罗斯|波兰|塞尔维亚|匈牙利|希腊|意大利|西班牙|葡萄牙|法国|德国|英国|荷兰|比利时|瑞士|瑞典|挪威|芬兰|丹麦|奥地利|捷克|罗马尼亚|保加利亚|美国|加拿大|墨西哥|巴西|阿根廷|智利|秘鲁|哥伦比亚|委内瑞拉|厄瓜多尔|玻利维亚|古巴|牙买加|海地|澳大利亚|新西兰|日本|韩国|朝鲜|印度|东帝汶|巴布亚|斐济/i.test(ctext)) { rejected++; continue; }
-        if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
-        if (!_isFreshEnough(it)) { rejected++; continue; }
-        /* 质量闸①：无事件要素的泛新闻不入库 */
-        if (!_CAT_EVENT_RE.test(ctext)) { rejected++; continue; }
-        /* 质量闸②：非拉丁外文（孟加拉/西里尔等）翻译失败 → 拒绝（落库即中文铁律） */
-        if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; continue; }
-        /* 标记类别权威指定 + 通道溯源，交给标准管线入库（时效/配额闸在 _ingestLinkedItems 内） */
-        it._sourceType = 'category_balance'; it._catBal = pack.name;
-        if (!it.source) it.source = '类别均衡·' + pack.name;
-        it._forceDataType = true; it.data_type = ct;
+        it._sourceType = 'gap_scheduler';
         batch.push(it);
-        catIns++;
-        if (catIns >= 8) break;
+        cap++;
+        if (cap >= 8) break;   /* 单缺口单轮回填上限，均衡铺开 */
       }
-      if (batch.length) {
-        const res = await _ingestLinkedItems(batch, 'CAT-BAL', '（' + pack.name + '）');
-        inserted += (res && res.inserted) || 0;
+      return batch;
+    };
+    /* ④ 国别缺口回填：GDELT sourcecountry × 最缺类别事件词（FIPS→英文国名→AP 三级） */
+    for (const g of pickCountries) {
+      const kwCt = catGaps.length ? catGaps[cyc % catGaps.length].ct : 'terror_events';
+      const kw = GAP_CAT_KEYWORDS[kwCt];
+      let arts = [];
+      /* GDELT 试码链：FIPS 码 → 英文国名，各带「全语言 / 仅英文源」两试。
+       * 2026-08-29 实测排雷：sourcecountry 抓回的多为当地语言标题（越南语/泰语），
+       * 后置事件词闸（中英文正则）无法命中——sourcelang:english 让英文媒体报该国事件，
+       * 标题即英文可过闸；英文源召回 0（小语种国家英文覆盖薄）再回落全语言。 */
+      const isoTry = [];
+      const _fips = crawler.gdCode(g.cn); if (_fips) isoTry.push(_fips);
+      const _en = GAP_COUNTRY_EN[g.cn]; if (_en) isoTry.push('"' + _en + '"');
+      for (const iso of isoTry) {
+        try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' sourcelang:english ' + kw, { timespan: '1d', maxrecords: 12 }); } catch (e) {}
+        if (arts.length) break;
+        try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' ' + kw, { timespan: '1d', maxrecords: 12 }); } catch (e) {}
+        if (arts.length) break;
       }
+      if (!arts.length) {
+        const en = GAP_COUNTRY_EN[g.cn];
+        if (en) { try { arts = await crawler.apSearch(en + ' ' + kw.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), { maxrecords: 10, pages: 1 }); } catch (e) {} }
+      }
+      fetched += arts.length;
+      await _postFetch(arts);
+      const batch = _filterBatch(arts, it => {
+        if (!it.country && !it.country_cn) it.country = g.cn;   /* 缺口归因：无国别字段按目标国记账 */
+        if (!it.source) it.source = '缺口调度·' + g.cn;
+      });
+      if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + g.cn + '·' + g.tier + '）'); inserted += (res && res.inserted) || 0; }
     }
-    console.log('[CAT-BAL] 类别均衡(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 补 ' + targets.map(w => CATEGORY_PACKS[w].name + '(' + catN[w] + ')').join('+') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected);
-  } catch (e) { console.warn('[CAT-BAL] 采集失败:', e.message); }
-  finally { _categoryBalanceBusyUntil = 0; }
+    /* ⑤ 类别缺口回填：GNews 原子 → GDELT → AP 三级兜底 */
+    for (const g of pickCats) {
+      let arts = [];
+      const gpk = CAT_GNEWS_PACKS[g.ct];
+      if (gpk && gpk.length) {
+        for (const gq of [gpk[cyc % gpk.length], gpk[(cyc + 2) % gpk.length]]) {
+          try { const a1 = await _catGnewsRss(gq, 12); if (a1.length) arts = arts.concat(a1); } catch (e) {}
+        }
+      }
+      const pack = CATEGORY_PACKS[g.ct];
+      if (!arts.length && pack) {
+        try { arts = await crawler.gdeltSearch(pack.queries[cyc % pack.queries.length], { timespan: '1d', maxrecords: 15 }); } catch (e) {}
+      }
+      if (!arts.length && pack) {
+        try { const apq = pack.queries[cyc % pack.queries.length].replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
+          arts = await crawler.apSearch(apq, { maxrecords: 10, pages: 1 }); } catch (e) {}
+      }
+      fetched += arts.length;
+      await _postFetch(arts);
+      const batch = _filterBatch(arts, it => {
+        it._forceDataType = true; it.data_type = g.ct;   /* 类别权威指定 */
+        if (!it.source) it.source = '缺口调度·' + (pack ? pack.name : g.ct);
+      });
+      if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + (pack ? pack.name : g.ct) + '）'); inserted += (res && res.inserted) || 0; }
+    }
+    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
+  } catch (e) { console.warn('[GAP-SCHED] 采集失败:', e.message); }
+  finally { _gapSchedBusyUntil = 0; }
 }
 
 /* ===== 海外核心安全威胁一分钟哨兵调度（2026-08-27 用户铁指令）=====
@@ -5560,12 +5657,11 @@ function startGlobalMediaCron() {
   // 中文媒体通道：每10分钟一轮——涉华突发（人员伤亡/项目遇袭）国内信源首报最快（2026-08-17）
   setTimeout(_runCnMedia, 40000);
   setInterval(_runCnMedia, 10 * 60 * 1000);
-  // 区域均衡采集器：每30分钟挑最薄弱2区域定向采集（2026-08-17 用户指令：采集全球均衡）
-  setTimeout(_runRegionBalance, 90000);
-  setInterval(_runRegionBalance, 30 * 60 * 1000);
-  // 类别均衡采集器：每30分钟挑最薄弱3类别定向补齐（2026-08-28 用户指令：12类全方位采集不能偏科）
-  setTimeout(_runCategoryBalance, 120000);
-  setInterval(_runCategoryBalance, 30 * 60 * 1000);
+  /* 缺口调度器（2026-08-29 用户指令：全球均衡+全类别，采集有重点）：
+   * 合并取代区域均衡(_runRegionBalance)/类别均衡(_runCategoryBalance)两个调度入口——
+   * 统一按「国家梯队×12类别目标矩阵」算缺口定向补，每 30 分钟一轮。 */
+  setTimeout(_runGapScheduler, 2 * 60 * 1000);
+  setInterval(_runGapScheduler, 30 * 60 * 1000);
   // 原微信公众号直采 cron 已于 2026-08-26 退役（用户指令：不再从公众号抓取数据入库，
   // 由 _runWechatLeads 四步管线取代；wechatoa/wechatNeg 模块保留供手动诊断端点使用）。
   // Neon 云采集同步：每10分钟拉取 GitHub Actions 采集的原始条目（2026-08-24 方案二；未配置 NEON_DATABASE_URL 时静默跳过）
@@ -7487,7 +7583,10 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
           return true;
         });
         for (const a of preserved.concat(data)) {
-          if (!a || a.risk_zone) continue;
+          if (!a) continue;
+          /* 两区渲染（2026-08-29）：客户端副本补核心区标记（缺失时服务端权威判定） */
+          if (a.is_core === undefined) a.is_core = _alertIsCore(a);
+          if (a.risk_zone) continue;
           try {
             const s = _scoreRiskItem({ title: a.title || '', title_zh: a.title_zh || '', content: a.desc || a.content || '', country: a.country || '', source: a.source || '', publishedAt: a.publishedAt || a.time || '' });
             a.risk_score = s.score; a.risk_zone = s.zone; a.risk_rationale = s.rationale; a.zone_action = s.action;
@@ -7495,7 +7594,7 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
           } catch (e) {}
         }
         const clientKept = data.length;
-        data = _capAlertQueue(data.concat(preserved)).slice(0, 300);
+        data = _partitionCore(_capAlertQueue(data.concat(preserved))).slice(0, 300);
         console.log('[DATAHUB] alerts 权威合并: 客户端 ' + clientKept + ' 条 + 服务端保留 ' + preserved.length + ' 条 → ' + data.length + ' 条');
       } catch (e) { console.warn('[DATAHUB] alerts 合并异常（回退全量覆盖）:', e.message); }
     }

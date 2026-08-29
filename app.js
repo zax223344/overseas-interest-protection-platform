@@ -12637,13 +12637,15 @@ const AVIEW={
     var lvlOrder={red:0,orange:1,yellow:2,blue:3};
     var stOrder={active:0,acknowledged:1,responding:2,resolved:3};
     /* 2026-08-14 用户指令：预警队列分层——涉华负面 > 涉华 > 其他；层内按级别>状态>时间
-     * 2026-08-28 核心威胁置顶：十大核心威胁（涉华受害/海盗/恐袭/政变/制裁…）排最前 */
+     * 2026-08-28 核心威胁置顶：十大核心威胁（涉华受害/海盗/恐袭/政变/制裁…）排最前
+     * 2026-08-29 两区渲染：核心区条目（is_core：核心威胁/资产项目命中/橙区起/涉华严重事件，
+     * 服务端权威判定）与核心威胁同层置顶，不占国别均衡配额；其余态势区铺底 */
     var _cnQ=function(a){
       var t=String(a.title||'')+' '+String(a.title_zh||'');
       return /中国|中资|中企|中方|华人|华侨|涉华|对华|一带一路|Chinese|China|Beijing|CPEC/i.test(t);
     };
     alerts.sort(function(a,b){
-      var ca=a.core_threat?0:1, cb=b.core_threat?0:1;
+      var ca=(a.core_threat||a.is_core)?0:1, cb=(b.core_threat||b.is_core)?0:1;
       if(ca!==cb)return ca-cb;
       var ta=(a.chinaNegative||a._chinaNegative)?0:(_cnQ(a)?1:2);
       var tb=(b.chinaNegative||b._chinaNegative)?0:(_cnQ(b)?1:2);
@@ -12665,6 +12667,7 @@ const AVIEW={
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
         (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
+        (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
         stripTags(a.title_zh||a.title)+'</div>'+
         (function(){
@@ -12740,7 +12743,7 @@ const AVIEW={
           var _seen={}, _hidden={};
           showList=[];
           visible.forEach(function(a){
-            if(a.level==='red'){ showList.push(a); return; }
+            if(a.level==='red'||a.is_core){ showList.push(a); return; } /* 红区/核心区条目永不折叠（2026-08-29 两区渲染） */
             var ck=a.country||'其他';
             _seen[ck]=(_seen[ck]||0)+1;
             if(_seen[ck]<=COUNTRY_CAP) showList.push(a);
@@ -12824,6 +12827,7 @@ const AVIEW={
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
         (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
+        (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
         stripTags(a.title_zh||a.title)+'</div>'+
         (function(){

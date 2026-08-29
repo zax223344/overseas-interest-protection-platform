@@ -508,6 +508,39 @@ const _gdeltCache = new Map();
 const GDELT_TTL = 15 * 60 * 1000;
 /* GDELT 连续失败熔断：短时间内反复 429 时暂停该通道，避免拖慢整体采集 */
 let _gdeltFailStreak = 0, _gdeltCooldownUntil = 0;
+/* ===== GDELT sourcecountry 国别码权威表（2026-08-29 实测排雷，根因修复）=====
+ * 实测：GDELT DOC API 只认 FIPS 10-4 两字码或英文国名；
+ * ISO 两字码（VN）与三字码（VNM/PAK）一律返回 "Invalid/Unsupported Country." 召回 0。
+ * 平台内任何 sourcecountry 查询必须经 GD_COUNTRIES 取码，禁止再手写 ISO 码。 */
+const GD_COUNTRIES = {
+  '巴基斯坦': ['PK', 'Pakistan'], '阿富汗': ['AF', 'Afghanistan'], '马里': ['ML', 'Mali'],
+  '尼日尔': ['NG', 'Niger'], '布基纳法索': ['UV', 'Burkina Faso'], '索马里': ['SO', 'Somalia'],
+  '尼日利亚': ['NI', 'Nigeria'], '肯尼亚': ['KE', 'Kenya'], '中非': ['CT', 'Central African Republic'],
+  '刚果（金）': ['CG', 'DR Congo'], '刚果(金)': ['CG', 'DR Congo'], '南非': ['SF', 'South Africa'],
+  '哈萨克斯坦': ['KZ', 'Kazakhstan'], '吉尔吉斯斯坦': ['KG', 'Kyrgyzstan'], '塔吉克斯坦': ['TI', 'Tajikistan'],
+  '乌兹别克斯坦': ['UZ', 'Uzbekistan'], '缅甸': ['BM', 'Myanmar'], '菲律宾': ['RP', 'Philippines'],
+  '泰国': ['TH', 'Thailand'], '印度尼西亚': ['ID', 'Indonesia'], '马来西亚': ['MY', 'Malaysia'],
+  '俄罗斯': ['RS', 'Russia'], '沙特阿拉伯': ['SA', 'Saudi Arabia'], '沙特': ['SA', 'Saudi Arabia'],
+  '印度': ['IN', 'India'], '伊朗': ['IR', 'Iran'], '伊拉克': ['IZ', 'Iraq'], '越南': ['VM', 'Vietnam'],
+  '斯里兰卡': ['CE', 'Sri Lanka'], '吉布提': ['DJ', 'Djibouti'], '埃及': ['EG', 'Egypt'],
+  '埃塞俄比亚': ['ET', 'Ethiopia'], '几内亚': ['GV', 'Guinea'], '秘鲁': ['PE', 'Peru'],
+  '巴西': ['BR', 'Brazil'], '阿根廷': ['AR', 'Argentina'], '老挝': ['LA', 'Laos'],
+  '柬埔寨': ['CB', 'Cambodia'], '孟加拉国': ['BG', 'Bangladesh'], '阿尔及利亚': ['AG', 'Algeria'],
+  '阿联酋': ['AE', 'United Arab Emirates'], '希腊': ['GR', 'Greece'], '巴拿马': ['PA', 'Panama'],
+  '乌克兰': ['UP', 'Ukraine'], '叙利亚': ['SY', 'Syria'], '也门': ['YM', 'Yemen'],
+  '以色列': ['IS', 'Israel'], '黎巴嫩': ['LE', 'Lebanon'], '约旦': ['JO', 'Jordan'],
+  '利比亚': ['LY', 'Libya'], '苏丹': ['SU', 'Sudan'], '摩洛哥': ['MO', 'Morocco'],
+  '突尼斯': ['TS', 'Tunisia'], '赞比亚': ['ZA', 'Zambia'], '津巴布韦': ['ZI', 'Zimbabwe'],
+  '莫桑比克': ['MZ', 'Mozambique'], '安哥拉': ['AO', 'Angola'], '尼泊尔': ['NP', 'Nepal'],
+  '喀麦隆': ['CM', 'Cameroon'], '乍得': ['CD', 'Chad']
+};
+/* GDELT 返回的 sourcecountry 是英文国名 → 中文（反查用） */
+const GD_EN2CN = {};
+Object.keys(GD_COUNTRIES).forEach(cn => { const en = GD_COUNTRIES[cn][1]; if (!GD_EN2CN[en.toLowerCase()]) GD_EN2CN[en.toLowerCase()] = cn; });
+function gdCode(cn) { const e = GD_COUNTRIES[String(cn || '').trim()]; return e ? e[0] : ''; }
+function gdEn(cn) { const e = GD_COUNTRIES[String(cn || '').trim()]; return e ? e[1] : ''; }
+function gdCnFromEn(en) { return GD_EN2CN[String(en || '').trim().toLowerCase()] || ''; }
+
 /* GDELT DOC 2.0：关键词 → 全球新闻文章列表（真实开放网络检索，辅通道） */
 async function gdeltSearch(query, opts) {
   opts = opts || {};
@@ -892,4 +925,4 @@ async function resolveUrl(title, item) {
   return url;
 }
 
-module.exports = { crawlAll, crawlQuery, crawlWeb, gdeltSearch, apSearch, resolveUrl, chinaNegative, chinaRelated, interestRelated, classify, isPublicHost, fetchPublic, extractArticle, WEB_CHANNELS, PRESET_QUERIES, MEDIA_FEEDS, SEARCH_ENGINES, SOCIAL_TARGETS };
+module.exports = { crawlAll, crawlQuery, crawlWeb, gdeltSearch, apSearch, resolveUrl, chinaNegative, chinaRelated, interestRelated, classify, isPublicHost, fetchPublic, extractArticle, WEB_CHANNELS, PRESET_QUERIES, MEDIA_FEEDS, SEARCH_ENGINES, SOCIAL_TARGETS, GD_COUNTRIES, gdCode, gdEn, gdCnFromEn };
