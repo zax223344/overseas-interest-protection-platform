@@ -5260,6 +5260,39 @@ const AUTH={
   }
 };
 
+/* ============================================================
+ * WORLDGEO — 真实世界地理底图层（2026-08-29 用户指令：地球/平面地图都得有地图层）
+ * 数据源：项目自带 countries-110m.json（Natural Earth 110m，与 Leaflet 底图同源）
+ * 提供：land 大陆轮廓 / china 中国轮廓（含台湾，地图合规）/ borders 国界线
+ * ============================================================ */
+const WORLDGEO={
+  _p:null,
+  load(){
+    if(!this._p){
+      this._p=fetch('countries-110m.json').then(function(r){return r.json();}).then(function(w){
+        var land=topojson.feature(w,w.objects.land);
+        var countries=topojson.feature(w,w.objects.countries);
+        /* 中国 = China feature + 台湾（中国地图合规：台湾是中国一部分，必须并入） */
+        var chinaPolys=[];
+        countries.features.forEach(function(f){
+          var nm=f.properties&&f.properties.name;
+          if(nm==='China'||nm==='Taiwan'){
+            var g=f.geometry;
+            if(g.type==='Polygon')chinaPolys.push([g.coordinates]);
+            else if(g.type==='MultiPolygon')chinaPolys.push.apply(chinaPolys,g.coordinates);
+          }
+        });
+        var borders=topojson.mesh(w,w.objects.countries,function(a,b){return a!==b;});
+        return {land:land.features[0],chinaPolys:chinaPolys,borders:borders};
+      }).catch(function(e){
+        console.warn('[WORLDGEO] 轮廓数据加载失败，地图层回退点阵:',e);
+        return null;
+      });
+    }
+    return this._p;
+  }
+};
+
 // ===== GLOBE — Overseas Interest Protection Intelligence Globe =====
 const GLOBE={
   canvas:null,ctx:null,rotation:0,tilt:0,autoRotate:true,
@@ -5318,7 +5351,94 @@ const GLOBE={
     if(!this._landDots)this._genLandDots();
     if(!this._protectLines)this._genProtectLines();
     if(!this._tradeRoutes)this._genTradeRoutes();
+    /* 真实地理底图层（2026-08-29）：加载成功后 draw() 用大陆轮廓替代点阵 */
+    if(!this._geoLoading){
+      this._geoLoading=true;
+      var self=this;
+      WORLDGEO.load().then(function(g){if(g)self._geo=g;});
+    }
     this.animate();
+  },
+  /* 单位球 3D 坐标（正交投影内部量）：lat/lon 度 → [x,y,z]，z>0 为可见半球 */
+  _xyz(lat,lon,rot,tilt){
+    const lr=lat*Math.PI/180,lor=(lon+rot)*Math.PI/180;
+    const tr=(tilt||0)*Math.PI/180;
+    const x0=Math.cos(lr)*Math.sin(lor);
+    const y0=-Math.sin(lr);
+    const z0=Math.cos(lr)*Math.cos(lor);
+    const y1=y0*Math.cos(tr)-z0*Math.sin(tr);
+    const z1=y0*Math.sin(tr)+z0*Math.cos(tr);
+    return [x0,y1,z1];
+  },
+  /* 多边形环 → canvas 路径（含地平线精确裁剪：3D 线性插值求 z=0 交点） */
+  _ringPath(ctx,ring,cx,cy,r,rot,tilt){
+    const n=ring.length;
+    if(n<2)return;
+    let open=false,prev=null;
+    for(let i=0;i<=n;i++){
+      const v=ring[i%n];
+      const P=this._xyz(v[1],v[0],rot,tilt);
+      if(P[2]>0){
+        if(!open){
+          let sx=P[0],sy=P[1];
+          if(prev&&prev[2]<=0&&prev[2]-P[2]!==0){
+            const t=prev[2]/(prev[2]-P[2]);
+            sx=prev[0]+t*(P[0]-prev[0]);sy=prev[1]+t*(P[1]-prev[1]);
+          }
+          ctx.moveTo(cx+sx*r,cy+sy*r);
+          open=true;
+        }else{
+          ctx.lineTo(cx+P[0]*r,cy+P[1]*r);
+        }
+      }else if(open&&prev&&prev[2]>0&&prev[2]-P[2]!==0){
+        const t=prev[2]/(prev[2]-P[2]);
+        const hx=prev[0]+t*(P[0]-prev[0]),hy=prev[1]+t*(P[1]-prev[1]);
+        ctx.lineTo(cx+hx*r,cy+hy*r);
+        open=false;
+      }
+      prev=P;
+    }
+  },
+  /* 折线（国界 mesh / 航线）→ canvas 路径，不可见段断开 */
+  _linePath(ctx,line,cx,cy,r,rot,tilt){
+    let open=false;
+    for(let i=0;i<line.length;i++){
+      const v=line[i];
+      const P=this._xyz(v[1],v[0],rot,tilt);
+      if(P[2]>0){
+        if(!open){ctx.moveTo(cx+P[0]*r,cy+P[1]*r);open=true;}
+        else ctx.lineTo(cx+P[0]*r,cy+P[1]*r);
+      }else open=false;
+    }
+  },
+  /* 真实大陆轮廓层：陆块 + 中国金色高亮 + 国界线 */
+  _drawGeoLand(ctx,cx,cy,r,tilt){
+    const geo=this._geo;
+    if(!geo)return;
+    const rot=this.rotation;
+    /* 陆块 */
+    ctx.beginPath();
+    const polys=geo.land.geometry.type==='Polygon'?[geo.land.geometry.coordinates]:geo.land.geometry.coordinates;
+    polys.forEach(poly=>poly.forEach(ring=>this._ringPath(ctx,ring,cx,cy,r,rot,tilt)));
+    ctx.fillStyle='rgba(16,52,86,0.85)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,212,255,0.30)';
+    ctx.lineWidth=0.6;
+    ctx.stroke();
+    /* 国界线 */
+    ctx.beginPath();
+    geo.borders.coordinates.forEach(line=>this._linePath(ctx,line,cx,cy,r,rot,tilt));
+    ctx.strokeStyle='rgba(0,212,255,0.12)';
+    ctx.lineWidth=0.4;
+    ctx.stroke();
+    /* 中国（含台湾）金色高亮 */
+    ctx.beginPath();
+    geo.chinaPolys.forEach(poly=>poly.forEach(ring=>this._ringPath(ctx,ring,cx,cy,r,rot,tilt)));
+    ctx.fillStyle='rgba(255,200,60,0.22)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,200,60,0.6)';
+    ctx.lineWidth=0.8;
+    ctx.stroke();
   },
   _genLandDots(){
     const dots=[],chinaDots=[];
@@ -5566,27 +5686,32 @@ const GLOBE={
     sg.addColorStop(0.5,'rgba(6,14,28,0.9)');
     sg.addColorStop(1,'rgba(2,5,10,0.95)');
     ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=sg;ctx.fill();
-    // Land dot-matrix (cyan)
-    if(this._landDots){
-      this._landDots.forEach(d=>{
-        const p=this._ll2xy(d.lat,d.lon,cx,cy,r,this.rotation,tilt);
-        if(p.v){
-          const b=p.d*0.6+0.4;
-          ctx.fillStyle='rgba(0,160,210,'+(b*0.3)+')';
-          ctx.fillRect(p.x-0.7,p.y-0.7,1.4,1.4);
-        }
-      });
-    }
-    // China highlighted in gold
-    if(this._chinaDots){
-      this._chinaDots.forEach(d=>{
-        const p=this._ll2xy(d.lat,d.lon,cx,cy,r,this.rotation,tilt);
-        if(p.v){
-          const b=p.d*0.5+0.5;
-          ctx.fillStyle='rgba(255,200,60,'+(b*0.55)+')';
-          ctx.fillRect(p.x-0.9,p.y-0.9,1.8,1.8);
-        }
-      });
+    // 真实地理底图层（2026-08-29：大陆轮廓多边形，加载失败回退点阵）
+    if(this._geo){
+      this._drawGeoLand(ctx,cx,cy,r,tilt);
+    }else{
+      // Land dot-matrix fallback (cyan)
+      if(this._landDots){
+        this._landDots.forEach(d=>{
+          const p=this._ll2xy(d.lat,d.lon,cx,cy,r,this.rotation,tilt);
+          if(p.v){
+            const b=p.d*0.6+0.4;
+            ctx.fillStyle='rgba(0,160,210,'+(b*0.3)+')';
+            ctx.fillRect(p.x-0.7,p.y-0.7,1.4,1.4);
+          }
+        });
+      }
+      // China highlighted in gold (fallback)
+      if(this._chinaDots){
+        this._chinaDots.forEach(d=>{
+          const p=this._ll2xy(d.lat,d.lon,cx,cy,r,this.rotation,tilt);
+          if(p.v){
+            const b=p.d*0.5+0.5;
+            ctx.fillStyle='rgba(255,200,60,'+(b*0.55)+')';
+            ctx.fillRect(p.x-0.9,p.y-0.9,1.8,1.8);
+          }
+        });
+      }
     }
     // Grid lines (very subtle)
     ctx.strokeStyle='rgba(0,212,255,0.04)';ctx.lineWidth=0.5;
@@ -6048,17 +6173,62 @@ const FLATMAP={
     ctx.font='8px "Courier New",monospace';ctx.fillStyle='rgba(0,212,255,0.35)';
     [-120,-60,0,60,120].forEach(lon=>{const p=this._proj(85,lon);ctx.fillText((lon===0?'0°':(lon>0?lon+'E':(-lon)+'W')),p.x-8,P.t-4);});
     [60,30,0,-30].forEach(lat=>{const p=this._proj(lat,-180);ctx.fillText(Math.abs(lat)+'°'+(lat>=0?'N':'S'),6,p.y+3);});
-    /* 陆地点阵（等距圆柱投影） */
-    if(GLOBE._landDots)GLOBE._landDots.forEach(d=>{
-      const p=this._proj(d.lat,d.lon);
-      ctx.fillStyle='rgba(0,160,210,0.22)';
-      ctx.fillRect(p.x-0.7,p.y-0.7,1.4,1.4);
-    });
-    if(GLOBE._chinaDots)GLOBE._chinaDots.forEach(d=>{
-      const p=this._proj(d.lat,d.lon);
-      ctx.fillStyle='rgba(255,200,60,0.4)';
-      ctx.fillRect(p.x-0.8,p.y-0.8,1.6,1.6);
-    });
+    /* 真实地理底图层：大陆轮廓 + 国界 + 中国金色高亮（失败回退点阵） */
+    if(GLOBE._geo){
+      const geo=GLOBE._geo;
+      /* 陆块多边形 */
+      ctx.beginPath();
+      const polys=geo.land.geometry.type==='Polygon'?[geo.land.geometry.coordinates]:geo.land.geometry.coordinates;
+      polys.forEach(poly=>poly.forEach(ring=>{
+        ring.forEach((v,i)=>{
+          const p=this._proj(v[1],v[0]);
+          if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);
+        });
+        ctx.closePath();
+      }));
+      ctx.fillStyle='rgba(16,52,86,0.9)';
+      ctx.fill();
+      ctx.strokeStyle='rgba(0,212,255,0.35)';
+      ctx.lineWidth=0.6;
+      ctx.stroke();
+      /* 国界线 */
+      ctx.beginPath();
+      geo.borders.coordinates.forEach(line=>{
+        line.forEach((v,i)=>{
+          const p=this._proj(v[1],v[0]);
+          if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);
+        });
+      });
+      ctx.strokeStyle='rgba(0,212,255,0.14)';
+      ctx.lineWidth=0.4;
+      ctx.stroke();
+      /* 中国（含台湾）金色高亮 */
+      ctx.beginPath();
+      geo.chinaPolys.forEach(poly=>poly.forEach(ring=>{
+        ring.forEach((v,i)=>{
+          const p=this._proj(v[1],v[0]);
+          if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);
+        });
+        ctx.closePath();
+      }));
+      ctx.fillStyle='rgba(255,200,60,0.25)';
+      ctx.fill();
+      ctx.strokeStyle='rgba(255,200,60,0.65)';
+      ctx.lineWidth=0.8;
+      ctx.stroke();
+    }else{
+      /* 陆地点阵回退（等距圆柱投影） */
+      if(GLOBE._landDots)GLOBE._landDots.forEach(d=>{
+        const p=this._proj(d.lat,d.lon);
+        ctx.fillStyle='rgba(0,160,210,0.22)';
+        ctx.fillRect(p.x-0.7,p.y-0.7,1.4,1.4);
+      });
+      if(GLOBE._chinaDots)GLOBE._chinaDots.forEach(d=>{
+        const p=this._proj(d.lat,d.lon);
+        ctx.fillStyle='rgba(255,200,60,0.4)';
+        ctx.fillRect(p.x-0.8,p.y-0.8,1.6,1.6);
+      });
+    }
     /* 贸易航线（北京→枢纽，直线渐变） */
     ctx.setLineDash([4,4]);ctx.lineWidth=1;
     GLOBE._chokepoints.forEach(cp=>{
