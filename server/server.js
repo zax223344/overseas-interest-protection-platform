@@ -2673,6 +2673,142 @@ function _tombMatchSync(tb, it) {
 async function _isTombstoned(it) {
   return _tombMatchSync(await _getTombstones(), it);
 }
+
+/* ==========================================================================
+ * Google News 旧闻验真清扫器（2026-08-30 根治塔吉克旧闻污染）
+ *
+ * 事故：Google News RSS 的 pubDate 是"收录时间"非"发布时间"——旧闻被重新
+ * 收录推送时 24h 时效闸判其为新（今日入库的塔吉克事件簇 12 条实为
+ * 2005~2026-08-15 的旧闻，用户当场识破）。
+ * 机制：每 15min 扫近 2h 入库的 news.google.com 预警（≤15 条/轮防限流），
+ * 解码出原始媒体 URL → 从 URL 提取发布日期 → 早于 30 天的剔除
+ * + 墓碑（谷歌链接/标题/核心实体三键）防重入。
+ * 安全边界：URL 无日期信息的一律不动（宁漏勿杀）；解码失败跳过。
+ * 解码协议（googlenewsdecoder 同款）：GET 文章页取 data-n-a-sg/签名时间戳
+ * → POST batchexecute 换取原始出版商 URL。
+ * ========================================================================== */
+const _GNS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+async function _gnewsDecodeUrl(gurl) {
+  try {
+    const m = String(gurl).match(/\/(?:articles|read)\/([A-Za-z0-9_-]+)/);
+    if (!m) return null;
+    const b = m[1];
+    const page = await netx.smartFetch('https://news.google.com/rss/articles/' + b, { timeout: 12000, headers: { 'User-Agent': _GNS_UA } });
+    if (!page || !page.ok) return null;
+    const html = await page.text();
+    const sg = html.match(/data-n-a-sg="([^"]+)"/), ts = html.match(/data-n-a-ts="([^"]+)"/);
+    if (!sg || !ts) return null;
+    /* 实测（2026-08-30）：f.req 需三层包裹 [[["Fbv4je", inner]]] 才返回 200，两层返回 400 */
+    const innerStr = '["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],"' + b + '",' + ts[1] + ',"' + sg[1] + '"]';
+    const fReq = JSON.stringify([[["Fbv4je", innerStr]]]);
+    const resp = await netx.smartPost('https://news.google.com/_/DotsSplashUi/data/batchexecute', {
+      timeout: 15000,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'User-Agent': _GNS_UA },
+      body: 'f.req=' + encodeURIComponent(fReq),
+    });
+    if (!resp || !resp.ok) return null;
+    const txt = await resp.text();
+    /* 应答格式：)]}'\n\n[["Fbv4je","[\"garturlres\",\"https://…\",…]",…]] */
+    const parts = txt.split('\n\n');
+    if (parts.length < 2) return null;
+    let outer;
+    try { outer = JSON.parse(parts[1]); } catch (e) { return null; }
+    const inner = outer && outer[0] && outer[0][2];
+    if (typeof inner !== 'string') return null;
+    try {
+      const arr = JSON.parse(inner);
+      if (Array.isArray(arr) && typeof arr[1] === 'string' && /^https?:\/\//.test(arr[1])) return arr[1];
+    } catch (e) {}
+    return null;
+  } catch (e) { return null; }
+}
+/* 从原始 URL 提取发布日期（带月/日合法性校验，防把文章 ID 误当日期） */
+function _urlPubDate(u) {
+  const s = String(u || '');
+  let m = s.match(/(?:^|[\/?&._=-])((?:19|20)\d{2})[-\/](\d{1,2})[-\/](\d{1,2})(?:[\/?&._=-]|$)/);
+  if (m) { const d = new Date(+m[1], +m[2] - 1, +m[3]); if (+m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31 && d.getFullYear() === +m[1]) return d; }
+  m = s.match(/(?:^|[\/._-])((?:19|20)\d{2})(\d{2})(\d{2})\d{0,5}(?:[\/._-]|$)/);
+  if (m) { if (+m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return new Date(+m[1], +m[2] - 1, +m[3]); }
+  m = s.match(/(?:^|[\/._-])((?:19|20)\d{2})(\d{2})(?:[\/._-]|$)/);
+  if (m && +m[2] >= 1 && +m[2] <= 12) return new Date(+m[1], +m[2] - 1, 1);
+  m = s.match(/\/((?:19|20)\d{2})\/(\d{1,2})\//);
+  if (m && +m[2] >= 1 && +m[2] <= 12) return new Date(+m[1], +m[2] - 1, 1);
+  return null;
+}
+/* 原文页面发布日期提取（URL 无日期时的增强验真）：article:published_time / <time datetime> / JSON-LD datePublished */
+async function _pagePubDate(u) {
+  try {
+    const r = await netx.smartFetch(u, { timeout: 10000, headers: { 'User-Agent': _GNS_UA } });
+    if (!r || !r.ok) return null;
+    const html = (await r.text()).slice(0, 80000);
+    const cands = [];
+    let m = html.match(/article:published_time["']?\s+content=["']([^"']+)/i) || html.match(/content=["']([^"']+)["'][^>]*property=["']article:published_time/i);
+    if (m) cands.push(m[1]);
+    m = html.match(/<time[^>]+datetime=["']([^"']+)/i);
+    if (m) cands.push(m[1]);
+    m = html.match(/"datePublished"\s*:\s*"([^"]+)"/i);
+    if (m) cands.push(m[1]);
+    for (const c of cands) {
+      const d = new Date(c);
+      if (isFinite(d.getTime()) && d.getFullYear() > 2000 && d.getFullYear() <= new Date().getFullYear() + 1) return d;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+let _gnewsSweepBusy = false;
+async function _runGnewsTruthSweep() {
+  if (_gnewsSweepBusy) return;
+  _gnewsSweepBusy = true;
+  try {
+    const { rows } = await query(`SELECT data_json FROM datahub_store WHERE collection='alerts'`);
+    if (!rows.length) return;
+    let arr = Array.isArray(rows[0].data_json) ? rows[0].data_json : JSON.parse(rows[0].data_json);
+    if (!Array.isArray(arr)) return;
+    const now = Date.now();
+    const cand = arr.filter(a => {
+      if (!a || String(a.url || '').indexOf('news.google.com') < 0 || !a.time) return false;
+      const t = new Date(String(a.time).replace(' ', 'T')).getTime();
+      return isFinite(t) && t > 0 && now - t < 2 * 3600 * 1000;
+    }).slice(0, 15);
+    if (!cand.length) return;
+    console.log('[GNEWS-TRUTH] 本轮候选 ' + cand.length + ' 条（近2h google news），开始解码验真...');
+    const removed = [];
+    for (const a of cand) {
+      const orig = await _gnewsDecodeUrl(a.url);
+      if (!orig) { await new Promise(s => setTimeout(s, 1200)); continue; }
+      /* 两级验真：URL 日期模式 → 原文页面 meta 发布时间 */
+      const d = _urlPubDate(orig) || await _pagePubDate(orig);
+      if (d && now - d.getTime() > 30 * 24 * 3600 * 1000) {
+        removed.push({ a, orig, d });
+        console.log('[GNEWS-TRUTH] 验出旧闻: ' + (a.title_zh || a.title || '').slice(0, 50) + ' | 原文发布 ' + d.toISOString().slice(0, 10) + ' | ' + orig.slice(0, 70));
+      }
+      await new Promise(s => setTimeout(s, 1500)); /* 防限流 */
+    }
+    if (!removed.length) return;
+    const killIds = new Set(removed.map(x => String(x.a.id)));
+    arr = arr.filter(a => !killIds.has(String(a.id)));
+    await query(`UPDATE datahub_store SET data_json=$1, updated_at=NOW() WHERE collection='alerts'`, [JSON.stringify(arr)]);
+    for (const coll of ['events', 'terror_events']) {
+      try {
+        const r2 = await query(`SELECT data_json FROM datahub_store WHERE collection=$1`, [coll]);
+        if (!r2.rows.length) continue;
+        let a2 = Array.isArray(r2.rows[0].data_json) ? r2.rows[0].data_json : JSON.parse(r2.rows[0].data_json);
+        if (!Array.isArray(a2)) continue;
+        const b = a2.length;
+        a2 = a2.filter(x => !killIds.has(String(String(x.id).replace('live-', ''))));
+        if (a2.length !== b) await query(`UPDATE datahub_store SET data_json=$1, updated_at=NOW() WHERE collection=$2`, [JSON.stringify(a2), coll]);
+      } catch (e) {}
+    }
+    for (const x of removed) {
+      await _addTombstone(x.a.title, x.a.title_zh, x.a.url);   /* 谷歌链接为重入主键 */
+    }
+    console.log('[GNEWS-TRUTH] 本轮剔除旧闻 ' + removed.length + ' 条并立墓碑');
+  } catch (e) {
+    console.warn('[GNEWS-TRUTH] 清扫异常:', e.message);
+  } finally {
+    _gnewsSweepBusy = false;
+  }
+}
 function _coreEntityKey(t) {
   /* 提取标题中的国家、组织、数字、核心名词，用于识别"洗稿式重复" */
   const s = String(t || '').toLowerCase();
@@ -5993,6 +6129,10 @@ function startGlobalMediaCron() {
   // BRI 专项采集器：每5分钟一轮，日≥100条/巴基斯坦≥40条（2026-08-16 用户指令）
   setTimeout(() => { _syncBriStatsFromDB().then(() => { _runBriFocus(); }); }, 25000);
   setInterval(_runBriFocus, 5 * 60 * 1000);
+  // Google News 旧闻验真清扫器：每15分钟解码原始URL验发布日期，旧闻剔除+墓碑
+  // （2026-08-30 根治塔吉克旧闻污染——Google News pubDate 是收录时间非发布时间）
+  setTimeout(_runGnewsTruthSweep, 3 * 60 * 1000);
+  setInterval(_runGnewsTruthSweep, 15 * 60 * 1000);
   // 中文媒体通道：每10分钟一轮——涉华突发（人员伤亡/项目遇袭）国内信源首报最快（2026-08-17）
   setTimeout(_runCnMedia, 40000);
   setInterval(_runCnMedia, 10 * 60 * 1000);

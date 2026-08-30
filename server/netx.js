@@ -143,6 +143,81 @@ async function smartFetch(url, opts) {
   throw lastErr || new Error('smartFetch: all legs failed');
 }
 
+/* 代理腿 POST：https.request + HttpsProxyAgent（不跟随重定向，POST 场景无此需求） */
+function _proxyPost(url, headers, body, timeout) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = https.request(url, {
+      agent: _proxyAgent(), timeout, family: 4, headers, method: 'POST',
+    }, (res) => {
+      const code = res.statusCode || 0;
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        const buf = Buffer.concat(chunks);
+        resolve({
+          ok: code >= 200 && code < 300,
+          status: code,
+          statusText: res.statusMessage || '',
+          headers: _wrapHeaders(res.headers),
+          text: async () => buf.toString('utf8'),
+          json: async () => JSON.parse(buf.toString('utf8')),
+        });
+      });
+      res.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    });
+    req.on('timeout', () => { req.destroy(); if (!settled) { settled = true; reject(new Error('proxy timeout')); } });
+    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    req.end(body);
+  });
+}
+
+/**
+ * 智能 POST：直连优先，网络层失败回落本地代理（与 smartFetch 同一套通路记忆）。
+ * @param {string} url
+ * @param {object} opts { headers, body(string), timeout }
+ * 2026-08-30：为 Google News 旧闻验真清扫器（batchexecute 解码接口）新增。
+ */
+async function smartPost(url, opts) {
+  opts = opts || {};
+  const headers = opts.headers || {};
+  const body = opts.body || '';
+  const timeout = opts.timeout || 15000;
+  const host = (() => { try { return new URL(url).hostname; } catch (e) { return ''; } })();
+  const mode = _cachedMode(host);
+  const proxyAlive = PROXY_ENABLED && Date.now() >= _proxyDownUntil;
+  const order = mode === 'proxy' && proxyAlive ? ['proxy', 'direct'] : ['direct', 'proxy'];
+  let lastErr = null;
+  for (const leg of order) {
+    if (leg === 'proxy' && (!proxyAlive)) continue;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (leg === 'direct') {
+          const r = await fetch(url, {
+            method: 'POST', headers, body, redirect: 'follow',
+            signal: AbortSignal.timeout(Math.min(timeout, 12000)),
+          });
+          _remember(host, 'direct');
+          return r;
+        }
+        const r = await _proxyPost(url, headers, body, timeout);
+        _remember(host, 'proxy');
+        return r;
+      } catch (e) {
+        lastErr = e;
+        if (leg === 'proxy' && e && /ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(String(e.message))) {
+          _proxyDownUntil = Date.now() + PROXY_DOWN_TTL;
+          break;
+        }
+        if (attempt === 0) await new Promise(s => setTimeout(s, 1200));
+      }
+    }
+  }
+  throw lastErr || new Error('smartPost: all legs failed');
+}
+
 /* 观测用：当前 host 通路记忆与代理熔断状态 */
 function stats() {
   const hosts = {};
@@ -154,4 +229,4 @@ function stats() {
   };
 }
 
-module.exports = { smartFetch, stats };
+module.exports = { smartFetch, smartPost, stats };
