@@ -3382,7 +3382,12 @@ function _dominantQuotaOk(it) {
  * ②重大事件（伤亡≥5/绑架/劫持/撤侨/政变/核事故）放行；③非安全类条目不受限。 */
 const _SEC_STRUCT_TYPES = ['terror_events', 'military_conflicts', 'geopolitical_intel', 'social_unrest', 'security_events'];
 const SEC_STRUCT_SHARE_MAX = 0.45;
-const SEC_STRUCT_MIN_TOTAL = 120;
+/* 2026-08-30 稳定化：120→300 水位线。实测 08-30（周日）低流量日：安全类新闻先到、占比
+ * 早上即超 45%，120 水位让结构帽全天开闸，单轮砍掉 45-65 条 → 总量越砍越低 → 占比更超线，
+ * 形成"砍量→总量低→占比更超线"自锁（当天 196 条 vs 平日 400+，领导观感"采集量崩了"）。
+ * 修复原则：总量优先于结构、重点优先于均衡——当日总量达 300（500 目标的六成）后才开帽调结构，
+ * 低流量日先把量保住，缺口调度器照常补弱类，结构靠"补弱"而非"砍强"来实现。 */
+const SEC_STRUCT_MIN_TOTAL = 300;
 let _catStructDb = { date: '', total: 0, sec: 0, t: 0 };
 async function _catStructRefresh() {
   try {
