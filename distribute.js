@@ -384,17 +384,18 @@
         }
       }
     } catch (e) {}
-    /* 注入事件流 EVENTS（ticker 联动） */
+    /* 注入事件流 EVENTS（ticker 联动）——2026-08-30 修复：source/url 必须透传，
+     * 用户在事件流/态势视图看到派生条目时同样可溯源（原来只搬标题，来源链断裂） */
     try {
       if (typeof EVENTS !== 'undefined') {
-        EVENTS.unshift({ id: 'live-' + a.id, title: a.title, country: a.country, date: a.time, type: a.type, severity: lv === 'red' ? 'critical' : lv === 'orange' ? 'high' : 'medium', status: 'active', _live: true });
+        EVENTS.unshift({ id: 'live-' + a.id, title: a.title, country: a.country, date: a.time, type: a.type, severity: lv === 'red' ? 'critical' : lv === 'orange' ? 'high' : 'medium', status: 'active', _live: true, source: a.source || '实时采集', url: a.url || '', ext_url: a.ext_url || '', title_zh: a.title_zh || '', publishedAt: a.publishedAt || '' });
         if (EVENTS.length > 300) EVENTS.length = 300;
       }
     } catch (e) {}
-    /* 注入恐袭库 TERROR_EVENTS（安全类 / 红橙） */
+    /* 注入恐袭库 TERROR_EVENTS（安全类 / 红橙）——同步透传 source/url */
     try {
       if (typeof TERROR_EVENTS !== 'undefined' && (type === '安全风险' || lv === 'red' || lv === 'orange')) {
-        TERROR_EVENTS.unshift({ id: a.id, title: a.title, location: a.country, date: a.time, severity: lv === 'red' ? '高' : lv === 'orange' ? '中' : '低', type: a.type, _live: true });
+        TERROR_EVENTS.unshift({ id: a.id, title: a.title, location: a.country, date: a.time, severity: lv === 'red' ? '高' : lv === 'orange' ? '中' : '低', type: a.type, _live: true, source: a.source || '实时采集', url: a.url || '', ext_url: a.ext_url || '', title_zh: a.title_zh || '', group: a.core_threat_name || a.author || '' });
         if (TERROR_EVENTS.length > 200) TERROR_EVENTS.length = 200;
       }
     } catch (e) {}

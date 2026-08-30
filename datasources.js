@@ -427,7 +427,10 @@ var DATASOURCES = (function(){
               country: c,
               /* 无正文时不再编造"数据源「XX」采集"占位文本（2026-08-13：占位文本会污染预警描述），直接用标题兜底 */
               content: (_ri && _ri.content) ? _ri.content : txt,
-              source: src.name,
+              /* 来源铁律（2026-08-30）：真实条目必须署真实来源——用后端返回的 it.source，
+               * 绝不套用当前轮到的注册源名（src.name）。否则"中国要求塔吉克斯坦保护公民"
+               * 这类 Google News 真实新闻会被错标为"Shodan物联网探测"等风马牛不相及的源。 */
+              source: (_ri && _ri.source) ? _ri.source : '实时采集',
               severity: (isReal && _ri && _ri.severity ? _ri.severity : '中'),
               category: (src.feeds[1]||'采集'),
               data_type: _cat2,
@@ -525,13 +528,15 @@ var DATASOURCES = (function(){
       try{
         if(typeof COLLECTED_DB!=='undefined' && typeof COLLECTED_DB.add==='function'){
           var _cat = FEED_TO_CAT[s.feeds[0]] || 'osint_intel';
-          var _ttl = s.name+'：'+txt;
+          /* 来源铁律（2026-08-30）：真实条目标题不加注册源前缀、来源署真实源（it.source），
+           * 注册源关联只记在 _fromSource 字段，不再污染标题与来源展示。 */
+          var _ttl = txt;
           /* 去重 + 单类上限，防止采集库无限膨胀 */
           if(!_dupInCollected(_cat,_ttl) && COLLECTED_DB.count(_cat) < 400){
             COLLECTED_DB.add(_cat, {
               title: _ttl, country:c,
               content: txt,
-              source: s.name, severity:(isReal && _ri && _ri.severity ? _ri.severity : '中'),
+              source: (_ri && _ri.source) ? _ri.source : '实时采集', severity:(isReal && _ri && _ri.severity ? _ri.severity : '中'),
               category:(s.feeds[1]||'采集'), data_type:_cat, enterprise:'', url:'',
               tags:[c, s.feeds[1]||''], _fromSource:s.id,
               interestLinked: (_ri && _ri.interestLinked === true) ? true : undefined,
