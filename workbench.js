@@ -1,23 +1,79 @@
 /* ============================================================
- * WORKBENCH 联合作业台 v2（2026-08-30 真地图图层版）
+ * WORKBENCH 联合作业台 v3（2026-08-30 编排自由化版 —— 学习 WorldMonitor.app 信息编排真髓）
+ * 核心理念：不替用户预设工作流，给「图层 × 面板 × 时间 × 观测方案」四维自由组合，每人拼自己的观测台
+ *   ⏱ 时间窗   6h / 24h(值班口径) / 48h / 7天，贯穿指数计算/热区聚合/情报流
+ *   🧩 面板    指数卡 / 工作区 / 情报流 各自可开可关
+ *   📐 观测方案 当前组合（工作区+图层+时间窗+面板）存为命名方案，一键切换
+ *   ⛶ 满宽地图 隐藏工作区/情报流，地图占满
+ * 状态持久化：orps_wb_state（跨会话恢复观测台含地图视野）+ orps_wb_profiles（多方案库）
  * 中央：Leaflet 真实地图（天地图卫星底图 TDT_BASEMAP，失败回退本地矢量）
  * 图层 = 地图标记层（勾选直接 add/remove L.layerGroup，不是数据过滤）：
- *   L1 预警热区   近24h真实 ALERTS 按国家聚合，半径∝数量、色=最高级别，点击列该国预警
+ *   L1 预警热区   真实 ALERTS 按国家聚合，半径∝数量、色=最高级别，点击列该国预警
  *   L2 重点项目   ENTERPRISES 真实项目档案（瓜达尔港/比雷埃夫斯/汉班托塔…）落点国家坐标
  *   L3 海上咽喉   CHOKEPOINTS 8 大通道真实地理坐标，色按 risk
  *   L4 高风险国家 COUNTRIES scores.security≥7 警示圈
  *   L5 风险走廊   CORRIDORS 一带一路走廊落点
- * 其余保留 v1：任务工作区联动图层组合 / Explain 三段论 / 海外利益安全指数 / 情报流
+ * 其余：任务工作区联动图层组合 / Explain 三段论 / 海外利益安全指数 / 情报流
  * 数据源：全局 ALERTS / COUNTRIES / ENTERPRISES / CHOKEPOINTS / CORRIDORS + /api/intel/stats
  * ============================================================ */
 var WORKBENCH = {
   _ws: 'overall',
   _layers: {},
+  _hours: 24,          /* 时间窗：WorldMonitor 时间维度（24h=值班铁律默认） */
+  _panels: { ix: true, ws: true, feed: true },  /* 面板开关节点（WorldMonitor 面板编排） */
+  _mapFocus: false,    /* 地图满宽模式 */
   _inited: false,
   _map: null,          /* Leaflet 地图实例 */
   _lg: {},             /* {图层键: L.layerGroup} */
   _stats: null,
   _ix: null,
+
+  /* ── 状态持久化：orps_wb_ 前缀（图层/时间/面板/方案，跨会话保留用户拼好的观测台） ── */
+  _saveState: function () {
+    try {
+      var st = {
+        ws: this._ws, layers: this._layers, hours: this._hours,
+        panels: this._panels, mapFocus: this._mapFocus,
+        center: this._map ? this._map.getCenter() : null,
+        zoom: this._map ? this._map.getZoom() : null
+      };
+      this._savedView = st;  /* 内存同步：_render 重建地图后按此恢复视野 */
+      localStorage.setItem('orps_wb_state', JSON.stringify(st));
+    } catch (e) {}
+  },
+  _loadState: function () {
+    try {
+      var s = JSON.parse(localStorage.getItem('orps_wb_state') || 'null');
+      if (s) {
+        if (s.ws) this._ws = s.ws;
+        if (s.layers) this._layers = s.layers;
+        if (s.hours) this._hours = s.hours;
+        if (s.panels) this._panels = s.panels;
+        this._mapFocus = !!s.mapFocus;
+        this._savedView = s;
+      }
+    } catch (e) {}
+  },
+  /* 观测方案：保存/读取用户自定义组合（WorldMonitor 多标签页思想） */
+  _profiles: function () {
+    try { return JSON.parse(localStorage.getItem('orps_wb_profiles') || '{}'); } catch (e) { return {}; }
+  },
+  _saveProfile: function (name) {
+    var p = this._profiles();
+    p[name] = { ws: this._ws, layers: JSON.parse(JSON.stringify(this._layers)), hours: this._hours, panels: JSON.parse(JSON.stringify(this._panels)) };
+    try { localStorage.setItem('orps_wb_profiles', JSON.stringify(p)); } catch (e) {}
+  },
+  _applyProfile: function (name) {
+    var p = this._profiles()[name];
+    if (!p) return;
+    this._ws = p.ws; this._layers = p.layers; this._hours = p.hours; this._panels = p.panels;
+    this._render();
+  },
+  _delProfile: function (name) {
+    var p = this._profiles();
+    delete p[name];
+    try { localStorage.setItem('orps_wb_profiles', JSON.stringify(p)); } catch (e) {}
+  },
 
   /* ── 地图图层定义（勾选=地图标记显示/隐藏） ── */
   MAP_LAYERS: [
@@ -36,7 +92,7 @@ var WORKBENCH = {
 
   /* ── Explain 三段论（SOURCE/FRESHNESS/CONFIDENCE，对应真实数据链） ── */
   EXP: {
-    alerts: { s: 'DataHub 真实预警队列（服务端 _serverAlertGen 每 3 分钟生成，经 chinaOverseasGate + nonIntelGenre + 体裁/历史旧案/墓碑多闸门）。按预警 country 字段聚合到 COUNTRIES 国家坐标。', f: '预警生成每 3 分钟；前端 DataHub 实时订阅刷新。仅统计近 24h（值班口径铁律）。', c: '圆色=该国当前最高预警级别；半径∝预警量。点击圆看该国预警明细与原文链接。' },
+    alerts: { s: 'DataHub 真实预警队列（服务端 _serverAlertGen 每 3 分钟生成，经 chinaOverseasGate + nonIntelGenre + 体裁/历史旧案/墓碑多闸门）。按预警 country 字段聚合到 COUNTRIES 国家坐标。', f: '预警生成每 3 分钟；前端 DataHub 实时订阅刷新。时间窗顶栏可切 6h/24h/48h/7天，默认 24h（值班口径铁律）。', c: '圆色=该国当前最高预警级别；半径∝预警量。点击圆看该国预警明细与原文链接。' },
     project: { s: 'ENTERPRISES 35 企真实项目档案（瓜达尔港/比雷埃夫斯港/汉班托塔港/皎漂港/蒙内铁路/西芒杜/卡莫阿/中老铁路等），项目落点为其东道国 COUNTRIES 坐标。', f: '项目档案为底数库静态维护；关联风险随事件实时更新（_tagAssets 自动锚定）。', c: '项目-事件关联基于地理+名称实体双匹配（interest-base matchProjects）。' },
     strait: { s: 'CHOKEPOINTS 海上咽喉档案 + interest-base STRAIT_CHANNELS 通道清单；坐标为公开航海地理坐标。channel-watch 通道哨兵（30min）监测通道事件。', f: '哨兵 30 分钟；通道风险分随事件更新。', c: '通道状态分级：正常/关注/高风险/中断；曼德海峡等当前为极高。' },
     risk: { s: 'COUNTRIES 国别风险档案 scores.security（公共安全维度评分，蓝皮书口径底数）。', f: '国别档案静态底数 + 预警联动更新。', c: '评分≥7 显示警示圈；分值为研判参考，实时事件看预警热区层。' },
@@ -52,9 +108,9 @@ var WORKBENCH = {
     { key: 'corridor', icon: '⚓', label: '通道走廊监控', layers: ['strait', 'corridor', 'alerts'] }
   ],
 
-  /* ── 安全指数：近24h真实预警加权 ── */
-  computeIndex: function (alerts) {
-    var now = Date.now(), win = 24 * 3600 * 1000;
+  /* ── 安全指数：真实预警加权（时间窗跟随顶栏选择） ── */
+  computeIndex: function (alerts, hours) {
+    var now = Date.now(), win = (hours || 24) * 3600 * 1000;
     var score = 0, contrib = {}, lv = { red: 0, orange: 0, yellow: 0 }, coreN = 0, cnN = 0, n = 0;
     (alerts || []).forEach(function (a) {
       if (!a || !a.time) return;
@@ -121,12 +177,16 @@ var WORKBENCH = {
     if (!host) return;
     if (typeof DataHub !== 'undefined' && DataHub.subscribe && !this._subscribed) {
       this._subscribed = true;
-      DataHub.subscribe(function (col) { if (col === 'alerts' || !col) WORKBENCH._refreshLayers(); });
+      DataHub.subscribe(function (col) { if (col === 'alerts' || !col) WORKBENCH._onAlerts(); });
     }
     if (!this._inited) {
       this._inited = true;
+      this._loadState();  /* 恢复上次观测台（图层/时间窗/面板/满宽/地图视野） */
+      var hasLayers = Object.keys(this._layers).length > 0;
       var ws0 = this.WORKSPACES[0];
-      this.MAP_LAYERS.forEach(function (d) { WORKBENCH._layers[d.key] = ws0.layers.indexOf(d.key) >= 0 || d.def; });
+      this.MAP_LAYERS.forEach(function (d) {
+        if (!hasLayers) WORKBENCH._layers[d.key] = ws0.layers.indexOf(d.key) >= 0 || d.def;
+      });
       this._pullStats();
       setInterval(function () { WORKBENCH._pullStats(); }, 5 * 60 * 1000);
     }
@@ -138,28 +198,49 @@ var WORKBENCH = {
     fetch('/api/intel/stats').then(function (r) { return r.json(); }).then(function (d) { self._stats = d; self._renderIndexBar(); }).catch(function () {});
   },
 
+  /* 预警数据推送 → 指数卡/情报流/地图热区三处同步刷新（150ms 防抖合并批量推送） */
+  _onAlerts: function () {
+    var self = this;
+    if (this._onAlertsT) return;
+    this._onAlertsT = setTimeout(function () {
+      self._onAlertsT = null;
+      if (!self._inited) return;
+      self._ix = self.computeIndex(self._alerts(), self._hours);
+      self._renderIndexBar();
+      self._renderFeed();
+      self._refreshLayers();
+    }, 150);
+  },
+
   _render: function () {
     var host = document.getElementById('workbench-content');
     if (!host) return;
     var self = this;
     var ws = this.WORKSPACES.filter(function (w) { return w.key === self._ws; })[0] || this.WORKSPACES[0];
-    this._ix = this.computeIndex(this._alerts());
+    this._ix = this.computeIndex(this._alerts(), this._hours);
+    var hN = this._hours === 168 ? '7 天' : this._hours + ' 小时';
+    var mapH = this._mapFocus ? 680 : 560;
 
     var html = '';
-    /* 指数卡 */
-    html += '<div class="card" id="wb-ixcard" style="margin-bottom:12px">' + this._indexHTML() + '</div>';
+    /* 编排工具条：时间窗 × 面板 × 观测方案 × 满宽（WorldMonitor 信息编排自由） */
+    html += '<div class="card" style="margin-bottom:12px">' + this._toolbarHTML() + '</div>';
 
-    /* 工作区 tab */
-    html += '<div class="card" style="margin-bottom:12px"><div class="card-tt"><span class="ic">🧭</span>任务工作区 — 场景切换自动联动地图图层</div><div class="dc-tabs" id="wb-ws-tabs" style="margin-bottom:0">';
-    this.WORKSPACES.forEach(function (w) {
-      html += '<span class="dc-tab' + (w.key === self._ws ? ' active' : '') + '" data-ws="' + w.key + '" style="cursor:pointer">' + w.icon + ' ' + w.label + '</span>';
-    });
-    html += '</div></div>';
+    /* 指数卡（面板可关） */
+    if (this._panels.ix) html += '<div class="card" id="wb-ixcard" style="margin-bottom:12px">' + this._indexHTML() + '</div>';
+
+    /* 工作区 tab（面板可关；满宽模式隐藏） */
+    if (this._panels.ws && !this._mapFocus) {
+      html += '<div class="card" style="margin-bottom:12px"><div class="card-tt"><span class="ic">🧭</span>任务工作区 — 场景切换自动联动地图图层</div><div class="dc-tabs" id="wb-ws-tabs" style="margin-bottom:0">';
+      this.WORKSPACES.forEach(function (w) {
+        html += '<span class="dc-tab' + (w.key === self._ws ? ' active' : '') + '" data-ws="' + w.key + '" style="cursor:pointer">' + w.icon + ' ' + w.label + '</span>';
+      });
+      html += '</div></div>';
+    }
 
     /* 主体：左图层栏 + 中地图 + 右情报流 */
     html += '<div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap">';
-    /* 左：图层控制 */
-    html += '<div class="card" style="flex:0 0 200px;min-width:200px"><div class="card-tt"><span class="ic">🗺</span>地图图层 <span id="wb-lcnt" style="font-weight:400;font-size:11px;color:var(--text3)"></span></div><div id="wb-layers">';
+    /* 左：图层控制（满宽模式保留——图层勾选是地图观测核心） */
+    html += '<div class="card" style="flex:0 0 200px;min-width:200px' + (this._mapFocus ? ';align-self:flex-start' : '') + '"><div class="card-tt"><span class="ic">🗺</span>地图图层 <span id="wb-lcnt" style="font-weight:400;font-size:11px;color:var(--text3)"></span></div><div id="wb-layers">';
     this.MAP_LAYERS.forEach(function (d) {
       html += '<div class="wb-lrow" data-lk="' + d.key + '"><span style="width:16px;text-align:center">' + d.em + '</span>' +
         '<label style="flex:1;cursor:pointer;display:flex;align-items:center;gap:6px;margin:0">' +
@@ -169,18 +250,36 @@ var WORKBENCH = {
     });
     html += '</div><div style="font-size:10.5px;color:var(--text3);margin-top:10px;line-height:1.7">勾选 = 地图标记层显示/隐藏<br>「i」= 图层数据链三段论</div></div>';
 
-    /* 中：真实地图 */
-    html += '<div class="card" style="flex:1;min-width:420px;padding:8px"><div id="wb-map" style="height:560px;border-radius:8px;overflow:hidden;background:var(--bg2)"></div>' +
+    /* 中：真实地图（满宽模式独占横向空间） */
+    html += '<div class="card" style="flex:1;min-width:' + (this._mapFocus ? 520 : 420) + 'px;padding:8px"><div id="wb-map" style="height:' + mapH + 'px;border-radius:8px;overflow:hidden;background:var(--bg2)"></div>' +
       '<div style="font-size:10.5px;color:var(--text3);margin-top:6px;display:flex;gap:14px;flex-wrap:wrap;align-items:center">' +
       '<span>底图：天地图卫星影像（服务端中转，密钥不出服务端）</span>' +
       '<span>● <span style="color:#ff3355">红</span> / <span style="color:#ff8800">橙</span> / <span style="color:#ffcc00">黄</span> 预警热区</span>' +
-      '<span>⚓ 咽喉 ▲ 项目</span><span id="wb-mapstat"></span></div></div>';
+      '<span>⚓ 咽喉 ▲ 项目</span><span>时间窗 ' + hN + '</span><span id="wb-mapstat"></span></div></div>';
 
-    /* 右：情报流 */
-    html += '<div class="card" style="flex:0 0 300px;min-width:300px;display:flex;flex-direction:column"><div class="card-tt"><span class="ic">📡</span>实时情报流<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3)">24h · 核心置顶</span></div><div style="flex:1;max-height:560px;overflow-y:auto" id="wb-feed">';
+    /* 右：情报流（面板可关；满宽模式隐藏） */
+    if (this._panels.feed && !this._mapFocus) {
+      html += '<div class="card" style="flex:0 0 300px;min-width:300px;display:flex;flex-direction:column">' + this._feedHTML() + '</div>';
+    }
+    html += '</div>';
+
+    host.innerHTML = html;
+
+    /* 地图初始化（首次）或重挂（innerHTML 重建后 DOM 换了，需重建地图） */
+    this._initMap();
+    this._refreshLayers();
+    this._bind();
+  },
+
+  /* 情报流 HTML（_render 与订阅推送刷新共用，保证 DataHub 更新后 feed 不陈旧） */
+  _feedHTML: function () {
+    var self = this;
+    var hN = this._hours === 168 ? '7 天' : this._hours + ' 小时';
+    var html = '<div class="card-tt"><span class="ic">📡</span>实时情报流<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3)">' + hN + ' · 核心置顶</span></div><div style="flex:1;max-height:560px;overflow-y:auto" id="wb-feed">';
+    var winMs = this._hours * 3600 * 1000;
     var list = this._alerts().filter(function (a) {
       var t = Date.parse(String((a && a.time) || '').replace(' ', 'T'));
-      return a && (!isNaN(t) ? (Date.now() - t <= 24 * 3600 * 1000) : false);
+      return a && (!isNaN(t) ? (Date.now() - t <= winMs) : false);
     });
     var feed = list.slice().sort(function (x, y) {
       var cx = x.is_core ? 1 : 0, cy = y.is_core ? 1 : 0;
@@ -198,17 +297,53 @@ var WORKBENCH = {
           (a.country ? '<span style="color:var(--cyan)">' + self._esc(a.country) + '</span>' : '') + '<span>' + self._ago(a) + '</span></div></div></div>';
       });
     } else {
-      html += '<div style="padding:18px;text-align:center;color:var(--text3);font-size:12px">近 24h 无预警数据</div>';
+      html += '<div style="padding:18px;text-align:center;color:var(--text3);font-size:12px">近 ' + hN + ' 无预警数据</div>';
     }
-    html += '</div></div></div>';
+    html += '</div>';
+    return html;
+  },
 
-    var mapExisted = !!this._map;
-    host.innerHTML = html;
+  /* 订阅推送刷新情报流（feed 容器不存在=面板关闭/满宽，安全跳过） */
+  _renderFeed: function () {
+    var host = document.getElementById('wb-feed');
+    if (!host) return;
+    var outer = host.closest('.card');
+    if (!outer) return;
+    outer.innerHTML = this._feedHTML();
+    this._bindFeed();
+  },
 
-    /* 地图初始化（首次）或重挂（innerHTML 重建后 DOM 换了，需重建地图） */
-    this._initMap();
-    this._refreshLayers();
-    this._bind();
+  /* ── 编排工具条：时间窗 / 面板开关 / 观测方案 / 满宽地图 ── */
+  _toolbarHTML: function () {
+    var self = this;
+    var hs = [6, 24, 48, 168];
+    var hNames = { 6: '6小时', 24: '24小时·值班口径', 48: '48小时', 168: '7天' };
+    var html = '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:2px 0">';
+    /* 时间窗 */
+    html += '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span style="font-size:11px;color:var(--text3)">⏱ 时间窗</span>';
+    hs.forEach(function (h) {
+      html += '<span class="dc-tab wb-tbtn' + (self._hours === h ? ' active' : '') + '" data-h="' + h + '" style="cursor:pointer;font-size:11px">' + hNames[h] + '</span>';
+    });
+    html += '</div>';
+    /* 面板开关（点击即开/关，对应下方三块面板） */
+    var pn = { ix: '📈 指数卡', ws: '🧭 工作区', feed: '📡 情报流' };
+    html += '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span style="font-size:11px;color:var(--text3)">🧩 面板</span>';
+    Object.keys(pn).forEach(function (k) {
+      html += '<span class="dc-tab wb-pbtn' + (self._panels[k] ? ' active' : '') + '" data-p="' + k + '" style="cursor:pointer;font-size:11px;opacity:' + (self._panels[k] ? 1 : .45) + '" title="点击开/关该面板">' + pn[k] + '</span>';
+    });
+    html += '</div>';
+    /* 观测方案：保存/应用/删除自定义组合 */
+    var profiles = this._profiles(), pnames = Object.keys(profiles);
+    html += '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span style="font-size:11px;color:var(--text3)">📐 观测方案</span>' +
+      '<select id="wb-prof" style="background:var(--bg2);color:var(--text);border:1px solid var(--border2);border-radius:4px;font-size:11px;padding:2px 5px;max-width:130px"><option value="">— 选择 —</option>';
+    pnames.forEach(function (n) { html += '<option value="' + self._esc(n) + '">' + self._esc(n) + '</option>'; });
+    html += '</select>' +
+      '<button class="dc-tab" id="wb-prof-save" style="cursor:pointer;font-size:11px" title="把当前 时间窗+图层+面板 组合存为方案">💾 保存当前</button>' +
+      '<button class="dc-tab" id="wb-prof-del" style="cursor:pointer;font-size:11px;opacity:' + (pnames.length ? 1 : .4) + '">🗑 删除</button></div>';
+    /* 满宽地图 */
+    html += '<span class="dc-tab wb-mfocus' + (this._mapFocus ? ' active' : '') + '" style="cursor:pointer;font-size:11px;margin-left:auto" title="隐藏工作区/情报流，地图占满">⛶ 满宽地图</span>';
+    html += '</div>';
+    return html;
   },
 
   /* ============================================================
@@ -219,12 +354,20 @@ var WORKBENCH = {
     if (!el) return;
     if (typeof L === 'undefined') { el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text3)">Leaflet 未加载</div>'; return; }
     try {
-      this._map = L.map(el, { center: [25, 40], zoom: 2.4, minZoom: 2, maxZoom: 12, worldCopyJump: true, zoomControl: true, attributionControl: false });
+      /* 视野恢复：上次保存的 center/zoom（无则默认全球视图） */
+      var center = [25, 40], zoom = 2.4;
+      if (this._savedView && this._savedView.center && this._savedView.center.lat != null) {
+        center = [this._savedView.center.lat, this._savedView.center.lng];
+        zoom = this._savedView.zoom || 2.4;
+      }
+      this._map = L.map(el, { center: center, zoom: zoom, minZoom: 2, maxZoom: 12, worldCopyJump: true, zoomControl: true, attributionControl: false });
       if (typeof TDT_BASEMAP !== 'undefined') {
         TDT_BASEMAP.addTo(this._map, 'sat');
       } else if (typeof LOCAL_BASEMAP !== 'undefined') {
         LOCAL_BASEMAP.addTo(this._map);
       }
+      /* 视野变化即存（moveend 在拖拽/缩放结束后触发一次，不刷屏） */
+      this._map.on('moveend', function () { WORKBENCH._saveState(); });
       setTimeout(function () { if (WORKBENCH._map) WORKBENCH._map.invalidateSize(); }, 300);
     } catch (e) {
       el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--orange)">地图初始化失败：' + this._esc(e.message) + '</div>';
@@ -240,15 +383,16 @@ var WORKBENCH = {
     this._lg = {};
     var counts = {};
 
-    /* L1 预警热区 */
+    /* L1 预警热区（时间窗跟随顶栏选择） */
     if (this._layers.alerts) {
       var lg = L.layerGroup();
       var now = Date.now();
+      var winMs = this._hours * 3600 * 1000;
       var byCty = {};
       this._alerts().forEach(function (a) {
         if (!a || !a.time) return;
         var t = Date.parse(String(a.time).replace(' ', 'T'));
-        if (isNaN(t) || now - t > 24 * 3600 * 1000) return;
+        if (isNaN(t) || now - t > winMs) return;
         var k = a.country || '';
         if (!k) return;
         byCty[k] = byCty[k] || { n: 0, red: 0, orange: 0, yellow: 0, core: 0, items: [] };
@@ -282,7 +426,7 @@ var WORKBENCH = {
           radius: radius, color: hex, weight: 2, fillColor: hex, fillOpacity: 0.25
         }).bindPopup(
           '<div style="max-width:260px"><b style="font-size:13px">' + self._esc(k) + ' · 预警热区</b>' +
-          '<div style="font-size:11px;color:#5a7a9a;margin:3px 0">近24h ' + b.n + ' 条（红' + b.red + ' 橙' + b.orange + ' 黄' + b.yellow + '）' + (b.core ? ' <span style="color:#ff8800">核心区 ' + b.core + '</span>' : '') + '</div>' + rows +
+          '<div style="font-size:11px;color:#5a7a9a;margin:3px 0">近' + self._hours + 'h ' + b.n + ' 条（红' + b.red + ' 橙' + b.orange + ' 黄' + b.yellow + '）' + (b.core ? ' <span style="color:#ff8800">核心区 ' + b.core + '</span>' : '') + '</div>' + rows +
           '<div style="font-size:10px;color:#4a5a70;margin-top:4px">数据：DataHub 真实预警</div></div>'
         ).addTo(lg);
       });
@@ -403,9 +547,10 @@ var WORKBENCH = {
   _indexHTML: function () {
     var ix = this._ix;
     if (!ix) return '';
+    var hN = this._hours === 168 ? '7 天' : this._hours + ' 小时';
     var pct = Math.min(100, ix.idx);
     var html = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">' +
-      '<div><div style="font-size:11px;color:var(--text3);letter-spacing:1px">海外利益安全指数 · 近 24h 真实预警加权</div>' +
+      '<div><div style="font-size:11px;color:var(--text3);letter-spacing:1px">海外利益安全指数 · 近 ' + hN + ' 真实预警加权</div>' +
       '<div style="font-size:24px;font-weight:700;color:' + ix.grade.c + ';margin-top:2px">' + ix.grade.t + ' <span style="font-size:15px">' + ix.idx + '</span></div></div>' +
       '<div style="flex:1;min-width:180px"><div style="display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--bg2)">' +
       '<span style="width:' + pct + '%;background:linear-gradient(90deg,var(--cyan),' + ix.grade.c + ');transition:width .6s"></span></div>' +
@@ -430,7 +575,46 @@ var WORKBENCH = {
 
   _bind: function () {
     var self = this;
-    /* 工作区切换 → 图层组合联动 */
+    /* ── 编排工具条：时间窗切换（贯穿指数/热区/情报流） ── */
+    Array.prototype.forEach.call(document.querySelectorAll('.wb-tbtn[data-h]'), function (el) {
+      el.onclick = function () {
+        self._hours = parseInt(el.getAttribute('data-h'), 10);
+        self._saveState();
+        self._render();  /* 指数卡/热区/情报流全量重算 */
+      };
+    });
+    /* ── 面板开/关（指数卡/工作区/情报流） ── */
+    Array.prototype.forEach.call(document.querySelectorAll('.wb-pbtn[data-p]'), function (el) {
+      el.onclick = function () {
+        var k = el.getAttribute('data-p');
+        self._panels[k] = !self._panels[k];
+        self._saveState();
+        self._render();
+      };
+    });
+    /* ── 满宽地图 ── */
+    var mf = document.querySelector('.wb-mfocus');
+    if (mf) mf.onclick = function () {
+      self._mapFocus = !self._mapFocus;
+      self._saveState();
+      self._render();
+    };
+    /* ── 观测方案：应用/保存/删除 ── */
+    var sel = document.getElementById('wb-prof');
+    if (sel) sel.onchange = function () {
+      if (sel.value) { self._applyProfile(sel.value); self._saveState(); }
+    };
+    var sb = document.getElementById('wb-prof-save');
+    if (sb) sb.onclick = function () {
+      var n = (prompt('观测方案名称（保存当前 时间窗+图层+工作区+面板 组合）：') || '').trim();
+      if (n) { self._saveProfile(n); self._render(); }
+    };
+    var db = document.getElementById('wb-prof-del');
+    if (db) db.onclick = function () {
+      var s = document.getElementById('wb-prof');
+      if (s && s.value && confirm('删除方案「' + s.value + '」？')) { self._delProfile(s.value); self._render(); }
+    };
+    /* ── 工作区切换 → 图层组合联动 ── */
     Array.prototype.forEach.call(document.querySelectorAll('#wb-ws-tabs .dc-tab[data-ws]'), function (el) {
       el.onclick = function () {
         var k = el.getAttribute('data-ws');
@@ -444,13 +628,15 @@ var WORKBENCH = {
         Array.prototype.forEach.call(document.querySelectorAll('#wb-layers input[data-layer]'), function (cb) {
           cb.checked = !!self._layers[cb.getAttribute('data-layer')];
         });
+        self._saveState();
         self._refreshLayers();
       };
     });
-    /* 图层勾选 → 地图标记层显示/隐藏 */
+    /* ── 图层勾选 → 地图标记层显示/隐藏 ── */
     Array.prototype.forEach.call(document.querySelectorAll('#wb-layers input[data-layer]'), function (cb) {
       cb.onchange = function () {
         self._layers[cb.getAttribute('data-layer')] = cb.checked;
+        self._saveState();
         self._refreshLayers();
       };
     });
@@ -462,11 +648,15 @@ var WORKBENCH = {
       };
     });
     /* 情报流 → 原文 */
+    this._bindFeed();
+    this._bindIndex();
+  },
+
+  _bindFeed: function () {
     Array.prototype.forEach.call(document.querySelectorAll('.wb-feed[data-url]'), function (row) {
       var u = row.getAttribute('data-url');
       if (u) row.onclick = function () { window.open(u, '_blank'); };
     });
-    this._bindIndex();
   },
 
   _bindIndex: function () {
@@ -497,7 +687,8 @@ var WORKBENCH = {
   _showIx: function () {
     var ix = this._ix;
     if (!ix) return;
-    var html = '<div class="wb-sec"><div class="wb-sh">当前读数</div><div class="wb-sv">' + ix.grade.t + '（' + ix.idx + '/100）——近 24h 真实预警 ' + ix.n + ' 条加权（核心区 ' + ix.coreN + ' · 涉华 ' + ix.cnN + '）</div></div>';
+    var hN = this._hours === 168 ? '7 天' : this._hours + ' 小时';
+    var html = '<div class="wb-sec"><div class="wb-sh">当前读数</div><div class="wb-sv">' + ix.grade.t + '（' + ix.idx + '/100）——近 ' + hN + ' 真实预警 ' + ix.n + ' 条加权（核心区 ' + ix.coreN + ' · 涉华 ' + ix.cnN + '）</div></div>';
     html += '<div class="wb-sec"><div class="wb-sh">加权构成（分国家贡献，降序）</div>';
     if (ix.rows.length) {
       var max = ix.rows[0].v;
@@ -508,7 +699,7 @@ var WORKBENCH = {
     } else {
       html += '<div class="wb-sv">近 24h 无预警数据</div>';
     }
-    html += '</div><div class="wb-sec"><div class="wb-sh">计算口径</div><div class="wb-sv">单条权重 = (核心区×5 : 普通×1) × (红3/橙2/黄1) × (涉华×1.5)，近 24h 窗口求和归一化映射五级。全部基于真实预警计算，零模拟成分。</div></div>';
+    html += '</div><div class="wb-sec"><div class="wb-sh">计算口径</div><div class="wb-sv">单条权重 = (核心区×5 : 普通×1) × (红3/橙2/黄1) × (涉华×1.5)，近 ' + hN + ' 窗口求和归一化映射五级。全部基于真实预警计算，零模拟成分。</div></div>';
     this._modal('海外利益安全指数 · 构成明细', html);
   }
 };
