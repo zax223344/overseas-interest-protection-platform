@@ -40,6 +40,7 @@ const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维�
 const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专项哨兵（2026-08-28：涉华受害/政变/外资审查等弱类补强，10分钟一轮） */
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
+const wmFeed = require('./wm-feed'); /* WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO领事警示/断网/疫情/新闻摘要，30分钟一轮） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -655,7 +656,7 @@ async function _integrityWatchdog() {
   try {
     const d0 = new Date(); d0.setHours(0, 0, 0, 0);
     const { rows } = await query(
-      "SELECT id, title, data_json->>'title_zh' AS tzh, data_json->>'_fromSource' AS fs FROM intel_data WHERE collect_time >= $1 ORDER BY id ASC",
+      "SELECT id, title, data_json->>'title_zh' AS tzh, data_json->>'_fromSource' AS fs, data_json->>'_sourceType' AS st, data_json->>'chinaRelated' AS cr FROM intel_data WHERE collect_time >= $1 ORDER BY id ASC",
       [d0]
     );
     if (!rows.length) return;
@@ -664,8 +665,12 @@ async function _integrityWatchdog() {
       const t = String(r.title || '');
       /* 删除名单 */
       if (_POST_BLOCK_RE.test(t + ' ' + String(r.tzh || ''))) { delBlocked.push(r.id); continue; }
-      /* 国内新闻 */
-      if (globalmedia._isDomesticChina && globalmedia._isDomesticChina(t + ' ' + String(r.tzh || ''))) { delDomestic.push(r.id); continue; }
+      /* 国内新闻
+       * 2026-08-31 豁免对齐（WM 走廊条目被误删根因）：入库闸 _preInsertGate 已给
+       * wm_feed+chinaRelated 条目加了国内豁免，但 watchdog 复扫没同步 → 中国走廊控制塔
+       * 4 条入库 30min 内被巡检当"国内混入"删除。两处判定必须同源豁免。 */
+      const _wmChina = r.st === 'wm_feed' && r.cr === 'true';
+      if (!_wmChina && globalmedia._isDomesticChina && globalmedia._isDomesticChina(t + ' ' + String(r.tzh || ''))) { delDomestic.push(r.id); continue; }
       /* 标题重复 */
       const k1 = _normTitleKey(t), k2 = _normTitleKey(r.tzh);
       if ((k1.length >= 10 && seen[k1]) || (k2.length >= 10 && seen[k2])) { delDup.push(r.id); continue; }
@@ -2437,6 +2442,26 @@ app.post('/api/gap-scheduler/run', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ===== WorldMonitor 数据接入哨兵手动触发端点（2026-08-31 Task #506） ===== */
+app.post('/api/wm-feed/run', async (req, res) => {
+  try {
+    if (Date.now() < _wmFeedBusyUntil) return res.json({ ok: false, error: '上一轮 WorldMonitor 采集尚未结束，请稍候' });
+    const r = await wmFeed.runWmFeed({});
+    const items = r.items || [];
+    let inserted = 0;
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 4); } catch (e) {}
+      items.forEach(it => {
+        try { ENTITY.enrich(it); it.interestLinked = true; } catch (e) {}
+        if (!it._sourceType) it._sourceType = 'wm_feed';
+      });
+      const res2 = await _ingestLinkedItems(items, 'WM-FEED', '（手动触发）');
+      inserted = (res2 && res2.inserted) || 0;
+    }
+    res.json({ ok: true, collected: items.length, inserted });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 /* ===== 海外核心安全威胁一分钟哨兵手动触发端点（2026-08-27） ===== */
 app.post('/api/core-threat/sweep', async (req, res) => {
   try {
@@ -3086,7 +3111,9 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    * 2026-08-28 豁免修正：cnsec 哨兵条目定义上即"海外涉华人员安全事件"（interestLinked+chinaRelated 双标），
    * 中文媒体报道的海外受害新闻（如"中国公民在尼日利亚被绑架"）此前被误判国内新闻拦杀——
    * CNSEC 9 候选 3 条被此闸误杀、涉华人员条目 7 天仅 22 条的根因。 */
-  const _cnsecExempt = it._cnsecWatch === true || it._sourceType === 'cnsec_watch';
+  const _cnsecExempt = it._cnsecWatch === true || it._sourceType === 'cnsec_watch'
+    || (it._sourceType === 'wm_feed' && it.chinaRelated === true); /* 2026-08-31：WM 中国决策信号/
+    走廊控制塔是涉华情报监测（chinaRelated 双标），非国内新闻；不加豁免会被国内闸误杀 4 条/日 */
   if (!_cnsecExempt && globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
   }
@@ -3102,13 +3129,19 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   /* 核心实体指纹：catch 洗稿式重复 */
   const cek = _coreEntityKey(it.title || it.title_zh);
   if (cek.length >= 15 && titleKeys.has('_cek:' + cek)) return { ok: false, code: ['entity-dup'] };
-  /* 事件签名 */
-  const sig = _eventSignature(it);
+  /* 事件签名
+   * 2026-08-31 快照豁免（WM-FEED 0 入库根因二）：战区/舰队/咽喉/走廊/决策信号是
+   * 状态型快照（每实体每日一条，合成 URL `worldmonitor.app/wm-snapshot/<entity>/<日期>` 幂等去重），
+   * 与新闻流共用事件签名空间必然互撞（US|strike|日 撞美空袭新闻 / Egypt|disruption|日 撞
+   * 苏伊士新闻）。快照 URL 自带日维度幂等，跳过 sig/语义两层查重；UCDP/警示等真实事件
+   * 条目（真实源 URL）照常全链查重。 */
+  const _wmSnapshot = it._sourceType === 'wm_feed' && /worldmonitor\.app\/wm-snapshot\//.test(String(it.url || ''));
+  const sig = _wmSnapshot ? null : _eventSignature(it);
   if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
   /* 语义级事件查重（2026-08-30 root-cause：跨措辞/跨通道/跨日变体绕过精确查重——
    * 海地屠杀 47 死 5 天 20+ 版本 / 斯里兰卡中国公民谋杀案三版本分签的同类问题根治。
    * 同事件已有 ≥2 独立源后全拒（保留前两源供多源印证），详见 _semanticEventDup 注释。 */
-  if (await _semanticEventDup(it)) return { ok: false, code: ['event-sig-dup'] };
+  if (!_wmSnapshot && await _semanticEventDup(it)) return { ok: false, code: ['event-sig-dup'] };
   /* 事件簇产量帽（2026-08-29）：同国+同类事件当日变体超 12 条拒收（防单一事件刷屏） */
   if (!_eventClusterOk(it)) { _gateAudit('入库闸', 'event-flood', it.title); return { ok: false, code: ['event-flood'] }; }
   /* 类别结构帽（2026-08-29）：安全类当日占比>45%时，非涉华非重大安全类降池（让位弱类补缺） */
@@ -3126,6 +3159,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
       6h 印证窗口对社交帖系统性误杀；用户指令要求社交数据能进预警中心 */
     || it._sourceType === 'project_watch' /* 2026-08-29：重点项目动态是采集核心（审计维度③），
       项目新闻多为小众单源（CPEC 工作组会议全网 1-2 家），6h 印证窗口恰恰杀掉的就是这类高价值项目情报 */
+    || _wmSnapshot /* 2026-08-31：WM 状态快照（战区/舰队/咽喉/走廊）是 WorldMonitor 独家聚合，
+      天然等不到"其他独立源印证"；时效由 trustPubDate 白名单+URL 日幂等保证 */
     || _isCorePriorityText(it);
   if (!_corePriority && it._sourceType !== 'wechat_oa' && it._sourceType !== 'wechat_lead') {
     const age = _getEventAgeMs(it);
@@ -3694,7 +3729,12 @@ function _regionToCountry(t) {
 function _eventSignature(it) {
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   const tl = t.toLowerCase();
-  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|flood|earthquake|murder|arrest|massacre|袭击|爆炸|死亡|遇难|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾|洪水|地震|恐袭|劫持|政变|谋杀|逮捕|被捕|屠杀|坠机|沉船|判决|释放/g;
+  /* 2026-08-31 领域词补充（WM-FEED 0 入库根因）：疫情/断网/领事咨询类条目天然无
+   * 原 evRe 事件词 → 签名退化为「国||日期」，与库内同国同日普通新闻跨通道误撞全灭。
+   * 补 outbreak/epidemic/outage/disruption/advisory 及中文对应词：
+   *  - 签名带事件类型后不再与「国||日期」退化签名撞（误杀消除）
+   *  - 同类事件不同来源仍含同样领域词 → 互撞去重精度不变（疫情多源变体仍只留首发） */
+  const evRe = /attack|blast|bomb|explosion|killed|kidnap|hostage|shoot|strike|clash|raid|ambush|crash|collapse|sanction|tariff|protest|riot|coup|fire|flood|earthquake|murder|arrest|massacre|outbreak|epidemic|pandemic|outage|disruption|advisory|袭击|爆炸|死亡|遇难|绑架|枪击|制裁|抗议|冲突|炮击|撤离|火灾|洪水|地震|恐袭|劫持|政变|谋杀|逮捕|被捕|屠杀|坠机|沉船|判决|释放|疫情|爆发|传染病|断网|中断|预警/g;
   const evSet = new Set();
   let mm; while ((mm = evRe.exec(tl)) !== null) evSet.add(mm[0]);
   const ev = Array.from(evSet).sort().join('+') || '';
@@ -3902,7 +3942,9 @@ function _isFreshEnough(it) {
    * 2026-08-30 增补 gap_scheduler：缺口调度器补的是国别/类别覆盖缺口，经济/制裁/政局类正文高频
    * 回溯引用 1-2 天前的事件日期（"周三美联储宣布…"），事件日期提取把刚发布的报道全判旧闻——
    * 实测 15 轮全 0 入库（超时拒主导，含发布仅 3h 的新鲜条目被正文旧日期误杀）。以发布时间为准绳。 */
-  const trustPubDate = it._sourceType === 'wechat_oa' || it._sourceType === 'gap_scheduler';
+  const trustPubDate = it._sourceType === 'wechat_oa' || it._sourceType === 'gap_scheduler' || it._sourceType === 'wm_feed';
+  /* 2026-08-31 增补 wm_feed：WorldMonitor 接入哨兵。UCDP 冲突事件的 dateStart 是事件
+   * 发生日（常比数据更新晚 1-3 天），新闻摘要 publishedAt 为可靠发布时间——以发布时间为准绳。 */
 
   /* 优先从标题+正文提取事件发生时间 */
   const evtDate = trustPubDate ? null : _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || new Date());
@@ -4160,7 +4202,8 @@ async function _ingestLinkedItems(items, tag, note) {
       'CORE-THREAT-MANUAL': 'core_threat_watch', 'CHANNEL-WATCH': 'channel_watch', 'COMPLIANCE-WATCH': 'compliance_watch',
       'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
-      'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler'
+      'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler',
+      'WM-FEED': 'wm_feed'
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
@@ -5909,6 +5952,30 @@ async function _runConsularWatch() {
   finally { _consularWatchBusyUntil = 0; }
 }
 
+/* ===== WorldMonitor.app 数据接入哨兵调度（2026-08-31 Task #506）=====
+ * 每 30 分钟：UCDP 武装冲突 + FCDO 领事警示 + 国别断网 + 疫情 + 新闻摘要，
+ * 匿名 session token（12h 自动刷新）+ 描述性 UA + 串行礼貌限速（其 free 层节奏 5-15min）。 */
+let _wmFeedBusyUntil = 0;
+async function _runWmFeed() {
+  if (Date.now() < _wmFeedBusyUntil) return;
+  _wmFeedBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await wmFeed.runWmFeed({});
+    const items = r.items || [];
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) {}
+    items.forEach(it => {
+      try { ENTITY.enrich(it); it.interestLinked = true; } catch (e) {}
+      if (!it._sourceType) it._sourceType = 'wm_feed';
+      /* data_type 已在 wm-feed.js 权威指定（military_conflicts/security_events/
+       * infrastructure/osint_intel + _forceDataType），新闻摘要类留给通用分类器 */
+    });
+    const res = await _ingestLinkedItems(items, 'WM-FEED', '');
+    if (res && res.inserted) console.log('[WM-FEED] ✅ 新入库 WorldMonitor 情报 ' + res.inserted + ' 条');
+  } catch (e) { console.warn('[WM-FEED] 采集失败:', e.message); }
+  finally { _wmFeedBusyUntil = 0; }
+}
+
 /* ===== 核心威胁专项哨兵调度（2026-08-28 用户指令：十大核心威胁重点采集）=====
  * 体检实测四类零产出（涉华袭击/涉华绑架/政变/外资审查），本哨兵专用查询矩阵补强。
  * 每 10 分钟一轮；条目强制 data_type 按内容分类（恐袭→terror_events/制裁→sanctions_data/
@@ -6108,6 +6175,9 @@ function startGlobalMediaCron() {
   // 重点项目与TIER1弱国哨兵（2026-08-29 审计补强：BRI/项目命中+零覆盖重点国），启动8分钟后首跑
   setTimeout(_runProjectWatch, 8 * 60 * 1000);
   setInterval(_runProjectWatch, 30 * 60 * 1000);
+  // WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO警示/断网/疫情/新闻摘要），启动9分钟后首跑
+  setTimeout(_runWmFeed, 9 * 60 * 1000);
+  setInterval(_runWmFeed, 30 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min */
