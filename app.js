@@ -16136,7 +16136,7 @@ const FORECAST={
         (sc.drivers.length?'<div style="padding:6px 8px;background:var(--bg2);border-radius:6px;margin-bottom:8px;font-size:10px;color:var(--text3)">📡 驱动信号：'+sc.drivers.join('；')+'</div>':'')+
         (sc.affected.length?'<div style="padding:8px;background:var(--bg2);border-radius:6px;margin-bottom:8px"><strong style="font-size:11px;color:var(--cyan)">🏢 波及项目（实查）</strong><div style="margin-top:4px">'+sc.affected.map(function(e){return '<span style="display:inline-block;padding:2px 6px;background:rgba(0,212,255,0.1);border-radius:4px;font-size:10px;margin:2px">'+e+'</span>';}).join('')+'</div></div>':'')+
         '<div style="padding:8px;background:var(--orange-bg);border-radius:6px"><strong style="font-size:11px;color:var(--orange)">📋 应对措施</strong><ol style="margin:4px 0 0;padding-left:18px;font-size:11px;line-height:1.7">'+sc.actions.map(function(a){return '<li>'+a+'</li>';}).join('')+'</ol></div>'+
-        '<div id="scn-ai-'+i+'" style="margin-top:8px"></div>'+
+        '<div id="scn-ai-'+i+'" style="margin-top:8px">'+((self._scnAiCache&&self._scnAiCache[r.name])||'')+'</div>'+
         '</div>';
     });
     html+='</div>';
@@ -16149,6 +16149,7 @@ const FORECAST={
   _scenarioPath(idx,btn){
     var sc=this._scnRows&&this._scnRows[idx]; if(!sc)return;
     var box=document.getElementById('scn-ai-'+idx); if(!box)return;
+    var self=this;
     if(btn){btn.disabled=true;btn.textContent='⏳ 推演中…';}
     box.innerHTML='<div style="padding:8px;background:rgba(179,102,255,0.06);border-radius:6px;font-size:11px;color:var(--purple)">Kimi 推演发展路径中（约30-90秒）…</div>';
     var tok=''; try{ tok=(typeof APIClient!=='undefined'&&APIClient.getToken)?APIClient.getToken():(localStorage.getItem('orps_token')||''); }catch(e){}
@@ -16158,7 +16159,12 @@ const FORECAST={
       .then(function(res){ var j=res.j||{};
         if(res.status===200&&j.ok){
           var txt=String(j.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\*\*([^*]+)\*\*/g,'<strong style="color:var(--cyan)">$1</strong>').replace(/\u000A/g,'<br>');
-          box.innerHTML='<div style="padding:10px;background:rgba(179,102,255,0.06);border:1px solid rgba(179,102,255,0.25);border-radius:8px;font-size:11px;line-height:1.8;color:var(--text2)"><strong style="color:var(--purple)">🤖 AI 路径推演（'+(j.model||'')+'）</strong><br>'+txt+'</div>';
+          var html='<div style="padding:10px;background:rgba(179,102,255,0.06);border:1px solid rgba(179,102,255,0.25);border-radius:8px;font-size:11px;line-height:1.8;color:var(--text2)"><strong style="color:var(--purple)">🤖 AI 路径推演（'+(j.model||'')+'）</strong><br>'+txt+'</div>';
+          /* 写缓存：重绘 renderScenario 时自动回填，推演结果不再被 30s 轮询清空 */
+          self._scnAiCache=self._scnAiCache||{};
+          self._scnAiCache[sc.country]=html;
+          var box=document.getElementById('scn-ai-'+idx);
+          if(box) box.innerHTML=html;
         }else{
           box.innerHTML=res.status===401?'<div style="padding:8px;background:var(--orange-bg);border-radius:6px;font-size:11px;color:var(--orange)">⚠️ 登录已过期，请重新登录 <button class="btn sm" style="font-size:9px;padding:1px 6px" onclick="location.reload()">重新登录</button></div>':'<div style="padding:8px;background:var(--red-bg);border-radius:6px;font-size:11px;color:var(--red)">⚠️ '+(j.error||'推演失败')+'</div>';
         }
@@ -16235,13 +16241,15 @@ const FORECAST={
       '<div style="font-size:12px;line-height:1.7;color:var(--text2)">🎓 <b>AI 专家团研判</b> · 四位 AI 专家（安全/外交/经贸/风控）基于系统实时采集数据会商输出。<span style="color:var(--text3)">内容由大模型生成、非真人专家意见，供研判参考。</span></div>'+
       '<button type="button" class="btn sm primary" onclick="FORECAST._expertPanel(this);event.stopPropagation();return false;" style="font-size:11px">🤖 开始 AI 专家团会商</button></div></div>';
     html+='<div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">';
+    var _self=this;
     PERSONAS.forEach(function(pp){
       html+='<div class="card" style="border-left:3px solid '+pp.color+'">'+
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
         '<div style="width:40px;height:40px;border-radius:50%;background:rgba(179,102,255,0.12);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">'+pp.icon+'</div>'+
         '<div style="flex:1"><div style="font-weight:700;font-size:13px">'+pp.key+' <span style="font-size:9px;color:var(--purple);border:1px solid rgba(179,102,255,0.4);border-radius:8px;padding:0 5px;margin-left:4px">AI</span></div>'+
         '<div class="text-xs text-muted">'+pp.brief+'</div></div></div>'+
-        '<div id="expert-ai-'+pp.key+'" style="padding:10px;background:var(--bg2);border-radius:8px;font-size:12px;line-height:1.7;color:var(--text3);min-height:56px">点击「开始 AI 专家团会商」生成该领域研判…</div>'+
+        '<div id="expert-ai-'+pp.key+'" style="padding:10px;background:var(--bg2);border-radius:8px;font-size:12px;line-height:1.7;color:var(--text3);min-height:56px">'+
+        ((_self._expertAiCache&&_self._expertAiCache[pp.key])||'点击「开始 AI 专家团会商」生成该领域研判…')+'</div>'+
         '</div>';
     });
     html+='</div>';
@@ -16256,10 +16264,16 @@ const FORECAST={
   },
 
   /* AI 专家团会商（一次调用产出四位专家意见，按标记分派到卡片） */
+  /* ===== AI 结果重绘保全（2026-08-30 root fix）=====
+   * renderExpert/renderScenario 会被 30s 实时数据轮询全量重绘（el.innerHTML=html），
+   * AI 会商/路径推演结果此前只写 DOM 不留缓存——用户等 30-90 秒出的结果在
+   * 下一次重绘瞬间被清回占位文本（用户实测"点没有用"的核心元凶）。
+   * 修复：成功结果写入 _expertAiCache/_scnAiCache，重绘时自动回填。 */
   _expertPanel(btn){
     if(btn){btn.disabled=true;btn.textContent='⏳ 会商中…';}
     var boxes=document.querySelectorAll('[id^="expert-ai-"]');
     boxes.forEach(function(b){ b.innerHTML='<span style="color:var(--purple)">Kimi 专家团研判中（约30-90秒）…</span>'; });
+    var self=this;
     var d=null; try{ if(typeof FORESEE!=='undefined') d=FORESEE.compute(); }catch(e){}
     var ds=(typeof SITUATION!=='undefined'&&SITUATION._dailyStats)||{};
     var focus=d?d.high.concat(d.watch).slice(0,10).map(function(r){ return {name:r.name,cur:r.cur,pred:r.pred,r3:r.r3,red:r.red,orange:r.orange,domType:r.domDim}; }):[];
@@ -16274,13 +16288,16 @@ const FORECAST={
         }
         var text=String(j.text||'');
         ['安全态势专家','外交地缘专家','经贸合规专家','项目风控专家'].forEach(function(key){
-          var box=document.getElementById('expert-ai-'+key);
-          if(!box)return;
           var m=text.split('【'+key+'】')[1];
           if(m){ var next=m.indexOf('【'); if(next>0) m=m.slice(0,next); }
           if(!m) m='（本次输出未包含该专家段落）';
-          box.innerHTML=m.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\*\*([^*]+)\*\*/g,'<strong style="color:var(--cyan)">$1</strong>').replace(/\u000A/g,'<br>')+
+          var html=m.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\*\*([^*]+)\*\*/g,'<strong style="color:var(--cyan)">$1</strong>').replace(/\u000A/g,'<br>')+
             '<div style="margin-top:6px;font-size:9px;color:var(--text3)">'+(j.model||'')+' · '+String(j.at||'').replace('T',' ').slice(0,19)+'</div>';
+          /* 写缓存：下一次实时数据重绘 renderExpert 时自动回填，结果不再丢失 */
+          self._expertAiCache=self._expertAiCache||{};
+          self._expertAiCache[key]=html;
+          var box=document.getElementById('expert-ai-'+key);
+          if(box) box.innerHTML=html;
         });
       })
       .catch(function(e){ boxes.forEach(function(b){ b.innerHTML='<span style="color:var(--red)">⚠️ 网络错误：'+e.message+'</span>'; }); })

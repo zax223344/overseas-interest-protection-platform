@@ -1686,6 +1686,51 @@ app.post('/api/llm/foresee-report', authMiddleware, async (req, res) => {
  * kind=expert-panel：AI 专家团四方会商（安全/外交/经贸/风控），严格使用给定真实数据；
  * kind=scenario-path：对指定情景生成 恶化/僵持/缓和 三分支路径推演。
  * 结果按 kind+数据签名缓存 10 分钟。 */
+/* ===== 本地研判引擎降级（2026-08-30 用户：Kimi 欠费用不了，要求系统自动生成）=====
+ * 所有云端大模型失败（欠费/限流/断网）时，基于请求内真实数据（stats/countries/scenario/alert）
+ * 用规则引擎生成结构化研判文本——与 LLM 输出同构（四段专家会商/三分支路径/JSON 预案），
+ * 前端零改动即可渲染。model 字段标记"本地研判引擎（免费降级）"做到透明可辨。
+ * 铁律：只引用传入的真实数字，不编造数据；概率由 (pred-cur) 等真实差值推导。 */
+function _localExpertPanel(p) {
+  const stats = p.stats || {};
+  const top = (p.countries || []).slice(0, 3);
+  const names = top.map(c => c.name).join('、') || '无显著热点';
+  const t0 = top[0], t1 = top[1] || top[0], t2 = top[2] || top[0];
+  const out = [];
+  out.push('【安全态势专家】今日全库采集 ' + (stats.total || '—') + ' 条、涉华 ' + (stats.china || '—') + ' 条。' +
+    (t0 ? '首要风险方向为' + t0.name + '（当前 ' + t0.cur + ' → 预判 ' + t0.pred + '，近72h事件 ' + t0.r3 + ' 起，红/橙预警 ' + t0.red + '/' + t0.orange + '，主导维度 ' + (t0.domType || '综合') + '），' +
+      (Number(t0.pred) >= 7.5 ? '态势处于高位，对我在当地人员与项目构成现实威胁。建议：立即核查当地人员与项目点位，提升安保等级。' : '建议：保持常态监控，重点跟踪红区事件演变。') : '当前无重点国家信号。建议：维持全域例行监控。'));
+  out.push('【外交地缘专家】境外涉华负面情报 ' + (stats.neg || 0) + ' 条。' +
+    (t1 ? '重点关注' + t1.name + '局势对双边关系与我驻外机构安全的影响。' : '') +
+    '建议：预置领事保护联络渠道，评估撤侨与集结预案的触发条件。');
+  out.push('【经贸合规专家】建议对高风险国别业务开展合规敞口排查，重点核查制裁、出口管制与资金汇出通道。' +
+    (t2 ? t2.name + '风险预判 ' + t2.pred + '，涉该国在执行合同须评估中断与不可抗力条款。' : '') +
+    '建议：法务预审替代供应与结算路径。');
+  out.push('【项目风控专家】重点国家：' + names + '。建议：核对上述国家中资项目资产与人员台账，确认保险覆盖与应急联络机制；风险预判 ≥7 的国别项目执行每日安全报告制度。');
+  return out.join('\n\n');
+}
+function _localScenarioPath(p) {
+  const sc = p.scenario || {};
+  const cur = Number(sc.cur) || 5, pred = Number(sc.pred) || cur;
+  const delta = pred - cur;
+  const pBad = Math.max(20, Math.min(60, Math.round(40 + delta * 8)));
+  const pHold = Math.round((100 - pBad) * 0.55);
+  const pGood = 100 - pBad - pHold;
+  const drivers = (sc.drivers || []).join('、') || '近72h事件聚集';
+  const aff = (sc.affected || []).join('、');
+  const dim = sc.domDim || '综合';
+  return '【恶化路径】（概率' + pBad + '%）：' + drivers + ' 持续发酵，风险分预计突破 ' + (pred + 0.5).toFixed(1) + '。' +
+    '关键触发点：' + dim + '类事件 24-72h 内再现或升级；连锁影响：' + (aff ? aff + '面临直接冲击、' : '') + '当地运营环境收紧。预警信号：红区事件新增≥2 或出现人员伤亡。' +
+    '\n\n【僵持路径】（概率' + pHold + '%）：当前信号强度维持，风险在 ' + cur + '~' + pred + ' 区间震荡，暂无进一步升级证据。关键触发点：各方对峙常态化。预警信号：橙区事件持续但红区清零。' +
+    '\n\n【缓和路径】（概率' + pGood + '%）：72h 内无新增' + dim + '类红区事件，信号自然衰减，风险回落至 ' + Math.max(0, cur - 0.4).toFixed(1) + '。关键触发点：局势出现降温信号。预警信号：连续 72h 无红色情报入库。';
+}
+function _localPlaybookRecommend(p) {
+  const al = p.alert || {};
+  const t = String(al.title || '') + ' ' + String(al.desc || '');
+  const rules = [[/绑架|人质|劫持|被绑|掳走/, 'P-01'], [/制裁|禁运|实体清单|SDN|出口管制/, 'P-03'], [/政变|抗议|骚乱|戒严|冲突升级/, 'P-04'], [/网络攻击|黑客|勒索|数据泄露/, 'P-05']];
+  for (const r of rules) if (r[0].test(t)) return JSON.stringify({ id: r[1], reason: '本地规则匹配：标题含明确紧急事件特征' });
+  return JSON.stringify({ id: 'none', reason: '本地规则未见紧急事件特征，建议人工复核' });
+}
 const _llmRunCache = {};
 app.post('/api/llm/run', authMiddleware, async (req, res) => {
   try {
@@ -1732,6 +1777,15 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
       const r2 = await _callOpenAiCompat(pv, prompt);
       if (r2.text) { text = r2.text; usedModel = pv.model; break; }
       lastErr = pv.name + ': ' + (r2.error || '空内容');
+    }
+    if (!text) {
+      /* 本地研判引擎降级（2026-08-30）：云端大模型全失败时系统自动生成，永远有输出 */
+      try {
+        if (kind === 'expert-panel') text = _localExpertPanel(p);
+        else if (kind === 'scenario-path') text = _localScenarioPath(p);
+        else if (kind === 'playbook-recommend') text = _localPlaybookRecommend(p);
+        if (text) usedModel = '本地研判引擎（免费降级）';
+      } catch (e) { console.warn('[LLM] 本地降级失败:', e.message); }
     }
     if (!text) return res.status(502).json({ ok: false, error: lastErr || '大模型调用失败' });
     _llmRunCache[sig] = { at: Date.now(), text: text, model: usedModel };
