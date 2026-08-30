@@ -3374,19 +3374,16 @@ function _dominantQuotaOk(it) {
   return _domCounts.by[cap] <= DOMINANT_DAILY_CAP[cap];
 }
 
-/* ===== 类别结构帽（2026-08-29 用户指令：全球均衡化、全类别化，采集有重点但不偏科）=====
+/* ===== 类别结构帽 → 已退役为观察器（2026-08-30 用户铁律：采集不设上限，只设下限）=====
  * 7 天实测：安全类（恐袭/军事/地缘/社会动荡/治安）占 ~72%，新兴类（网络/卫生/基建/灾害）仅 ~11%。
- * 当安全类当日占比 > 45%（且当日总量 ≥ 120，防凌晨冷启动误判）时，非涉华、非重大事件的
- * 安全类新条目降 sidepool（reason=cat-structure），把入库席位让给缺口调度器补的弱类。
- * 豁免（重点优先铁律）：①涉华条目（chinaRelated 或标题命中涉华词）永远放行；
- * ②重大事件（伤亡≥5/绑架/劫持/撤侨/政变/核事故）放行；③非安全类条目不受限。 */
+ * 旧机制：安全类占比>45% 时"砍"安全类新条目（降 sidepool）——本质是用拒绝做均衡 = 变相上限。
+ * 2026-08-30 用户铁律「采集的数据不设上限，设下限，500 目标是下限」：
+ *   ① 拒绝式结构帽永久停用（任何条目不再因结构占比被拒）；
+ *   ② 结构均衡改由缺口调度器"补弱"实现——弱类主动检索补齐，安全类照常入库不设限；
+ *   ③ 重点优先铁律不变：涉华/重大事件本来就不受帽限制，现在所有真实安全情报也全额入库。
+ * _catStructRefresh/_catStructDb 保留：供 GAP-SCHED 观察安全类占比（占比高 → 加大弱类补采力度）。 */
 const _SEC_STRUCT_TYPES = ['terror_events', 'military_conflicts', 'geopolitical_intel', 'social_unrest', 'security_events'];
 const SEC_STRUCT_SHARE_MAX = 0.45;
-/* 2026-08-30 稳定化：120→300 水位线。实测 08-30（周日）低流量日：安全类新闻先到、占比
- * 早上即超 45%，120 水位让结构帽全天开闸，单轮砍掉 45-65 条 → 总量越砍越低 → 占比更超线，
- * 形成"砍量→总量低→占比更超线"自锁（当天 196 条 vs 平日 400+，领导观感"采集量崩了"）。
- * 修复原则：总量优先于结构、重点优先于均衡——当日总量达 300（500 目标的六成）后才开帽调结构，
- * 低流量日先把量保住，缺口调度器照常补弱类，结构靠"补弱"而非"砍强"来实现。 */
 const SEC_STRUCT_MIN_TOTAL = 300;
 let _catStructDb = { date: '', total: 0, sec: 0, t: 0 };
 async function _catStructRefresh() {
@@ -3400,21 +3397,8 @@ async function _catStructRefresh() {
   } catch (e) { /* DB 异常时不拦数据 */ }
 }
 async function _catStructureOk(it) {
-  try {
-    if (_catStructDb.date !== _todayKey() || Date.now() - _catStructDb.t > 10 * 60 * 1000) await _catStructRefresh();
-    if (_catStructDb.total < SEC_STRUCT_MIN_TOTAL) return true;
-    if (_catStructDb.sec / _catStructDb.total <= SEC_STRUCT_SHARE_MAX) return true;
-    /* 该条目将被归入的类别（与入库时同源判定）非安全类 → 不受限 */
-    const dt = (it._forceDataType && it.data_type) ? it.data_type : _classifyIntelType(it);
-    if (_SEC_STRUCT_TYPES.indexOf(dt) < 0) return true;
-    /* 涉华豁免（重点优先） */
-    const t = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '').slice(0, 300);
-    if (it.chinaRelated || /中国|中资|中企|中方|华人|华侨|中国公民|留学生|一带一路|Chinese|China|CPEC/i.test(t)) return true;
-    /* 重大事件豁免 */
-    const dm = t.match(/(\d+)\s*(?:人|名)?\s*(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
-    if ((dm && parseInt(dm[1] || dm[2], 10) >= 5) || /绑架|劫持|人质|撤侨|政变|核事故|核泄漏|kidnap|hostage|evacuat|coup d'état|\bcoup\b/i.test(t)) return true;
-    return false;
-  } catch (e) { return true; }
+  /* 2026-08-30 退役：永远放行。结构均衡由 GAP-SCHED 补弱实现，绝不砍强。 */
+  return true;
 }
 
 /* ===== 事件时间提取（2026-08-20 用户指令：不要只看标题生成时间，要从正文/标题提取事件发生时间）=====
@@ -4016,7 +4000,7 @@ function _logDailyStats() {
   const chinaGap = Math.max(0, 80 - s.china);
   const chinaCap = Math.max(0, s.china - 100);
   const negGap = Math.max(0, 50 - s.chinaNegative);
-  console.log('[DAILY STATS] 今日 ' + s.date + ' | 总量 ' + s.total + '（距≥500差' + totalGap + '）| 涉华 ' + s.china + '（目标80-100，差' + chinaGap + '，超' + chinaCap + '）| 境外涉华负面 ' + s.chinaNegative + '（目标≥50，差' + negGap + '）| 已跑' + s.rounds + '轮');
+  console.log('[DAILY STATS] 今日 ' + s.date + ' | 总量 ' + s.total + '（下限500，还差' + totalGap + '，不设上限）| 涉华 ' + s.china + '（目标80-100，差' + chinaGap + '，超' + chinaCap + '）| 境外涉华负面 ' + s.chinaNegative + '（目标≥50，差' + negGap + '）| 已跑' + s.rounds + '轮');
 }
 function _dedupByUrl(arr) {
   const seen = new Set();
@@ -5500,6 +5484,8 @@ const _NONLATIN_RE = /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0E0
  * ① 目标矩阵：国家梯队（TIER1 ≥12 条/国/日、TIER2 ≥6 条/国/日——54 国底数库利益密度分层）
  *   × 12 大类别（每类 ≥30 条/日；地缘兜底类不设目标——未命中信号全归它，量永远最大）；
  * ② 每轮统计当日入库矩阵，算缺口率（(目标-实际)/目标），优先补最空的格子（自限防过采）；
+ *   2026-08-30 地板驱动：总量未达 500 下限时自动加力（补国/补类翻倍、单轮回填放宽），
+ *   矩阵全绿但地板未达时转地板补采模式——采集只设下限，不设上限；
  * ③ 国别缺口：GDELT sourcecountry:<FIPS 码> × 当前最缺类别事件词矩阵 定向采集（FIPS→英文国名双试 + AP 兜底）；
  *   类别缺口：GNews 原子查询（CAT_GNEWS_PACKS，已验证稳定）→ GDELT → AP 三级兜底；
  * ④ 全部走 _ingestLinkedItems 标准管线（_sourceType='gap_scheduler'，全套闸门生效），
@@ -5559,7 +5545,6 @@ async function _runGapScheduler() {
       }
     }
     countryGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
-    const pickCountries = countryGaps.slice(0, 3);
     /* ③ 类别缺口（缺口率排序） */
     const catGaps = [];
     for (const ct of Object.keys(GAP_CAT_KEYWORDS)) {
@@ -5568,8 +5553,30 @@ async function _runGapScheduler() {
       if (n < GAP_CAT_TARGET) catGaps.push({ ct, n, target: GAP_CAT_TARGET, rate: (GAP_CAT_TARGET - n) / GAP_CAT_TARGET });
     }
     catGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
-    const pickCats = catGaps.slice(0, 3);
-    if (!pickCountries.length && !pickCats.length) { console.log('[GAP-SCHED] 目标矩阵全达标，本轮空闲'); return; }
+    /* 2026-08-30 用户铁律「采集的数据不设上限，设下限，500 目标是下限」：
+     * ① 总量未达 500 地板 → 调度器自动加力：补国 3→6、补类 3→6、单轮回填 8→14；
+     * ② 安全类占比 > 45% → 弱类再多补 2 格稀释结构（纯补弱，绝不砍强）；
+     * ③ 矩阵全绿但地板未达 → 不空闲，转"地板补采"模式（最空类别 × 最少 TIER1 国继续采）。 */
+    const dayTotal = Object.keys(catN).reduce((s, k) => s + catN[k], 0);
+    const secN = _SEC_STRUCT_TYPES.reduce((s, ct) => s + (catN[ct] || 0), 0);
+    const secShare = dayTotal ? secN / dayTotal : 0;
+    const shortOfFloor = Math.max(0, 500 - dayTotal);
+    const nCountry = shortOfFloor > 0 ? 6 : 3;
+    const nCat = (shortOfFloor > 0 ? 6 : 3) + (secShare > SEC_STRUCT_SHARE_MAX ? 2 : 0);
+    const roundCap = shortOfFloor > 0 ? 14 : 8;
+    let pickCountries = countryGaps.slice(0, nCountry);
+    let pickCats = catGaps.slice(0, nCat);
+    if (!pickCountries.length && !pickCats.length) {
+      if (dayTotal >= 500) { console.log('[GAP-SCHED] 目标矩阵全达标且已达下限500，本轮空闲'); return; }
+      /* 地板补采模式 */
+      pickCats = Object.keys(GAP_CAT_KEYWORDS).filter(ct => ct !== 'geopolitical_intel')
+        .sort((a, b) => (catN[a] || 0) - (catN[b] || 0)).slice(0, 3)
+        .map(ct => ({ ct, n: catN[ct] || 0, target: GAP_CAT_TARGET, rate: 0 }));
+      pickCountries = INTEREST_BASE.COUNTRY_TIERS.TIER1.slice(0, 20)
+        .map(x => ({ cn: x.cn, iso: x.iso, tier: 'TIER1', n: Object.keys(countryN).reduce((s, k) => (k === x.cn || k.indexOf(x.cn) >= 0 || x.cn.indexOf(k) >= 0 ? s + countryN[k] : s), 0), target: GAP_COUNTRY_TARGET.TIER1, rate: 0 }))
+        .sort((a, b) => a.n - b.n).slice(0, 3);
+      console.log('[GAP-SCHED] 矩阵全绿但总量 ' + dayTotal + ' < 下限500，启动地板补采模式');
+    }
     const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
     let fetched = 0, inserted = 0, rejected = 0;
     const titleKeysPre = await _getRecentTitleKeys();
@@ -5604,7 +5611,7 @@ async function _runGapScheduler() {
         it.interestLinked = true;
         batch.push(it);
         cap++;
-        if (cap >= 8) break;   /* 单缺口单轮回填上限，均衡铺开 */
+        if (cap >= roundCap) break;   /* 单缺口单轮回填上限（地板未达500时自动放宽到14），均衡铺开 */
       }
       return batch;
     };
@@ -5663,7 +5670,7 @@ async function _runGapScheduler() {
       });
       if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + (pack ? pack.name : g.ct) + '）'); inserted += (res && res.inserted) || 0; }
     }
-    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
+    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限500，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
   } catch (e) { console.warn('[GAP-SCHED] 采集失败:', e.message); }
   finally { _gapSchedBusyUntil = 0; }
 }
