@@ -15903,7 +15903,36 @@ const FORECAST={
     var avgConf=Math.round(all.reduce(function(s,p){return s+p.confidence;},0)/all.length);
     var topRise=all.slice().sort(function(a,b){return (b.p6-b.cur)-(a.p6-a.cur);})[0];
     var detRate=M.total?Math.round(M.detailed/M.total*100):0;
-    var html='<div class="stat-grid mb-12" style="grid-template-columns:repeat(4,1fr)">'+
+    /* ===== 本期研判结论（2026-08-30 实战化改造：一句话结论 + 全局风险分级 + 行动建议）===== */
+    var _top3=all.slice().sort(function(a,b){return b.p6-a.p6;}).slice(0,3);
+    var _gLv=(_top3.length&&_top3[0].p6>=8)?'red':(_top3.length&&_top3[0].p6>=6.5)?'orange':(upCount>=Math.max(3,Math.ceil(all.length*0.3)))?'yellow':'blue';
+    var _gLvTxt={red:'红色 · 高危',orange:'橙色 · 偏高',yellow:'黄色 · 关注',blue:'蓝色 · 平稳'}[_gLv];
+    var _gCol={red:'var(--red)',orange:'var(--orange)',yellow:'var(--yellow)',blue:'var(--cyan)'}[_gLv];
+    var _cnSet={};
+    try{ (typeof ENTERPRISES!=='undefined'?ENTERPRISES:[]).forEach(function(e){ (e.countries||[]).forEach(function(c){_cnSet[c]=1;}); }); }catch(e){}
+    var _cnTop=_top3.filter(function(p){return _cnSet[p.country];});
+    var _concl='未来 6 个月，'+all.length+' 个监测国中 '+upCount+' 国风险上行、'+downCount+' 国下降；最高风险方向为 '+
+      (_top3.length?_top3.map(function(p){return p.country+'（预测 '+p.p6.toFixed(1)+'）';}).join('、'):'—')+'；'+
+      (_cnTop.length?'其中涉我利益集中方向：'+_cnTop.map(function(p){return p.country;}).join('、')+'，须优先部署防范。':'涉我利益集中方向暂未出现高风险信号。');
+    var _advHtml=_top3.slice(0,3).map(function(p,i){
+      var col=p.p6>=8?'var(--red)':p.p6>=6.5?'var(--orange)':'var(--yellow)';
+      var short=String(p.advice||'维持例行研判').split('；')[0];
+      return '<div onclick="FORECAST.explain(\''+String(p.country).replace(/'/g,"\\'")+'\')" style="display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:11px;line-height:1.6;color:var(--text1)" onmouseover="this.style.background=\'rgba(0,212,255,0.06)\'" onmouseout="this.style.background=\'transparent\'">'+
+        '<span style="flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:800;color:'+col+';border:1px solid '+col+'">'+(i+1)+'</span>'+
+        '<span><b>'+esc(p.country)+'</b>：'+esc(short)+'</span></div>';
+    }).join('');
+    var html='<div class="card mb-12" style="border-left:4px solid '+_gCol+';padding:14px 16px">'+
+      '<div style="display:flex;gap:16px;align-items:stretch;flex-wrap:wrap">'+
+      '<div style="min-width:120px;display:flex;flex-direction:column;justify-content:center;gap:6px">'+
+        '<div style="font-size:15px;font-weight:800;color:'+_gCol+';border:1px solid '+_gCol+';border-radius:8px;padding:8px 10px;text-align:center;letter-spacing:1px">'+_gLvTxt+'</div>'+
+        '<div style="font-size:9px;color:var(--text3);text-align:center">全局风险分级 · 均置信 '+avgConf+'%</div></div>'+
+      '<div style="flex:1.2;border-left:1px solid rgba(0,212,255,0.12);border-right:1px solid rgba(0,212,255,0.12);padding:0 14px;display:flex;flex-direction:column;justify-content:center">'+
+        '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">本期研判结论</div>'+
+        '<div style="font-size:13px;font-weight:600;line-height:1.8;color:var(--text1)">'+_concl+'</div></div>'+
+      '<div style="flex:1;display:flex;flex-direction:column;justify-content:center">'+
+        '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">行动建议（点击查看依据）</div>'+_advHtml+'</div>'+
+      '</div></div>';
+    html+='<div class="stat-grid mb-12" style="grid-template-columns:repeat(4,1fr)">'+
       '<div class="stat-card"><div class="stat-ic" style="background:var(--red-bg);color:var(--red)">📈</div><div class="stat-info"><div class="stat-label">风险上升趋势</div><div class="stat-val" style="color:var(--red)">'+upCount+'国</div><div class="stat-sub">'+(topRise?'升幅最大 '+topRise.country+' +'+(topRise.p6-topRise.cur).toFixed(1):'需重点关注')+'</div></div></div>'+
       '<div class="stat-card"><div class="stat-ic" style="background:var(--green-bg);color:var(--green)">📉</div><div class="stat-info"><div class="stat-label">风险下降趋势</div><div class="stat-val" style="color:var(--green)">'+downCount+'国</div><div class="stat-sub">持平 '+flatCount+' 国</div></div></div>'+
       '<div class="stat-card"><div class="stat-ic" style="background:var(--blue-bg);color:var(--cyan)">📊</div><div class="stat-info"><div class="stat-label">当前平均风险</div><div class="stat-val" style="color:var(--cyan)">'+avgCur.toFixed(1)+'</div><div class="stat-sub">覆盖 '+all.length+' 国 / '+M.total+' 条样本</div></div></div>'+

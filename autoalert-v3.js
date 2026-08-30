@@ -166,6 +166,10 @@
       { id: 'P-04', name: '社会动荡升级预警', trigger: /政变|大规模抗议|骚乱|冲突升级|戒严/, actions: ['发布旅行安全提示', '启动撤侨预案评估', '通知在华人华侨', '推送外交部门'] },
       { id: 'P-05', name: '网络安全事件响应', trigger: /网络攻击|黑客|数据泄露|勒索软件|APT/, actions: ['隔离受影响系统', '通知网络安全团队', '启动溯源', '上报主管部门'] }
     ],
+    /* P-00 通用国别风险响应：不参与关键词 match，仅在国别升级情景匹配不到
+     * 具体预案时兜底展示（2026-08-30：红色/橙色国家升级情景此前显示"未匹配预案"
+     * 等于让领导看空面板）。 */
+    generic: { id: 'P-00', name: '国别风险通用响应', actions: ['评估当地我方人员与资产分布', '核发安全提示与出行管制建议', '建立每日报送与联络机制', '研判提升安保等级的触发条件'] },
     match(title) { return this.playbooks.filter(function (p) { return p.trigger.test(String(title || '')); }); }
   };
 
@@ -173,10 +177,17 @@
   window.AUTOALERT = {
     _cfgKey: 'orps_autoalert_v3_cfg',
     _logsKey: 'orps_autoalert_v3_logs',
+    _actionsKey: 'orps_autoalert_v3_actions',   /* 情景处置状态：id -> {status:'ack'|'assign'|'dismiss', time} */
+    _pbKey: 'orps_autoalert_v3_pb',             /* SOAR 预案 checklist：pbId -> [已勾选步骤下标] */
+    _pushedKey: 'orps_autoalert_v3_pushed',     /* 已推送预警中心的情景 id 集合（防重复推送） */
     _cfg: null,
     _logs: [],
     _forecasts: [],
     _selectedId: null,
+    _actions: {},
+    _pbCheck: {},
+    _pushed: {},
+    _filter: { lv: 'all', type: 'all' },
     _timer: null,
     _engineOn: true,
     _lastRun: null,
@@ -185,10 +196,22 @@
     init() {
       this._loadCfg();
       this._loadLogs();
+      this._loadActions();
       this._injectCss();
       this._bindDataHub();
       this.run();
       this._startLoop();
+    },
+
+    _loadActions() {
+      try { this._actions = JSON.parse(localStorage.getItem(this._actionsKey)) || {}; } catch (e) { this._actions = {}; }
+      try { this._pbCheck = JSON.parse(localStorage.getItem(this._pbKey)) || {}; } catch (e) { this._pbCheck = {}; }
+      try { this._pushed = JSON.parse(localStorage.getItem(this._pushedKey)) || {}; } catch (e) { this._pushed = {}; }
+    },
+    _saveActions() {
+      try { localStorage.setItem(this._actionsKey, JSON.stringify(this._actions)); } catch (e) {}
+      try { localStorage.setItem(this._pbKey, JSON.stringify(this._pbCheck)); } catch (e) {}
+      try { localStorage.setItem(this._pushedKey, JSON.stringify(this._pushed)); } catch (e) {}
     },
 
     _loadCfg() { try { this._cfg = JSON.parse(localStorage.getItem(this._cfgKey)) || null; } catch (e) { this._cfg = null; } if (!this._cfg) this._cfg = { engineOn: true, autoSoar: true, showBlue: false }; },
@@ -227,10 +250,89 @@
       el.innerHTML = '<div id="aa3-root"></div>';
       this._root = document.getElementById('aa3-root');
       this._renderHero();
+      this._renderConclusion();
       this._renderHorizon();
       this._renderMain();
       this._renderCharts();
       this._renderFooter();
+    },
+
+    /* ---------- 本期研判结论：一句话结论 + 风险分级 + 行动建议（2026-08-30 实战化改造） ---------- */
+    buildConclusion() {
+      var F = this._forecasts;
+      var red = F.filter(function (x) { return x.level === 'red'; });
+      var orange = F.filter(function (x) { return x.level === 'orange'; });
+      var yellow = F.filter(function (x) { return x.level === 'yellow'; });
+      var cn = F.filter(function (x) { return _hasChina(x.title || '') || _hasChina(x.asset || ''); });
+      var h24 = F.filter(function (x) { return x.hours === '24h' && x.level !== 'blue'; });
+      var live = (typeof ALERTS !== 'undefined') ? ALERTS.length : 0;
+      var level, levelTxt;
+      if (red.length >= 1) { level = 'red'; levelTxt = '红色 · 高危'; }
+      else if (orange.length >= 3 || (orange.length >= 1 && cn.length >= 1)) { level = 'orange'; levelTxt = '橙色 · 偏高'; }
+      else if (orange.length + yellow.length >= 2) { level = 'yellow'; levelTxt = '黄色 · 关注'; }
+      else { level = 'blue'; levelTxt = '蓝色 · 平稳'; }
+      /* 一句话结论：只陈述真实计算出的信号，不虚构 */
+      var parts = [];
+      if (red.length) parts.push(red.length + ' 项红色情景' + (red[0] ? '（' + (red[0].country || '') + (red[0].horizon ? ' · ' + red[0].horizon : '') + '）' : ''));
+      if (orange.length) parts.push(orange.length + ' 项橙色');
+      if (h24.length) parts.push(h24.length + ' 项预计 24h 内显现');
+      if (cn.length) parts.push(cn.length + ' 项涉我利益');
+      var sentence = '未来 7 日风险总体' +
+        (level === 'red' ? '处于高位，须立即处置' : level === 'orange' ? '偏高，须优先防范' : level === 'yellow' ? '值得关注，保持监控' : '平稳，未见显著升级信号') +
+        (parts.length ? '：' + parts.join('、') : '') + '。';
+      /* 行动建议：红色 + 涉我橙色情景逐项绑定（可点击定位） */
+      var acts = [];
+      F.slice(0, 10).forEach(function (f) {
+        if (acts.length >= 4) return;
+        var isCn = _hasChina(f.title || '') || _hasChina(f.asset || '');
+        if (f.level !== 'red' && !(f.level === 'orange' && isCn)) return;
+        var pb = _SOAR.match(f.title || f.asset || '')[0];
+        var base;
+        if (f.type === 'asset_exposure') base = '核查 ' + (f.asset || '') + '（' + (f.country || '') + '）资产与人员安全';
+        else if (f.type === 'threat_asset') base = '评估 ' + (f.threat || '') + ' 对 ' + (f.asset || '') + ' 的威胁联动，加强项目防护';
+        else base = '对 ' + f.country + (pb ? ' 启动 ' + pb.id + '《' + pb.name + '》' : ' 提升安保等级、限制非必要出行');
+        if (pb) base += '：' + pb.actions.slice(0, 2).join('、');
+        acts.push({ id: f.id, lv: f.level, txt: base });
+      });
+      if (!acts.length) {
+        if (orange.length) { var o = orange[0]; acts.push({ id: o.id, lv: 'orange', txt: '关注 ' + (o.country || o.asset || '') + ' 橙色信号演变，预置处置预案' }); }
+        else acts.push({ id: null, lv: 'yellow', txt: '维持全域例行监控，按 60s 周期跟踪预测引擎滚动更新' });
+      }
+      return { level: level, levelTxt: levelTxt, sentence: sentence, acts: acts, cnN: cn.length, redN: red.length, orangeN: orange.length, live: live };
+    },
+
+    _renderConclusion() {
+      var c = this.buildConclusion();
+      var col = _LEVEL_COLOR[c.level];
+      var html = '<div class="aa3-conclusion" style="border-left:4px solid ' + col.border + '">' +
+        '<div class="aa3-concl-left">' +
+          '<div class="aa3-concl-lv" style="background:' + col.bg + ';border:1px solid ' + col.border + ';color:' + col.text + '">' + c.levelTxt + '</div>' +
+          '<div class="aa3-concl-basis">基于近72h ' + c.live + ' 条真实预警推演 · ' + (this._lastRun || '-') + ' 更新</div>' +
+        '</div>' +
+        '<div class="aa3-concl-mid">' +
+          '<div class="aa3-concl-tt">本期研判结论</div>' +
+          '<div class="aa3-concl-sentence">' + c.sentence + '</div>' +
+        '</div>' +
+        '<div class="aa3-concl-right">' +
+          '<div class="aa3-concl-tt">行动建议（点击定位）</div>' +
+          c.acts.map(function (a, i) {
+            var ac = _LEVEL_COLOR[a.lv];
+            return '<div class="aa3-concl-act" onclick="AUTOALERT.jumpTo(\'' + (a.id || '') + '\')">' +
+              '<span class="aa3-concl-act-n" style="background:' + ac.bg + ';color:' + ac.text + '">' + (i + 1) + '</span>' +
+              '<span>' + a.txt + '</span></div>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+      this._root.insertAdjacentHTML('beforeend', html);
+    },
+
+    jumpTo(id) {
+      if (!id || !this._forecasts.some(function (x) { return x.id === id; })) { showToast('该建议为通用措施，无对应情景'); return; }
+      this._selectedId = id;
+      this._renderMain();
+      this._drawTrendChart();
+      var el = document.getElementById('aa3-root');
+      if (el && el.scrollIntoView) try { document.getElementById('view-autoalert').scrollTop = 0; } catch (e) {}
     },
 
     _renderHero() {
@@ -285,6 +387,10 @@
     },
 
     _renderMain() {
+      /* 2026-08-30 root fix：原实现 insertAdjacentHTML 只追加不清旧——每次 select/筛选/处置
+       * 都会再堆一个 .aa3-main 面板（用户实测"点了没反应/乱"的元凶）。先移除旧面板再插入。 */
+      var old = this._root.querySelectorAll('.aa3-main');
+      for (var i = 0; i < old.length; i++) { old[i].remove(); }
       var html = '<div class="aa3-main">';
       html += '<div class="aa3-scenarios">' + this._renderScenarioList() + '</div>';
       html += '<div class="aa3-detail">' + this._renderDetail() + '</div>';
@@ -297,21 +403,59 @@
       var visible = this._forecasts.filter(function (x) { return x.level !== 'blue' || self._cfg.showBlue; });
       var html = '<div class="aa3-section-title">📋 预测情景队列</div>';
       if (!visible.length) return html + '<div class="aa3-empty">当前态势平稳，未发现显著未来升级风险</div>';
-      html += '<div class="aa3-list">';
+      /* 筛选 chips：等级 + 类型（2026-08-30 交互性改造） */
+      var lvCnt = { red: 0, orange: 0, yellow: 0, all: visible.length };
+      var typeCnt = { country_upgrade: 0, asset_exposure: 0, threat_asset: 0, all: visible.length };
       visible.forEach(function (f) {
+        if (lvCnt[f.level] !== undefined) lvCnt[f.level]++;
+        if (typeCnt[f.type] !== undefined) typeCnt[f.type]++;
+      });
+      var typeLabel = { country_upgrade: '国家升级', asset_exposure: '资产暴露', threat_asset: '威胁关联' };
+      html += '<div class="aa3-filters">' +
+        '<div class="aa3-filter-row">';
+      [['red', '红区 ' + lvCnt.red], ['orange', '橙区 ' + lvCnt.orange], ['yellow', '黄区 ' + lvCnt.yellow], ['all', '全部 ' + lvCnt.all]].forEach(function (p) {
+        var k = p[0], lb = p[1];
+        var on = self._filter.lv === k;
+        var fc = _LEVEL_COLOR[k] || _LEVEL_COLOR.blue;
+        html += '<span class="aa3-chip' + (on ? ' on' : '') + '" style="' + (on ? 'background:' + fc.bg + ';color:' + fc.text + ';border-color:' + fc.border : '') + '" onclick="AUTOALERT.setFilter(\'lv\',\'' + k + '\')">' + lb + '</span>';
+      });
+      html += '</div><div class="aa3-filter-row">';
+      [['country_upgrade', '国家升级 ' + typeCnt.country_upgrade], ['asset_exposure', '资产暴露 ' + typeCnt.asset_exposure], ['threat_asset', '威胁关联 ' + typeCnt.threat_asset], ['all', '全部类型 ' + typeCnt.all]].forEach(function (p) {
+        var k = p[0], lb = p[1];
+        var on = self._filter.type === k;
+        html += '<span class="aa3-chip' + (on ? ' on' : '') + '" onclick="AUTOALERT.setFilter(\'type\',\'' + k + '\')">' + lb + '</span>';
+      });
+      html += '</div></div>';
+      var shown = visible.filter(function (f) {
+        return (self._filter.lv === 'all' || f.level === self._filter.lv) &&
+               (self._filter.type === 'all' || f.type === self._filter.type);
+      });
+      if (!shown.length) return html + '<div class="aa3-empty">该筛选条件下无情景</div>';
+      html += '<div class="aa3-list">';
+      shown.forEach(function (f) {
         var col = _LEVEL_COLOR[f.level];
         var selected = self._selectedId === f.id ? ' selected' : '';
         var icon = f.type === 'asset_exposure' ? '🏢' : f.type === 'threat_asset' ? '🎯' : '📈';
-        html += '<div class="aa3-row' + selected + '" onclick="AUTOALERT.select(\'' + f.id + '\')">' +
+        var act = self._actions[f.id];
+        var actBadge = act
+          ? '<span class="aa3-act-badge st-' + act.status + '">' + (act.status === 'ack' ? '已阅' : act.status === 'assign' ? '已交办' : '已忽略') + '</span>'
+          : (self._pushed[f.id] ? '<span class="aa3-act-badge st-pushed">已推送</span>' : '');
+        html += '<div class="aa3-row' + selected + (act && act.status === 'dismiss' ? ' dismissed' : '') + '" onclick="AUTOALERT.select(\'' + f.id + '\')">' +
           '<div class="aa3-row-lv" style="background:' + col.bg + ';color:' + col.text + ';border:1px solid ' + col.border + '">' + col.label + '</div>' +
           '<div class="aa3-row-body">' +
-            '<div class="aa3-row-title">' + icon + ' ' + (f.title || f.asset || '-') + '</div>' +
+            '<div class="aa3-row-title">' + icon + ' ' + (f.title || f.asset || '-') + actBadge + '</div>' +
             '<div class="aa3-row-meta">' + (f.country || '全球') + ' · 动量 ' + (f.score || '-') + ' · ' + (f.horizon || '') + '</div>' +
           '</div>' +
         '</div>';
       });
       html += '</div>';
       return html;
+    },
+
+    setFilter(k, v) {
+      this._filter[k] = v;
+      this._renderMain();
+      this._drawTrendChart();
     },
 
     _renderDetail() {
@@ -371,25 +515,99 @@
       }
       html += '</div>';
       html += '<div class="aa3-detail-section">' +
-        '<div class="aa3-detail-label">SOAR 预案</div>';
+        '<div class="aa3-detail-label">SOAR 预案（点击预案卡执行 checklist）</div>';
       if (!playbooks.length) {
-        html += '<div class="aa3-empty">未匹配标准预案，建议人工研判</div>';
-      } else {
+        /* 国别升级情景兜底通用预案；其余类型才显示"人工研判" */
+        if (item.type === 'country_upgrade') {
+          playbooks = [_SOAR.generic];
+        } else {
+          html += '<div class="aa3-empty">未匹配标准预案，建议人工研判</div>';
+        }
+      }
+      if (playbooks.length) {
+        var self = this;
         playbooks.forEach(function (p) {
-          html += '<div class="aa3-playbook">' +
-            '<div class="aa3-playbook-name">' + p.id + ' ' + p.name + '</div>' +
-            '<div class="aa3-playbook-actions">' + p.actions.map(function (a) { return '<span class="aa3-tag">' + a + '</span>'; }).join('') + '</div>' +
+          var done = (self._pbCheck[p.id] || []).length;
+          html += '<div class="aa3-playbook' + (done >= p.actions.length ? ' done' : '') + '" onclick="AUTOALERT.openPlaybook(\'' + p.id + '\',\'' + item.id + '\')">' +
+            '<div class="aa3-playbook-name">' + p.id + ' ' + p.name +
+              '<span class="aa3-pb-progress">' + done + '/' + p.actions.length + '</span>' +
+              '<span class="aa3-pb-run">▶ 执行</span></div>' +
+            '<div class="aa3-playbook-actions">' + p.actions.map(function (a, i) {
+              var ck = (self._pbCheck[p.id] || []).indexOf(i) >= 0;
+              return '<span class="aa3-tag' + (ck ? ' checked' : '') + '">' + (ck ? '☑' : '☐') + ' ' + a + '</span>';
+            }).join('') + '</div>' +
           '</div>';
         });
       }
       html += '</div>';
+      var act = this._actions[item.id];
       html += '<div class="aa3-detail-actions">' +
-        '<button class="btn" onclick="AUTOALERT.pushToAlertCenter(\'' + item.id + '\')">推送至预警中心</button>' +
-        '<button class="btn" onclick="AUTOALERT.createAiReport(\'' + item.id + '\')">生成 AI 简报</button>' +
+        '<button class="btn" ' + (this._pushed[item.id] ? 'disabled title="已推送，请到预警中心查看"' : '') + ' onclick="AUTOALERT.pushToAlertCenter(\'' + item.id + '\')">' + (this._pushed[item.id] ? '已推送 ✓' : '推送至预警中心') + '</button>' +
+        '<button class="btn" onclick="AUTOALERT.createAiReport(\'' + item.id + '\')">🤖 AI 推演简报</button>' +
         '<button class="btn" onclick="AUTOALERT.openCountry(\'' + (item.country || '') + '\')">查看国家态势</button>' +
+      '</div>' +
+      '<div class="aa3-disposition">' +
+        '<span class="aa3-disp-label">处置：</span>' +
+        '<button class="btn aa3-disp-btn st-ack' + (act && act.status === 'ack' ? ' cur' : '') + '" onclick="AUTOALERT.setAction(\'' + item.id + '\',\'ack\')">✅ 已阅</button>' +
+        '<button class="btn aa3-disp-btn st-assign' + (act && act.status === 'assign' ? ' cur' : '') + '" onclick="AUTOALERT.setAction(\'' + item.id + '\',\'assign\')">📌 交办</button>' +
+        '<button class="btn aa3-disp-btn st-dismiss' + (act && act.status === 'dismiss' ? ' cur' : '') + '" onclick="AUTOALERT.setAction(\'' + item.id + '\',\'dismiss\')">✖ 忽略</button>' +
+        (act ? '<span class="aa3-disp-time">' + act.time + ' ' + (act.status === 'ack' ? '已阅' : act.status === 'assign' ? '已交办' : '已忽略') + '</span>' : '') +
       '</div>';
       html += '</div>';
       return html;
+    },
+
+    /* 处置状态闭环：已阅/交办/忽略，持久化并回写队列徽标 */
+    setAction(id, status) {
+      var item = this._forecasts.find(function (x) { return x.id === id; });
+      if (!item) return;
+      if (this._actions[id] && this._actions[id].status === status) { delete this._actions[id]; this._log('撤销处置', item.title || item.asset); }
+      else { this._actions[id] = { status: status, time: _nowFmt() }; this._log(status === 'ack' ? '标记已阅' : status === 'assign' ? '交办处置' : '忽略情景', item.title || item.asset); }
+      this._saveActions();
+      this._renderMain();
+      this._drawTrendChart();
+    },
+
+    /* SOAR 预案执行 checklist：模态框内逐项勾选，进度持久化 */
+    openPlaybook(pbId, forecastId) {
+      var pb = _SOAR.playbooks.find(function (p) { return p.id === pbId; }) || _SOAR.generic;
+      var checked = this._pbCheck[pbId] || [];
+      var fc = this._forecasts.find(function (x) { return x.id === forecastId; });
+      var self = this;
+      var html = '<div style="font-size:12px;line-height:1.8">' +
+        (fc ? '<div style="padding:8px 10px;background:var(--bg2,#141a2a);border-radius:6px;margin-bottom:10px">关联情景：<b>' + (fc.title || fc.asset || '') + '</b> · ' + (fc.country || '全球') + '</div>' : '') +
+        '<div id="aa3-pb-list">' + pb.actions.map(function (a, i) {
+          var on = checked.indexOf(i) >= 0;
+          return '<div class="aa3-pb-item' + (on ? ' on' : '') + '" onclick="AUTOALERT.togglePbStep(\'' + pbId + '\',' + i + ')" style="padding:7px 10px;margin-bottom:5px;border-radius:6px;cursor:pointer;background:' + (on ? 'rgba(34,197,94,0.12)' : 'rgba(22,30,50,0.7)') + ';border:1px solid ' + (on ? 'rgba(34,197,94,0.5)' : 'rgba(0,212,255,0.12)') + '">' +
+            (on ? '✅ ' : '☐ ') + a + '</div>';
+        }).join('') + '</div>' +
+        '<div style="margin-top:8px;font-size:10px;color:#7a8ba3">点击条目勾选/取消，进度 ' + checked.length + '/' + pb.actions.length + '，自动保存。全部勾选即视为该预案已执行。</div></div>';
+      this._log('执行预案 ' + pb.id, pb.name);
+      try {
+        showModal('📋 ' + pb.id + ' ' + pb.name + ' · 执行清单', html);
+      } catch (e) { /* showModal 不可用时降级为提示 */ try { showToast('预案 ' + pb.id + '：' + pb.actions.join('；')); } catch (e2) {} }
+    },
+
+    togglePbStep(pbId, idx) {
+      var arr = this._pbCheck[pbId] || [];
+      var i = arr.indexOf(idx);
+      if (i >= 0) arr.splice(i, 1); else arr.push(idx);
+      this._pbCheck[pbId] = arr;
+      this._saveActions();
+      /* 刷新模态框内条目 + 队列卡片进度 */
+      var pb = _SOAR.playbooks.find(function (p) { return p.id === pbId; }) || _SOAR.generic;
+      try {
+        var nodes = document.querySelectorAll('#aa3-pb-list .aa3-pb-item');
+        nodes.forEach(function (n, k) {
+          var on = arr.indexOf(k) >= 0;
+          n.classList.toggle('on', on);
+          n.style.background = on ? 'rgba(34,197,94,0.12)' : 'rgba(22,30,50,0.7)';
+          n.style.border = '1px solid ' + (on ? 'rgba(34,197,94,0.5)' : 'rgba(0,212,255,0.12)');
+          n.innerHTML = (on ? '✅ ' : '☐ ') + (pb ? pb.actions[k] : '');
+        });
+      } catch (e) {}
+      this._renderMain();
+      this._drawTrendChart();
     },
 
     _renderCharts() {
@@ -413,7 +631,7 @@
       var html = '';
       assets.forEach(function (a) {
         var col = _LEVEL_COLOR[a.level];
-        html += '<div class="aa3-asset-row">' +
+        html += '<div class="aa3-asset-row" onclick="AUTOALERT.selectByAsset(\'' + String(a.asset || '').replace(/'/g, '') + '\')" title="点击定位该资产的风险情景">' +
           '<span class="aa3-asset-lv" style="background:' + col.bg + ';color:' + col.text + '">' + col.label + '</span>' +
           '<span class="aa3-asset-name">' + a.asset + '</span>' +
           '<span class="aa3-asset-country">' + a.country + '</span>' +
@@ -451,7 +669,17 @@
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#e2e8f0', font: { size: 11 } } } },
+            onClick: function (evt) {
+              try {
+                var pts = this.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+                if (pts && pts.length) {
+                  var f = focus[pts[0].datasetIndex];
+                  if (f) AUTOALERT.select(f.id);
+                }
+              } catch (e) {}
+            },
+            onHover: function (evt, els) { evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default'; },
+            plugins: { legend: { labels: { color: '#e2e8f0', font: { size: 11 } } }, tooltip: { callbacks: { afterBody: function (items) { var f = focus[items[0].datasetIndex]; return f ? ['点击查看该国家情景详情'] : []; } } } },
             scales: {
               y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#7a8ba3' } },
               x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#7a8ba3' } }
@@ -493,6 +721,7 @@
     pushToAlertCenter(id) {
       var item = this._forecasts.find(function (x) { return x.id === id; });
       if (!item) return;
+      if (this._pushed[id]) { try { showToast('该情景已推送过，请到预警中心查看'); } catch (e) {} return; }
       try {
         if (typeof ALERTS !== 'undefined') {
           var a = { id: id, alert_no: id, level: item.level, type: '安全风险', country: item.country || '全球', title: item.title || item.asset || '未来风险预警', desc: item.reason || item.horizon || '', time: _nowFmt(), status: 'active', source: '自动预警预测', _forecast: true };
@@ -500,14 +729,67 @@
           if (typeof DataHub !== 'undefined' && DataHub.save) DataHub.save('alerts');
           if (typeof DataHub !== 'undefined' && DataHub._notify) DataHub._notify('alerts');
         }
+        this._pushed[id] = _nowFmt();
+        this._saveActions();
         this._log('推送至预警中心', item.title || item.asset);
         if (typeof showToast === 'function') showToast('已推送至预警中心');
+        this._renderMain();
+        this._drawTrendChart();
       } catch (e) {}
     },
+    /* AI 推演简报：真实调用服务端大模型（kind=scenario-path），不再只是跳页 */
     createAiReport(id) {
       var item = this._forecasts.find(function (x) { return x.id === id; });
       if (!item) return;
-      try { if (typeof navigateTo === 'function') navigateTo('aireport'); this._log('生成 AI 简报', item.title || item.asset); } catch (e) {}
+      var self = this;
+      try {
+        showModal('🤖 AI 推演简报', '<div style="padding:10px;font-size:12px;color:#7a8ba3">Kimi 正在基于该情景的真实数据推演发展路径（约30-90秒）…<div style="margin-top:8px;font-size:11px">情景：' + (item.title || item.asset || '') + '</div></div>');
+      } catch (e) {}
+      var tok = '';
+      try { tok = (typeof APIClient !== 'undefined' && APIClient.getToken) ? APIClient.getToken() : (localStorage.getItem('orps_token') || ''); } catch (e) {}
+      var drivers = [];
+      if (item.factors) drivers = ['近72h红区 ' + item.factors.red, '橙区 ' + item.factors.orange, '涉华 ' + item.factors.cn, '严重事件 ' + item.factors.severe, '风险评分 ' + item.factors.score];
+      var affected = [];
+      if (item.type === 'threat_asset') affected = [item.asset || ''];
+      fetch('/api/llm/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+        body: JSON.stringify({
+          kind: 'scenario-path',
+          scenario: {
+            name: item.title || item.asset || item.country || '预测情景',
+            domDim: item.type === 'asset_exposure' ? '资产暴露' : item.type === 'threat_asset' ? '威胁关联' : '风险升级',
+            cur: item.type === 'country_upgrade' ? (item.factors ? item.factors.score : item.score) : (item.score || '—'),
+            pred: item.score || '—',
+            drivers: drivers,
+            affected: affected
+          }
+        })
+      }).then(function (r) { return r.json().then(function (j) { return { status: r.status, j: j }; }); })
+        .then(function (res) {
+          var j = res.j || {};
+          var body;
+          if (res.status === 200 && j.ok) {
+            var txt = String(j.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\*\*([^*]+)\*\*/g, '<strong style="color:#00d4ff">$1</strong>').replace(/\n/g, '<br>');
+            body = '<div style="padding:12px;font-size:12px;line-height:1.8;color:#e2e8f0;max-height:60vh;overflow:auto"><strong style="color:#b366ff">🤖 AI 路径推演（' + (j.model || '') + (j.elapsed ? ' · ' + j.elapsed : '') + '）</strong><br><br>' + txt + '</div>';
+            self._log('AI 推演简报生成', item.title || item.asset);
+          } else if (res.status === 401) {
+            body = '<div style="padding:20px;font-size:12px;color:#f97316">⚠️ 登录已过期，请重新登录后重试</div>';
+          } else {
+            body = '<div style="padding:20px;font-size:12px;color:#ef4444">⚠️ ' + (j.error || '推演失败') + '</div>';
+          }
+          try { showModal('🤖 AI 推演简报 · ' + (item.country || ''), body); } catch (e) {}
+        })
+        .catch(function (e) {
+          try { showModal('🤖 AI 推演简报', '<div style="padding:20px;font-size:12px;color:#ef4444">⚠️ 网络错误：' + e.message + '</div>'); } catch (e2) {}
+        });
+    },
+    /* 资产暴露行点击 → 联动选中对应情景 */
+    selectByAsset(name) {
+      var f = this._forecasts.find(function (x) { return x.asset === name; }) ||
+              this._forecasts.find(function (x) { return (x.title || '').indexOf(name) >= 0; });
+      if (f) { this.select(f.id); try { showToast('已定位情景：' + (f.title || f.asset)); } catch (e) {} }
+      else { try { showToast('该资产暂无关联升级情景'); } catch (e) {} }
     },
 
     /* ---------- 样式 ---------- */
@@ -587,7 +869,49 @@
         '#view-autoalert .aa3-footer{background:var(--aa3-panel);border:1px solid var(--aa3-border);border-radius:10px;padding:12px;}' +
         '#view-autoalert .aa3-logs{font-size:10px;color:var(--aa3-text2);}' +
         '#view-autoalert .aa3-log{padding:2px 0;border-bottom:1px dashed var(--aa3-border);}' +
-        '@media(max-width:1100px){#view-autoalert .aa3-hero{flex-direction:column;align-items:flex-start;}#view-autoalert .aa3-main{flex-direction:column;}#view-autoalert .aa3-scenarios{width:auto;}#view-autoalert .aa3-charts{flex-direction:column;}}';
+        /* ---- 本期研判结论卡 ---- */
+        '#view-autoalert .aa3-conclusion{display:flex;gap:16px;background:var(--aa3-panel);border:1px solid var(--aa3-border);border-radius:10px;padding:14px 18px;margin-bottom:14px;align-items:stretch;}' +
+        '#view-autoalert .aa3-concl-left{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:120px;}' +
+        '#view-autoalert .aa3-concl-lv{font-size:16px;font-weight:800;padding:8px 12px;border-radius:8px;text-align:center;letter-spacing:1px;}' +
+        '#view-autoalert .aa3-concl-basis{font-size:9px;color:var(--aa3-text3);text-align:center;line-height:1.5;}' +
+        '#view-autoalert .aa3-concl-mid{flex:1.2;display:flex;flex-direction:column;justify-content:center;border-right:1px solid var(--aa3-border);border-left:1px solid var(--aa3-border);padding:0 14px;}' +
+        '#view-autoalert .aa3-concl-right{flex:1;display:flex;flex-direction:column;justify-content:center;}' +
+        '#view-autoalert .aa3-concl-tt{font-size:11px;font-weight:700;color:var(--aa3-text2);margin-bottom:6px;}' +
+        '#view-autoalert .aa3-concl-sentence{font-size:13px;line-height:1.8;color:var(--aa3-text);font-weight:600;}' +
+        '#view-autoalert .aa3-concl-act{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:11px;line-height:1.6;color:var(--aa3-text);transition:background .15s;}' +
+        '#view-autoalert .aa3-concl-act:hover{background:rgba(0,212,255,0.08);}' +
+        '#view-autoalert .aa3-concl-act-n{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:800;}' +
+        /* ---- 筛选 chips ---- */
+        '#view-autoalert .aa3-filters{margin-bottom:10px;padding:8px;background:var(--aa3-panel2);border-radius:6px;}' +
+        '#view-autoalert .aa3-filter-row{display:flex;gap:6px;flex-wrap:wrap;}' +
+        '#view-autoalert .aa3-filter-row + .aa3-filter-row{margin-top:6px;}' +
+        '#view-autoalert .aa3-chip{font-size:10px;padding:3px 9px;border-radius:12px;border:1px solid var(--aa3-border);color:var(--aa3-text2);cursor:pointer;background:transparent;transition:all .15s;}' +
+        '#view-autoalert .aa3-chip:hover{color:var(--aa3-text);border-color:rgba(0,212,255,0.4);}' +
+        '#view-autoalert .aa3-chip.on{font-weight:700;}' +
+        /* ---- 处置徽标 / 已忽略行 ---- */
+        '#view-autoalert .aa3-act-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:1px;}' +
+        '#view-autoalert .aa3-act-badge.st-ack{background:rgba(59,130,246,0.15);color:#3b82f6;}' +
+        '#view-autoalert .aa3-act-badge.st-assign{background:rgba(179,102,255,0.15);color:#b366ff;}' +
+        '#view-autoalert .aa3-act-badge.st-dismiss{background:rgba(122,139,163,0.15);color:#7a8ba3;}' +
+        '#view-autoalert .aa3-act-badge.st-pushed{background:rgba(34,197,94,0.12);color:#22c55e;}' +
+        '#view-autoalert .aa3-row.dismissed{opacity:.5;}' +
+        '#view-autoalert .aa3-row-title .aa3-act-badge{float:right;}' +
+        /* ---- SOAR 预案执行 ---- */
+        '#view-autoalert .aa3-playbook{cursor:pointer;transition:background .15s;}' +
+        '#view-autoalert .aa3-playbook:hover{background:rgba(0,212,255,0.06);}' +
+        '#view-autoalert .aa3-playbook.done{border-left:3px solid #22c55e;}' +
+        '#view-autoalert .aa3-pb-progress{font-size:9px;color:#22c55e;margin-left:6px;}' +
+        '#view-autoalert .aa3-pb-run{font-size:9px;color:#00d4ff;margin-left:8px;border:1px solid rgba(0,212,255,0.3);border-radius:8px;padding:0 6px;}' +
+        '#view-autoalert .aa3-tag.checked{color:#22c55e;border-color:rgba(34,197,94,0.4);}' +
+        /* ---- 处置按钮组 ---- */
+        '#view-autoalert .aa3-disposition{display:flex;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--aa3-border);flex-wrap:wrap;}' +
+        '#view-autoalert .aa3-disp-label{font-size:11px;color:var(--aa3-text2);font-weight:700;}' +
+        '#view-autoalert .aa3-disp-btn{font-size:10px !important;padding:3px 10px !important;}' +
+        '#view-autoalert .aa3-disp-btn.st-ack.cur{background:rgba(59,130,246,0.2);border-color:#3b82f6;color:#3b82f6;}' +
+        '#view-autoalert .aa3-disp-btn.st-assign.cur{background:rgba(179,102,255,0.2);border-color:#b366ff;color:#b366ff;}' +
+        '#view-autoalert .aa3-disp-btn.st-dismiss.cur{background:rgba(122,139,163,0.2);border-color:#7a8ba3;color:#7a8ba3;}' +
+        '#view-autoalert .aa3-disp-time{font-size:9px;color:var(--aa3-text3);margin-left:4px;}' +
+        '@media(max-width:1100px){#view-autoalert .aa3-hero{flex-direction:column;align-items:flex-start;}#view-autoalert .aa3-main{flex-direction:column;}#view-autoalert .aa3-scenarios{width:auto;}#view-autoalert .aa3-charts{flex-direction:column;}#view-autoalert .aa3-conclusion{flex-direction:column;}#view-autoalert .aa3-concl-mid{border:none;padding:0;}}';
       document.head.appendChild(s);
     }
   };
