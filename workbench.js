@@ -7,7 +7,7 @@
  *  - 海外利益安全指数：近 24h 真实预警加权计算（核心区×5 / 红橙黄分级 / 涉华加权），
  *    构成明细分国分类展示，零模拟成分
  *  - 国家风险聚合 + 实时情报流 + 预警面板：全部来自 DataHub 真实数据
- * 数据源：DataHub.get('alerts') + /api/intel/stats + /api/health
+ * 数据源：全局 ALERTS（DataHub 同步）+ /api/intel/stats + /api/health
  * ============================================================ */
 var WORKBENCH = {
   _ws: 'overall',            /* 当前任务工作区键 */
@@ -132,9 +132,13 @@ var WORKBENCH = {
     if (isNaN(t)) return true; /* 无时间戳保守放行，由后端闸门负责 */
     return Date.now() - t <= this._hours * 3600 * 1000;
   },
+  /* 读预警真实数据：直接引用全局 ALERTS（DataHub._getArr('alerts') 同源） */
+  _alerts: function () {
+    return (typeof ALERTS !== 'undefined' && Array.isArray(ALERTS)) ? ALERTS : [];
+  },
   _filtered: function () {
     var ws = this.WORKSPACES.filter(function (w) { return w.key === WORKBENCH._ws; })[0] || this.WORKSPACES[0];
-    var arr = (typeof DataHub !== 'undefined' && DataHub.get) ? (DataHub.get('alerts') || []) : [];
+    var arr = this._alerts();
     return arr.filter(function (a) { return a && ws.filter(a) && WORKBENCH._layerPass(a) && WORKBENCH._timePass(a); });
   },
 
@@ -171,7 +175,7 @@ var WORKBENCH = {
     var ws = this.WORKSPACES.filter(function (w) { return w.key === self._ws; })[0] || this.WORKSPACES[0];
 
     /* 指数（口径用全量 24h 预警，不随工作区过滤） */
-    var all = (typeof DataHub !== 'undefined' && DataHub.get) ? (DataHub.get('alerts') || []) : [];
+    var all = this._alerts();
     this._ix = this.computeIndex(all);
 
     /* 国家聚合（工作区过滤后） */
