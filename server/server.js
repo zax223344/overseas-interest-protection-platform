@@ -483,7 +483,7 @@ async function _generateDailyReport(dateKey) {
    * 是采集通道国/来源国污染。简报展示一律从标题提取事发国，提不到才用 DB 值）。 */
   function _reportEventCountry(i) {
     const t = String(i.title || '');
-    const c = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0);
+    const c = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t);
     return c || String(i.country || '');
   }
 
@@ -880,6 +880,10 @@ function _gateAudit(gate, reason, title) {
     /* 2026-08-30 语义查重拦截：低频落日志（用户点名的重复采集一类问题，需可观测） */
     if (reason === 'event-sig-dup-sem' && (n <= 5 || n % 20 === 0)) {
       console.log('[GATE] event-sig-dup-sem #' + n + ': ' + String(title || '').slice(0, 80));
+    }
+    /* 2026-08-30 无国别锚拒收：低频落日志（空 country 一类问题治理效果可观测） */
+    if (reason === 'no-country' && (n <= 5 || n % 50 === 0)) {
+      console.log('[GATE] no-country #' + n + ': ' + String(title || '').slice(0, 80));
     }
   } catch (e) {}
 }
@@ -2796,6 +2800,10 @@ function _isTitleQualityOk(it) {
    * 但"获释/被救/回国/遣返"类政府/官方行动仍放行。 */
   if ((/回到.*家中|回到了.*家|回到.*家人|回到.*故乡|回到.*老家|与家人团聚|久别重逢|回忆录|.*的故事|自述|专访|特写|profile|human interest|first.person/i.test(usable)) &&
       !/获释|被救|释放|遣返|回国|返回.*(中国|北京|上海|祖国)| rescued | released .* from /i.test(usable)) return false;
+  /* 2026-08-30 拦截律所投资诉讼招揽广告（铁证样本 30262："MVST Deadline: MVST Investors
+   * with Losses in Excess of $100K"）——"投资者损失/截止日期/加入诉讼/索赔"模式是律所
+   * 新闻稿广告，不是安全事件情报。 */
+  if (/investors? with losses|deadline.{0,30}(investor|lawsuit|file|claim)|join (the )?(lawsuit|class action|investigation)|to file (a )?(claim|lawsuit)|class action.{0,30}deadline|no cost.{0,30}(you|investor)|投资者损失.{0,20}(截止|索赔|诉讼)/i.test(usable)) return false;
   return true;
 }
 /* 统一入库前置闸（2026-08-19）：所有 INSERT 通道必须调用，集中处理：
@@ -2863,10 +2871,19 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
     it.chinaRelated = !!(crawler.chinaRelated && crawler.chinaRelated(_crTxt));
   }
   /* 2026-08-30 country 空值兜底：google_news 通道 46+ 条空国别（目标矩阵统计失真源）。
-   * 标题能提取到国名时填充（首个匹配国；多国标题取先命中者——宁可信标题不信空值）。 */
+   * 标题能提取到国名时填充（首个匹配国；多国标题取先命中者——宁可信标题不信空值）。
+   * 2026-08-30 二次修复：标题只含地区名（俾路支/伦敦/内罗毕）时走 _REGION_COUNTRY 地区映射。
+   * 2026-08-30 三次修复（采集端 root fix）：国名/地区/查询词兜底全失败 → 涉华或国际组织条归"国际"，
+   * 其余直接拒收（no-country）——空 country 条目对国别矩阵/预警两区渲染是负资产，不再积累。 */
   if (!String(it.country || '').trim()) {
-    const _sc = _SIG_COUNTRIES.find(x => String(it.title || '').indexOf(x) >= 0 || String(it.title_zh || '').indexOf(x) >= 0);
+    const _t = String(it.title || '') + ' ' + String(it.title_zh || '');
+    const _sc = _SIG_COUNTRIES.find(x => _t.indexOf(x) >= 0) || _regionToCountry(_t);
     if (_sc) it.country = _sc;
+  }
+  if (!String(it.country || '').trim()) {
+    const _t2 = String(it.title || '') + ' ' + String(it.title_zh || '');
+    if (it.chinaRelated === true || /联合国|北约|欧盟|东盟|安理会|上合|金砖|红海|亚丁湾|霍尔木兹|马六甲|UN|NATO|European Union|ASEAN|BRICS|G7|G20/i.test(_t2)) it.country = '国际';
+    else { _gateAudit('入库闸', 'no-country', it.title); return { ok: false, code: ['no-country'] }; }
   }
   const u = it.url || it.title;
   if (!u) return { ok: false, code: ['no-url-title'] };
@@ -3429,6 +3446,64 @@ function _extractEventDate(text, refDate) {
 
 const _SIG_COUNTRIES = ['尼泊尔','巴基斯坦','阿富汗','伊朗','伊拉克','叙利亚','也门','沙特','以色列','巴勒斯坦','乌克兰','俄罗斯','缅甸','泰国','越南','老挝','柬埔寨','马来西亚','印度尼西亚','菲律宾','新加坡','孟加拉国','斯里兰卡','印度','哈萨克斯坦','乌兹别克斯坦','塔吉克斯坦','吉尔吉斯斯坦','土库曼斯坦','蒙古','韩国','日本','朝鲜','埃及','利比亚','阿尔及利亚','突尼斯','摩洛哥','苏丹','南苏丹','埃塞俄比亚','索马里','肯尼亚','坦桑尼亚','乌干达','卢旺达','刚果','尼日利亚','加纳','马里','尼日尔','乍得','喀麦隆','布基纳法索','赞比亚','津巴布韦','安哥拉','莫桑比克','南非','几内亚','墨西哥','巴西','阿根廷','智利','秘鲁','哥伦比亚','委内瑞拉','玻利维亚','厄瓜多尔','古巴','海地','巴拿马','美国','加拿大','英国','法国','德国','意大利','西班牙','葡萄牙','荷兰','比利时','瑞士','瑞典','挪威','芬兰','丹麦','奥地利','希腊','波兰','塞尔维亚','匈牙利','罗马尼亚','捷克','保加利亚','澳大利亚','新西兰','Nepal','Pakistan','Afghanistan','Iran','Iraq','Syria','Yemen','Saudi','Israel','Ukraine','Russia','Myanmar','Thailand','Vietnam','Laos','Cambodia','Malaysia','Indonesia','Philippines','Bangladesh','Sri Lanka','India','Kazakhstan','Uzbekistan','Ethiopia','Somalia','Kenya','Nigeria','Ghana','Mali','Niger','Chad','Cameroon','South Africa','Mexico','Brazil','Argentina','Chile','Peru','Colombia','Venezuela','Ecuador','Bolivia','Haiti','Panama'];
 const _SIG_EVENT_RE = /死亡|遇难|身亡|伤亡|洪水|地震|袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|抗议|示威|制裁|坠机|沉船|山火|台风|飓风|killed|dead|flood|earthquake|attack|bomb|kidnap|clash|protest|sanction|coup|crash/i;
+/* ===== 地区/城市→国别映射（2026-08-30 采集端修复：google_news 通道空 country 32+条/日 =====
+ * 根因：Google News RSS 条目无 country 字段，标题常只含地区名（俾路支省/伦敦/内罗毕）不含国名，
+ * 国名表兜底匹配不到 → 空 country 条目破坏目标矩阵统计与预警两区渲染。
+ * 高频地区词（中英双语）映射到 _SIG_COUNTRIES 国名。宁可信地区锚不信空值。 */
+const _REGION_COUNTRY = [
+  [['俾路支','卡拉奇','拉合尔','伊斯兰堡','白沙瓦','奎达','信德','Balochistan','Karachi','Lahore','Islamabad','Peshawar','Quetta','Sindh'],'巴基斯坦'],
+  [['伦敦','曼彻斯特','英格兰','苏格兰','贝尔法斯特','London','Manchester','England','Scotland'],'英国'],
+  [['内罗毕','蒙巴萨','Nairobi','Mombasa'],'肯尼亚'],
+  [['拉各斯','阿布贾','卡诺','Lagos','Abuja','Kano'],'尼日利亚'],
+  [['开罗','亚历山大','Cairo','Alexandria','Sinai','西奈'],'埃及'],
+  [['孟买','新德里','克什米尔','Mumbai','Delhi','Kashmir','印控克什米尔'],'印度'],
+  [['喀布尔','坎大哈','赫拉特','Kabul','Kandahar','Herat'],'阿富汗'],
+  [['达卡','Dhaka'],'孟加拉国'],
+  [['仰光','曼德勒','若开','Yangon','Mandalay','Rakhine'],'缅甸'],
+  [['萨那','荷台达','胡塞','Sanaa','Hodeidah','Houthi','Houthis'],'也门'],
+  [['加沙','约旦河西岸','Gaza','West Bank'],'巴勒斯坦'],
+  [['喀土穆','达尔富尔','Khartoum','Darfur'],'苏丹'],
+  [['廷巴克图','巴马科','加奥','Timbuktu','Bamako','Gao'],'马里'],
+  [['摩加迪沙','索马里兰','Mogadishu','Somaliland'],'索马里'],
+  [['亚的斯亚贝巴','Addis Ababa'],'埃塞俄比亚'],
+  [['金沙萨','卢本巴希','Kinshasa','Lubumbashi'],'刚果'],
+  [['基辅','敖德萨','哈尔科夫','Kyiv','Odesa','Kharkiv'],'乌克兰'],
+  [['莫斯科','车臣','达吉斯坦','Moscow','Chechnya','Dagestan'],'俄罗斯'],
+  [['突尼斯市','Tunis'],'突尼斯'],
+  [['卡萨布兰卡','拉巴特','Casablanca','Rabat'],'摩洛哥'],
+  [['德尔加杜角','Cabo Delgado','德尔加杜角省'],'莫桑比克'],
+  [['德黑兰','Tehran','伊斯法罕'],'伊朗'],
+  [['利伯维尔','利雅得','吉达','Riyadh','Jeddah','利雅得省'],'沙特'],
+  [['德克萨斯','得州','得克萨斯','佛罗里达','加利福尼亚','纽约','芝加哥','华盛顿州','Texas','Florida','California','New York','Chicago','San Francisco','Houston','Dallas'],'美国'],
+  [['圣保罗','里约热内卢','Sao Paulo','Rio de Janeiro','Brasilia'],'巴西'],
+  [['墨西哥城','锡那罗亚','Mexico City','Sinaloa','华雷斯'],'墨西哥'],
+  [['加拉加斯','Caracas'],'委内瑞拉'],
+  [['波哥大','Bogota','麦德林','Medellin'],'哥伦比亚'],
+  [['太子港','Port-au-Prince'],'海地'],
+  [['雅加达','泗水','Jakarta','Surabaya'],'印度尼西亚'],
+  [['马尼拉','达沃','Manila','Davao','宿务'],'菲律宾'],
+  [['科伦坡','Colombo','汉班托塔'],'斯里兰卡'],
+  [['阿拉木图','阿斯塔纳','Almaty','Astana'],'哈萨克斯坦'],
+  [['塔什干','Tashkent','撒马尔罕'],'乌兹别克斯坦'],
+  [['杜尚别','Dushanbe'],'塔吉克斯坦'],
+  [['比什凯克','Bishkek'],'吉尔吉斯斯坦'],
+  [['阿克拉','Accra'],'加纳'],
+  [['达累斯萨拉姆','Dar es Salaam','多多马'],'坦桑尼亚'],
+  [['坎帕拉','Kampala'],'乌干达'],
+  [['基加利','Kigali'],'卢旺达'],
+  [['利伯维尔','Libreville'],'几内亚'],
+  [['亚松森','Asunción','Asuncion'],'巴拉圭'],
+  [['基多','Quito'],'厄瓜多尔'],
+  [['拉巴斯','La Paz'],'玻利维亚'],
+  [['的黎波里','Tripoli','班加西','Benghazi'],'利比亚'],
+  [['阿尔及尔','Algiers'],'阿尔及利亚'],
+  [['鹿特丹','阿姆斯特丹','Rotterdam','Amsterdam'],'荷兰']
+];
+function _regionToCountry(t) {
+  const s = String(t || '');
+  for (const pair of _REGION_COUNTRY) { if (pair[0].some(k => s.indexOf(k) >= 0)) return pair[1]; }
+  return null;
+}
 /* ===== 多源印证（2026-08-13 用户指令；2026-08-28 重构）=====
  * 事件签名 v3 = 事发国（标题提取，非来源国）+ 事件词集合 + 日期 + 主语锚点词。
  * v2 缺陷（面板重复/误合并的根因）：
@@ -3444,8 +3519,8 @@ function _eventSignature(it) {
   const evSet = new Set();
   let mm; while ((mm = evRe.exec(tl)) !== null) evSet.add(mm[0]);
   const ev = Array.from(evSet).sort().join('+') || '';
-  /* 事发国：标题优先（跨源一致），标题无国名才退化用条目国别 */
-  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || String(it.country_cn || it.country || '');
+  /* 事发国：标题优先（跨源一致），标题无国名才退化用条目国别（含地区映射：俾路支→巴基斯坦等） */
+  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
   /* 主语锚点：伤亡数字 / 威胁组织 / 关键设施——同事件不同措辞的共同锚
    * 2026-08-29 P1-3 数量级桶修正：同一事件死亡人数随救援进展持续更新（469→475→626），
    * 精确数字当锚点会让每次更新都换签名绕过 event-sig-dup——中尼洪灾 7 天 141 条变体的根因。
@@ -3472,7 +3547,7 @@ const _evCluster = { date: '', by: {} };
 function _eventClusterOk(it) {
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   if (t.trim().length < 8) return true;
-  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || String(it.country_cn || it.country || '');
+  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
   if (!ctry) return true;
   const ev = t.match(/洪水|地震|死亡|遇难|身亡|失踪|伤亡|袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|坠机|沉船|flood|earthquake|attack|bomb|kidnap|clash|coup|crash/i);
   if (!ev) return true; /* 无事件词的常规报道不适用簇帽 */
@@ -3517,7 +3592,7 @@ async function _semanticEventDup(it) {
      * 原路径直接 return false 跳过查重）：标题无国名但含涉华实体锚（中国公民/华人/中资等）
      * ——涉华实体本身即强锚（chinaOverseasGate 已前置把关，误伤风险低），
      * 用实体词做候选查询键，语义判定照常执行。 */
-    let ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0);
+    let ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t);
     const ckey = ctry || Array.from(facSet).find(w => /中国公民|华人|中资|中国籍|中国工人/.test(w)) || '';
     if (!ckey) return false;
     /* 候选缓存：轮内同键连续查重只打一次 DB（国名或涉华实体词） */
@@ -3693,7 +3768,16 @@ function _isFreshEnough(it) {
   }
 
   /* 铁律收尾：三种途径都拿不到日期的新闻，时效不可验证 → 一律拦截（原"放行"是旧闻漏网主通道，
-   * 2026-08-25 实测近 3 天 43% 入库条目无任何日期字段） */
+   * 2026-08-25 实测近 3 天 43% 入库条目无任何日期字段）
+   * 2026-08-30 例外修复：gap_scheduler 检索通道全部自带 when:1d 硬限制（AP/GNews 只返回一天内新闻），
+   * 时间戳解析失败的当日新闻被当旧闻全杀（实测白天 15+ 轮全 0 入库，超时拒主导，铁证：
+   * "特朗普将沙特民用核协议提交国会审查"/"沙特处决5人"当日 AP 新闻因无时间戳被拒）。
+   * 时间戳缺失 → 信任检索窗口，按采集时刻计。 */
+  if (!dated && it._sourceType === 'gap_scheduler') {
+    it.publish_time = it.publish_time || new Date().toISOString();
+    it.event_date = it.event_date || it.publish_time;
+    dated = true;
+  }
   if (!dated) return false;
 
   /* ===== 当天数据铁律（2026-08-28 用户指令：当天只采当天数据，除非非常重要且库内无此条）=====
@@ -5318,7 +5402,10 @@ const CAT_GNEWS_PACKS = {
   infrastructure: ['pipeline explosion', 'railway accident', 'port shutdown', 'power plant failure', 'bridge collapse'],
   social_unrest: ['factory strike', 'mining protest', 'Bangladesh riot', 'fuel protest', 'transport strike']
 };
-/* GNews RSS 原子查询（串行+重试×2，并发即限流——与哨兵同款铁律） */
+/* GNews RSS 原子查询（串行+重试×2，并发即限流——与哨兵同款铁律）
+ * 2026-08-30 采集端修复：country 不再硬编码空串（google_news 通道 32+条/日空国别的根因）——
+ * 标题/描述国名提取 → 地区映射（俾路支→巴基斯坦等）→ 查询词自带国名兜底（CAT_GNEWS_PACKS
+ * 查询多为 'Pakistan economy crisis' 类，查询意图即国别）。 */
 async function _catGnewsRss(q, max) {
   const _once = () => Promise.race([
     netx.smartFetch('https://news.google.com/rss/search?q=' + encodeURIComponent(q + ' when:1d') + '&hl=en-US&gl=US&ceid=US:en',
@@ -5330,10 +5417,15 @@ async function _catGnewsRss(q, max) {
     let text = await _once();
     for (let r = 0; !text && r < 2; r++) { await new Promise(s => setTimeout(s, 2000)); text = await _once(); }
     if (!text) return [];
-    return (scrapers.parseRss(text) || []).slice(0, max || 12).map(it => ({
-      title: it.title || '', content: it.description || '', url: it.link || '',
-      publish_time: it.pubDate || '', source: 'Google News', country: ''
-    }));
+    const _qCountry = _SIG_COUNTRIES.find(x => String(q).toLowerCase().indexOf(String(x).toLowerCase()) >= 0) || '';
+    return (scrapers.parseRss(text) || []).slice(0, max || 12).map(it => {
+      const _t = String(it.title || '') + ' ' + String(it.description || '');
+      return {
+        title: it.title || '', content: it.description || '', url: it.link || '',
+        publish_time: it.pubDate || '', source: 'Google News',
+        country: _SIG_COUNTRIES.find(x => _t.indexOf(x) >= 0) || _regionToCountry(_t) || _qCountry
+      };
+    });
   } catch (e) { return []; }
 }
 /* 类别均衡质量闸（2026-08-28 用户指令：数据质量整治）：

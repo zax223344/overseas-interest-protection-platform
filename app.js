@@ -16049,13 +16049,25 @@ const FORECAST={
     };
     var d=null; try{ if(typeof FORESEE!=='undefined') d=FORESEE_SAFE(); }catch(e){}
     function FORESEE_SAFE(){ try{ return FORESEE.compute(); }catch(e){ return null; } }
-    var focus=d?d.high.concat(d.watch).slice(0,6):[];
+    /* 2026-08-30 实战化修复（root cause ×2）：
+     * ① 波及中资项目恒为 0 的 bug：原匹配 e.country===r.name，但企业库字段是 countries 数组
+     *   ——匹配逻辑从未命中过。改为 countries 数组包含判断。
+     * ② focus 排序纯按风险分（索马里第一但我国在当地无项目资产，对领导无处置意义）：
+     *   加中资利益加权——35 企企业库 countries 命中的国家排序提升，体现"利益在哪、
+     *   情景推演优先推哪"的实战逻辑。 */
+    var _cnCountrySet={};
+    try{ (typeof ENTERPRISES!=='undefined'?ENTERPRISES:[]).forEach(function(e){ (e.countries||[]).forEach(function(c){ _cnCountrySet[c]=(_cnCountrySet[c]||0)+1; }); }); }catch(e){}
+    var _allFocus=(d?d.high.concat(d.watch):[]);
+    var focus=_allFocus.slice(0,24).sort(function(a,b){
+      var wa=(a.pred-6.5)+(_cnCountrySet[a.name]?1.8:0), wb=(b.pred-6.5)+(_cnCountrySet[b.name]?1.8:0);
+      return wb-wa;
+    }).slice(0,6);
     var self=this;
     this._scnRows=focus.map(function(r){
       var prob=r.pred>=9?'55-70%':r.pred>=8?'40-55%':r.pred>=7?'28-40%':'18-28%';
       var impact=r.pred>=8.5?'极高':r.pred>=7?'高':'中';
       var affected=[];
-      try{ affected=(typeof ENTERPRISES!=='undefined'?ENTERPRISES:[]).filter(function(e){return e.country===r.name;}).slice(0,5).map(function(e){return e.name;}); }catch(e){}
+      try{ affected=(typeof ENTERPRISES!=='undefined'?ENTERPRISES:[]).filter(function(e){return (e.countries||[]).indexOf(r.name)>=0;}).slice(0,5).map(function(e){return e.short||e.name;}); }catch(e){}
       var drivers=(r.contrib||[]).slice(0,4).map(function(c){return c.label;});
       return {
         name:r.name+'：'+(r.domDim||'综合')+'风险升级情景', country:r.name, flag:r.flag,
@@ -16084,7 +16096,8 @@ const FORECAST={
       html+='<div class="card" style="border-top:3px solid '+sc.color+'">'+
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
         '<strong style="font-size:13px;color:'+sc.color+'">'+sc.flag+' '+sc.name+'</strong>'+
-        '<span class="badge '+(sc.impact==='极高'?'b-red':sc.impact==='高'?'b-orange':'b-yellow')+'">影响:'+sc.impact+'</span></div>'+
+        '<span style="display:flex;gap:4px;align-items:center">'+(_cnCountrySet[sc.country]?'<span class="badge" style="background:rgba(255,51,85,0.12);color:var(--red);font-size:9px">🇨🇳 中资 '+_cnCountrySet[sc.country]+' 企</span>':'')+
+        '<span class="badge '+(sc.impact==='极高'?'b-red':sc.impact==='高'?'b-orange':'b-yellow')+'">影响:'+sc.impact+'</span></span></div>'+
         '<div class="flex gap-8 mb-8 wrap">'+
         '<span class="badge b-blue">概率: '+sc.prob+'</span>'+
         '<span class="badge b-purple">窗口: '+sc.timeframe+'</span>'+
@@ -16164,6 +16177,9 @@ const FORECAST={
     /* ===== 专家研判 v2（2026-08-16 重设计：原 6 位虚构真人专家全部废弃）=====
      * 改为 AI 专家团：四位 AI 专家基于系统实时数据会商（Kimi 大模型，服务端中转）。
      * 每张卡先展示该领域的真实数据摘要，AI 会商结果分派到对应卡。绝不再出现假人名假履历。 */
+    /* 2026-08-30 防御性拉取：进专家页时若日统计仍为 0（拉取未完成/失败），主动拉一次，
+     * 并在返回后重渲染数据摘要——修"今日全库采集 0 条"失真。 */
+    try{ if(typeof SITUATION!=='undefined' && !(SITUATION._dailyStats&&SITUATION._dailyStats.total>0)){ SITUATION.fetchDailyStats(); var _feSelf=this; setTimeout(function(){try{_feSelf.render();}catch(e){}},4000); } }catch(e){}
     var d=null; try{ if(typeof FORESEE!=='undefined') d=FORESEE.compute(); }catch(e){}
     var ds=(typeof SITUATION!=='undefined'&&SITUATION._dailyStats)||{};
     var focus=d?d.high.concat(d.watch).slice(0,10):[];
@@ -19271,6 +19287,12 @@ function initApp(){
   // Init first view（异步，防止卡死页面）
   setTimeout(function(){try{SITUATION.init();}catch(e){console.error('SITUATION.init错误:',e);}},100);
   console.log('[initApp] 完成，SITUATION.init 已异步启动');
+  /* 2026-08-30 全局日统计拉取（root fix）：fetchDailyStats 此前只在态势页渲染时启动，
+   * 用户登录后直接进预测中心/专家研判页时 _dailyStats 恒为 0——专家页显示"今日全库采集 0 条"
+   * 而实际今日已入库 130+ 条，领导视角形同系统瘫痪。改为登录即拉取+全局 30s 轮询，
+   * 不依赖任何特定视图渲染。 */
+  setTimeout(function(){try{SITUATION.fetchDailyStats();}catch(e){}},2000);
+  if(!window._globalDailyStatsTimer) window._globalDailyStatsTimer=setInterval(function(){try{SITUATION.fetchDailyStats();}catch(e){}},30000);
   // 启动实时情报流（SSE）
   initLiveFeed();
   // 启动自动采集引擎状态监控（每30秒查询服务端引擎状态，显示在首页）
