@@ -805,6 +805,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-nav">
 <div class="sb-group">态势感知</div>
 <div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">态势总览</span></div>
+<div class="sb-item" data-view="workbench" onclick="navigateTo('workbench')"><span class="ic">🧭</span><span class="lb">联合作业台</span></div>
 <div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">🎯</span><span class="lb">我的关注</span></div>
 <div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
 <div class="sb-group">监测中心</div>
@@ -885,6 +886,9 @@ select.intel-input{cursor:pointer}
 <div class="card"><div class="card-tt"><span class="ic">🛰️</span>GEOINT 卫星影像 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">实时图层统计 · 最近影像</span></div><div id="sit-geoint"></div></div>
 </div>
 </div>
+
+<!-- VIEW: WORKBENCH 联合作业台（任务工作区 + 情报图层 + 安全指数） -->
+<div class="view" id="view-workbench"><div id="workbench-content" style="padding:14px"></div></div>
 
 <!-- VIEW: INTEL IMAGE CENTER -->
 <div class="view" id="view-intel">
@@ -1181,7 +1185,8 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=1"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=265"></script>
+<script src="app.js?v=266"></script>
+<script src="workbench.js?v=1"></script>
 <script src="foresee.js?v=2"></script>
 <script src="distribute.js?v=38"></script>
 <script src="datasources.js?v=26"></script>
@@ -1194,7 +1199,7 @@ function closeMobileMenu(){
 <script src="socmint.js?v=4"></script>
 <script src="command-center.js?v=3"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=5"></script>
+<script src="role-ui.js?v=6"></script>
 <script src="dailyreport.js?v=5"></script>
 <script src="wechat.js?v=4"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
