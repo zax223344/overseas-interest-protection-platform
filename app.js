@@ -1191,7 +1191,9 @@ var DATACENTER={
     var byCat={};Object.keys(catNames).forEach(function(k){byCat[k]=0;});
     var byCountry={},byDay={},byRegion={},byOrg={},chinaCnt=0,negCnt=0,redCnt=0;
     var REGION_MAP={'巴基斯坦':'南亚','印度':'南亚','孟加拉国':'南亚','斯里兰卡':'南亚','尼泊尔':'南亚','阿富汗':'中亚','哈萨克斯坦':'中亚','乌兹别克斯坦':'中亚','吉尔吉斯斯坦':'中亚','塔吉克斯坦':'中亚','土库曼斯坦':'中亚','尼日利亚':'非洲','马里':'非洲','尼日尔':'非洲','刚果':'非洲','索马里':'非洲','肯尼亚':'非洲','埃塞俄比亚':'非洲','南非':'非洲','埃及':'非洲','利比亚':'非洲','苏丹':'非洲','加纳':'非洲','坦桑尼亚':'非洲','乌干达':'非洲','赞比亚':'非洲','津巴布韦':'非洲','莫桑比克':'非洲','安哥拉':'非洲','喀麦隆':'非洲','乍得':'非洲','阿尔及利亚':'非洲','摩洛哥':'非洲','突尼斯':'非洲','布基纳法索':'非洲','科特迪瓦':'非洲','塞内加尔':'非洲','卢旺达':'非洲','伊朗':'中东','伊拉克':'中东','叙利亚':'中东','也门':'中东','黎巴嫩':'中东','约旦':'中东','以色列':'中东','巴勒斯坦':'中东','沙特':'中东','阿联酋':'中东','卡塔尔':'中东','科威特':'中东','巴林':'中东','阿曼':'中东','土耳其':'中东','缅甸':'东南亚','菲律宾':'东南亚','印尼':'东南亚','印度尼西亚':'东南亚','马来西亚':'东南亚','泰国':'东南亚','越南':'东南亚','柬埔寨':'东南亚','老挝':'东南亚','乌克兰':'欧洲','俄罗斯':'欧洲','英国':'欧洲','法国':'欧洲','德国':'欧洲','希腊':'欧洲','波兰':'欧洲','罗马尼亚':'欧洲','匈牙利':'欧洲','捷克':'欧洲','塞尔维亚':'欧洲','墨西哥':'拉美','阿根廷':'拉美','智利':'拉美','秘鲁':'拉美','哥伦比亚':'拉美','委内瑞拉':'拉美','巴西':'拉美','美国':'北美','加拿大':'北美','澳大利亚':'大洋洲','新西兰':'大洋洲','日本':'东亚','韩国':'东亚'};
-    var ORG_RE=/(BLA|BLF|TTP|ISIS|ISIL|IS-KP|Taliban|塔利班|Boko Haram|博科圣地|Al-Shabaab|索马里青年党|Al-Qaeda|基地组织|AQIM|HTS|俾路支|哈马斯|真主党|胡塞|Houthi|Hamas|Hezbollah)/gi;
+    var ORG_RE=/(BLA|BLF|TTP|ISIS|ISIL|IS-KP|Taliban|塔利班|Boko Haram|博科圣地|Al-Shabaab|索马里青年党|Al-Qaeda|基地组织|AQIM|HTS|俾路支解放军|俾路支|哈马斯|真主党|胡塞|Houthi|Hamas|Hezbollah|LeT|JeM|Al-Badr|勇敢军|伊斯兰国)/gi;
+    /* 威胁组织英文缩写/别名 → 标准中文名归一映射（聚合 key 统一中文，防 ttp/TTP 分裂计数） */
+    var ORG_CN={'BLA':'俾路支解放军','BLF':'俾路支解放阵线','TTP':'巴基斯坦塔利班','TALIBAN':'塔利班','ISIS':'伊斯兰国','ISIL':'伊斯兰国','IS-KP':'伊斯兰国呼罗珊省','BOKO HARAM':'博科圣地','AL-SHABAAB':'索马里青年党','AL-QAEDA':'基地组织','AQIM':'伊斯兰马格里布基地组织','HTS':'沙姆解放组织','HOUTHI':'胡塞武装','胡塞':'胡塞武装','HAMAS':'哈马斯','HEZBOLLAH':'真主党','LET':'虔诚军','JEM':'穆罕默德军','AL-BADR':'巴德尔组织'};
     rows.forEach(function(r){
       var text=String((r.title||'')+' '+(r.title_zh||'')+' '+(r.content||r.desc||'')+' '+(r.content_zh||''));
       var cat=r._store;
@@ -1212,7 +1214,7 @@ var DATACENTER={
       if(/制裁|批评|指责|威胁|抹黑|遏制|脱钩|反华|排华|歧视|sanction|critic|accuse|threat|smear|contain|decouple/i.test(text))negCnt++;
       if(/死亡|伤亡|遇害|遇难|绑架|恐袭|爆炸|空袭|枪击|战争|政变|killed|dead|attack|blast|bombing/i.test(text))redCnt++;
       var m;ORG_RE.lastIndex=0;
-      while((m=ORG_RE.exec(text))!==null){var g=m[0];if(g.length>1)byOrg[g]=(byOrg[g]||0)+1;}
+      while((m=ORG_RE.exec(text))!==null){var g=ORG_CN[String(m[0]).toUpperCase()]||m[0];if(g.length>1)byOrg[g]=(byOrg[g]||0)+1;}
     });
     function topN(o,n){return Object.keys(o).map(function(k){return{k:k,v:o[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,n);}
     return {period:period,range:range,total:rows.length,byCat:byCat,byCountry:topN(byCountry,12),byRegion:topN(byRegion,10),byDay:byDay,byOrg:topN(byOrg,10),chinaCnt:chinaCnt,negCnt:negCnt,redCnt:redCnt,generatedAt:new Date()};
