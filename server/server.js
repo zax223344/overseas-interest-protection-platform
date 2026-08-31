@@ -1083,6 +1083,42 @@ function _contentCountryFix(it) {
     return false;
   } catch (e) { return false; }
 }
+/* 2026-08-31 标题跨形态去重 helper（用户铁证根因）：写入侧重复组增量不断累积——
+ * 原版只在 _serverAlertGen 跑一次，但 PUT /api/datahub/:collection 合并路径客户端
+ * DataHub 回灌的 ALERTS 不经过生成器，每次覆盖都会再写入同题双条。
+ * 统一走本 helper：保留优先级 SRV- > 裸数字 id > 其他形态（TR-/ANOM-/时间戳 id），
+ * 空字段互补后丢弃多余条目。日志前缀区分调用方。 */
+function _dedupAlertsByTitle(arr, logTag) {
+  const _idRank = (a) => { const id = String((a && a.id) || ''); if (id.indexOf('SRV-') === 0) return 0; if (/^\d+$/.test(id)) return 1; return 2; };
+  const byTkey = new Map();
+  const keptT = [];
+  let count = 0;
+  try {
+    for (const a of (arr || [])) {
+      if (!a) continue;
+      const k = String(a.title || a.title_zh || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
+      if (!k) { keptT.push(a); continue; }
+      const prev = byTkey.get(k);
+      if (!prev) { byTkey.set(k, a); keptT.push(a); continue; }
+      const keep = _idRank(a) < _idRank(prev) ? a : prev;
+      const drop = (keep === a) ? prev : a;
+      /* 字段互补：被丢弃条目的非空字段转移到保留条 */
+      for (const f of ['desc', 'title_zh', 'url', 'country', 'publishedAt', 'risk_score', 'risk_zone', 'asset_tags', 'core_threat_name', 'channel_tags']) {
+        if ((keep[f] == null || keep[f] === '') && drop[f] != null && drop[f] !== '') keep[f] = drop[f];
+      }
+      if (keep.is_core !== true && drop.is_core === true) keep.is_core = true;
+      /* 保证 keptT 恰有一份 keep（之前若 keep=a 但 a 未入表 → push；keep=prev 已在表中 → 不重 push） */
+      const ki = keptT.indexOf(keep);
+      if (ki < 0) keptT.push(keep);
+      /* 移除 drop（drop 在 keptT 仅当它就是 prev 且被更优的 a 顶替） */
+      if (drop !== keep) { const di = keptT.indexOf(drop); if (di >= 0) keptT.splice(di, 1); }
+      byTkey.set(k, keep);
+      count++;
+    }
+    if (count && logTag) console.log(logTag + ' 标题跨形态去重 ' + count + ' 组');
+  } catch (e) { console.warn(logTag + ' 标题去重异常:', e.message); return { kept: arr || [], count: 0 }; }
+  return { kept: keptT, count };
+}
 async function _serverAlertGen() {
   try {
     /* 2026-08-26 修复：15 分钟窗口过窄，入库与生成器错车（或重启/风控延迟）导致高价值条目
@@ -1127,36 +1163,13 @@ async function _serverAlertGen() {
       }
       if (_dualMerged) { alerts = kept; console.log('[ALERT-GEN] #522 双形态合并 ' + _dualMerged + ' 组（SRV-/裸 id 同条去重）'); }
     } catch (e) { console.warn('[ALERT-GEN] 双形态合并异常:', e.message); }
-    /* 2026-08-31 标题级跨形态去重（用户铁证：预警中心实测 27 组标题重复对）：
+    /* 2026-08-31 标题级跨形态去重（用户铁证：预警中心实测 27 组标题重复对）——
      * 双形态合并只处理 SRV-/裸数字 id 对；前端分发路径的 1788xxx 时间戳 id、
      * ANOM- 异动形态与生成器产物因 id 键不同永远错开，造成同题双条刷屏。
      * 按归一化标题键去重：保留优先级 SRV- > 裸数字 id（可溯源 intel_data）> 其他形态；
-     * 空字段互补后丢弃多余条目。 */
-    let _titleDedup = 0;
-    try {
-      const _idRank = (a) => { const id = String((a && a.id) || ''); if (id.indexOf('SRV-') === 0) return 0; if (/^\d+$/.test(id)) return 1; return 2; };
-      const byTkey = new Map();
-      const keptT = [];
-      for (const a of alerts) {
-        if (!a) continue;
-        const k = String(a.title || a.title_zh || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
-        if (!k) { keptT.push(a); continue; }
-        const prev = byTkey.get(k);
-        if (!prev) { byTkey.set(k, a); keptT.push(a); continue; }
-        const keep = _idRank(a) < _idRank(prev) ? a : prev;
-        const drop = (keep === a) ? prev : a;
-        /* 空字段互补：被丢弃条目的独有信息转移到保留条 */
-        for (const f of ['desc', 'title_zh', 'url', 'country', 'publishedAt', 'risk_score', 'risk_zone', 'asset_tags', 'core_threat_name', 'channel_tags']) {
-          if ((keep[f] == null || keep[f] === '') && drop[f] != null && drop[f] !== '') keep[f] = drop[f];
-        }
-        if (keep.is_core !== true && drop.is_core === true) keep.is_core = true;
-        const di = keptT.indexOf(drop); if (di >= 0) keptT.splice(di, 1);
-        const pj = keptT.indexOf(prev); if (pj >= 0) keptT[pj] = keep;
-        byTkey.set(k, keep);
-        _titleDedup++;
-      }
-      if (_titleDedup) { alerts = keptT; console.log('[ALERT-GEN] 标题跨形态去重 ' + _titleDedup + ' 组（前端时间戳/异动 id 与 DB 形态同题去重）'); }
-    } catch (e) { console.warn('[ALERT-GEN] 标题跨形态去重异常:', e.message); }
+     * 空字段互补后丢弃多余条目（统一走 _dedupAlertsByTitle helper）。 */
+    const _tdRes = _dedupAlertsByTitle(alerts, '[ALERT-GEN]');
+    if (_tdRes.count) { alerts = _tdRes.kept; _titleDedup = _tdRes.count; }
     /* 2026-08-29 存量清扫：预警队列里的历史旧案回顾（1988 泛美103审判类）逐轮剔除，
      * 与新生成否决同源判定——用户删不干净的这类旧案报道由生成器自动出清。 */
     let _histSwept = 0;
@@ -8901,6 +8914,16 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
           } catch (e) {}
         }
         const clientKept = data.length;
+        /* 2026-08-31 标题跨形态去重（根因 #524：原版只在 _serverAlertGen 跑，PUT 合并路径客户端回灌
+         * 不经过生成器，每次合并都会再写同题双条；预警中心重复组从 23 涨到 30 即为此因）。
+         * 在权威合并完成后、写库前统一去重，保证落库 + 下发到下一轮 PUT 前都是干净态。 */
+        const _tdPut = _dedupAlertsByTitle(data.concat(preserved), '[DATAHUB]');
+        if (_tdPut.count) {
+          /* 去重合并按 id 归属拆分回 client/preserved（保留条目 id 未变，仅字段互补） */
+          data = _tdPut.kept.filter(a => clientIds.has(String(a.id || '')));
+          preserved.length = 0;
+          preserved.push(..._tdPut.kept.filter(a => !clientIds.has(String(a.id || ''))));
+        }
         data = _partitionCore(_capAlertQueue(data.concat(preserved))).slice(0, 500); /* 2026-08-31 与 _serverAlertGen 同上限：300→500 */
         console.log('[DATAHUB] alerts 权威合并: 客户端 ' + clientKept + ' 条 + 服务端保留 ' + preserved.length + ' 条 → ' + data.length + ' 条');
       } catch (e) { console.warn('[DATAHUB] alerts 合并异常（回退全量覆盖）:', e.message); }
