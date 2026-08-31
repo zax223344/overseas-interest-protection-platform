@@ -8855,8 +8855,8 @@ const SITUATION={
     }).join('');
     // Latest alerts — 8 items with rich info filling the card
     var la=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents?AVIEW._mergeEvents([...ALERTS].sort((a,b)=>b.time.localeCompare(a.time)),'fuzzy'):[...ALERTS].sort((a,b)=>b.time.localeCompare(a.time)));
-    /* 国别封顶：同一国家相似新闻在最新预警面板只留 1 条 */
-    la=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry?AVIEW._capPerCountry(la,1):la).slice(0,8);
+    /* 国别封顶 3 条/国（2026-08-31 对齐 renderLiveStats 大池口径；首屏随后即被轮播引擎接管） */
+    la=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry?AVIEW._capPerCountry(la,3):la).slice(0,8);
     var alertHtml='';
     la.forEach(function(a,i){
       var lv=ALERT_LV[a.level];
@@ -9014,18 +9014,13 @@ const SITUATION={
     if(tCol>0) return (now-tCol)<=maxMs;                   /* ③ 采集时间 */
     return !!a._live;                                      /* ④ 实时条目兜底 */
   },
-  _isHighValuePanel(a){
-    /* 铁律 2026-08-27：全球态势焦点/最新情报面板只显示核心安全事件
-       （恐怖袭击/海外袭击/绑架/重大刑案/恐怖组织动态），其他一律不显示 */
-    var t=String(a.title||'')+String(a.title_zh||'');
-    /* 铁律 2026-08-27 深夜追加：外文/半中半英标题一律不上焦点面板
-       （例：「US designates UK-based 巴勒斯坦 Action as foreign」）。 */
+  /* 标题翻译质量闸（2026-08-31 从 _isHighValuePanel 拆出）：半中半英/纯外文主体/机翻半成品
+   * 一票否决上高可见面板。哨兵与池子过滤共用——内容可以放宽轮播，翻译质量绝不放宽。 */
+  _isPanelTitleClean(a){
     var disp=String(a.title_zh||a.title||'');
     var latinRuns=disp.match(/[A-Za-z][A-Za-z'’-]*(?:\s+[A-Za-z][A-Za-z'’-]*){3,}/g)||[];
     if(latinRuns.length&&/[一-龥]/.test(disp)) return false;   /* 混排：含中文又有 4+ 连续英文词 */
     if(disp.length&&(/[一-龥]/.test(disp)?false:true)&&/[A-Za-z]{6,}/.test(disp)) return false; /* 纯外文主体 */
-    /* 铁律 2026-08-28：翻译残留类烂标题不上高可见面板
-     *（例：「27人死亡11 Shtatorit，恐怖分子的组织者」——数字+外文实义词=机翻半成品） */
     if(/[一-龥]/.test(disp)){
       var _frags=disp.match(/\d{1,4}\s+[A-Za-z][A-Za-z]{3,}/g)||[];
       var _wl=/^(?:CPEC|ISIS|ISIL|Taliban|COVID|IMF|WTO|NATO|TTP|BLA|ISWAP|Houthi|Houthis|Hezbollah|Hamas|RSF|ELN|FARC|OPEC|SWIFT)s?$/i;
@@ -9036,6 +9031,15 @@ const SITUATION={
       var _lower=disp.match(/[a-z]{4,}/g)||[];
       if(_lower.length>=2) return false;
     }
+    return true;
+  },
+  _isHighValuePanel(a){
+    /* 铁律 2026-08-27：全球态势焦点"高价值预警"子面板只显示核心安全事件
+       （恐怖袭击/海外袭击/绑架/重大刑案/恐怖组织动态），其他一律不显示 */
+    var t=String(a.title||'')+String(a.title_zh||'');
+    /* 铁律 2026-08-27 深夜追加：外文/半中半英标题一律不上焦点面板
+       （例：「US designates UK-based 巴勒斯坦 Action as foreign」）。 */
+    if(!this._isPanelTitleClean(a)) return false;
     /* 核心事件词：必须命中 */
     var isCore=/恐袭|恐怖|自杀式|绑架|劫持|人质|武装袭击|恐怖袭击|枪击|谋杀|屠杀|灭门|刑事|命案|爆炸|伏击|突袭|武装分子|极端组织|塔利班|博科|青年党|基地组织|伊斯兰国|ISIS|绑架案|劫持案|抢劫|匪徒|帮派|枪击案|凶杀|命案|中国公民|中方人员|华人被袭|华侨被绑|撤侨|群体开枪|terror|suicide|kidnap|hostage|attack|bombing|blast|shooting|murder|massacre|militant|insurgent|extremist|Taliban|Boko|Shabaab|Qaeda|ISIS|ambush|raid|assault|armed|gunmen|criminal|gang|homicide/i.test(t);
     if(!isCore) return false;
@@ -9044,7 +9048,10 @@ const SITUATION={
     if(isNoise) return false;
     return true;
   },
-  /* 面板哨兵：每 30 秒检查一次高可见面板内容，自动清退非核心事件并刷新 */
+  /* 面板哨兵：每 30 秒检查一次高可见面板内容
+   * 2026-08-31 调整：池子已放宽为预警中心大池轮播（核心事件降级为排序权重），
+   * 哨兵不再按核心事件词清退（会与大池口径打架→30s 一次强制刷新死循环闪烁），
+   * 只拦两类硬伤：①翻译烂标题（半中半英/机翻残留）②超过 24h 的旧闻残留。 */
   _panelSentinel(){
     if(this._panelSentinelTimer) return;
     var self=this;
@@ -9058,10 +9065,10 @@ const SITUATION={
           var bad=0;
           rows.forEach(function(r){
             var t=r.textContent||'';
-            if(!SITUATION._isHighValuePanel({title:t})) bad++;
+            if(!SITUATION._isPanelTitleClean({title:t})) bad++;
           });
           if(bad>0){
-            console.warn('[SITUATION-SENTINEL] 最新预警面板检出 '+bad+' 条非核心事件，强制刷新');
+            console.warn('[SITUATION-SENTINEL] 最新预警面板检出 '+bad+' 条翻译烂标题，强制刷新');
             self.renderLiveStats();
           }
         }
@@ -9072,10 +9079,10 @@ const SITUATION={
           var bad2=0;
           items.forEach(function(r){
             var t=r.textContent||'';
-            if(!SITUATION._isHighValuePanel({title:t})) bad2++;
+            if(!SITUATION._isPanelTitleClean({title:t})) bad2++;
           });
           if(bad2>0){
-            console.warn('[SITUATION-SENTINEL] 全球态势焦点面板检出 '+bad2+' 条非核心事件，强制刷新');
+            console.warn('[SITUATION-SENTINEL] 全球态势焦点面板检出 '+bad2+' 条翻译烂标题，强制刷新');
             self.renderIntelPanels();
           }
         }
@@ -9102,22 +9109,25 @@ const SITUATION={
       var _val=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._alertValue)?AVIEW._alertValue(a):{score:0,tags:[]};}catch(e){return {score:0,tags:[]};}};
       var _facts=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._liteFacts)?AVIEW._liteFacts(a):[];}catch(e){return [];}};
       var _tier=function(a){var t=String(a.title||'')+String(a.title_zh||'');if(a.chinaNegative||a._chinaNegative)return 0;if(_cnRe.test(t))return 1;if(_corrRe.test(t+String(a.country||'')))return 2;return 3;};
-      /* 2026-08-27 高可见面板只展示 24h 内高价值数据，杜绝陈旧旧闻刷屏 */
-      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a);});
+      /* 2026-08-31 用户指令：最新预警面板对齐预警中心大池子轮播（上百条不断轮流循环），
+       * 不再用核心事件硬闸+国别封顶1条把池子砍到两三页——
+       * 保留：24h 时效铁律（杜绝旧闻刷屏）+ 非蓝（信噪分离：蓝=普通动态不占版面）+ 事件级合并；
+       * 核心安全事件降级为排序权重（核心在前，非核心垫后循环），国别封顶放宽 3 条/国保多样性。 */
+      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && a.level!=='blue' && SITUATION._freshItem(a,24);});
       if(this._laLevel!=='all')pool=pool.filter(function(a){return a.level===self._laLevel;});
       if(this._laCnOnly)pool=pool.filter(function(a){return _tier(a)<=1;});
-      /* 排序：等级为主（红>橙>黄>蓝，重大事件优先）+ 涉华/高危走廊加权 + 价值分决胜 + 时间 */
+      /* 排序：等级为主（红>橙>黄>蓝，重大事件优先）+ 涉华/高危走廊/核心事件加权 + 价值分决胜 + 时间 */
       var _lvW={red:4000,orange:3000,yellow:2000,blue:1000};
       var _tierW={0:1000,1:800,2:500,3:0}; /* 涉华负面/涉华/高危走廊/其他 */
-      var _score=function(a){return (_lvW[a.level]||0)+(_tierW[_tier(a)]||0)+_val(a).score;};
+      var _score=function(a){return (_lvW[a.level]||0)+(_tierW[_tier(a)]||0)+(SITUATION._isHighValuePanel(a)?2500:0)+_val(a).score;};
       var sortedAlerts=pool.slice().sort(function(a,b){
         var sa=_score(a),sb=_score(b);if(sa!==sb)return sb-sa;
         return String(b.time||'').localeCompare(String(a.time||''));
       });
       /* 事件级合并：同事件多来源/多进展只留最高优先级一条，避免同一火灾/绑架反复刷屏 */
       sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(sortedAlerts,'fuzzy'):sortedAlerts;
-      /* 国别封顶：同一国家（按标题提取事发国）在最新预警面板中最多 1 条 */
-      sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(sortedAlerts,1):sortedAlerts;
+      /* 国别封顶：同一国家最多 3 条（2026-08-31 放宽 1→3：大池轮播下保多样性也要保量） */
+      sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(sortedAlerts,3):sortedAlerts;
       var totalPages=Math.max(1,Math.ceil(sortedAlerts.length/pageSize));
       if(this._alertPage>=totalPages)this._alertPage=0;
       var start=(this._alertPage%totalPages)*pageSize;
@@ -9272,13 +9282,14 @@ const SITUATION={
     }catch(e){}
     var topAlerts=[];
     try{
-      /* 2026-08-27 全球态势焦点只展示 24h 内高价值预警 */
+      /* 高价值预警子面板：核心安全事件语义不变，但池子扩容 12→60（2026-08-31 用户指令：
+       * 焦点面板要用大池子不断轮流循环，不是一小撮数据反复闪） */
       topAlerts=(ALERTS||[]).filter(function(a){return SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a);}).sort(function(a,b){
         return (typeof AVIEW!=='undefined'?AVIEW._alertValue(b).score:0)-(typeof AVIEW!=='undefined'?AVIEW._alertValue(a).score:0);
       });
       topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(topAlerts,'fuzzy'):topAlerts;
-      topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(topAlerts,1):topAlerts;
-      topAlerts=topAlerts.slice(0,12); /* 池扩容 4→12，每分钟轮播 4 条 */
+      topAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(topAlerts,2):topAlerts;
+      topAlerts=topAlerts.slice(0,60); /* 池扩容 12→60，每分钟轮播 4 条 */
     }catch(e){}
     /* 轮播窗口：每分钟从 12 条池子里换 4 条展示 */
     var topPoolLen=topAlerts.length;
@@ -9359,15 +9370,15 @@ const SITUATION={
     }else{
       h+='<div style="padding:6px;font-size:10px;color:var(--text3)">今日暂无高价值预警</div>';
     }
-    /* 实时情报流列表（2026-08-20：让 liveItems 指标可见，同时给态势总览一个实时滚动切片；
-     * 2026-08-28 池扩容 5→15，每分钟轮播 5 条） */
-    var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
+    /* 实时情报流列表（2026-08-31 用户指令：对齐预警中心大池口径轮播——非蓝+24h+非resolved，
+     * 不再核心事件硬过滤；2026-08-28 池扩容 5→15，2026-08-31 扩容 15→50，每分钟轮播 5 条） */
+    var liveSlice=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && a.status!=='resolved' && SITUATION._freshItem(a,24); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
     /* 事件级去重：同一事件多来源/多进展只留最新一条，避免同一火灾/制裁/袭击反复刷屏 */
     liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(liveSlice,'fuzzy'):liveSlice;
     /* 全球态势焦点面板内跨子面板国别去重 */
     liveSlice=liveSlice.filter(function(a){ var c=(typeof AVIEW!=='undefined'&&AVIEW._eventKeyFuzzy)?(AVIEW._eventKeyFuzzy(a).split('|')[0]||a.country||''):(a.country||''); return !usedCountries[c]; });
-    liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(liveSlice,1):liveSlice;
-    liveSlice=liveSlice.slice(0,15); /* 池扩容 5→15 */
+    liveSlice=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(liveSlice,2):liveSlice;
+    liveSlice=liveSlice.slice(0,50); /* 池扩容 15→50 */
     var livePoolLen=liveSlice.length;
     liveSlice=_win(liveSlice,5);
     /* ===== P0-3 精简模式开关（2026-08-29 用户批准：只加开关，不砍既有内容） =====
@@ -9377,11 +9388,11 @@ const SITUATION={
     h+='<div style="font-size:10px;font-weight:700;color:var(--cyan);margin:8px 0 4px;display:flex;align-items:center;gap:6px">📡 实时情报流'+(livePoolLen>5&&!compact?'<span style="font-size:8px;color:var(--text3);font-weight:400"> · 轮播 '+(rot%livePoolLen+1)+'/'+livePoolLen+'</span>':'')+
       '<span onclick="SITUATION.toggleLiveCompact()" title="切换 精简模式（国家/标题/时间 三列10条）与 详细模式" style="margin-left:auto;cursor:pointer;padding:1px 7px;border-radius:5px;font-size:9px;font-weight:700;border:1px solid '+(compact?'var(--cyan)':'var(--border)')+';color:'+(compact?'var(--cyan)':'var(--text3)')+';background:'+(compact?'rgba(0,212,255,0.10)':'transparent')+'">'+(compact?'☰ 精简':'☑ 详细')+'</span></div>';
     if(compact){
-      /* 精简模式：三列 10 条最新（不走轮播窗口，直接取池子前 10） */
-      var cmpPool=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && SITUATION._freshItem(a,24) && SITUATION._isHighValuePanel(a); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
+      /* 精简模式：三列 10 条最新（2026-08-31 对齐大池口径：非蓝+24h+非resolved，国别封顶2） */
+      var cmpPool=(ALERTS||[]).filter(function(a){ return a.level!=='blue' && a.status!=='resolved' && SITUATION._freshItem(a,24); }).sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); });
       try{
         cmpPool=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(cmpPool,'fuzzy'):cmpPool;
-        cmpPool=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(cmpPool,1):cmpPool;
+        cmpPool=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(cmpPool,2):cmpPool;
       }catch(e){}
       cmpPool=cmpPool.slice(0,10);
       if(cmpPool.length){
