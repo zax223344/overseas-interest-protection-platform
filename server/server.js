@@ -2492,6 +2492,78 @@ async function _trGnews(q, max) {
     }));
   } catch (e) { return []; }
 }
+
+/* ── 关键词作战相关性双要素闸（2026-08-31 任务 #515）──────────────────
+ * 用户铁律：搜「中资#抢劫」就必须是"中资企业/中国公民在海外被抢劫"——
+ * 芝加哥本地抢劫案 / 中国融资新闻 / 苏丹内战这类单要素噪声一律拦在入库前。
+ * 规则：「#」拆分的每个子题构成一个要素组；涉华子题（中资/中国/华人…）展开为
+ * 标准涉华模式集（含海外旗舰项目名——Gwadar 报道常不写 China），其余子题译英
+ * 取词干（robbery→rob，匹配 robbed/robber/robbing）。入库条目须【所有组同时命中】；
+ * 单子题查询退化为单组匹配。 */
+const _KW_CN_ZH_RE = /中资|中国|中方|华人|华侨|中企|一带一路|撤侨|北京|人民币/i;
+const _KW_CN_ZH_WORDS = ['中资', '中国', '中方', '华人', '华侨', '中企', '一带一路', '撤侨', '北京'];
+const _KW_CN_EN_WORDS = ['chinese', 'china', 'beijing'];
+const _KW_CN_ASSETS = ['CPEC', 'Gwadar', 'Hambantota', 'Piraeus', 'Kyaukpyu', 'Jakarta-Bandung', 'China-Laos', 'Addis-Djibouti', 'Mombasa-Nairobi', 'Simandou', 'Kamoa', 'Tazara', 'Colombo Port City'];
+/* 主题要素提取丢弃的泛化英文词（company/funded 级——留着"中企 IPO 融资新闻"就能凭词混进主题组） */
+const _KW_GENERIC_EN = new Set(['company', 'companies', 'firm', 'firms', 'funded', 'funding', 'funds', 'fund', 'investor', 'investors', 'investment', 'investments', 'overseas', 'abroad', 'foreign', 'national', 'nationals', 'citizen', 'citizens', 'worker', 'workers', 'people', 'person', 'persons', 'enterprise', 'enterprises', 'business', 'businesses', 'staff', 'employee', 'employees', 'project', 'projects', 'news', 'report', 'reports', 'said', 'amid', 'after', 'their', 'they', 'have', 'has', 'were', 'will', 'would', 'could', 'into', 'over', 'more', 'most', 'new', 'first', 'two', 'three']);
+/* 轻量词干（robbery→rob / kidnapping→kidnap / sanctions→sanction / evacuation→evacuat） */
+function _kwStem(w) {
+  let s = String(w || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (s.length < 3) return '';
+  let changed = true;
+  while (changed && s.length > 3) {
+    changed = false;
+    for (const suf of ['ing', 'ery', 'ers', 'ies']) {
+      if (s.endsWith(suf) && s.length - suf.length >= 3) { s = s.slice(0, -suf.length); changed = true; break; }
+    }
+    if (!changed) for (const suf of ['ed', 'es', 'er', 'ion']) {
+      if (s.endsWith(suf) && s.length - suf.length >= 4) { s = s.slice(0, -suf.length); changed = true; break; }
+    }
+    if (!changed && s.endsWith('s') && s.length > 3) { s = s.slice(0, -1); changed = true; }
+  }
+  return s.replace(/([a-z])\1$/, '$1');
+}
+/* 子题 → 要素组：涉华子题展开标准涉华集；其余子题 = 原词 + 英译 + 英译词干。
+ * enOf：外部已译好的英文（collect 端复用翻译结果，避免二次调用翻译 API） */
+function _kwGroup(sub, enOf) {
+  if (_KW_CN_ZH_RE.test(sub) || (!/[\u4e00-\u9fff]/.test(sub) && /chinese|china|beijing/i.test(sub))) {
+    return { cn: true, pats: _KW_CN_ZH_WORDS.concat(_KW_CN_EN_WORDS, _KW_CN_ASSETS) };
+  }
+  const g = [sub];
+  const en = String(enOf || '').trim();
+  if (en && !/[\u4e00-\u9fff]/.test(en)) {
+    if (g.indexOf(en) < 0) g.push(en);
+    en.split(/[^A-Za-z]+/).forEach(w => {
+      const wl = w.toLowerCase(), st = _kwStem(w);
+      if (st.length >= 3 && !_KW_GENERIC_EN.has(wl) && g.indexOf(st) < 0) g.push(st);
+    });
+  } else if (!/[\u4e00-\u9fff]/.test(sub)) {
+    sub.split(/[^A-Za-z]+/).forEach(w => {
+      const wl = w.toLowerCase(), st = _kwStem(w);
+      if (st.length >= 3 && !_KW_GENERIC_EN.has(wl) && g.indexOf(st) < 0) g.push(st);
+    });
+  }
+  return { cn: false, pats: g };
+}
+/* 条目文本对要素组的命中判定：中文 pat → indexOf；英文 pat → 词首+词尾形态学边界正则。
+ * 排雷（实测 XPeng「机器人」新闻凭 \brob 前缀命中 robot 漏过）：模式 = 词首 \b + 词干 +
+ * 可选叠尾字母（rob→robbed/kidnap→kidnapped）+ 可屈折后缀 + 词尾 \b——
+ * \brob(b)?(ed|ing|er|ery|…)?\b 命中 rob/robbed/robber/robbery/robberies，不命中 robot/problems */
+function _kwGroupHit(g, text, zhText) {
+  for (const p of (g.pats || [])) {
+    if (!p) continue;
+    if (/[\u4e00-\u9fff]/.test(p)) {
+      if ((text || '').indexOf(p) >= 0 || (zhText || '').indexOf(p) >= 0) return true;
+    } else {
+      const raw = String(p);
+      const e = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const L = /[A-Za-z]$/.test(raw) ? raw.slice(-1).toLowerCase() : '';
+      const re = new RegExp('\\b' + e + (L ? ('(?:' + L + ')?') : '') + '(?:es|s|ed|ing|er|ers|ery|eries|ies|ion|ions)?\\b', 'i');
+      if (re.test(text || '') || re.test(zhText || '')) return true;
+    }
+  }
+  return false;
+}
 app.post('/api/threatroom/collect', async (req, res) => {
   try {
     if (Date.now() < _threatroomBusyUntil) return res.json({ ok: false, error: '上一轮专项采集尚未结束，请稍候' });
@@ -2513,6 +2585,7 @@ app.post('/api/threatroom/collect', async (req, res) => {
       const arts = [];
       const seen = new Set();
       let enKws = [];   /* v4：关键词作战的英文检索词（回传前端展示"主题→外文关键字"链路） */
+      let kwGroups = null;  /* v5：双要素相关性组（任务 #515，见 _kwGroup 注释） */
       const push = (list) => (list || []).forEach(a => {
         const u = String(a.url || a.title || '');
         if (u && !seen.has(u)) { seen.add(u); arts.push(a); }
@@ -2593,6 +2666,7 @@ app.post('/api/threatroom/collect', async (req, res) => {
          * 中文原文保留做 GDELT 全语言兜底（中文源/俄语源仍能命中）。 */
         const enQuery = String(body.en || '').trim();
         const kws = [];
+        const subEns = {};   /* v5：子题 → 英译（双要素组复用，避免二次调翻译 API） */
         const addKw = (k) => { k = String(k || '').replace(/[""]/g, '').trim(); if (k && kws.indexOf(k) < 0 && kws.length < 4) kws.push(k); };
         if (enQuery) addKw(enQuery);
         const mainZh = q.replace(/[#＃]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -2606,15 +2680,20 @@ app.post('/api/threatroom/collect', async (req, res) => {
           }
           if (en) addKw(en);
           /* # 子题变体：「中资#抢劫」→ "Chinese companies" + "robbery" 分别碰撞，覆盖分主题报道 */
-          const subs = q.split(/[#＃,，、;；]+/).map(s => s.trim()).filter(s => s.length >= 2).slice(0, 2);
-          for (const s of subs) {
-            if (!/[\u4e00-\u9fff]/.test(s)) { addKw(s); continue; }
+          const subs = q.split(/[#＃,，、;；]+/).map(s => s.trim()).filter(s => s.length >= 2).slice(0, 3);
+          for (let si = 0; si < subs.length; si++) {
+            const s = subs[si];
+            if (!/[\u4e00-\u9fff]/.test(s)) { addKw(s); subEns[si] = s; continue; }
             let e2 = '';
             try { e2 = await _tryTranSmart(s, 'zh', 'en'); } catch (e) {}
-            if (e2 && !/[\u4e00-\u9fff]/.test(e2)) addKw(e2);
+            if (!e2 || /[\u4e00-\u9fff]/.test(e2)) { try { const y2 = await _tryYoudao(s); if (y2 && /[a-zA-Z]/.test(y2) && !/[\u4e00-\u9fff]/.test(y2)) e2 = y2; } catch (e) {} }
+            if (e2 && !/[\u4e00-\u9fff]/.test(e2)) { addKw(e2); subEns[si] = e2; }
           }
         } else addKw(q);
         enKws = kws.slice();
+        /* v5 双要素组（任务 #515）：每个子题一组——「中资#抢劫」= [涉华集] AND [抢劫词干集] */
+        const kwSubs = q.split(/[#＃,，、;；]+/).map(s => s.trim()).filter(s => s.length >= 2).slice(0, 3);
+        kwGroups = kwSubs.map((s, i) => _kwGroup(s, subEns[i])).filter(g => g.pats && g.pats.length);
         console.log('[THREATROOM] 关键词翻译: ' + q + ' → [' + kws.join(' | ') + ']');
         /* 每个英文关键字独立全网碰撞 */
         for (const kw of kws) {
@@ -2655,6 +2734,14 @@ app.post('/api/threatroom/collect', async (req, res) => {
       for (const it of arts) {
         const ctext = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || '');
         if (_BAL_NOISE.test(ctext)) { rejected++; continue; }
+        /* v5 双要素相关性闸（任务 #515）：所有子题组同时命中才放行——
+         * 「中资#抢劫」须同时含涉华要素（中资/China/Gwadar…）AND 主题要素（rob 词干/抢劫），
+         * 芝加哥本地抢劫案（缺涉华）/中企融资新闻（缺抢劫）在此拦截 */
+        if (kwGroups && kwGroups.length) {
+          const txt = String(it.title || '') + ' ' + String(it.content || it.description || '');
+          const zht = String(it.title_zh || '') + ' ' + txt;
+          if (!kwGroups.every(g => _kwGroupHit(g, txt, zht))) { rejected++; continue; }
+        }
         if (!it.url && !it.title) { rejected++; continue; }
         if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
         const bk = _normTitleKey(it.title);
@@ -2728,32 +2815,72 @@ app.get('/api/threatroom/data', async (req, res) => {
         [String(days), '%' + q + '%', enName ? '%' + enName + '%' : '']);
       rows = r.rows;
     } else if (pats.length) {
-      /* v4（2026-08-31 用户指令：引擎≠实体库门槛）：中文关键词译成英文参与库内匹配——
-       * 英文原文标题（title 字段）用英文词命中率远高于中文词；title_zh 仍由中文 q 覆盖 */
-      if (/[\u4e00-\u9fff]/.test(q) && pats.length < 8) {
-        let en = '';
-        try { en = await _tryTranSmart(q.replace(/[#＃]/g, ' ').replace(/\s+/g, ' '), 'zh', 'en'); } catch (e) {}
-        if (!en || /[\u4e00-\u9fff]/.test(en)) {
-          try { const y = await _tryYoudao(q); if (y && /[a-zA-Z]/.test(y) && !/[\u4e00-\u9fff]/.test(y)) en = y; } catch (e) {}
+      /* v5（2026-08-31 任务 #515）：双要素 AND 匹配——#拆分子题各成一组（组内 OR、组间 AND）。
+       * 「中资#抢劫」= 涉华组 AND 抢劫词干组——单要素噪声（全球抢劫案/中企融资新闻）不再混入；
+       * 单子题 / org / project 保持 v4 宽 OR 老路。 */
+      const kwSubs = q.split(/[#＃,，、;；]+/).map(s => s.trim()).filter(s => s.length >= 2).slice(0, 3);
+      let done = false;
+      if (type === 'keyword' && kwSubs.length >= 2) {
+        const groups = [];
+        for (const s of kwSubs) {
+          let en = '';
+          if (/[\u4e00-\u9fff]/.test(s)) {
+            try { en = await _tryTranSmart(s, 'zh', 'en'); } catch (e) {}
+            if (!en || /[\u4e00-\u9fff]/.test(en)) {
+              try { const y = await _tryYoudao(s); if (y && /[a-zA-Z]/.test(y) && !/[\u4e00-\u9fff]/.test(y)) en = y; } catch (e) {}
+            }
+          }
+          groups.push(_kwGroup(s, en));
         }
-        if (en) {
-          /* 整句 + 实词级（"Chinese companies robbery" 单词拆开各自命中，容错标题语序差异） */
-          pats.push('%' + en + '%');
-          en.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 4)
-            .forEach(w => { if (pats.length < 10) pats.push('%' + w + '%'); });
+        const fGroups = groups.filter(g => g.pats && g.pats.length);
+        if (fGroups.length >= 2) {
+          /* 英文词干 → PG 正则（\m 词首/\M 词尾 + 叠尾字母+屈折后缀，与 _kwGroupHit
+           * 同形态学边界——防 XPeng「robot」凭 %rob% 漏进抢劫主题）；中文词原样子串匹配 */
+          const arrs = fGroups.map(g => g.pats.slice(0, 25).map(p => {
+            const raw = String(p);
+            if (/[\u4e00-\u9fff]/.test(raw)) return raw.replace(/[\\^$.|?*+()[{]/g, '\\$&');
+            const e = raw.replace(/[\\^$.|?*+()[{]/g, '\\$&');
+            const L = /[A-Za-z]$/.test(raw) ? raw.slice(-1).toLowerCase() : '';
+            return '\\m' + e + (L ? ('(?:' + L + ')?') : '') + '(?:es|s|ed|ing|er|ers|ery|eries|ies|ion|ions)?\\M';
+          }));
+          const whereCls = arrs.map((_, i) =>
+            `( title ~* ANY($${i + 2}) OR data_json->>'title_zh' ~* ANY($${i + 2}) OR description ~* ANY($${i + 2}) OR data_json->>'content' ~* ANY($${i + 2}) )`
+          ).join(' AND ');
+          const r = await query(
+            `SELECT * FROM intel_data WHERE collect_time >= NOW() - ($1 || ' days')::interval AND ${whereCls} ORDER BY collect_time DESC LIMIT 400`,
+            [String(days)].concat(arrs));
+          rows = r.rows;
+          done = true;
         }
       }
-      const arr = pats.slice(0, 10);
-      const ph = arr.map((_, i) => '$' + (i + 2)).join(',');
-      const r = await query(
-        `SELECT * FROM intel_data WHERE collect_time >= NOW() - ($1 || ' days')::interval
-          AND ( title ILIKE ANY($2)
-             OR data_json->>'title_zh' ILIKE ANY($2)
-             OR (description ILIKE ANY($2))
-             OR (data_json->>'content' ILIKE ANY($2)) )
-          ORDER BY collect_time DESC LIMIT 400`,
-        [String(days), arr]);
-      rows = r.rows;
+      if (!done) {
+        /* v4（2026-08-31 用户指令：引擎≠实体库门槛）：中文关键词译成英文参与库内匹配——
+         * 英文原文标题（title 字段）用英文词命中率远高于中文词；title_zh 仍由中文 q 覆盖 */
+        if (/[\u4e00-\u9fff]/.test(q) && pats.length < 8) {
+          let en = '';
+          try { en = await _tryTranSmart(q.replace(/[#＃]/g, ' ').replace(/\s+/g, ' '), 'zh', 'en'); } catch (e) {}
+          if (!en || /[\u4e00-\u9fff]/.test(en)) {
+            try { const y = await _tryYoudao(q); if (y && /[a-zA-Z]/.test(y) && !/[\u4e00-\u9fff]/.test(y)) en = y; } catch (e) {}
+          }
+          if (en) {
+            /* 整句 + 实词级（"Chinese companies robbery" 单词拆开各自命中，容错标题语序差异） */
+            pats.push('%' + en + '%');
+            en.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 4)
+              .forEach(w => { if (pats.length < 10) pats.push('%' + w + '%'); });
+          }
+        }
+        const arr = pats.slice(0, 10);
+        const ph = arr.map((_, i) => '$' + (i + 2)).join(',');
+        const r = await query(
+          `SELECT * FROM intel_data WHERE collect_time >= NOW() - ($1 || ' days')::interval
+            AND ( title ILIKE ANY($2)
+               OR data_json->>'title_zh' ILIKE ANY($2)
+               OR (description ILIKE ANY($2))
+               OR (data_json->>'content' ILIKE ANY($2)) )
+            ORDER BY collect_time DESC LIMIT 400`,
+          [String(days), arr]);
+        rows = r.rows;
+      }
     }
     res.json(rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, collect_time: r.collect_time })));
   } catch (err) { res.status(500).json({ error: err.message }); }

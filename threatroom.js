@@ -11,6 +11,8 @@
  *   ⑤ 预警图（Leaflet）：国别事件热度圈 + 中资项目资产点位 + 实体中心脉冲
  *   ⑥ 情报卡片流（点击详情）+ 报告一键复制导出 + 实体词全文高亮
  *   ⑦ v2 首页动态面板：最近作战 / 全球热点实体榜（24h 聚合）/ 今日核心焦点
+ *   ⑧ v5 交互选项框（任务 #516）：国别/威胁组织/中资项目/主题子题四面板，
+ *      主题模板直接作战 + 主体×事件子题「#」自主组合
  * 铁律：零模拟数据；所有数字来自真实采集/库内数据；空数据显示通道预留。
  */
 var THREATROOM = {
@@ -94,6 +96,18 @@ var THREATROOM = {
     s += '.tr-chip{font-size:11px;padding:3px 10px;border:1px solid var(--border2,#1e2a40);border-radius:12px;cursor:pointer;color:var(--text2,#aab8d0)}';
     s += '.tr-chip:hover{border-color:var(--cyan,#00d4ff);color:var(--cyan,#00d4ff)}';
     s += '.tr-chiplab{font-size:10px;color:var(--text3,#7a8aa3)}';
+    /* v5 交互选项框（任务 #516）：国别/组织/项目/主题四面板 */
+    s += '.tr-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}';
+    s += '.tr-tab{font-size:11.5px;padding:4px 13px;border:1px solid var(--border2,#1e2a40);border-radius:6px;cursor:pointer;color:var(--text2,#aab8d0);background:transparent;user-select:none}';
+    s += '.tr-tab:hover{border-color:var(--cyan,#00d4ff);color:var(--cyan,#00d4ff)}';
+    s += '.tr-tab.on{border-color:var(--cyan,#00d4ff);color:var(--cyan,#00d4ff);background:#00d4ff12;font-weight:700}';
+    s += '.tr-optbox{display:none;border:1px dashed var(--border2,#1e2a40);border-radius:8px;padding:10px 10px 6px;margin-bottom:10px;background:var(--bg2,#0b1322)}';
+    s += '.tr-optbox.show{display:block}';
+    s += '.tr-optwrap{display:flex;gap:6px;flex-wrap:wrap;max-height:190px;overflow-y:auto;align-items:flex-start;align-content:flex-start}';
+    s += '.tr-opt{font-size:11.5px;padding:3px 10px;border:1px solid var(--border2,#1e2a40);border-radius:12px;cursor:pointer;color:var(--text2,#aab8d0);white-space:nowrap}';
+    s += '.tr-opt:hover{border-color:var(--cyan,#00d4ff);color:var(--cyan,#00d4ff)}';
+    s += '.tr-opt.run{border-color:var(--orange,#f59e0b)66;color:var(--orange,#f59e0b)}';
+    s += '.tr-optg{font-size:10px;color:var(--text3,#7a8aa3);width:100%;margin:6px 0 2px;letter-spacing:1px}';
     s += '.tr-stage{display:none;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--border2,#1e2a40);border-radius:8px;margin-bottom:12px;background:var(--bg2,#0d1524);font-size:12.5px;color:var(--text2,#aab8d0)}';
     s += '.tr-spin{width:14px;height:14px;border:2px solid var(--border2,#1e2a40);border-top-color:var(--cyan,#00d4ff);border-radius:50%;animation:trrot 0.8s linear infinite;flex-shrink:0}';
     s += '@keyframes trrot{to{transform:rotate(360deg)}}';
@@ -144,6 +158,14 @@ var THREATROOM = {
     s += '<button class="tr-go" id="tr-go">🚀 启动作战</button>';
     s += '</div>';
     s += '<div class="tr-chips" id="tr-chips"></div>';
+    /* v5 交互选项框（任务 #516）：四面板——国别/组织/项目/主题（可点开选择，主题支持子题组合） */
+    s += '<div class="tr-tabs" id="tr-tabs">';
+    s += '<span class="tr-tab" data-tab="country">🗺️ 国别</span>';
+    s += '<span class="tr-tab" data-tab="org">🎯 威胁组织</span>';
+    s += '<span class="tr-tab" data-tab="project">🏗️ 中资项目</span>';
+    s += '<span class="tr-tab" data-tab="theme">💡 主题子题</span>';
+    s += '</div>';
+    s += '<div class="tr-optbox" id="tr-optbox"></div>';
     s += '<div class="tr-live" id="tr-live"></div>';
     s += '</div>';
     /* 进度条 */
@@ -205,6 +227,126 @@ var THREATROOM = {
         self.run(t.getAttribute('data-q'));
       };
     }
+    /* v5 交互选项框（任务 #516）：tab 切换 + 面板点击委托 */
+    var tabs = document.getElementById('tr-tabs');
+    if (tabs) tabs.onclick = function (e) {
+      var t = e.target.closest ? e.target.closest('.tr-tab') : null;
+      if (!t) return;
+      var tab = t.getAttribute('data-tab');
+      var box = document.getElementById('tr-optbox');
+      Array.prototype.forEach.call(tabs.querySelectorAll('.tr-tab'), function (x) { x.classList.remove('on'); });
+      if (box && box.classList.contains('show') && box.getAttribute('data-cur') === tab) {
+        box.classList.remove('show'); box.setAttribute('data-cur', ''); return;   /* 再点同 tab 收起 */
+      }
+      t.classList.add('on');
+      self._renderOptPanel(tab);
+    };
+    var optbox = document.getElementById('tr-optbox');
+    if (optbox) optbox.onclick = function (e) {
+      var t = e.target.closest ? e.target.closest('.tr-opt') : null;
+      if (!t) return;
+      var run = t.getAttribute('data-run');
+      if (run) {   /* 直接发起作战 */
+        var inp = document.getElementById('tr-q');
+        if (inp) inp.value = run;
+        self.run(run);
+        return;
+      }
+      var add = t.getAttribute('data-add');
+      if (add) {   /* 子题追加：「中资」+点「绑架」→ 中资#绑架 */
+        var inp2 = document.getElementById('tr-q');
+        if (!inp2) return;
+        var cur = String(inp2.value || '').trim();
+        if (!cur) inp2.value = add;
+        else {
+          var parts = cur.split(/[#＃]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+          if (parts.indexOf(add) < 0) parts.push(add);
+          inp2.value = parts.join('#');
+        }
+        inp2.focus();
+        self._liveDetect(inp2.value);
+      }
+    };
+  },
+
+  /* ═══════════ v5 交互选项框渲染（任务 #516） ═══════════ */
+  _renderOptPanel: function (tab) {
+    var box = document.getElementById('tr-optbox');
+    if (!box) return;
+    var self = this, html = '';
+    if (tab === 'country') {
+      html += '<div class="tr-optg">全部国家（红字 = 库内 24h 预警数，点击发起国别作战）</div>';
+      html += '<div class="tr-optwrap">';
+      (typeof COUNTRIES !== 'undefined' ? COUNTRIES : []).forEach(function (c) {
+        var hot = self._country24h(c.name);
+        html += '<span class="tr-opt" data-run="' + self._esc(c.name) + '">' + self._esc(c.name) +
+          (hot ? ' <b style="color:var(--red,#ef4444)">' + hot + '</b>' : '') + '</span>';
+      });
+      html += '</div>';
+    } else if (tab === 'org') {
+      html += '<div class="tr-optg">威胁组织库（点击发起组织专项作战）</div>';
+      html += '<div class="tr-optwrap">';
+      var orgs = (typeof THREAT_DATA !== 'undefined' && THREAT_DATA.organizations) ? THREAT_DATA.organizations : [];
+      orgs.forEach(function (o) {
+        var reg = (o.operatingRegions || []).slice(0, 2).join('、');
+        html += '<span class="tr-opt" data-run="' + self._esc(o.name) + '" title="' + self._esc(reg) + '">' + self._esc(o.name) + '</span>';
+      });
+      html += '</div>';
+    } else if (tab === 'project') {
+      /* 项目按东道国分组（ENTERPRISES p.n/p.c 缩写字段 + ENTITY.PROJECTS 官方框架库，名称去重） */
+      var byC = {}, seenP = {}, order = [];
+      (typeof ENTERPRISES !== 'undefined' ? ENTERPRISES : []).forEach(function (ent) {
+        (ent.projects || []).forEach(function (p) {
+          var nm = p.name || p.n || '', cy = p.country || p.c || '';
+          if (!nm || !cy) return;
+          var k = nm + '@' + cy; if (seenP[k]) return; seenP[k] = 1;
+          if (!byC[cy]) { byC[cy] = []; order.push(cy); }
+          byC[cy].push(nm);
+        });
+      });
+      try {
+        if (typeof ENTITY !== 'undefined' && ENTITY.PROJECTS) ENTITY.PROJECTS.forEach(function (p) {
+          var nm = p.name || '', cy = p.country || '';
+          if (typeof ENTITY.normalizeCountry === 'function') { try { cy = ENTITY.normalizeCountry(cy); } catch (e) {} }
+          if (!nm || !cy) return;
+          var k = nm + '@' + cy; if (seenP[k]) return; seenP[k] = 1;
+          if (!byC[cy]) { byC[cy] = []; order.push(cy); }
+          byC[cy].push(nm);
+        });
+      } catch (e) {}
+      order.sort(function (a, b) { return byC[b].length - byC[a].length; });
+      html += '<div class="tr-optg">中资海外项目库 ' + Object.keys(seenP).length + ' 个（按东道国分组，点击发起项目专项作战）</div>';
+      html += '<div class="tr-optwrap">';
+      order.forEach(function (cy) {
+        html += '<span class="tr-optg" style="margin-top:6px">📍 ' + self._esc(cy) + '（' + byC[cy].length + '）</span>';
+        byC[cy].forEach(function (nm) {
+          html += '<span class="tr-opt" data-run="' + self._esc(nm) + '" title="' + self._esc(cy) + '">' + self._esc(nm) + '</span>';
+        });
+      });
+      html += '</div>';
+    } else if (tab === 'theme') {
+      html += '<div class="tr-optg">① 作战模板（点击直接发起，多子题按【涉华 × 事件】双要素相关性过滤）</div>';
+      html += '<div class="tr-optwrap">';
+      [['中资#抢劫', '中资企业/人员被抢劫'], ['中资#绑架', '中资人员遭绑架'], ['中资#袭击', '中资目标遇袭'],
+       ['中国公民#安全', '中国公民海外安全事件'], ['华人#袭击', '华人华侨遇袭'], ['中企#抗议', '中资企业遭抗议'],
+       ['中企#制裁', '中企被制裁/合规风险'], ['一带一路#恐袭', 'BRI 沿线恐袭'], ['中资项目#冲突', '项目所在地冲突'],
+       ['中国工人#遇险', '中方工人遇险'], ['中国船员#海盗', '船员海盗劫持']].forEach(function (t) {
+        html += '<span class="tr-opt run" data-run="' + self._esc(t[0]) + '" title="' + self._esc(t[1]) + '">' + self._esc(t[0]) + '</span>';
+      });
+      html += '</div>';
+      html += '<div class="tr-optg">② 自主组合子题（先点主体要素，再点事件要素，自动用「#」拼接后启动作战）</div>';
+      html += '<div class="tr-optwrap">';
+      ['中资', '中国公民', '华人', '中企', '中资项目', '一带一路', '中国工人', '中国船员', '孔子学院'].forEach(function (w) {
+        html += '<span class="tr-opt" data-add="' + self._esc(w) + '">' + self._esc(w) + '</span>';
+      });
+      ['抢劫', '绑架', '袭击', '恐袭', '抗议', '制裁', '骚乱', '冲突', '敲诈', '勒索', '撤离', '安全事件'].forEach(function (w) {
+        html += '<span class="tr-opt" data-add="' + self._esc(w) + '" style="border-color:var(--orange,#f59e0b)44">' + self._esc(w) + '</span>';
+      });
+      html += '</div>';
+    }
+    box.innerHTML = html;
+    box.classList.add('show');
+    box.setAttribute('data-cur', tab);
   },
 
   /* ═══════════ 实体识别 ═══════════ */
@@ -289,7 +431,7 @@ var THREATROOM = {
     } else {
       html += '<span class="tr-badge" style="color:var(--cyan,#00d4ff);border-color:var(--cyan,#00d4ff)44">关键词作战</span>';
       html += '<span style="color:var(--text,#e8eefc);font-weight:700">' + this._esc(q) + '</span>';
-      html += '<span style="color:var(--text3,#7a8aa3)">主题将自动译为多路外文关键字，全网碰撞 GDELT · Google News · AP（「#」可拆分多个子题）</span>';
+      html += '<span style="color:var(--text3,#7a8aa3)">主题自动译为多路外文关键字全网碰撞 GDELT · Google News · AP；「#」拆分子题后按【双要素】过滤——涉华主题须同时命中涉华要素+事件要素</span>';
       html += '<span style="color:var(--green,#22c55e)">✓ 任意主题可搜，实体库仅作增强</span>';
     }
     el.innerHTML = html;
