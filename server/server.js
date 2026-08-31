@@ -780,7 +780,7 @@ setTimeout(_negSentinel, 2 * 60 * 1000); /* 启动 2 分钟后首跑 */
 
 /* ===== 交付质量哨兵（2026-08-15 用户指令：同一问题不能反复出现，部署交付后系统自愈）=====
  * 把历次用户投诉固化为铁律自检项，每30分钟巡查、发现即自动修，不靠人工发现：
- *  ① 共享预警库只留"今日"数据（跨天旧预警/无时间无编号条目自动清除）；
+ *  ① 共享预警库只留 24h 滚动窗内数据（2026-08-31 零点清零根治：跨满 24h 的旧预警/无时间无编号条目自动清除，零点不再悬崖式清零）；
  *  ② 历史静态种子黑名单裸条目（无原文链接）无论藏在哪个库一律清除；
  *  ③ 今日入库统计口径（全库）抽查可见；
  * 巡检结果经 GET /api/quality 对外透明，前端系统设置页可视化。 */
@@ -789,9 +789,15 @@ async function _qualityGuardian() {
   const checks = [], actions = [];
   try {
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const ds = dayStart.getTime();
-    const tk = String(dayStart.getFullYear()) + String(dayStart.getMonth() + 1).padStart(2, '0') + String(dayStart.getDate()).padStart(2, '0');
-    /* ① 共享预警库当日化 + 黑名单 */
+    /* 2026-08-31 零点清零根治（用户铁律：预警中心数据不能一到零点就全部清零）：
+     * 「今日零点」日历日切割 → 24h 滚动窗。与 _serverAlertGen 24h 回看、PUT 写入闸、
+     * GET 下发闸、前端 _purgeAlertsNotToday 五窗合一：
+     * ① 零点不再有悬崖式清零——条目发布满 24h 才平滑退出；
+     * ② 生成器(3min·24h回看)与巡检(30min·原当日化)不再互搏，数字 3↔8 震荡根除。 */
+    const ds = Date.now() - 24 * 3600 * 1000;
+    const tkSet = new Set([new Date(), new Date(ds)].map(d =>
+      String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0')));
+    /* ① 共享预警库滚动窗清洗 + 黑名单 */
     try {
       const r = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
       if (r.rows.length && Array.isArray(r.rows[0].data_json)) {
@@ -800,17 +806,17 @@ async function _qualityGuardian() {
           const txt = String(a.title || '') + String(a.title_zh || '');
           if (!a.url && _POST_BLOCK_RE.test(txt)) return false;
           const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
-          if (t) return t >= ds;
+          if (t) return t >= ds;   /* 24h 滚动窗 */
           const m = String(a.alert_no || '').match(/(20\d{6})/);
-          return m ? m[1] === tk : false;
+          return m ? tkSet.has(m[1]) : false;
         });
         if (kept.length !== arr.length) {
           await query('UPDATE datahub_store SET data_json=$1::jsonb, updated_at=now() WHERE collection=$2', [JSON.stringify(kept), 'alerts']);
-          actions.push('共享预警库剔除非当日/黑名单 ' + (arr.length - kept.length) + ' 条');
+          actions.push('共享预警库剔除超24h/黑名单 ' + (arr.length - kept.length) + ' 条');
         }
-        checks.push({ name: '共享预警库当日化', ok: true, detail: kept.length + ' 条（全部今日）' });
+        checks.push({ name: '共享预警库24h滚动窗', ok: true, detail: kept.length + ' 条（24h 窗内）' });
       }
-    } catch (e) { checks.push({ name: '共享预警库当日化', ok: false, detail: e.message }); }
+    } catch (e) { checks.push({ name: '共享预警库24h滚动窗', ok: false, detail: e.message }); }
     /* ② 黑名单裸条目扫描（全库任何日期，无原文链接的静态种子） */
     try {
       const r2 = await query("SELECT id, title, data_json->>'title_zh' tzh FROM intel_data WHERE data_json->>'url' IS NULL OR data_json->>'url'=''");
@@ -1812,19 +1818,26 @@ function _callOpenAiCompat(pv, prompt) {
       const https = require('https');
       const body = JSON.stringify({ model: pv.model, messages: [{ role: 'user', content: prompt }], max_tokens: pv.maxTokens });
       const u = new URL(pv.base + '/chat/completions');
-      const rq = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', timeout: pv.timeout, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pv.key, 'Content-Length': Buffer.byteLength(body) } }, (llmRes) => {
+      const rq = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', timeout: pv.timeout, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pv.key, 'Content-Length': Buffer.byteLength(body) }       }, (llmRes) => {
         const chunks = [];
         llmRes.on('data', c => chunks.push(c));
         llmRes.on('end', () => {
           const raw = Buffer.concat(chunks).toString('utf8');
           let j = {};
-          try { j = JSON.parse(raw); } catch (e) { return resolve({ text: '', error: '返回解析失败: ' + raw.slice(0, 160) }); }
+          try { j = JSON.parse(raw); } catch (e) { return resolve({ text: '', error: '返回解析失败(HTTP ' + llmRes.statusCode + '): ' + raw.slice(0, 160) }); }
           if (j.error || (j.code && j.code !== 0)) {
             const m = (j.error && j.error.message) || j.message || ('code ' + j.code);
-            return resolve({ text: '', error: m });
+            return resolve({ text: '', error: 'HTTP ' + llmRes.statusCode + ' ' + m });
           }
-          const msg = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message : {};
-          resolve({ text: msg.content || '', error: msg.content ? '' : '空内容' });
+          const ch = (j.choices && j.choices[0]) || {};
+          const msg = ch.message || {};
+          if (!msg.content) {
+            /* 推理模型 thinking 烧尽 max_tokens 时 content 为空（2026-09-01 排障发现） */
+            const fin = ch.finish_reason || '—';
+            const rlen = (msg.reasoning_content || '').length;
+            return resolve({ text: '', error: rlen ? '空内容(推理' + rlen + '字, finish=' + fin + ')' : '空内容(finish=' + fin + ')' });
+          }
+          resolve({ text: msg.content, error: '' });
         });
       });
       rq.on('error', e => resolve({ text: '', error: e.message }));
@@ -1925,6 +1938,68 @@ function _localPlaybookRecommend(p) {
   for (const r of rules) if (r[0].test(t)) return JSON.stringify({ id: r[1], reason: '本地规则匹配：标题含明确紧急事件特征' });
   return JSON.stringify({ id: 'none', reason: '本地规则未见紧急事件特征，建议人工复核' });
 }
+/* ===== 本地研判引擎降级：AI情报分析报告（intel-report）=====
+ * 云端大模型全失败时，基于前端装配的真实系统数据（预警统计/高价值事件/八维推演/
+ * 关联簇/项目暴露/COSRI 画像）用规则引擎生成结构化研判 JSON——与 LLM 输出同构，
+ * 前端零改动可解析。铁律：只引用传入的真实数字与事件标题，不编造数据。 */
+function _localIntelReport(p) {
+  const st = p.stats || {};
+  const fs = p.foresee || {};
+  const co = p.cosri || {};
+  const ev = (p.events || []).slice(0, 8);
+  const winName = ({ '24h': '24小时', '72h': '72小时', '7d': '7天' })[String(p.win || '72h')] || '72小时';
+  const cName = String(p.country || '目标国');
+  const top = ev[0] || null;
+  const redN = st.red || 0, orN = st.orange || 0, ylN = st.yellow || 0;
+  const total = st.total || 0, cnN = st.china || 0, asN = st.assetHit || 0;
+  const et = t => String(t || '').replace(/[\r\n]+/g, ' ').slice(0, 50);
+  const times = ev.map(e => String(e.time || '')).filter(Boolean).sort();
+  /* 涉事方：从真实事件文本正则归纳，没有就如实说没有 */
+  const P_RX = /(塔利班|青年党|博科圣地|伊斯兰国|基地组织|胡塞武装|真主党|哈马斯|俾路支|分离武装|武装分子|政府军|警方|反对派|军方)/;
+  let person = '';
+  for (const e of ev) { const m = String(e.title || '').match(P_RX); if (m && person.indexOf(m[1]) < 0) person = person ? person + '、' + m[1] : m[1]; }
+  const ast = (p.assets || []).map(a => typeof a === 'string' ? a : ((a.name || '') + (a.ent ? '（' + a.ent + '）' : ''))).filter(Boolean);
+  const elements = {
+    time: times.length ? (times[0] + ' 至 ' + times[times.length - 1]) : '窗口内无带时间戳事件',
+    place: cName + '（具体点位见引用预警明细）',
+    person: person || '事件文本中未识别到明确涉事组织',
+    cause: top ? ('由「' + et(top.title) + '」等窗口内高价值信号构成') : '窗口内无预警事件，无起因数据',
+    process: ev.length ? ('窗口内代表性事件依次为：' + ev.slice(0, 3).map((e, i) => (i + 1) + '.' + et(e.title)).join('；')) : '窗口内无预警事件',
+    result: redN || orN ? ('已触发红色预警 ' + redN + ' 条、橙色 ' + orN + ' 条') : '窗口内未触发红/橙级预警'
+  };
+  let summary = '近' + winName + '，' + cName + '共监测预警 ' + total + ' 条（红 ' + redN + '、橙 ' + orN + '、黄 ' + ylN + '），涉华命中 ' + cnN + ' 条、中资资产命中 ' + asN + ' 条';
+  if (fs.cur != null) summary += '；八维风险推演 ' + fs.cur + ' → ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '）';
+  summary += '。' + (top ? '首要信号为「' + et(top.title) + '」。' : '窗口内无显著信号。') + ((p.clusters || []).length ? '发现事件关联簇 ' + p.clusters.length + ' 个。' : '');
+  const tp = [];
+  tp.push('【窗口态势】近' + winName + '该国预警总量 ' + total + ' 条，其中红色 ' + redN + ' 条、橙色 ' + orN + ' 条；涉华命中 ' + cnN + ' 条，命中中资资产标签 ' + asN + ' 条。');
+  if (ev.length) tp.push('【重点事件】（按预警价值排序）\n' + ev.slice(0, 5).map((e, i) => (i + 1) + '. [' + (e.level || '—') + '][' + (e.type || '—') + '] ' + et(e.title) + '（' + (e.time || '时间不详') + '）').join('\n'));
+  if (fs.cur != null) tp.push('【八维推演】当前综合风险 ' + fs.cur + '、未来 72 小时预判 ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '，' + (fs.level || '—') + '）' +
+    (fs.domDim ? '；主导维度：' + fs.domDim : '') +
+    ((fs.contrib || []).length ? '；驱动因素：' + fs.contrib.slice(0, 5).map(x => x.label + (Number(x.v) >= 0 ? '+' : '') + x.v).join('、') : '；无显著新增驱动'));
+  if ((p.clusters || []).length) tp.push('【关联簇】' + p.clusters.slice(0, 4).map(c => (c.title || '') + '——' + (c.detail || ('窗口内聚集 ' + (c.n || 0) + ' 起'))).join('；'));
+  if ((p.orgs || []).length) tp.push('【威胁组织】关联活跃威胁组织 ' + p.orgs.length + ' 个：' + p.orgs.slice(0, 6).join('、') + '，须评估其针对中资目标的袭击能力。');
+  const threatAnalysis = tp.join('\n\n');
+  const ip = [];
+  ip.push(ast.length ? '【项目暴露】该国在册中资项目 ' + ast.length + ' 个：' + ast.slice(0, 6).join('、') + '，须逐一核实现场人员与安保等级。' : '【项目暴露】系统内暂无该国中资项目记录，以人员与机构安全为主要关注面。');
+  if (cnN) ip.push('涉华命中 ' + cnN + ' 条，建议立即核查我在当地人员、企业与使领馆机构安全状况。');
+  if (asN) ip.push('有 ' + asN + ' 条预警命中中资资产标签，相关资产所在区域风险抬头，建议联动资产档案复核撤离预案。');
+  if (fs.pred != null && Number(fs.pred) >= 6.5) ip.push('八维风险预判 ' + fs.pred + ' 处于高位区间，人员安全、业务连续性与供应链稳定性压力上升，建议压缩非必要外事活动。');
+  else if (fs.pred != null) ip.push('八维风险预判 ' + fs.pred + '，维持常态监测，关注红/橙预警增量的边际变化。');
+  if (redN) ip.push('红色预警 ' + redN + ' 条在库，若 72 小时内同类型再现，建议升级响应并启动应急通信核查。');
+  const impactAnalysis = ip.join('\n');
+  let advice;
+  if (co.guide && co.guide.length) {
+    advice = '依据系统 COSRI 国别行动指引：\n' + co.guide.slice(0, 8).map((g, i) => (i + 1) + '. ' + g).join('\n');
+  } else {
+    const adv = [];
+    if (redN || orN) adv.push('红/橙预警在库，立即核实在事人员安全并提升安保等级，压缩非必要外出');
+    if (cnN || asN) adv.push('涉华/资产信号命中，核查我在当地项目、人员与机构暴露面，建立每日安全报告制度');
+    if (ast.length) adv.push('对在册中资项目逐一复核安保等级、保险覆盖与应急联络机制');
+    adv.push('保持 72 小时情报窗口滚动监测，红色预警新增≥2 或出现人员伤亡即升级响应');
+    advice = adv.map((g, i) => (i + 1) + '. ' + g).join('\n');
+  }
+  return JSON.stringify({ summary: summary, elements: elements, threatAnalysis: threatAnalysis, impactAnalysis: impactAnalysis, advice: advice });
+}
 const _llmRunCache = {};
 app.post('/api/llm/run', authMiddleware, async (req, res) => {
   try {
@@ -1958,6 +2033,32 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
         '预警标题：' + (al.title || '') + '\n预警摘要：' + String(al.desc || '').slice(0, 300) + '\n事发国：' + (al.country || '—') + '；级别：' + (al.level || '—') + '；类型：' + (al.type || '—') + '\n\n' +
         '应急预案清单：\n' + pbs + '\n\n' +
         '研判规则：\n1. 先判断事件本质：若并非真实紧急事件（历史纪念、文化探访、一般新闻评论、财经资讯，且无现实安全威胁），不需要启动预案，id 输出 "none"；\n2. 若确需预案，按事件本质选最匹配的一份，不要被个别词语误导（标题含"铁路"不等于交通事故，含"爆炸"需区分恐袭与工业事故）；\n3. 只输出一行 JSON，不要输出任何其他内容：{"id":"预案id或none","reason":"中文一句话理由，30字内"}。';
+    } else if (kind === 'intel-report') {
+      /* 智能情报分析报告（2026-09-01 用户指令：报告必须数据驱动，六要素从真实事件归纳） */
+      const st = p.stats || {};
+      const fs = p.foresee || {};
+      const co = p.cosri || {};
+      const ev = (p.events || []).slice(0, 8);
+      const winName = ({ '24h': '24小时', '72h': '72小时', '7d': '7天' })[String(p.win || '72h')] || '72小时';
+      const evLines = ev.map((e, i) => (i + 1) + '. [' + (e.level || '—') + '][' + (e.type || '—') + '] ' + String(e.title || '').replace(/[\r\n]+/g, ' ').slice(0, 80) + '（' + (e.time || '时间不详') + (e.source ? '，来源：' + String(e.source).slice(0, 30) : '') + '）').join('\n');
+      const clLines = (p.clusters || []).slice(0, 6).map((c, i) => (i + 1) + '. 【' + (c.kind || '簇') + '】' + (c.title || '') + '：' + (c.detail || ('窗口内聚集 ' + (c.n || 0) + ' 起'))).join('\n');
+      const ast = (p.assets || []).map(a => typeof a === 'string' ? a : ((a.name || '') + (a.ent ? '（' + a.ent + '）' : ''))).filter(Boolean);
+      prompt = '你是中国海外利益保护情报预警平台的资深情报研判专家。以下是系统基于实时采集数据装配的国别情报数据，请据此生成一份AI情报分析报告。\n\n' +
+        '【国家】' + (p.country || '—') + '　【窗口】近' + winName + '　【报告类型】' + (p.reportType || '综合情报') + '\n' +
+        '【预警统计】窗口内预警共 ' + (st.total || 0) + ' 条：红色 ' + (st.red || 0) + '、橙色 ' + (st.orange || 0) + '、黄色 ' + (st.yellow || 0) + '、蓝色 ' + (st.blue || 0) + '；涉华命中 ' + (st.china || 0) + ' 条；命中中资资产标签 ' + (st.assetHit || 0) + ' 条。\n\n' +
+        '【高价值事件 TOP' + ev.length + '】（按预警价值评分排序）\n' + (evLines || '窗口内无预警事件。') + '\n\n' +
+        '【八维风险推演】' + (fs.cur != null
+          ? '当前综合 ' + fs.cur + ' → 未来72小时预判 ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '，' + (fs.level || '—') + '）' + (fs.domDim ? '；主导维度：' + fs.domDim : '') + '；驱动因素：' + (((fs.contrib || []).slice(0, 5).map(x => x.label + (Number(x.v) >= 0 ? '+' : '') + x.v).join('、')) || '无显著新增信号')
+          : '系统无该国八维推演数据') + '\n\n' +
+        '【关联簇】\n' + (clLines || '窗口内未发现事件关联簇。') + '\n\n' +
+        '【项目暴露】' + (ast.length ? '该国中资项目 ' + ast.length + ' 个：' + ast.slice(0, 10).join('、') : '系统内暂无该国中资项目记录') + '\n\n' +
+        '【威胁组织】' + ((p.orgs || []).length ? '关联活跃威胁组织 ' + p.orgs.length + ' 个：' + p.orgs.slice(0, 8).join('、') : '窗口内无关联威胁组织') + '\n\n' +
+        '【COSRI国别画像】' + (co.overall != null
+          ? '综合 ' + co.overall + '（政治 ' + ((co.scores || {}).political || '—') + '/经济 ' + ((co.scores || {}).economic || '—') + '/社会 ' + ((co.scores || {}).social || '—') + '/公共安全 ' + ((co.scores || {}).security || '—') + '）；在册中资项目 ' + (co.projects != null ? co.projects : '—') + ' 个；行动指引：' + ((co.guide || []).join('；') || '无')
+          : 'COSRI 库未覆盖该国') + '\n\n' +
+        '请严格只基于上述数据输出 JSON（不得输出任何其他文字、不得使用markdown代码块）：\n' +
+        '{"summary":"报告摘要，120字内，概括窗口内态势主线与核心判断","elements":{"time":"时间（事件时间范围）","place":"地点（国家+事件涉及点位）","person":"涉事方（从事件文本归纳的组织/人员）","cause":"起因（从事件归纳）","process":"过程（TOP事件串联概述）","result":"结果（已造成的后果/当前状态）"},"threatAnalysis":"威胁分析，必须引用具体事件标题与统计数字（如：72小时内红色预警N条、八维风险分升至X），400字内","impactAnalysis":"影响预测，结合项目暴露与八维走势，评估对中资人员/项目/通道的具体影响，300字内","advice":"对策建议，结合COSRI行动指引与预警态势，分条给出可执行措施，300字内"}\n' +
+        '铁律：全部中文；六要素只能从给定事件文本归纳，事件中不存在的信息如实写"数据未覆盖"；禁止编造任何数字、组织与事实；threatAnalysis 中至少引用 2 条具体事件标题和 3 个统计数字。';
     } else {
       return res.status(400).json({ ok: false, error: '未知 kind' });
     }
@@ -1971,6 +2072,7 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
       const r2 = await _callOpenAiCompat(pv, prompt);
       if (r2.text) { text = r2.text; usedModel = pv.model; break; }
       lastErr = pv.name + ': ' + (r2.error || '空内容');
+      console.warn('[LLM] ' + kind + ' 通道失败 ' + pv.name + '(' + pv.model + '): ' + (r2.error || '空内容'));
     }
     if (!text) {
       /* 本地研判引擎降级（2026-08-30）：云端大模型全失败时系统自动生成，永远有输出 */
@@ -1978,6 +2080,7 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
         if (kind === 'expert-panel') text = _localExpertPanel(p);
         else if (kind === 'scenario-path') text = _localScenarioPath(p);
         else if (kind === 'playbook-recommend') text = _localPlaybookRecommend(p);
+        else if (kind === 'intel-report') text = _localIntelReport(p);
         if (text) usedModel = '本地研判引擎（免费降级）';
       } catch (e) { console.warn('[LLM] 本地降级失败:', e.message); }
     }
@@ -2681,6 +2784,66 @@ async function _trGnews(q, max) {
   } catch (e) { return []; }
 }
 
+/* ── 第三/第四引擎（2026-08-31 v8 GDELT 限流根治·用户铁律：专项检索不能每次都空手而归）──
+ * 实测该网络环境（127.0.0.1:7897 代理）：Bing News RSS(format=RSS) 实测返回必应 HTML
+ * 搜索页（302→HTML 0 item，已死）、Yahoo News RSS 实测 15s 超时（封禁/不可达）、
+ * Reddit search RSS 实测 20s 超时（全网封锁）——三个传统免 key 关键字新闻源全军覆没。
+ * 最终落地：HN Algolia（JSON，200/1.5s/14KB，唯一实测可达的免 key 关键字新闻补充源，
+ * 偏科技/突发但覆盖重大世界新闻）+ Bing/Yahoo 降级为"快速失败探针"（5s 单次，
+ * 不重试——endpoint 死了就明着报 0，不浪费 58s/轮）。 */
+async function _trBingNews(q, max) {
+  try {
+    const r = await Promise.race([
+      netx.smartFetch('https://www.bing.com/news/search?q=' + encodeURIComponent(q) + '&format=RSS&setmkt=en-US&setlang=en',
+        { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+        .then(rs => (rs && rs.ok) ? rs.text() : null).catch(() => null),
+      new Promise(res => setTimeout(() => res(null), 6000))
+    ]);
+    if (!r || !/<item[\s>]/i.test(r)) return [];   /* 多数情况：302 跳到必应 HTML，无 item 即放弃 */
+    return (scrapers.parseRss(r) || []).slice(0, max || 20).map(it => ({
+      title: it.title || '', content: it.description || '', url: it.link || '',
+      publish_time: it.pubDate || '', source: 'Bing News', country: ''
+    }));
+  } catch (e) { return []; }
+}
+async function _trYahooNews(q, max) {
+  try {
+    const r = await Promise.race([
+      netx.smartFetch('https://news.search.yahoo.com/rss?p=' + encodeURIComponent(q),
+        { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+        .then(rs => (rs && rs.ok) ? rs.text() : null).catch(() => null),
+      new Promise(res => setTimeout(() => res(null), 6000))
+    ]);
+    if (!r || !/<item[\s>]/i.test(r)) return [];
+    return (scrapers.parseRss(r) || []).slice(0, max || 20).map(it => ({
+      title: it.title || '', content: it.description || '', url: it.link || '',
+      publish_time: it.pubDate || '', source: 'Yahoo News', country: ''
+    }));
+  } catch (e) { return []; }
+}
+/* HN Algolia：免 key JSON 关键字搜索（实测可达 200/1.5s）—— 偏科技/突发新闻，
+ * 重大世界事件通常有 HackerNews 讨论帖，可作 GNews 之外的独立命中面。 */
+async function _trHnAlgolia(q, max) {
+  try {
+    const r = await Promise.race([
+      netx.smartFetch('https://hn.algolia.com/api/v1/search?query=' + encodeURIComponent(q) + '&tags=story&hitsPerPage=' + Math.min(30, max || 20),
+        { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+        .then(rs => (rs && rs.ok) ? rs.text() : null).catch(() => null),
+      new Promise(res => setTimeout(() => res(null), 10000))
+    ]);
+    if (!r) return [];
+    let j; try { j = JSON.parse(r); } catch (e) { return []; }
+    const hits = (j && Array.isArray(j.hits)) ? j.hits : [];
+    return hits.slice(0, max || 20).map(h => ({
+      title: h.title || h.story_title || '',
+      content: h.url || h.story_text || '',
+      url: h.url || ('https://news.ycombinator.com/item?id=' + (h.objectID || '')),
+      publish_time: h.created_at ? new Date(h.created_at).toISOString() : '',
+      source: 'HN Algolia', country: ''
+    })).filter(it => it.title);
+  } catch (e) { return []; }
+}
+
 /* ── 关键词作战相关性双要素闸（2026-08-31 任务 #515）──────────────────
  * 用户铁律：搜「中资#抢劫」就必须是"中资企业/中国公民在海外被抢劫"——
  * 芝加哥本地抢劫案 / 中国融资新闻 / 苏丹内战这类单要素噪声一律拦在入库前。
@@ -2779,14 +2942,24 @@ app.post('/api/threatroom/collect', async (req, res) => {
         if (u && !seen.has(u)) { seen.add(u); arts.push(a); }
       });
       /* GDELT 检索包装（2026-08-31 铁律排雷：复杂查询（OR/括号）会挂起——一律纯 AND 语义
-       * 检索式 + 40s Promise.race 兜底，绝不无限等待） */
+       * 检索式 + 40s Promise.race 兜底，绝不无限等待）
+       * 2026-08-31 v8 本轮软熔断：GDELT 429 雪崩期每路查询要烧 3 次递增退避（6s+10s+14s）
+       * ×6.5s 节流，8 路查询能把前端 600s 超时烧穿——连续 2 路空返回即跳过本轮剩余
+       * GDELT 查询，火力全交 GNews/Bing/Yahoo 备胎矩阵。仅本轮内生效（10min 锁窗），
+       * 不动 crawler 内全局 10min 硬熔断。 */
+      let _gdEmptyRun = 0, _gdSkipRound = false;
       const _gdr = async (gq, opts) => {
+        if (_gdSkipRound) return [];
+        let r = [];
         try {
-          return await Promise.race([
+          r = await Promise.race([
             crawler.gdeltSearch(gq, opts).catch(() => []),
             new Promise(r2 => setTimeout(() => r2([]), 40000))
           ]);
-        } catch (e) { return []; }
+        } catch (e) { r = []; }
+        if (!r || !r.length) { if (++_gdEmptyRun >= 2) _gdSkipRound = true; }
+        else _gdEmptyRun = 0;
+        return r || [];
       };
       /* ── 分实体类型组织检索式（全部纯 AND：空格连接词项） ──
        * 2026-08-31 v3 实测排雷（用户铁律"采集量不够"）：
@@ -2813,6 +2986,9 @@ app.post('/api/threatroom/collect', async (req, res) => {
           for (const gt of gThemes) {
             push(await _trGnews(enName + ' ' + gt, 18));
           }
+          /* v8 第三/四引擎：Bing News + Yahoo News RSS（GDELT 限流时的独立命中面） */
+          push(await _trHnAlgolia(enName, 25));
+          push(await _trYahooNews(enName, 20));
           /* ③ 全语言兜底（俄语源）——限量 60+ 后续西里尔质量闸 */
           if (fips) push(await _gdr('sourcecountry:' + fips, { timespan: '7d', maxrecords: 60 }));
           /* ④ AP 补充 */
@@ -2831,6 +3007,9 @@ app.post('/api/threatroom/collect', async (req, res) => {
           for (const gt of gThemes) {
             push(await _trGnews(enName + ' ' + gt, 18));
           }
+          /* v8 第三/四引擎备胎 */
+          push(await _trHnAlgolia(enName, 20));
+          push(await _trYahooNews(enName, 15));
           /* ② AP */
           try { push(await crawler.apSearch(enName, { maxrecords: 15, pages: 1 })); } catch (e) {}
         }
@@ -2845,6 +3024,9 @@ app.post('/api/threatroom/collect', async (req, res) => {
           for (const gt of gThemes) {
             push(await _trGnews(enName + ' ' + gt, 18));
           }
+          /* v8 第三/四引擎备胎 */
+          push(await _trHnAlgolia(enName, 20));
+          push(await _trYahooNews(enName + ' China', 15));
           try { push(await crawler.apSearch(enName + ' China', { maxrecords: 15, pages: 1 })); } catch (e) {}
         }
       } else {
@@ -2883,10 +3065,11 @@ app.post('/api/threatroom/collect', async (req, res) => {
         const kwSubs = q.split(/[#＃,，、;；]+/).map(s => s.trim()).filter(s => s.length >= 2).slice(0, 3);
         kwGroups = kwSubs.map((s, i) => _kwGroup(s, subEns[i])).filter(g => g.pats && g.pats.length);
         console.log('[THREATROOM] 关键词翻译: ' + q + ' → [' + kws.join(' | ') + ']');
-        /* 每个英文关键字独立全网碰撞 */
+        /* 每个英文关键字独立全网碰撞（v8：GDELT+GNews+Bing 三引擎并联） */
         for (const kw of kws) {
           push(await _gdr('"' + kw + '" sourcelang:english', { timespan: '7d', maxrecords: 200 }));
           push(await _trGnews(kw, 30));
+          push(await _trHnAlgolia(kw, 20));
         }
         /* 主题×事件维度交叉（主力词 + 攻击/抗议/制裁等英文事件面） */
         const main = kws[0] || q;
@@ -2895,11 +3078,31 @@ app.post('/api/threatroom/collect', async (req, res) => {
         }
         push(await _gdr(main + ' attack', { timespan: '7d', maxrecords: 50 }));
         push(await _gdr(main + ' protest', { timespan: '7d', maxrecords: 40 }));
+        /* v8 第三/四引擎：主题主查 + 事件面交叉 */
+        push(await _trYahooNews(main, 20));
+        push(await _trHnAlgolia(main + ' attack', 15));
         /* 中文原文全语言兜底（中文/俄语源直接命中） */
         push(await _gdr(q.replace(/[#＃]/g, ' '), { timespan: '7d', maxrecords: 60 }));
         try { push(await crawler.apSearch(main, { maxrecords: 15, pages: 1 })); } catch (e) {}
       }
-      if (!arts.length) return res.json({ ok: true, collected: 0, filtered: 0, inserted: 0, rejected: 0, ms: Date.now() - t0, note: '全网检索无返回（GDELT 可能限流，稍后重试或直接查看库内联动数据）' });
+      /* v8 引擎命中透明化（GDELT 限流根治配套）：响应回传各引擎命中明细 + 熔断状态，
+       * 前端如实展示哪路通哪路断，不再笼统"可能限流" */
+      const _gdStat = (typeof crawler.gdeltStatus === 'function') ? crawler.gdeltStatus() : { cooling: false };
+      const _engN = f => arts.filter(f).length;
+      const engines = {
+        gdelt: _engN(a => a._src === 'gdelt'),
+        gnews: _engN(a => a.source === 'Google News'),
+        bing: _engN(a => a.source === 'Bing News'),
+        yahoo: _engN(a => a.source === 'Yahoo News'),
+        hn: _engN(a => a.source === 'HN Algolia'),
+        ap: _engN(a => a._src === 'apnews')
+      };
+      if (!arts.length) {
+        const gdNote = (_gdSkipRound || _gdStat.cooling)
+          ? 'GDELT 本轮限流熔断（已自动跳过，不烧超时），GNews/HN/Yahoo 备胎本轮也未命中'
+          : '多引擎（GDELT/GNews/HN/Yahoo/AP）本轮均未命中';
+        return res.json({ ok: true, collected: 0, filtered: 0, inserted: 0, rejected: 0, ms: Date.now() - t0, gdeltCooling: !!_gdStat.cooling, engines, note: gdNote + '——建议关键词换更宽的表述（如「巴基斯坦 恐袭」），或稍后重试，也可直接查看库内联动数据' });
+      }
       /* ── 后处理：seendate→发布时间 / 标记（翻译与富化在过滤后做——2026-08-31 实测排雷：
        * 全量翻译 150+ 条需 5-10 分钟导致用户端超时；只译入库批次 ≤60 条） ── */
       arts.forEach(it => {
@@ -2999,7 +3202,7 @@ app.post('/api/threatroom/collect', async (req, res) => {
         level: it.level || '', _web: true,
         _alreadyIngested: webHits.indexOf(it) >= 0   /* 前端可标记「库内已有」灰底 */
       }));
-      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, webHits: webHits.length, ms: Date.now() - t0, fresh });
+      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, webHits: webHits.length, ms: Date.now() - t0, gdeltCooling: !!_gdStat.cooling, engines, fresh });
     } finally {
       _threatroomBusyUntil = 0; /* 采集结束即解锁（异常也解锁，防止 5min 假锁） */
     }
@@ -8793,13 +8996,15 @@ app.get('/api/datahub/:collection', async (req, res) => {
     if (!DH_COLLECTIONS.includes(collection)) return res.status(400).json({ error: '无效的集合名' });
     const result = await query('SELECT data_json FROM datahub_store WHERE collection = $1', [collection]);
     let arr = result.rows.length > 0 ? result.rows[0].data_json : [];
-    /* 预警集合只下发今日（2026-08-17 铁律）：午夜后昨日预警自动失效，不依赖任何客户端清理 */
+    /* 预警集合下发窗口（2026-08-31 零点清零根治）：「今日零点」日历日切割 → 24h 滚动窗，
+     * 与 PUT 写入闸 / _qualityGuardian / _serverAlertGen 24h 回看 / 前端本地滚动窗同口径。
+     * 零点后昨日深夜预警仍在窗内正常下发，条目发布满 24h 才平滑退出。 */
     if (collection === 'alerts' && Array.isArray(arr)) {
-      const ds = new Date(); ds.setHours(0, 0, 0, 0);
+      const ds = Date.now() - 24 * 3600 * 1000;
       arr = arr.filter(a => {
         if (!a) return false;
         const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
-        if (!(t && t >= ds.getTime())) return false;
+        if (!(t && t >= ds)) return false;
         /* 2026-08-20 铁律：服务端下发再次过 chinaOverseasGate，防止任何持久化脏数据漏到前端 */
         const _gtxt = String(a.title || a.title_zh || '') + ' ' + String(a.desc || a.content || '');
         if (typeof scrapers !== 'undefined' && scrapers.chinaOverseasGate && !scrapers.chinaOverseasGate(_gtxt).pass) return false;
@@ -8830,9 +9035,12 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
      * ① 黑名单无链接条目；② 数字 id 条目以 PG collect_time 为准，早于今日拒收；
      * ③ 前端时间字段非今日拒收；④ 无时间用 alert_no 内嵌日期兜底，全无则拒收。 */
     if (collection === 'alerts') {
-      const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-      const ds = dayStart.getTime();
-      const tk = String(dayStart.getFullYear()) + String(dayStart.getMonth() + 1).padStart(2, '0') + String(dayStart.getDate()).padStart(2, '0');
+      /* 2026-08-31 零点清零根治：写入闸 cutoff 从「今日零点」改 24h 滚动窗——
+       * 下方四处 >= ds 与 alert_no 日期兜底随 cutoff 自动切换口径。
+       * 「旧闻绝不盖新戳」原则不变：早于 24h 窗的盖戳回灌仍一律拒收。 */
+      const ds = Date.now() - 24 * 3600 * 1000;
+      const tkSet = new Set([new Date(), new Date(ds)].map(d =>
+        String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0')));
       const numIds = data.map(a => a && a.id).filter(id => /^\d+$/.test(String(id)));
       const pgTime = {};
       if (numIds.length) {
@@ -8886,9 +9094,9 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
         const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
         if (t) return t >= ds;
         const m = String(a.alert_no || '').match(/(20\d{6})/);
-        return m ? m[1] === tk : false;
+        return m ? tkSet.has(m[1]) : false;
       });
-      if (data.length !== before) console.log('[DATAHUB] alerts 写入过滤: ' + before + ' → ' + data.length + '（剔除非今日/盖戳回灌）');
+      if (data.length !== before) console.log('[DATAHUB] alerts 写入过滤: ' + before + ' → ' + data.length + '（剔除超24h/盖戳回灌）');
       /* 2026-08-25 赋分改革根因修复：客户端全量覆盖会把服务端权威红区预警冲掉
        * （旧客户端 IndexedDB 里既没有新生成的红区条目、也没有 risk_zone 字段，一存全没）。
        * 改为权威合并：客户端条目按 id 覆盖/新增；服务端现有但客户端未包含的条目，
@@ -8976,8 +9184,10 @@ app.get('/api/reports', authMiddleware, async (req, res) => {
 
 app.get('/api/reports/:id', authMiddleware, async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    const result = await query('SELECT * FROM ai_reports WHERE report_id = $1 OR id = $2', [id, id]);
+    /* 2026-09-01 根治：报告 id 为 'AIR-xxxxxx' 字符串（report_id 列已迁 varchar），parseInt 强转恒 NaN */
+    const raw = String(req.params.id || '');
+    const num = parseInt(raw, 10);
+    const result = await query('SELECT * FROM ai_reports WHERE report_id = $1 OR ($2::int IS NOT NULL AND id = $2::int)', [raw, Number.isFinite(num) ? num : null]);
     if (result.rows.length === 0) return res.status(404).json({ error: '报告不存在' });
     const r = result.rows[0];
     res.json({ id: r.report_id||r.id, title: r.title, mode: r.mode, country: r.country, level: r.level, reportType: r.report_type, materials: r.materials, threatAnalysis: r.threat_analysis, impactAnalysis: r.impact_analysis, advice: r.advice, author: r.author, createdAt: r.created_at });
@@ -8987,7 +9197,7 @@ app.get('/api/reports/:id', authMiddleware, async (req, res) => {
 app.post('/api/reports', authMiddleware, async (req, res) => {
   try {
     const r = req.body;
-    const reportId = r.id || (Date.now() + Math.floor(Math.random() * 100000));
+    const reportId = String(r.id || (Date.now() + Math.floor(Math.random() * 100000)));
     const result = await query(
       'INSERT INTO ai_reports (report_id, title, mode, country, level, report_type, materials, threat_analysis, impact_analysis, advice, content_json, author) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id',
       [reportId, r.title||'', r.mode||'elements', r.country||'', r.level||'', r.reportType||r.report_type||'', r.materials||'', r.threatAnalysis||r.threat_analysis||'', r.impactAnalysis||r.impact_analysis||'', r.advice||'', JSON.stringify(r), req.user.username]
@@ -8998,16 +9208,17 @@ app.post('/api/reports', authMiddleware, async (req, res) => {
 
 app.put('/api/reports/:id', authMiddleware, async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const raw = String(req.params.id || '');
+    const num = parseInt(raw, 10);
     const r = req.body;
-    await query('UPDATE ai_reports SET title=$1, mode=$2, country=$3, level=$4, report_type=$5, materials=$6, threat_analysis=$7, impact_analysis=$8, advice=$9, content_json=$10 WHERE report_id=$11 OR id=$12',
-      [r.title||'', r.mode||'elements', r.country||'', r.level||'', r.reportType||r.report_type||'', r.materials||'', r.threatAnalysis||r.threat_analysis||'', r.impactAnalysis||r.impact_analysis||'', r.advice||'', JSON.stringify(r), id, id]);
+    await query('UPDATE ai_reports SET title=$1, mode=$2, country=$3, level=$4, report_type=$5, materials=$6, threat_analysis=$7, impact_analysis=$8, advice=$9, content_json=$10 WHERE report_id=$11 OR ($12::int IS NOT NULL AND id=$12::int)',
+      [r.title||'', r.mode||'elements', r.country||'', r.level||'', r.reportType||r.report_type||'', r.materials||'', r.threatAnalysis||r.threat_analysis||'', r.impactAnalysis||r.impact_analysis||'', r.advice||'', JSON.stringify(r), raw, Number.isFinite(num) ? num : null]);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/reports/:id', authMiddleware, async (req, res) => {
-  try { await query('DELETE FROM ai_reports WHERE report_id = $1 OR id = $2', [parseInt(req.params.id, 10), parseInt(req.params.id, 10)]); res.json({ success: true }); }
+  try { const raw = String(req.params.id || ''); const num = parseInt(raw, 10); await query('DELETE FROM ai_reports WHERE report_id = $1 OR ($2::int IS NOT NULL AND id = $2::int)', [raw, Number.isFinite(num) ? num : null]); res.json({ success: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 

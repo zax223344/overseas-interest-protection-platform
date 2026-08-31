@@ -721,6 +721,28 @@ select.intel-input{cursor:pointer}
   .globe-intel-panel{max-width:160px;font-size:10px}
   .sit-level-panel{min-width:150px;max-width:180px}
 }
+/* ===== 2026-09-01 预警中心·关联分析：可拖拽力导向星图 ===== */
+.gs-stage{position:relative;overflow:hidden;user-select:none;touch-action:none;border-radius:8px;background:radial-gradient(ellipse at 50% 42%,rgba(0,212,255,0.05),transparent 62%),repeating-radial-gradient(circle at 50% 42%,transparent 0 79px,rgba(0,212,255,0.025) 79px 80px),var(--bg2);animation:gsStageIn .5s ease both}
+@keyframes gsStageIn{from{opacity:0}to{opacity:1}}
+.gs-links{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
+.gs-link{stroke-dasharray:5 9;stroke-linecap:round;animation:gsFlow 2.6s linear infinite}
+@keyframes gsFlow{to{stroke-dashoffset:-14}}
+.gs-cluster{position:absolute;left:0;top:0;width:0;height:0;will-change:transform}
+.gs-core{position:absolute;left:-27px;top:-27px;width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none;transition:filter .15s}
+.gs-core:hover{filter:brightness(1.25)}
+.gs-core:active{cursor:grabbing}
+.gs-core-ic{font-size:20px;pointer-events:none;line-height:1}
+.gs-core-lb{position:absolute;top:31px;left:0;transform:translateX(-50%);font-size:9.5px;font-weight:700;white-space:nowrap;text-shadow:0 1px 4px #000;pointer-events:none}
+/* 含红色预警簇核心呼吸（克制：透明度呼吸，无闪烁） */
+.gs-pulse{animation:gsCorePulse 1.6s ease-in-out infinite}
+@keyframes gsCorePulse{0%,100%{opacity:1}50%{opacity:.7}}
+.gs-particle{position:absolute;left:0;top:0;animation:gsDrift var(--pd) ease-in-out var(--pdl) infinite alternate;will-change:transform}
+.gs-particle i{position:absolute;left:-4px;top:-4px;width:8px;height:8px;border-radius:50%;display:block;cursor:pointer;transition:transform .15s}
+.gs-particle:hover i{transform:scale(1.8)}
+@keyframes gsDrift{from{transform:translate(-2px,1px)}to{transform:translate(3px,-3px)}}
+.gs-tip{position:absolute;left:0;top:0;max-width:240px;background:rgba(10,21,37,0.93);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;font-size:10.5px;line-height:1.55;color:var(--text2);pointer-events:none;opacity:0;transition:opacity .12s;z-index:5}
+.gs-tip b{display:block;color:var(--cyan);font-size:11px;margin-bottom:2px}
+.gs-tip span{display:block}
 </style>
 </head>
 <body>
@@ -1192,7 +1214,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=1"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=273"></script>
+<script src="app.js?v=275"></script>
 <script src="workbench.js?v=3"></script>
 <script src="threatroom.js?v=8"></script>
 <script src="foresee.js?v=2"></script>

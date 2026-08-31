@@ -925,4 +925,4 @@ async function resolveUrl(title, item) {
   return url;
 }
 
-module.exports = { crawlAll, crawlQuery, crawlWeb, gdeltSearch, apSearch, resolveUrl, chinaNegative, chinaRelated, interestRelated, classify, isPublicHost, fetchPublic, extractArticle, WEB_CHANNELS, PRESET_QUERIES, MEDIA_FEEDS, SEARCH_ENGINES, SOCIAL_TARGETS, GD_COUNTRIES, gdCode, gdEn, gdCnFromEn };
+module.exports = { crawlAll, crawlQuery, crawlWeb, gdeltSearch, apSearch, resolveUrl, chinaNegative, chinaRelated, interestRelated, classify, isPublicHost, fetchPublic, extractArticle, WEB_CHANNELS, PRESET_QUERIES, MEDIA_FEEDS, SEARCH_ENGINES, SOCIAL_TARGETS, GD_COUNTRIES, gdCode, gdEn, gdCnFromEn, gdeltStatus: () => ({ cooling: Date.now() < _gdeltCooldownUntil, cooldownUntil: _gdeltCooldownUntil, failStreak: _gdeltFailStreak }) };

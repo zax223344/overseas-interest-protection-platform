@@ -602,7 +602,7 @@ var THREATROOM = {
     if (deck) deck.style.display = 'none';
 
     /* 阶段一：实体识别（即时） */
-    this._stage('实体识别 <b class="ok">✓</b>「' + this._esc(e.cn) + '」（' + this._typeLabel(e.type) + '）→ 全网采集中：GDELT 多路检索矩阵（实体名+12 主题变体+全语言兜底）+ Google News + AP 三引擎碰撞…');
+    this._stage('实体识别 <b class="ok">✓</b>「' + this._esc(e.cn) + '」（' + this._typeLabel(e.type) + '）→ 全网采集中：GDELT 检索矩阵 + Google News + HN Algolia + Yahoo News + AP 多引擎碰撞（任一引擎限流自动降级备胎）…');
 
     var base = this._apiBase();
     var t0 = Date.now();
@@ -617,9 +617,15 @@ var THREATROOM = {
         self._fresh = (j && j.ok && Array.isArray(j.fresh)) ? j.fresh : [];
         /* 服务端权威实体类型同步（gdCode 自动升级：前端 COUNTRIES 未收录的国家，服务端已按国家采集） */
         if (j && j.ok && j.type && j.type !== self._entity.type) { self._entity.type = j.type; }
+        /* v8 引擎命中明细（GDELT 限流透明化：如实展示哪路通哪路断） */
+        var _EN = { gdelt: 'GDELT', gnews: 'GNews', bing: 'Bing', yahoo: 'Yahoo', hn: 'HN', ap: 'AP' };
+        var engS = '';
+        if (j && j.ok && j.engines) {
+          engS = '【引擎命中：' + Object.keys(j.engines).map(function (k) { return _EN[k] + ' ' + (j.engines[k] || 0); }).join(' / ') + (j.gdeltCooling ? '；GDELT 熔断已自动跳过' : '') + '】';
+        }
         /* 阶段二完成 → 阶段三：库内联动 */
         var cTxt = j && j.ok
-          ? ('全网采集完成：检索 ' + (j.collected || 0) + ' 条 / 库内已有 ' + (j.webHits || 0) + ' 条 / 新入库 ' + (j.inserted || 0) + ' 条 / 前置拒 ' + (j.rejected || 0) + ' 条（' + ((j.ms || 0) / 1000).toFixed(1) + 's）→ 正在拉取库内 ' + self._days + ' 天联动数据…')
+          ? ('全网采集完成：检索 ' + (j.collected || 0) + ' 条 / 库内已有 ' + (j.webHits || 0) + ' 条 / 新入库 ' + (j.inserted || 0) + ' 条 / 前置拒 ' + (j.rejected || 0) + ' 条（' + ((j.ms || 0) / 1000).toFixed(1) + 's）' + engS + '→ 正在拉取库内 ' + self._days + ' 天联动数据…')
           : ('全网采集未新增（' + self._esc(String((j && j.error) || j.note || '无返回')) + '）→ 正在拉取库内 ' + self._days + ' 天联动数据…');
         self._stage(cTxt);
         var qs = '?type=' + encodeURIComponent(e.type) + '&cn=' + encodeURIComponent(e.cn) +
@@ -652,7 +658,7 @@ var THREATROOM = {
       .catch(function (err) {
         self._stage(null);
         self._busy = false;
-        self._toast('采集失败：' + self._esc(err.message || String(err)) + '（GDELT 可能限流，稍后重试；也可直接查库内数据）');
+        self._toast('采集失败：' + self._esc(err.message || String(err)) + '（引擎网络波动，稍后重试；也可直接查库内数据）');
       });
   },
 
@@ -799,7 +805,15 @@ var THREATROOM = {
         this._collect.keywords.map(function (k) {
           return '<span class="tr-badge" style="color:var(--orange,#f59e0b);border-color:var(--orange,#f59e0b)44">' + THREATROOM._esc(k) + '</span>';
         }).join(' ') +
-        ' <span style="color:var(--text3,#7a8aa3)">→ GDELT · Google News · AP 全网碰撞</span></div>';
+        /* v8 引擎命中明细（哪路通哪路断一目了然，命中绿色/空转灰色） */
+        (function () {
+          var c = THREATROOM._collect, EN = { gdelt: 'GDELT', gnews: 'Google News', bing: 'Bing News', yahoo: 'Yahoo News', hn: 'HN Algolia', ap: 'AP' };
+          if (!c || !c.engines) return ' <span style="color:var(--text3,#7a8aa3)">→ GDELT · Google News · Bing · Yahoo · AP 全网碰撞</span>';
+          return ' <span style="color:var(--text3,#7a8aa3)">→</span> ' + Object.keys(EN).map(function (k) {
+            var n = c.engines[k] || 0;
+            return '<span style="' + (n ? 'color:var(--green,#22c55e);font-weight:700' : 'color:var(--text3,#7a8aa3)') + '">' + EN[k] + ' ' + n + '</span>';
+          }).join(' / ') + (c.gdeltCooling ? ' <span style="color:var(--orange,#f59e0b)">（GDELT 限流熔断已跳过）</span>' : '');
+        })() + '</div>';
     }
     /* 研判文字 */
     html += '<div style="margin-top:10px;font-size:12.5px;line-height:1.85;color:var(--text,#e8eefc)">' +
