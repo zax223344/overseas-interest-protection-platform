@@ -3561,6 +3561,44 @@ var DataHub={
       }).catch(function(err){console.warn('[DataHub] API加载失败:',col,err.message);});
     });
   },
+  /* 2026-08-31 #522 同基础 id 合并：同一条 intel_data 会生成两个预警形态——
+   * SRV-<id>（服务端 _serverAlertGen 24h 回看生成）+ <id>（SSE 实时分发）。
+   * 两者 id 形态不同、country 可能错标不同（服务端归因 vs 前端正文提取），
+   * 导致所有去重键（id/country+title）全部错开 → 用户看到"同一事件两条"。
+   * 合并规则：保留信息更全的（SRV- 形态有 risk_score/zone/rationale）；
+   * country 用非空且更可信的一方修正；_live 标记与实时字段转移。 */
+  _mergeSrvAndLive(list){
+    if(!Array.isArray(list)||!list.length) return list;
+    var byBase={}, out=[];
+    for(var i=0;i<list.length;i++){
+      var a=list[i];
+      var id=String((a&&a.id)||'');
+      var base=id.replace(/^SRV-/,'');
+      if(!base || isNaN(parseInt(base,10)) || String(parseInt(base,10))!==base){
+        out.push(a); continue;   /* LIVE-/时间戳/其他非数字 id 不参与合并 */
+      }
+      if(byBase[base]===undefined){ byBase[base]=a; out.push(a); }
+      else{
+        var idx=out.indexOf(byBase[base]);
+        var cur=byBase[base];
+        var keep, drop;
+        if(id.indexOf('SRV-')===0 && String(cur.id||'').indexOf('SRV-')!==0){ keep=a; drop=cur; }
+        else { keep=cur; drop=a; }
+        /* country 修正：保留条目 country 为空或与正文提取明显不一致时用另一条的 */
+        if((!keep.country||!keep.country.trim()) && drop.country) keep.country=drop.country;
+        /* _live 条目 country 由前端正文提取（更可信），修正 SRV- 生成时的错标国别 */
+        if(drop._live && drop.country && drop.country.trim() && drop.country!==keep.country) keep.country=drop.country;
+        /* _live 标记转移（保持实时样式/新鲜度判定） */
+        if(drop._live && !keep._live) keep._live=true;
+        /* 实时字段补全（SRV- 条目可能缺） */
+        var fields=['desc','content_zh','title_zh','publishedAt','url','ext_url','corroboration','asset_tags','channel_tags','_eventSig','enterprise'];
+        for(var f=0;f<fields.length;f++){ var k=fields[f]; if(!keep[k] && drop[k]) keep[k]=drop[k]; }
+        byBase[base]=keep;
+        out[idx]=keep;
+      }
+    }
+    return out;
+  },
   _applyData(collection,data){
     /* 2026-08-20 铁律：服务端下发数据再过滤；基础集合禁止被空数组覆盖 */
     var isArr=Array.isArray(data);
@@ -3582,6 +3620,8 @@ var DataHub={
       };
       data=data.filter(_gPass);
     }
+    /* #522：SRV-<id> 与 <id> 同条双形态合并（服务端生成 + 实时分发双路径根治） */
+    if(collection==='alerts' && Array.isArray(data)) data=this._mergeSrvAndLive(data);
     if(collection==='alerts')ALERTS=data;
     else if(collection==='events')EVENTS=data;
     else if(collection==='terror_events')TERROR_EVENTS=data;

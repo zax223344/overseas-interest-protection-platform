@@ -365,9 +365,22 @@
       if (typeof ALERTS !== 'undefined') {
         var normA = _normTitle(a.title || '');
         var dupIdx = -1;
-        for (var _ai = 0; _ai < ALERTS.length; _ai++) {
-          if ((ALERTS[_ai].country || '') === (a.country || '') && _normTitle(ALERTS[_ai].title || '') === normA && normA.length >= 8) {
-            dupIdx = _ai; break;
+        /* #522 同基础 id 优先判定：同一条 intel_data 的 SRV-<id>（服务端生成）与 <id>（实时分发）
+         * 是同一事件的双形态——country 错标差异曾导致双条并存（塞内加尔矿企遇袭案）。
+         * 数字 id 基础值相同即判定同条，不再依赖 country+title 键。 */
+        var _baseId = String(a.id || '').replace(/^SRV-/, '');
+        var _baseOk = _baseId && !isNaN(parseInt(_baseId, 10)) && String(parseInt(_baseId, 10)) === _baseId;
+        if (_baseOk) {
+          for (var _bi = 0; _bi < ALERTS.length; _bi++) {
+            var _bid = String(ALERTS[_bi].id || '').replace(/^SRV-/, '');
+            if (_bid === _baseId) { dupIdx = _bi; break; }
+          }
+        }
+        if (dupIdx < 0) {
+          for (var _ai = 0; _ai < ALERTS.length; _ai++) {
+            if ((ALERTS[_ai].country || '') === (a.country || '') && _normTitle(ALERTS[_ai].title || '') === normA && normA.length >= 8) {
+              dupIdx = _ai; break;
+            }
           }
         }
         if (dupIdx >= 0) {
@@ -376,7 +389,9 @@
           if ((levelOrder[a.level] || 0) > (levelOrder[dup.level] || 0)) dup.level = a.level;
           if (a.time && (!dup.time || new Date(a.time) > new Date(dup.time))) dup.time = a.time;
           if (a.url && !dup.url) dup.url = a.url;
-          console.log('[INGEST DEDUP] ALERTS 已存在同标题记录，合并: ' + String(a.title).slice(0, 40));
+          /* #522：实时条目 country 由正文提取（更可信），修正 SRV- 条目的错标国别 */
+          if (a.country && dup.country && a.country !== dup.country) dup.country = a.country;
+          console.log('[INGEST DEDUP] ALERTS 已存在同标题/同源记录，合并: ' + String(a.title).slice(0, 40));
         } else {
           ALERTS = ALERTS.filter(function (x) { return String(x.id) !== String(a.id); });
           ALERTS.unshift(a);

@@ -996,6 +996,36 @@ async function _serverAlertGen() {
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
     let alerts = dh.rows.length && Array.isArray(dh.rows[0].data_json) ? dh.rows[0].data_json : [];
+    /* #522 存量双形态合并：SRV-<id>（本生成器产物）与 <id>（前端 SSE 分发后 PUT 上传）是
+     * 同一 intel_data 的双形态，历史上因 id/country 键错开造成同事件双条并存。
+     * 合并保留 SRV-（信息更全），country 用非空方修正，_live 与实时字段转移；
+     * 合并结果随函数末尾写回 datahub_store 持久化，逐轮自动出清存量双条。 */
+    let _dualMerged = 0;
+    try {
+      const byBase = new Map(); const kept = [];
+      for (const a of alerts) {
+        const base = String((a && a.id) || '').replace(/^SRV-/, '');
+        if (!base || !/^\d+$/.test(base)) { kept.push(a); continue; }
+        const prev = byBase.get(base);
+        if (!prev) { byBase.set(base, a); kept.push(a); continue; }
+        const prevIsSrv = String(prev.id || '').indexOf('SRV-') === 0;
+        const curIsSrv = String(a.id || '').indexOf('SRV-') === 0;
+        const keep = (curIsSrv && !prevIsSrv) ? a : prev;
+        const drop = (keep === a) ? prev : a;
+        if ((!keep.country || !String(keep.country).trim()) && drop.country) keep.country = drop.country;
+        /* _live 条目 country 由前端正文提取（更可信），修正 SRV- 生成时的错标国别 */
+        if (drop._live && drop.country && String(drop.country).trim() && drop.country !== keep.country) keep.country = drop.country;
+        if (drop._live && !keep._live) keep._live = true;
+        for (const k of ['desc', 'content_zh', 'title_zh', 'publishedAt', 'url', 'ext_url', 'corroboration', 'asset_tags', 'channel_tags', '_eventSig', 'enterprise']) {
+          if (!keep[k] && drop[k]) keep[k] = drop[k];
+        }
+        const ki = kept.indexOf(drop); if (ki >= 0) kept.splice(ki, 1);
+        const kj = kept.indexOf(prev); if (kj >= 0) kept[kj] = keep; else kept.push(keep);
+        byBase.set(base, keep);
+        _dualMerged++;
+      }
+      if (_dualMerged) { alerts = kept; console.log('[ALERT-GEN] #522 双形态合并 ' + _dualMerged + ' 组（SRV-/裸 id 同条去重）'); }
+    } catch (e) { console.warn('[ALERT-GEN] 双形态合并异常:', e.message); }
     /* 2026-08-29 存量清扫：预警队列里的历史旧案回顾（1988 泛美103审判类）逐轮剔除，
      * 与新生成否决同源判定——用户删不干净的这类旧案报道由生成器自动出清。 */
     let _histSwept = 0;
@@ -1025,10 +1055,15 @@ async function _serverAlertGen() {
     }
     const have = new Set(alerts.map(a => String(a.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 40)));
     const haveIds = new Set(alerts.map(a => String(a.id || '')));
+    /* #522 同基础 id 防重：前端实时分发会把 intel_data 存为裸 id 形态（无 SRV- 前缀），
+     * 若 datahub 已有裸 <id> 条目（SSE 分发后 PUT 上传），此处再生成 SRV-<id> 会造成
+     * 同一事件双条并存（塞内加尔中资矿企遇袭案）。基础值相同即跳过生成。 */
+    const haveBaseIds = new Set(alerts.map(a => String(a.id || '').replace(/^SRV-/, '')));
     const added = [];
     for (const r of rows) {
       const genId = 'SRV-' + r.id;
       if (haveIds.has(genId)) continue; /* 预警中心已存在该条目，不重复生成 */
+      if (haveBaseIds.has(String(r.id))) continue; /* #522：已有裸 id 实时形态，不再生成 SRV- 双形态 */
       const it = r.data_json || {};
       it.title = it.title || r.title || '';
       it.country = it.country || r.country || '';
