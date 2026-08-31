@@ -670,7 +670,8 @@ async function _integrityWatchdog() {
        * wm_feed+chinaRelated 条目加了国内豁免，但 watchdog 复扫没同步 → 中国走廊控制塔
        * 4 条入库 30min 内被巡检当"国内混入"删除。两处判定必须同源豁免。 */
       const _wmChina = r.st === 'wm_feed' && r.cr === 'true';
-      if (!_wmChina && globalmedia._isDomesticChina && globalmedia._isDomesticChina(t + ' ' + String(r.tzh || ''))) { delDomestic.push(r.id); continue; }
+      const _trChina = r.st === 'threatroom' && r.cr === 'true'; /* 2026-08-31：专项作战室同源豁免（防中资项目检索条目被复扫误删） */
+      if (!_wmChina && !_trChina && globalmedia._isDomesticChina && globalmedia._isDomesticChina(t + ' ' + String(r.tzh || ''))) { delDomestic.push(r.id); continue; }
       /* 标题重复 */
       const k1 = _normTitleKey(t), k2 = _normTitleKey(r.tzh);
       if ((k1.length >= 10 && seen[k1]) || (k2.length >= 10 && seen[k2])) { delDup.push(r.id); continue; }
@@ -2462,6 +2463,302 @@ app.post('/api/wm-feed/run', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+/* ============================================================
+ * 专项情报作战室（2026-08-31，任务 #508）
+ * 用户指定实体（国家 / 威胁组织 / 中资项目 / 自由关键词）→ 专项全网采集（7 天窗）
+ * + 库内数据联动 + 前端态势预警分析报告与预警图。
+ * 端点一：POST /api/threatroom/collect —— 专项采集（GDELT 7d × AP 补充）
+ * 端点二：GET  /api/threatroom/data    —— 库内实体匹配数据（供报告渲染）
+ * 铁律：全部走 _ingestLinkedItems 标准管线；_sourceType='threatroom' 必须在
+ * _isFreshEnough 之前设置（与 gap_scheduler 同源排雷）。 */
+let _threatroomBusyUntil = 0;
+/* Google News RSS 检索（威胁作战室专用；与 channel-watch._gnewsRss 同模式：
+ * 串行+间歇重试，只支持英文查询——中文参数返回空）。
+ * 2026-08-31 v2：GDELT 之外的第二引擎（用户铁律"全网采集"），when:7d 对齐作战室窗口。 */
+async function _trGnews(q, max) {
+  const _once = () => Promise.race([
+    netx.smartFetch('https://news.google.com/rss/search?q=' + encodeURIComponent(q + ' when:7d') + '&hl=en-US&gl=US&ceid=US:en',
+      { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36' } })
+      .then(r => (r && r.ok) ? r.text() : null).catch(() => null),
+    new Promise(res => setTimeout(() => res(null), 14000))
+  ]);
+  try {
+    let text = await _once();
+    if (!text) { await new Promise(s => setTimeout(s, 2000)); text = await _once(); }
+    if (!text) return [];
+    return (scrapers.parseRss(text) || []).slice(0, max || 20).map(it => ({
+      title: it.title || '', content: it.description || '', url: it.link || '',
+      publish_time: it.pubDate || '', source: 'Google News', country: ''
+    }));
+  } catch (e) { return []; }
+}
+app.post('/api/threatroom/collect', async (req, res) => {
+  try {
+    if (Date.now() < _threatroomBusyUntil) return res.json({ ok: false, error: '上一轮专项采集尚未结束，请稍候' });
+    _threatroomBusyUntil = Date.now() + 10 * 60 * 1000;   /* v2 矩阵 16+ 路，锁窗扩到 10 分钟 */
+    const t0 = Date.now();
+    try {
+      const body = req.body || {};
+      let type = String(body.type || 'keyword');
+      const q = String(body.cn || body.q || '').trim();
+      if (!q) { _threatroomBusyUntil = 0; return res.json({ ok: false, error: '缺少实体名' }); }
+      /* 国别自动升级（2026-08-31 实测排雷：用户搜"吉尔吉斯斯坦"被前端判成 keyword——
+       * COUNTRIES 89 国清单不含该国。gdCode()（GD_COUNTRIES 唯一取源）命中即按国家采集，
+       * 前端识别只是提示，服务端才是权威） */
+      if (type !== 'country' && crawler.gdCode(q)) type = 'country';
+      /* 英文名服务端自解析：国别实体 gdEn() 唯一取源（GD_COUNTRIES），前端无需维护英文映射 */
+      const enName = String(body.en || '').trim() || (type === 'country' ? crawler.gdEn(q) : '');
+      if (type !== 'keyword' && enName) enKws.push(enName);
+      const als = Array.isArray(body.aliases) ? body.aliases.filter(a => a && String(a).trim()) : [];
+      const arts = [];
+      const seen = new Set();
+      let enKws = [];   /* v4：关键词作战的英文检索词（回传前端展示"主题→外文关键字"链路） */
+      const push = (list) => (list || []).forEach(a => {
+        const u = String(a.url || a.title || '');
+        if (u && !seen.has(u)) { seen.add(u); arts.push(a); }
+      });
+      /* GDELT 检索包装（2026-08-31 铁律排雷：复杂查询（OR/括号）会挂起——一律纯 AND 语义
+       * 检索式 + 40s Promise.race 兜底，绝不无限等待） */
+      const _gdr = async (gq, opts) => {
+        try {
+          return await Promise.race([
+            crawler.gdeltSearch(gq, opts).catch(() => []),
+            new Promise(r2 => setTimeout(() => r2([]), 40000))
+          ]);
+        } catch (e) { return []; }
+      };
+      /* ── 分实体类型组织检索式（全部纯 AND：空格连接词项） ──
+       * 2026-08-31 v3 实测排雷（用户铁律"采集量不够"）：
+       *   v2 用 14 条 GDELT 主题变体，但当日全量采集打满共享代理 IP 后 GDELT 持续 429，
+       *   实测检索量被限流腰斩（Kyrgyzstan 检索 36/入库 28——入库率优秀但总量不足）。
+       *   修法：GDELT 只保留 2 条最高价值主力查询（限流时仍能抢到），
+       *   主题变体全切 Google News RSS（channel-watch 每 30 分钟稳定使用，未见硬限流），
+       *   全语言兜底仅在 GDELT 未触发冷却时跑（防雪上加霜）。
+       *   + 批次内标题去重：同一事件被 GNews 和 GDELT 同时捞到时只入一次（精确标题指纹）。
+       *   目标：单轮入库从 28 提到 80+。 */
+      if (type === 'country') {
+        const fips = crawler.gdCode(q);
+        /* ① GDELT 主力两条（限流抢答高价值） */
+        if (fips) {
+          push(await _gdr('sourcecountry:' + fips + ' sourcelang:english', { timespan: '7d', maxrecords: 250 }));
+        }
+        if (enName) {
+          push(await _gdr('"' + enName + '" sourcelang:english', { timespan: '7d', maxrecords: 250 }));
+        }
+        /* ② Google News 主题矩阵（无 GDELT 限流；when:7d 对齐窗口）——v3 主力扩量来源 */
+        if (enName) {
+          push(await _trGnews(enName, 30));
+          const gThemes = ['summit', 'opposition', 'protest', 'election', 'attack', 'China', 'security', 'sanction'];
+          for (const gt of gThemes) {
+            push(await _trGnews(enName + ' ' + gt, 18));
+          }
+          /* ③ 全语言兜底（俄语源）——限量 60+ 后续西里尔质量闸 */
+          if (fips) push(await _gdr('sourcecountry:' + fips, { timespan: '7d', maxrecords: 60 }));
+          /* ④ AP 补充 */
+          try { push(await crawler.apSearch(enName, { maxrecords: 15, pages: 1 })); } catch (e) {}
+        }
+      } else if (type === 'org') {
+        const names = [enName].concat(als).filter(Boolean).slice(0, 3);
+        for (const nm of names) {
+          push(await _gdr('"' + nm + '" sourcelang:english', { timespan: '7d', maxrecords: 250 }));
+          push(await _gdr('"' + nm + '" attack', { timespan: '7d', maxrecords: 50 }));
+        }
+        if (enName) {
+          /* ① GNews 主题矩阵 */
+          push(await _trGnews(enName, 30));
+          const gThemes = ['China', 'attack', 'sanction', 'leader'];
+          for (const gt of gThemes) {
+            push(await _trGnews(enName + ' ' + gt, 18));
+          }
+          /* ② AP */
+          try { push(await crawler.apSearch(enName, { maxrecords: 15, pages: 1 })); } catch (e) {}
+        }
+      } else if (type === 'project') {
+        const names = [enName].concat(als).filter(Boolean).slice(0, 3);
+        for (const nm of names) {
+          push(await _gdr('"' + nm + '"', { timespan: '7d', maxrecords: 150 }));
+        }
+        if (enName) {
+          push(await _trGnews(enName, 30));
+          const gThemes = ['attack', 'protest', 'security', 'China'];
+          for (const gt of gThemes) {
+            push(await _trGnews(enName + ' ' + gt, 18));
+          }
+          try { push(await crawler.apSearch(enName + ' China', { maxrecords: 15, pages: 1 })); } catch (e) {}
+        }
+      } else {
+        /* 2026-08-31 v4 关键词作战模式（用户铁律：引擎≠实体库门槛——任何主题都要能搜）：
+         * 引擎职责是中转点：把用户主题（中文）翻译成英文关键字，再去 GDELT/GNews/AP 全网碰撞。
+         * 主查询=整句中→英（TranSmart zh→en，有道兜底）；「#」拆分的子题各译一遍作变体；
+         * 中文原文保留做 GDELT 全语言兜底（中文源/俄语源仍能命中）。 */
+        const enQuery = String(body.en || '').trim();
+        const kws = [];
+        const addKw = (k) => { k = String(k || '').replace(/[""]/g, '').trim(); if (k && kws.indexOf(k) < 0 && kws.length < 4) kws.push(k); };
+        if (enQuery) addKw(enQuery);
+        const mainZh = q.replace(/[#＃]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (enQuery) {
+          /* 前端已传英文：直接用 */
+        } else if (/[\u4e00-\u9fff]/.test(mainZh)) {
+          let en = '';
+          try { en = await _tryTranSmart(mainZh, 'zh', 'en'); } catch (e) {}
+          if (!en || /[\u4e00-\u9fff]/.test(en)) {
+            try { const y = await _tryYoudao(mainZh); if (y && /[a-zA-Z]/.test(y) && !/[\u4e00-\u9fff]/.test(y)) en = y; } catch (e) {}
+          }
+          if (en) addKw(en);
+          /* # 子题变体：「中资#抢劫」→ "Chinese companies" + "robbery" 分别碰撞，覆盖分主题报道 */
+          const subs = q.split(/[#＃,，、;；]+/).map(s => s.trim()).filter(s => s.length >= 2).slice(0, 2);
+          for (const s of subs) {
+            if (!/[\u4e00-\u9fff]/.test(s)) { addKw(s); continue; }
+            let e2 = '';
+            try { e2 = await _tryTranSmart(s, 'zh', 'en'); } catch (e) {}
+            if (e2 && !/[\u4e00-\u9fff]/.test(e2)) addKw(e2);
+          }
+        } else addKw(q);
+        enKws = kws.slice();
+        console.log('[THREATROOM] 关键词翻译: ' + q + ' → [' + kws.join(' | ') + ']');
+        /* 每个英文关键字独立全网碰撞 */
+        for (const kw of kws) {
+          push(await _gdr('"' + kw + '" sourcelang:english', { timespan: '7d', maxrecords: 200 }));
+          push(await _trGnews(kw, 30));
+        }
+        /* 主题×事件维度交叉（主力词 + 攻击/抗议/制裁等英文事件面） */
+        const main = kws[0] || q;
+        for (const gt of ['China', 'attack', 'protest', 'sanction', 'security']) {
+          push(await _trGnews(main + ' ' + gt, 18));
+        }
+        push(await _gdr(main + ' attack', { timespan: '7d', maxrecords: 50 }));
+        push(await _gdr(main + ' protest', { timespan: '7d', maxrecords: 40 }));
+        /* 中文原文全语言兜底（中文/俄语源直接命中） */
+        push(await _gdr(q.replace(/[#＃]/g, ' '), { timespan: '7d', maxrecords: 60 }));
+        try { push(await crawler.apSearch(main, { maxrecords: 15, pages: 1 })); } catch (e) {}
+      }
+      if (!arts.length) return res.json({ ok: true, collected: 0, filtered: 0, inserted: 0, rejected: 0, ms: Date.now() - t0, note: '全网检索无返回（GDELT 可能限流，稍后重试或直接查看库内联动数据）' });
+      /* ── 后处理：seendate→发布时间 / 标记（翻译与富化在过滤后做——2026-08-31 实测排雷：
+       * 全量翻译 150+ 条需 5-10 分钟导致用户端超时；只译入库批次 ≤60 条） ── */
+      arts.forEach(it => {
+        if (!it.publish_time && !it.publishedAt && !it.date && it.seendate) {
+          const iso = String(it.seendate).replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
+          if (iso !== it.seendate) { it.publish_time = iso; it.publishedAt = iso; it.date = iso; }
+        }
+        it._sourceType = 'threatroom'; /* 必须在 _isFreshEnough 之前（铁律） */
+        it.interestLinked = true;
+        if (type === 'country' && !it.country && !it.country_cn) it.country = q; /* 国别检索归因 */
+        if (!it.source) it.source = '专项作战室·' + q;
+      });
+      /* 轻量前置过滤（噪声/无标识/同标题），全量闸门仍在 _ingestLinkedItems 内 */
+      const titleKeys = await _getRecentTitleKeys();
+      const batch = [];
+      let rejected = 0;
+      /* v3 批次内标题去重：GNews+GDELT 同一事件两边捞到时（不同 URL 同标题）只入一次——
+       * 精确标题指纹哈希，与 DB titleKeys 互补：前者防批内冗余，后者防与库内重复 */
+      const batchTitleSeen = new Set();
+      for (const it of arts) {
+        const ctext = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || '');
+        if (_BAL_NOISE.test(ctext)) { rejected++; continue; }
+        if (!it.url && !it.title) { rejected++; continue; }
+        if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
+        const bk = _normTitleKey(it.title);
+        if (bk.length >= 10 && batchTitleSeen.has(bk)) { rejected++; continue; }
+        if (bk.length >= 10) batchTitleSeen.add(bk);
+        batch.push(it);
+        if (batch.length >= 80) break;   /* 翻译批次帽 v2（80 条·并发 4 ≈ 2-3 分钟；v1 40 条砍掉一半采集量） */
+      }
+      /* 翻译 + 实体富化只做入库批次（v2：并发 4） */
+      if (batch.length) {
+        try { await _translateListToZhParallel(batch, 4); } catch (e) {}
+        /* 西里尔质量闸（v2 全语言兜底配套）：俄语原文翻译失败/产出无中文/译文仍大量西里尔
+         * 残留的条目拒收——"公斤新闻今天"级垃圾的根治闸 */
+        let cyrRej = 0;
+        const batch2 = batch.filter(it => {
+          const orig = String(it.title || '');
+          if (!/[а-яё]/i.test(orig)) return true;   /* 非西里尔源不适用 */
+          const zh = String(it.title_zh || '');
+          if (!/[\u4e00-\u9fff]/.test(zh)) { cyrRej++; return false; }
+          if (((zh.match(/[а-яё]/gi) || []).length / Math.max(1, zh.length)) > 0.3) { cyrRej++; return false; }
+          return true;
+        });
+        rejected += cyrRej;
+        batch.length = 0;
+        batch.push(...batch2);
+        batch.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} });
+      }
+      let inserted = 0;
+      if (batch.length) {
+        const r2 = await _ingestLinkedItems(batch, 'THREATROOM', '（专项·' + q + '）');
+        inserted = (r2 && r2.inserted) || 0;
+      }
+      console.log('[THREATROOM] 专项采集 ' + q + '（' + type + '）：检索 ' + arts.length + ' / 过滤后 ' + batch.length + ' / 入库 ' + inserted + ' / 前置拒 ' + rejected + '，耗时 ' + (Date.now() - t0) + 'ms');
+      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, ms: Date.now() - t0 });
+    } finally {
+      _threatroomBusyUntil = 0; /* 采集结束即解锁（异常也解锁，防止 5min 假锁） */
+    }
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+/* 库内实体匹配数据：country → 国别列+标题双匹配；org/project/keyword → 标题/译文/正文关键词匹配 */
+app.get('/api/threatroom/data', async (req, res) => {
+  try {
+    let type = String(req.query.type || 'keyword');
+    const q = String(req.query.cn || req.query.q || '').trim();
+    const days = Math.max(1, Math.min(14, parseInt(req.query.days, 10) || 7));
+    if (!q) return res.status(400).json({ error: '缺少实体名' });
+    /* 国别自动升级（与 collect 端点同源：gdCode 命中即国家） */
+    if (type !== 'country' && crawler.gdCode(q)) type = 'country';
+    const enName = String(req.query.en || '').trim() || (type === 'country' ? crawler.gdEn(q) : '');
+    const pats = [];
+    if (q.length >= 2) pats.push('%' + q + '%');
+    if (enName.length >= 3) pats.push('%' + enName + '%');
+    String(req.query.aliases || '').split(',').forEach(a => { a = a.trim(); if (a.length >= 3) pats.push('%' + a + '%'); });
+    let rows = [];
+    if (type === 'country') {
+      /* 国别六路匹配（v2：v1 只查 country 中文+标题英文，漏掉英文国名 country 字段、
+       * 中文标题提及、正文提及——上合峰会报道标题常无国名，country 字段也可能是
+       * 'Kyrgyzstan' 英文写法，六路全开才捞得全） */
+      const r = await query(
+        `SELECT * FROM intel_data WHERE collect_time >= NOW() - ($1 || ' days')::interval
+          AND ( country ILIKE $2
+             OR data_json->>'country_cn' ILIKE $2
+             OR (CASE WHEN $3 <> '' THEN country ILIKE $3 ELSE FALSE END)
+             OR (CASE WHEN $3 <> '' THEN title ILIKE $3 ELSE FALSE END)
+             OR (CASE WHEN $3 <> '' THEN data_json->>'title_zh' ILIKE $3 ELSE FALSE END)
+             OR (CASE WHEN $3 <> '' THEN description ILIKE $3 ELSE FALSE END)
+             OR (CASE WHEN $3 <> '' THEN data_json->>'content' ILIKE $3 ELSE FALSE END)
+             OR data_json->>'title_zh' ILIKE $2 )
+          ORDER BY collect_time DESC LIMIT 400`,
+        [String(days), '%' + q + '%', enName ? '%' + enName + '%' : '']);
+      rows = r.rows;
+    } else if (pats.length) {
+      /* v4（2026-08-31 用户指令：引擎≠实体库门槛）：中文关键词译成英文参与库内匹配——
+       * 英文原文标题（title 字段）用英文词命中率远高于中文词；title_zh 仍由中文 q 覆盖 */
+      if (/[\u4e00-\u9fff]/.test(q) && pats.length < 8) {
+        let en = '';
+        try { en = await _tryTranSmart(q.replace(/[#＃]/g, ' ').replace(/\s+/g, ' '), 'zh', 'en'); } catch (e) {}
+        if (!en || /[\u4e00-\u9fff]/.test(en)) {
+          try { const y = await _tryYoudao(q); if (y && /[a-zA-Z]/.test(y) && !/[\u4e00-\u9fff]/.test(y)) en = y; } catch (e) {}
+        }
+        if (en) {
+          /* 整句 + 实词级（"Chinese companies robbery" 单词拆开各自命中，容错标题语序差异） */
+          pats.push('%' + en + '%');
+          en.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 4)
+            .forEach(w => { if (pats.length < 10) pats.push('%' + w + '%'); });
+        }
+      }
+      const arr = pats.slice(0, 10);
+      const ph = arr.map((_, i) => '$' + (i + 2)).join(',');
+      const r = await query(
+        `SELECT * FROM intel_data WHERE collect_time >= NOW() - ($1 || ' days')::interval
+          AND ( title ILIKE ANY($2)
+             OR data_json->>'title_zh' ILIKE ANY($2)
+             OR (description ILIKE ANY($2))
+             OR (data_json->>'content' ILIKE ANY($2)) )
+          ORDER BY collect_time DESC LIMIT 400`,
+        [String(days), arr]);
+      rows = r.rows;
+    }
+    res.json(rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, collect_time: r.collect_time })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 /* ===== 海外核心安全威胁一分钟哨兵手动触发端点（2026-08-27） ===== */
 app.post('/api/core-threat/sweep', async (req, res) => {
   try {
@@ -3112,8 +3409,10 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    * 中文媒体报道的海外受害新闻（如"中国公民在尼日利亚被绑架"）此前被误判国内新闻拦杀——
    * CNSEC 9 候选 3 条被此闸误杀、涉华人员条目 7 天仅 22 条的根因。 */
   const _cnsecExempt = it._cnsecWatch === true || it._sourceType === 'cnsec_watch'
-    || (it._sourceType === 'wm_feed' && it.chinaRelated === true); /* 2026-08-31：WM 中国决策信号/
+    || (it._sourceType === 'wm_feed' && it.chinaRelated === true) /* 2026-08-31：WM 中国决策信号/
     走廊控制塔是涉华情报监测（chinaRelated 双标），非国内新闻；不加豁免会被国内闸误杀 4 条/日 */
+    || (it._sourceType === 'threatroom' && it.chinaRelated === true); /* 2026-08-31：专项作战室检索
+    中资项目/涉华实体时，涉华条目正是检索目标（如搜"华为/中老铁路"），不能当国内新闻拦杀 */
   if (!_cnsecExempt && globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
   }
@@ -3136,12 +3435,16 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    * 苏伊士新闻）。快照 URL 自带日维度幂等，跳过 sig/语义两层查重；UCDP/警示等真实事件
    * 条目（真实源 URL）照常全链查重。 */
   const _wmSnapshot = it._sourceType === 'wm_feed' && /worldmonitor\.app\/wm-snapshot\//.test(String(it.url || ''));
-  const sig = _wmSnapshot ? null : _eventSignature(it);
+  /* 2026-08-31 专项作战室同源豁免：sig/语义/簇帽三层查重对研究通道全部让路——
+   * 多源多版本正是专项报告素材（上合峰会 20 家媒体报道=20 条情报）；查重仍保留
+   * url/title/entity 三层精确指纹（同一篇文章绝不重复入库） */
+  const _trExempt = it._sourceType === 'threatroom';
+  const sig = (_wmSnapshot || _trExempt) ? null : _eventSignature(it);
   if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
   /* 语义级事件查重（2026-08-30 root-cause：跨措辞/跨通道/跨日变体绕过精确查重——
    * 海地屠杀 47 死 5 天 20+ 版本 / 斯里兰卡中国公民谋杀案三版本分签的同类问题根治。
    * 同事件已有 ≥2 独立源后全拒（保留前两源供多源印证），详见 _semanticEventDup 注释。 */
-  if (!_wmSnapshot && await _semanticEventDup(it)) return { ok: false, code: ['event-sig-dup'] };
+  if (!_wmSnapshot && !_trExempt && await _semanticEventDup(it)) return { ok: false, code: ['event-sig-dup'] };
   /* 事件簇产量帽（2026-08-29）：同国+同类事件当日变体超 12 条拒收（防单一事件刷屏） */
   if (!_eventClusterOk(it)) { _gateAudit('入库闸', 'event-flood', it.title); return { ok: false, code: ['event-flood'] }; }
   /* 类别结构帽（2026-08-29）：安全类当日占比>45%时，非涉华非重大安全类降池（让位弱类补缺） */
@@ -3161,6 +3464,8 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
       项目新闻多为小众单源（CPEC 工作组会议全网 1-2 家），6h 印证窗口恰恰杀掉的就是这类高价值项目情报 */
     || _wmSnapshot /* 2026-08-31：WM 状态快照（战区/舰队/咽喉/走廊）是 WorldMonitor 独家聚合，
       天然等不到"其他独立源印证"；时效由 trustPubDate 白名单+URL 日幂等保证 */
+    || it._sourceType === 'threatroom' /* 2026-08-31：专项作战室是 7 天回顾性研究——窗口内大量
+      条目发布已超 6h，小国/新组织事件常全网仅 1-2 源，印证窗口会系统性误杀专项素材 */
     || _isCorePriorityText(it);
   if (!_corePriority && it._sourceType !== 'wechat_oa' && it._sourceType !== 'wechat_lead') {
     const age = _getEventAgeMs(it);
@@ -3764,6 +4069,9 @@ function _eventSignature(it) {
 const EVENT_CLUSTER_DAILY_CAP = 12;
 const _evCluster = { date: '', by: {} };
 function _eventClusterOk(it) {
+  /* 2026-08-31 专项作战室豁免：研究通道要的就是多源密度（用户铁律"上合峰会才采 2 条，
+   * 核心中的核心"）——同国同事件多版本入库供报告整合，不适用防刷屏簇帽 */
+  if (it._sourceType === 'threatroom') return true;
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   if (t.trim().length < 8) return true;
   const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
@@ -3799,6 +4107,9 @@ const _SEM_FAC_RE = /瓜达尔|霍尔木兹|红海|苏伊士|中巴经济走廊|
 const _SEM_NUM_RE = /(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|killed|missing|injured|dead)/i;
 async function _semanticEventDup(it) {
   try {
+    /* 2026-08-31 专项作战室豁免：语义查重"第三源起全拒"逻辑对研究通道反向优化——
+     * 多源多版本正是专项报告的素材（上合峰会 20 家媒体报道=20 条情报），全放行 */
+    if (it._sourceType === 'threatroom') return false;
     const t = String(it.title || '') + ' ' + String(it.title_zh || '');
     if (t.trim().length < 12) return false;
     const evSet = new Set(); let mm;
@@ -3935,6 +4246,26 @@ function _urlDate(u) {
 function _isFreshEnough(it) {
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
   let dated = false;   /* 2026-08-25 铁律：新闻必须能验证 24h 时效，三种途径都拿不到日期 → 拦截 */
+
+  /* 2026-08-31 专项作战室（threatroom）：用户指定实体（国家/组织/项目）的专项回顾采集，
+   * 窗口是近 7 天而非 24h——24h 时效闸/当天数据铁律/正文旧日期提取对回顾性分析全部不适用。
+   * 以发布时间为准绳：7 天内一律放行（GDELT timespan:7d 已硬限制检索窗）；
+   * 无日期条目按采集时刻计。注意：预警中心前端本就有 72h 过期剔除，2-7 天条目不会
+   * 污染实时预警流，只进数据中心/专项作战室报告。 */
+  if (it._sourceType === 'threatroom') {
+    const _tv = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
+    const _td = new Date(_tv);
+    if (!isNaN(_td.getTime())) {
+      const _age = Date.now() - _td.getTime();
+      if (_age > 7 * 24 * 3600 * 1000 || _age < -12 * 3600 * 1000) return false;
+      if (!it.event_date) { it.event_date = _td.toISOString(); if (!it.date) it.date = it.event_date; }
+      return true;
+    }
+    it.publish_time = it.publish_time || new Date().toISOString();
+    it.event_date = it.event_date || it.publish_time;
+    if (!it.date) it.date = it.event_date;
+    return true;
+  }
 
   /* 2026-08-25 白名单公众号豁免：wechat_oa 通道（搜狗/profile_ext/镜像站）是用户亲选的专业安全信源，
    * 正文常引用 24~48h 前的事件（如刚果金上加丹加案 8-24 事发、8-25 报道），正文事件日期提取会把
@@ -4203,7 +4534,7 @@ async function _ingestLinkedItems(items, tag, note) {
       'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
       'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler',
-      'WM-FEED': 'wm_feed'
+      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom'
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');

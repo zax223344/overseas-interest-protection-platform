@@ -187,7 +187,25 @@
     { id: 'BELOMONTE', name: '美丽山特高压输电', en: 'Belo Monte UHV', country: '巴西', tier: 1, corp: ['SGCC'], alias: ['Belo Monte'] },
     { id: 'CAUCHARI', name: '高查瑞光伏电站', en: 'Cauchari Solar', country: '阿根廷', tier: 2, corp: ['POWERCHINA'], alias: ['Cauchari'] },
     { id: 'SANTACRUZ', name: '圣克鲁斯水电站', en: 'Santa Cruz Hydro', country: '阿根廷', tier: 2, corp: ['ENERGYCHINA'], alias: ['Condor Cliff'] },
-    { id: 'ECUADORCCS', name: '科卡科多水电站', en: 'Coca Codo Sinclair', country: '厄瓜多尔', tier: 2, corp: ['SINOHYDRO', 'POWERCHINA'], alias: ['Coca Codo'] }
+    { id: 'ECUADORCCS', name: '科卡科多水电站', en: 'Coca Codo Sinclair', country: '厄瓜多尔', tier: 2, corp: ['SINOHYDRO', 'POWERCHINA'], alias: ['Coca Codo'] },
+    /* ══ 2026-08-31 扩充（用户指令：按商务部《对外投资合作国别(地区)指南》口径全面补充；
+     * 优先补安全风险高发国别——苏丹/尼日尔/乍得/尼泊尔/巴新等此前空白，联动预警直接受益）══ */
+    { id: 'KHARTOUMREF', name: '喀土穆炼油厂', en: 'Khartoum Refinery', country: '苏丹', tier: 1, corp: ['CNPC'], alias: ['Khartoum refinery', '苏丹炼厂'] },
+    { id: 'AGADEM', name: '阿加德姆油田与原油外输管道', en: 'Agadem Oilfield & Pipeline', country: '尼日尔', tier: 1, corp: ['CNPC'], alias: ['Agadem', 'Niger-Benin pipeline', '尼日尔-贝宁管道'] },
+    { id: 'RONIER', name: 'Ronier 油田', en: 'Ronier Oilfield', country: '乍得', tier: 2, corp: ['CNPC'], alias: ['Ronier'] },
+    { id: 'POKHARA', name: '博克拉国际机场', en: 'Pokhara International Airport', country: '尼泊尔', tier: 2, corp: ['CCCC', 'CACC'], alias: ['Pokhara airport'] },
+    { id: 'VAKHSH', name: '瓦亚铁路', en: 'Vakhdat-Yavan Railway', country: '塔吉克斯坦', tier: 2, corp: ['CRCC'], alias: ['Vahdat-Yavan'] },
+    { id: 'SHYMKENT', name: '奇姆肯特炼厂现代化改造', en: 'Shymkent Refinery Upgrade', country: '哈萨克斯坦', tier: 2, corp: ['CNPC', 'SINOPEC'], alias: ['Shymkent refinery', 'PKOP'] },
+    { id: 'PAPANGREN', name: '安格连燃煤电站', en: 'Pap Angren Coal Power', country: '乌兹别克斯坦', tier: 2, corp: ['POWERCHINA'], alias: ['Angren PP'] },
+    { id: 'PENGSHENG', name: '鹏盛工业园', en: 'Pengsheng Industrial Park', country: '乌兹别克斯坦', tier: 2, corp: [], alias: ['Pengsheng', '锡尔河工业园'] },
+    { id: 'NORTHAZADEGAN', name: '北阿扎德甘油田', en: 'North Azadegan Oilfield', country: '伊朗', tier: 1, corp: ['CNPC'], alias: ['North Azadegan'] },
+    { id: 'PAYRA', name: '帕亚拉燃煤电站', en: 'Payra Power Plant', country: '孟加拉国', tier: 2, corp: ['CMC'], alias: ['Payra'] },
+    { id: 'NARIAN', name: '内马铁路', en: 'Nairobi-Narok-Malaba SGR', country: '肯尼亚', tier: 2, corp: ['CCCC', 'CRCC'], alias: ['Nairobi-Malaba railway', 'SGR Phase 2'] },
+    { id: 'RAMUNICO', name: '瑞木镍钴矿', en: 'Ramu NiCo Mine', country: '巴布亚新几内亚', tier: 1, corp: ['MCC'], alias: ['Ramu NiCo', '瑞木'] },
+    { id: 'COASTAL2', name: '沿海二期燃煤电站', en: 'Duyen Hai II Power Plant', country: '越南', tier: 3, corp: ['POWERCHINA'], alias: ['Duyen Hai 2', '沿海电厂'] },
+    { id: 'RAMADANCITY', name: '斋月十日城市郊轻轨', en: '10th of Ramadan City LRT', country: '埃及', tier: 2, corp: ['AVIC', 'CRRC'], alias: ['10th Ramadan LRT'] },
+    { id: 'TANGERTECH', name: '丹吉尔科技城', en: 'Tangier Tech City', country: '摩洛哥', tier: 3, corp: ['CCCC'], alias: ['Tangier Tech'] },
+    { id: 'EASTWEST', name: '东西高速公路', en: 'East-West Highway', country: '阿尔及利亚', tier: 2, corp: ['CITIC', 'CSCEC'], alias: ['East-West expressway'] }
   ];
 
   /* ============================================================

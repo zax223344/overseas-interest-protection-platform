@@ -44,9 +44,40 @@
   function _isSevere(t) { return _SEVERE_RE.test(String(t || '')); }
   function _countryEvents(name) { if (typeof ALERTS === 'undefined') return []; return ALERTS.filter(function (a) { return (a.country || '') === name; }); }
   function _countryByName(name) { if (typeof COUNTRIES === 'undefined') return null; return COUNTRIES.find(function (c) { return c.name === name; }) || null; }
-  function _assetList() { var out = []; try { if (typeof ENTERPRISES !== 'undefined') ENTERPRISES.forEach(function (e) { (e.projects || []).forEach(function (p) { out.push({ type: 'project', name: p.name, country: p.country, enterprise: e.name, lat: p.lat, lng: p.lng }); }); }); if (typeof ASSETS !== 'undefined') ASSETS.forEach(function (a) { (a.items || []).forEach(function (it) { out.push({ type: it.type || 'asset', name: it.name, country: it.country || a.country, enterprise: a.enterprise || '', lat: it.lat, lng: it.lng }); }); }); } catch (e) {} return out; }
+  /* 2026-08-31 root-cause 修复：ENTERPRISES[].projects 实际字段是缩写 {n,c,inv,p}（见 app.js），
+   * 旧代码读 p.name/p.country 恒为 undefined → 全系统"我方利益 0 项"假象。现做字段兼容，
+   * 并并入 ENTITY.PROJECTS 官方框架 61 项目库（去重），国名统一 normalizeCountry 归一。 */
+  function _assetList() {
+    var out = [], seen = {};
+    var _norm = function (c) { try { return (typeof ENTITY !== 'undefined' && ENTITY.normalizeCountry) ? ENTITY.normalizeCountry(c) : (c || ''); } catch (e) { return c || ''; } };
+    try {
+      if (typeof ENTERPRISES !== 'undefined') ENTERPRISES.forEach(function (e) {
+        (e.projects || []).forEach(function (p) {
+          var nm = p.name || p.n || '', cy = _norm(p.country || p.c || '');
+          if (!nm || !cy) return;
+          var k = nm + '@' + cy; if (seen[k]) return; seen[k] = 1;
+          out.push({ type: 'project', name: nm, country: cy, enterprise: e.short || e.name || '', lat: p.lat, lng: p.lng, inv: p.inv, personnel: p.p });
+        });
+      });
+      if (typeof ENTITY !== 'undefined' && ENTITY.PROJECTS) ENTITY.PROJECTS.forEach(function (p) {
+        var nm = p.name || '', cy = _norm(p.country || '');
+        if (!nm || !cy) return;
+        var k = nm + '@' + cy; if (seen[k]) return; seen[k] = 1;
+        out.push({ type: 'project', name: nm, country: cy, enterprise: (p.corp || []).join('/'), lat: p.lat, lng: p.lng, tier: p.tier });
+      });
+      if (typeof ASSETS !== 'undefined') ASSETS.forEach(function (a) { (a.items || []).forEach(function (it) {
+        var nm = it.name || '', cy = _norm(it.country || a.country || '');
+        if (!nm || !cy) return;
+        var k = nm + '@' + cy; if (seen[k]) return; seen[k] = 1;
+        out.push({ type: it.type || 'asset', name: nm, country: cy, enterprise: a.enterprise || '', lat: it.lat, lng: it.lng });
+      }); });
+    } catch (e) {}
+    return out;
+  }
   function _threatList() { if (typeof THREATS === 'undefined') return []; try { return THREATS.getAll ? THREATS.getAll() : (THREATS.data || THREATS.list || []); } catch (e) { return []; } }
-  function _uniq(arr, keyFn) { var seen = {}, out = []; arr.forEach(function (x) { var k = keyFn(x); if (!seen[k]) { seen[k] = 1; out.push(x); } }); return out; }
+  /* 2026-08-31 潜伏 bug 修复：_uniq 调用方有不传 keyFn 的（_REASON.build）——
+   * 原 assets 恒空从未执行到该分支，_assetList 修复后立即引爆 TypeError。keyFn 可选化。 */
+  function _uniq(arr, keyFn) { var seen = {}, out = []; arr.forEach(function (x) { var k = keyFn ? keyFn(x) : x; if (!seen[k]) { seen[k] = 1; out.push(x); } }); return out; }
   function _sortDesc(arr, scoreFn) { return arr.slice().sort(function (a, b) { return scoreFn(b) - scoreFn(a); }); }
 
   /* ---------- 预测引擎 ---------- */

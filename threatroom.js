@@ -1,13 +1,16 @@
 /**
- * 专项情报作战室 - threatroom.js v1.0（2026-08-31，任务 #508）
+ * 专项情报作战室 - threatroom.js v2.0（2026-08-31，任务 #511/#512）
  * ============================================================
  * 输入任意实体（国家 / 威胁组织 / 中资项目 / 自由关键词）→
- *   ① 实体自动识别（COUNTRIES / THREAT_DATA / ENTERPRISES 三库匹配）
- *   ② 专项全网采集（POST /api/threatroom/collect：GDELT 7d + AP，走标准入库闸门）
- *   ③ 库内数据联动（GET /api/threatroom/data：近 7 天实体匹配，含既有数据）
- *   ④ 态势预警分析报告：综合威胁等级 + 自动研判 + 7 天趋势 + 类别分布 + 涉华焦点
+ *   ① 实体自动识别（COUNTRIES / THREAT_DATA / ENTERPRISES 三库匹配）+ 实时速览反馈
+ *   ② 专项全网采集（POST /api/threatroom/collect：GDELT 检索矩阵[实体名 250+12 主题变体+
+ *      全语言兜底] + Google News + AP 三引擎，走标准入库闸门）
+ *   ③ 库内数据联动（GET /api/threatroom/data：近 N 天实体六路匹配，含既有数据）
+ *   ④ 态势预警分析报告：综合威胁等级 + 自动研判 + 趋势 + 类别分布 + 涉华焦点
+ *      + 多源覆盖（信源分布）+ 关联实体推荐（标题碰撞）+ 预警图
  *   ⑤ 预警图（Leaflet）：国别事件热度圈 + 中资项目资产点位 + 实体中心脉冲
  *   ⑥ 情报卡片流（点击详情）+ 报告一键复制导出 + 实体词全文高亮
+ *   ⑦ v2 首页动态面板：最近作战 / 全球热点实体榜（24h 聚合）/ 今日核心焦点
  * 铁律：零模拟数据；所有数字来自真实采集/库内数据；空数据显示通道预留。
  */
 var THREATROOM = {
@@ -53,14 +56,18 @@ var THREATROOM = {
       this._bindShell();
       this._inited = true;
       /* 恢复上次报告 */
+      var restored = false;
       try {
         var last = JSON.parse(localStorage.getItem('orps_threatroom_last') || 'null');
         if (last && last.entity && last.items && last.items.length) {
           this._entity = last.entity; this._items = last.items;
           this._collect = last.collect || null; this._days = last.days || 7;
           this._renderReport();
+          restored = true;
         }
       } catch (e) {}
+      /* v2：无报告时渲染首页动态面板（消灭搜索框下方留白） */
+      if (!restored) this._renderDeck();
     }
   },
 
@@ -109,6 +116,20 @@ var THREATROOM = {
     s += '.tr-proj:hover{border-color:var(--cyan,#00d4ff)}';
     s += '.tr-modal{position:fixed;inset:0;background:#040a14ee;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px}';
     s += '.tr-modalbox{background:var(--bg,#0a1220);border:1px solid var(--border2,#1e2a40);border-radius:10px;max-width:760px;width:100%;max-height:82vh;overflow-y:auto;padding:20px 22px}';
+    /* ── v2 首页动态面板（消灭搜索框下方留白） ── */
+    s += '.tr-live{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--text2,#aab8d0)}';
+    s += '.tr-hcard{flex-shrink:0;min-width:150px;max-width:210px;border:1px solid var(--border2,#1e2a40);border-radius:8px;padding:9px 12px;cursor:pointer;background:var(--bg2,#0d1524)}';
+    s += '.tr-hcard:hover{border-color:var(--cyan,#00d4ff)}';
+    s += '.tr-hotrow{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;cursor:pointer;border-radius:4px;padding:2px 4px}';
+    s += '.tr-hotrow:hover{background:#00d4ff0d}';
+    s += '.tr-hotbar{height:9px;border-radius:2px;background:linear-gradient(90deg,#00d4ff,#0066ff88);min-width:2px}';
+    s += '.tr-coreit{border-left:3px solid var(--red,#ef4444);border-radius:6px;padding:7px 10px;margin-bottom:7px;cursor:pointer;background:var(--bg2,#0d1524);font-size:12px;color:var(--text,#e8eefc);line-height:1.5}';
+    s += '.tr-coreit:hover{background:#ef444408}';
+    s += '.tr-srcrow{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:11.5px}';
+    s += '.tr-srcbar{height:9px;border-radius:2px;background:linear-gradient(90deg,#22c55e,#00d4ff88);min-width:2px;opacity:.85}';
+    s += '.tr-rel{font-size:11.5px;padding:4px 12px;border:1px solid var(--border2,#1e2a40);border-radius:13px;cursor:pointer;color:var(--text2,#aab8d0);display:inline-flex;gap:6px;align-items:center;margin:0 6px 7px 0}';
+    s += '.tr-rel:hover{border-color:var(--cyan,#00d4ff);color:var(--cyan,#00d4ff)}';
+    s += '.tr-rel b{color:var(--orange,#f59e0b)}';
     s += '</style>';
     s += '<div class="tr-shell">';
     /* 搜索区 */
@@ -123,9 +144,12 @@ var THREATROOM = {
     s += '<button class="tr-go" id="tr-go">🚀 启动作战</button>';
     s += '</div>';
     s += '<div class="tr-chips" id="tr-chips"></div>';
+    s += '<div class="tr-live" id="tr-live"></div>';
     s += '</div>';
     /* 进度条 */
     s += '<div class="tr-stage" id="tr-stage"></div>';
+    /* v2 首页动态面板（无报告时展示：最近作战 / 热点实体榜 / 今日核心焦点） */
+    s += '<div id="tr-deck"></div>';
     /* 报告区 */
     s += '<div class="tr-rep" id="tr-rep"></div>';
     s += '</div>';
@@ -137,7 +161,20 @@ var THREATROOM = {
     var go = document.getElementById('tr-go');
     var q = document.getElementById('tr-q');
     if (go) go.onclick = function () { self.run(q.value); };
-    if (q) q.onkeydown = function (e) { if (e.key === 'Enter') self.run(q.value); };
+    if (q) {
+      q.onkeydown = function (e) { if (e.key === 'Enter') self.run(q.value); };
+      /* v2 实体速览：多事件兜底（input/IME/keyup/手动触发）防 headless + 中文 IME
+       * 边界场景；200ms 防抖；初始有值时也跑一次（chip 点击后等场景） */
+      var deb = null;
+      var fire = function () {
+        if (deb) clearTimeout(deb);
+        deb = setTimeout(function () { self._liveDetect(q.value); }, 200);
+      };
+      q.oninput = fire;
+      q.onkeyup = fire;
+      q.oncompositionend = fire;
+      if (q.value && String(q.value).trim()) fire();
+    }
     var days = document.getElementById('tr-days');
     if (days) days.onclick = function (e) {
       var t = e.target.closest ? e.target.closest('.tr-day') : null;
@@ -228,6 +265,187 @@ var THREATROOM = {
     return m[t] || '关键词';
   },
 
+  /* ═══════════ v2 实体速览（输入实时识别反馈） ═══════════ */
+  _liveDetect: function (v) {
+    var el = document.getElementById('tr-live');
+    if (!el) return;
+    var q = String(v || '').trim();
+    if (!q) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    var e = this._detectEntity(q);
+    var html = '';
+    if (e && e.type !== 'keyword') {
+      html += '<span class="tr-badge" style="color:var(--cyan,#00d4ff);border-color:var(--cyan,#00d4ff)44">已识别' + this._typeLabel(e.type) + '</span>';
+      html += '<span style="color:var(--text,#e8eefc);font-weight:700">' + this._esc(e.cn) + '</span>';
+      if (e.type === 'country') {
+        var hot = this._country24h(e.cn);
+        var projs = this._projCount(e.cn);
+        html += '<span style="color:var(--text3,#7a8aa3)">库内 24h 预警 ' + hot + ' 条 · 关联中资项目 ' + projs + ' 个</span>';
+      } else if (e.type === 'org') {
+        html += '<span style="color:var(--text3,#7a8aa3)">别名 ' + (e.aliases || []).slice(0, 2).join(' / ') + (e.regions && e.regions.length ? ' · 活动区域 ' + e.regions.slice(0, 2).join('、') : '') + '</span>';
+      } else if (e.type === 'project') {
+        html += '<span style="color:var(--text3,#7a8aa3)">' + this._esc(e.ent || '') + (e.country ? ' · 东道国 ' + this._esc(e.country) : '') + (e.inv ? ' · 投资 ' + e.inv + ' 亿' : '') + (e.pers ? ' · 人员 ' + e.pers + ' 人' : '') + '</span>';
+      }
+      html += '<span style="color:var(--green,#22c55e)">✓ 按实体专项采集（多维检索矩阵）</span>';
+    } else {
+      html += '<span class="tr-badge" style="color:var(--cyan,#00d4ff);border-color:var(--cyan,#00d4ff)44">关键词作战</span>';
+      html += '<span style="color:var(--text,#e8eefc);font-weight:700">' + this._esc(q) + '</span>';
+      html += '<span style="color:var(--text3,#7a8aa3)">主题将自动译为多路外文关键字，全网碰撞 GDELT · Google News · AP（「#」可拆分多个子题）</span>';
+      html += '<span style="color:var(--green,#22c55e)">✓ 任意主题可搜，实体库仅作增强</span>';
+    }
+    el.innerHTML = html;
+    el.style.display = 'flex';
+  },
+
+  /* 国别 24h 预警量（ALERTS 聚合，全真实数据） */
+  _country24h: function (name) {
+    var n = 0, cut = Date.now() - 24 * 3600 * 1000;
+    (typeof ALERTS !== 'undefined' ? ALERTS : []).forEach(function (a) {
+      if (String(a.country || '') === name) {
+        var t = Date.parse(String(a.time || '').replace(' ', 'T'));
+        if (!isNaN(t) && t >= cut) n++;
+      }
+    });
+    return n;
+  },
+
+  _projCount: function (country) {
+    /* 2026-08-31 修正：与后端 _assetList 同口径——ENTERPRISES 项目（p.c 缩写字段）
+     * + ENTITY.PROJECTS 官方框架 61 项目库，按名去重。旧版只数 ENTERPRISES 漏了一半。 */
+    var n = 0, seen = {};
+    (typeof ENTERPRISES !== 'undefined' ? ENTERPRISES : []).forEach(function (ent) {
+      (ent.projects || []).forEach(function (p) {
+        if (p.c === country && p.n) { var k = p.n + '@' + country; if (!seen[k]) { seen[k] = 1; n++; } }
+      });
+    });
+    try {
+      if (typeof ENTITY !== 'undefined' && ENTITY.PROJECTS) ENTITY.PROJECTS.forEach(function (p) {
+        var cy = p.country || '';
+        if (typeof ENTITY.normalizeCountry === 'function') { try { cy = ENTITY.normalizeCountry(cy); } catch (e) {} }
+        if (cy === country && p.name) { var k = p.name + '@' + country; if (!seen[k]) { seen[k] = 1; n++; } }
+      });
+    } catch (e) {}
+    return n;
+  },
+
+  /* ═══════════ v2 首页动态面板 ═══════════ */
+  _renderDeck: function () {
+    var deck = document.getElementById('tr-deck');
+    if (!deck) return;
+    var self = this;
+    var html = '';
+
+    /* ① 最近作战（横滑卡） */
+    var hist = this._histGet();
+    html += '<div class="card" style="margin-bottom:12px;padding:14px">';
+    html += '<div class="card-tt"><span class="ic">🕘</span>最近作战<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">' + (hist.length ? '点击恢复 · 最近 ' + hist.length + ' 次' : '尚无记录') + '</span></div>';
+    if (hist.length) {
+      html += '<div style="display:flex;gap:8px;margin-top:10px;overflow-x:auto;padding-bottom:4px">';
+      hist.forEach(function (h) {
+        var gc = h.lv === 'red' ? 'var(--red,#ef4444)' : h.lv === 'orange' ? 'var(--orange,#f59e0b)' : h.lv === 'yellow' ? 'var(--yellow,#eab308)' : h.lv === 'blue' ? '#38bdf8' : 'var(--green,#22c55e)';
+        html += '<div class="tr-hcard" data-q="' + self._esc(h.cn) + '">' +
+          '<div style="display:flex;align-items:center;gap:6px"><span style="font-weight:700;color:var(--text,#e8eefc);font-size:13px">' + self._esc(h.cn) + '</span>' +
+          '<span style="font-size:10px;color:var(--text3,#7a8aa3)">' + self._typeLabel(h.type) + '</span></div>' +
+          '<div style="display:flex;gap:10px;margin-top:5px;font-size:10.5px;color:var(--text3,#7a8aa3)">' +
+          '<span style="color:' + gc + ';font-weight:700">' + self._esc(h.gt || '—') + '</span>' +
+          '<span>' + (h.n || 0) + ' 条</span><span>' + self._ago(h.t) + '</span></div></div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:11.5px;color:var(--text3,#7a8aa3);padding:8px 0">尚无作战记录——输入任意实体（国家 / 恐怖组织 / 中资项目 / 关键词）发起第一次专项全网作战</div>';
+    }
+    html += '</div>';
+
+    /* ② 双栏：全球热点实体榜（24h）+ 今日核心焦点 */
+    var hot = this._hotEntities();
+    var core = this._todayCore();
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">';
+    html += '<div class="card" style="flex:1.15;min-width:330px;padding:12px">';
+    html += '<div class="card-tt"><span class="ic">🔥</span>全球热点实体榜<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">近 24h 预警国别聚合 · 点击发起作战</span></div>';
+    if (hot.length) {
+      var maxH = hot[0][1];
+      html += '<div style="margin-top:8px">';
+      hot.forEach(function (h) {
+        var w = Math.round(h[1] / maxH * 100);
+        html += '<div class="tr-hotrow" data-q="' + self._esc(h[0]) + '">' +
+          '<span style="width:88px;flex-shrink:0;color:var(--text,#e8eefc);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + self._esc(h[0]) + '">' + self._esc(h[0]) + '</span>' +
+          '<div style="flex:1"><div class="tr-hotbar" style="width:' + Math.max(2, w) + '%"></div></div>' +
+          '<span style="width:30px;text-align:right;color:' + (h[1] >= maxH * 0.66 ? 'var(--red,#ef4444)' : h[1] >= maxH * 0.33 ? 'var(--orange,#f59e0b)' : 'var(--text3,#7a8aa3)') + ';font-weight:700">' + h[1] + '</span></div>';
+      });
+      html += '</div>';
+    } else html += '<div style="font-size:11.5px;color:var(--text3,#7a8aa3);padding:8px 0">通道预留：24h 内暂无预警数据</div>';
+    html += '</div>';
+    html += '<div class="card" style="flex:1;min-width:300px;padding:12px">';
+    html += '<div class="card-tt"><span class="ic">⚡</span>今日核心焦点<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">★核心 / 红色预警 · 点击跟踪</span></div>';
+    if (core.length) {
+      html += '<div style="margin-top:8px">';
+      core.forEach(function (a) {
+        html += '<div class="tr-coreit" data-q="' + self._esc(a.country || '') + '">' +
+          '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + self._esc(String(a.title_zh || a.title || '')) + '</div>' +
+          '<div style="font-size:10px;color:var(--text3,#7a8aa3);margin-top:3px">📍' + self._esc(a.country || '—') + ' · ' + self._esc(a.source || '—') + ' · ' + String(a.time || '').slice(5, 16) + '</div></div>';
+      });
+      html += '</div>';
+    } else html += '<div style="font-size:11.5px;color:var(--text3,#7a8aa3);padding:8px 0">通道预留：今日暂无核心预警</div>';
+    html += '</div></div>';
+
+    deck.innerHTML = html;
+    deck.style.display = 'block';
+    /* 绑定点击：全部 → 填入搜索框并发起作战 */
+    Array.prototype.forEach.call(deck.querySelectorAll('[data-q]'), function (el) {
+      el.onclick = function () {
+        var qv = el.getAttribute('data-q');
+        if (!qv) return;
+        var inp = document.getElementById('tr-q');
+        if (inp) inp.value = qv;
+        self.run(qv);
+      };
+    });
+  },
+
+  _ago: function (t) {
+    var d = Date.now() - (t || 0);
+    if (d < 3600 * 1000) return Math.max(1, Math.round(d / 60000)) + ' 分钟前';
+    if (d < 24 * 3600 * 1000) return Math.round(d / 3600000) + ' 小时前';
+    return Math.round(d / 86400000) + ' 天前';
+  },
+
+  /* 近 24h 预警国别聚合 Top12（ALERTS 全局数组，全真实数据） */
+  _hotEntities: function () {
+    var by = {}, cut = Date.now() - 24 * 3600 * 1000;
+    (typeof ALERTS !== 'undefined' ? ALERTS : []).forEach(function (a) {
+      var c = String(a.country || '').trim();
+      if (!c || c === '国际') return;
+      var t = Date.parse(String(a.time || '').replace(' ', 'T'));
+      if (isNaN(t) || t < cut) return;
+      by[c] = (by[c] || 0) + 1;
+    });
+    return Object.keys(by).map(function (k) { return [k, by[k]]; })
+      .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 12);
+  },
+
+  /* 今日核心/红色预警 Top6 */
+  _todayCore: function () {
+    var cut = Date.now() - 24 * 3600 * 1000;
+    return (typeof ALERTS !== 'undefined' ? ALERTS : []).filter(function (a) {
+      if (!a.is_core && a.level !== 'red') return false;
+      var t = Date.parse(String(a.time || '').replace(' ', 'T'));
+      return !isNaN(t) && t >= cut;
+    }).slice(0, 6);
+  },
+
+  /* 作战历史（localStorage，最近 8 次） */
+  _histGet: function () {
+    try { return JSON.parse(localStorage.getItem('orps_threatroom_hist') || '[]'); } catch (e) { return []; }
+  },
+  _histPush: function () {
+    if (!this._entity || !this._items.length) return;
+    try {
+      var st = this._stats(), grade = this._grade(st);
+      var h = this._histGet().filter(function (x) { return x.cn !== THREATROOM._entity.cn; });
+      h.unshift({ cn: this._entity.cn, type: this._entity.type, n: st.n, gt: grade.t, lv: grade.lv, t: Date.now() });
+      localStorage.setItem('orps_threatroom_hist', JSON.stringify(h.slice(0, 8)));
+    } catch (e) {}
+  },
+
   /* ═══════════ 主流程 ═══════════ */
   run: function (raw) {
     if (this._busy) return;
@@ -238,9 +456,11 @@ var THREATROOM = {
     var self = this;
     var rep = document.getElementById('tr-rep');
     if (rep) { rep.style.display = 'none'; rep.innerHTML = ''; }
+    var deck = document.getElementById('tr-deck');
+    if (deck) deck.style.display = 'none';
 
     /* 阶段一：实体识别（即时） */
-    this._stage('实体识别 <b class="ok">✓</b>「' + this._esc(e.cn) + '」（' + this._typeLabel(e.type) + '）→ 全网采集中：GDELT 7d 检索 + AP 补充…');
+    this._stage('实体识别 <b class="ok">✓</b>「' + this._esc(e.cn) + '」（' + this._typeLabel(e.type) + '）→ 全网采集中：GDELT 多路检索矩阵（实体名+12 主题变体+全语言兜底）+ Google News + AP 三引擎碰撞…');
 
     var base = this._apiBase();
     var t0 = Date.now();
@@ -248,7 +468,7 @@ var THREATROOM = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: e.type, cn: e.cn, en: e.en || '', aliases: e.aliases || [] }),
-      signal: AbortSignal.timeout(360000)   /* 采集含 GDELT 限流退避+翻译，实测 4-6 分钟 */
+      signal: AbortSignal.timeout(600000)   /* v2 矩阵 16+ 路 + 翻译 80 条，实测 5-8 分钟 */
     }).then(function (r) { return r.ok ? r.json() : { ok: false, error: 'HTTP ' + r.status }; })
       .then(function (j) {
         self._collect = j;
@@ -278,6 +498,8 @@ var THREATROOM = {
               entity: self._entity, items: self._items.slice(0, 200), collect: self._collect, days: self._days, t: Date.now()
             }));
           } catch (ex) {}
+          /* v2 作战历史存档（首页「最近作战」面板数据源） */
+          self._histPush();
         }, 350);
       })
       .catch(function (err) {
@@ -338,7 +560,8 @@ var THREATROOM = {
   },
 
   _grade: function (st) {
-    var score = st.n + st.red * 8 + st.orange * 4 + st.cn * 3 + st.core * 2;
+    /* v2：采集深度提升后 n 可达数百——体量分封顶 50，等级由预警密度主导而非条数刷高 */
+    var score = Math.min(st.n, 50) + st.red * 8 + st.orange * 4 + st.cn * 3 + st.core * 2;
     var g = score >= 80 ? { t: '红色 · Ⅰ级', c: 'var(--red,#ef4444)', lv: 'red' }
       : score >= 45 ? { t: '橙色 · Ⅱ级', c: 'var(--orange,#f59e0b)', lv: 'orange' }
       : score >= 20 ? { t: '黄色 · Ⅲ级', c: 'var(--yellow,#eab308)', lv: 'yellow' }
@@ -395,6 +618,17 @@ var THREATROOM = {
     html += this._kpi('核心威胁', st.core + ' 条', 'var(--red,#ef4444)');
     if (this._collect && this._collect.ok) html += this._kpi('本轮新采集入库', this._collect.inserted + ' / ' + this._collect.collected + ' 条', 'var(--green,#22c55e)');
     html += '</div>';
+    /* v4：主题→外文关键字链路（用户铁律：引擎是中转点，把主题译成外文全网碰撞） */
+    if (this._collect && this._collect.ok && this._collect.keywords && this._collect.keywords.length) {
+      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--text2,#aab8d0)">' +
+        '<span style="color:var(--cyan,#00d4ff);font-weight:700">🌐 检索链路：</span>' +
+        '<span style="color:var(--text,#e8eefc);font-weight:600">' + this._esc(e.cn) + '</span>' +
+        ' <span style="color:var(--text3,#7a8aa3)">→</span> ' +
+        this._collect.keywords.map(function (k) {
+          return '<span class="tr-badge" style="color:var(--orange,#f59e0b);border-color:var(--orange,#f59e0b)44">' + THREATROOM._esc(k) + '</span>';
+        }).join(' ') +
+        ' <span style="color:var(--text3,#7a8aa3)">→ GDELT · Google News · AP 全网碰撞</span></div>';
+    }
     /* 研判文字 */
     html += '<div style="margin-top:10px;font-size:12.5px;line-height:1.85;color:var(--text,#e8eefc)">' +
       '<span style="color:var(--cyan,#00d4ff);font-weight:700">🧠 值班研判：</span>' + this._esc(this._judgeText(e, st, grade)) + '</div>';
@@ -463,10 +697,41 @@ var THREATROOM = {
     } else html += '<div style="font-size:11.5px;color:var(--text3,#7a8aa3);padding:8px 0">窗口内无关联项目（该实体不涉及已建档中资项目所在国）</div>';
     html += '</div></div>';
 
+    /* ── v2 多源覆盖 + 关联实体推荐 双栏 ── */
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">';
+    var srcs = this._srcStats();
+    html += '<div class="card" style="flex:1;min-width:320px;padding:12px">';
+    html += '<div class="card-tt"><span class="ic">🛰️</span>多源覆盖<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">' + srcs.total + ' 条 · ' + srcs.list.length + ' 个独立信源</span></div>';
+    if (srcs.list.length) {
+      var maxS = srcs.list[0][1];
+      html += '<div style="margin-top:8px">';
+      srcs.list.forEach(function (s) {
+        var w = Math.round(s[1] / maxS * 100);
+        html += '<div class="tr-srcrow"><span style="width:140px;flex-shrink:0;color:var(--text2,#aab8d0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + THREATROOM._esc(s[0]) + '">' + THREATROOM._esc(s[0]) + '</span>' +
+          '<div style="flex:1"><div class="tr-srcbar" style="width:' + Math.max(2, w) + '%"></div></div>' +
+          '<span style="width:30px;text-align:right;color:var(--text3,#7a8aa3)">' + s[1] + '</span></div>';
+      });
+      html += '</div>';
+    } else html += '<div style="font-size:11.5px;color:var(--text3,#7a8aa3);padding:8px 0">通道预留：无信源数据</div>';
+    html += '</div>';
+    /* 关联实体推荐（情报流标题中碰撞出的组织/项目名） */
+    var rels = this._relatedChips();
+    html += '<div class="card" style="flex:1;min-width:320px;padding:12px">';
+    html += '<div class="card-tt"><span class="ic">🔗</span>关联实体推荐<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">情报流碰撞 · 点击发起专项作战</span></div>';
+    if (rels.length) {
+      html += '<div style="margin-top:10px">';
+      rels.forEach(function (r) {
+        html += '<span class="tr-rel" data-rq="' + THREATROOM._esc(r[0]) + '">' + THREATROOM._esc(r[0]) + '<b>' + r[1] + '</b></span>';
+      });
+      html += '</div>';
+      html += '<div style="font-size:10.5px;color:var(--text3,#7a8aa3);margin-top:4px">从 ' + this._items.length + ' 条情报标题中自动碰撞出的高频关联实体（组织 / 中资项目）</div>';
+    } else html += '<div style="font-size:11.5px;color:var(--text3,#7a8aa3);padding:8px 0">窗口内情报未碰撞出已知组织/项目实体</div>';
+    html += '</div></div>';
+
     /* ── 情报卡片流 ── */
     html += '<div class="card" style="padding:12px">';
     html += '<div class="card-tt"><span class="ic">📡</span>专项情报流<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">' + st.n + ' 条 · 点击查看详情 · 实体词已高亮</span></div>';
-    var feed = this._items.slice(0, 60);
+    var feed = this._items.slice(0, 80);
     if (feed.length) {
       html += '<div style="margin-top:8px;max-height:520px;overflow-y:auto" id="tr-feed">';
       feed.forEach(function (it) {
@@ -493,6 +758,14 @@ var THREATROOM = {
     });
     Array.prototype.forEach.call(rep.querySelectorAll('.tr-proj[data-wc]'), function (el) {
       el.onclick = function () { self._flyTo(el.getAttribute('data-wc')); };
+    });
+    Array.prototype.forEach.call(rep.querySelectorAll('.tr-rel[data-rq]'), function (el) {
+      el.onclick = function () {
+        var rq = el.getAttribute('data-rq');
+        var inp = document.getElementById('tr-q');
+        if (inp) inp.value = rq;
+        self.run(rq);
+      };
     });
     this._renderMap(st, grade);
   },
@@ -555,6 +828,48 @@ var THREATROOM = {
       Object.keys(st.byCountry).sort(function (a, b) { return st.byCountry[b] - st.byCountry[a]; }).slice(0, 5).forEach(addAll);
     }
     return out.slice(0, 10);
+  },
+
+  /* v2 多源覆盖：按 URL 域名聚合信源分布（source 字段多为聚合器名不可用，域名才真实） */
+  _srcStats: function () {
+    var by = {}, total = 0;
+    this._items.forEach(function (it) {
+      total++;
+      var h = '';
+      try { h = new URL(String(it.url || '')).hostname.replace(/^www\./, ''); } catch (e) {
+        h = String(it.source || '未知信源').replace(/^专项作战室·.*$/, '专项采集');
+      }
+      if (!h) h = '未知信源';
+      by[h] = (by[h] || 0) + 1;
+    });
+    var list = Object.keys(by).map(function (k) { return [k, by[k]]; })
+      .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
+    return { list: list, total: total };
+  },
+
+  /* v2 关联实体推荐：情报流标题碰撞 THREAT_DATA 组织名 + ENTERPRISES 项目名（当前实体除外） */
+  _relatedChips: function () {
+    var e = this._entity, self = this;
+    var by = {};
+    var texts = this._items.slice(0, 120).map(function (it) { return String(it.title_zh || '') + ' ' + String(it.title || ''); });
+    (typeof THREAT_DATA !== 'undefined' && THREAT_DATA.organizations ? THREAT_DATA.organizations : []).forEach(function (o) {
+      var nm = String(o.name || '');
+      if (!nm || nm === e.cn) return;
+      var c = 0;
+      texts.forEach(function (t) { if (t.indexOf(nm) >= 0) c++; });
+      if (c > 0) by[nm] = { n: c, type: 'org' };
+    });
+    (typeof ENTERPRISES !== 'undefined' ? ENTERPRISES : []).forEach(function (ent) {
+      (ent.projects || []).forEach(function (p) {
+        var nm = String(p.n || '');
+        if (!nm || nm === e.cn || nm.length < 3) return;
+        var c = 0;
+        texts.forEach(function (t) { if (t.indexOf(nm) >= 0) c++; });
+        if (c > 0) by[nm] = { n: c, type: 'project' };
+      });
+    });
+    return Object.keys(by).map(function (k) { return [k, by[k].n, by[k].type]; })
+      .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 10);
   },
 
   /* ═══════════ 预警图 ═══════════ */
@@ -677,6 +992,7 @@ var THREATROOM = {
     L1.push('综合威胁等级：' + grade.t + '（' + grade.score + ' 分）');
     L1.push('关联数据 ' + st.n + ' 条｜红 ' + st.red + '｜橙 ' + st.orange + '｜黄 ' + st.yellow + '｜涉华 ' + st.cn + '｜核心 ' + st.core);
     if (this._collect && this._collect.ok) L1.push('本轮专项采集：检索 ' + this._collect.collected + ' 条，新入库 ' + this._collect.inserted + ' 条');
+    if (this._collect && this._collect.ok && this._collect.keywords && this._collect.keywords.length) L1.push('主题→外文检索词：' + this._collect.keywords.join(' / '));
     L1.push('');
     L1.push('【值班研判】' + this._judgeText(e, st, grade));
     L1.push('');

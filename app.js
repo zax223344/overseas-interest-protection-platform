@@ -3936,6 +3936,7 @@ var AUDIT={
 const VIEW_MAP={
   situation:{t:'态势总览',b:'态势感知 / 态势总览'},
   workbench:{t:'联合作业台',b:'态势感知 / 联合作业台（任务工作区 · 情报图层 · 安全指数）'},
+  threatroom:{t:'专项情报作战室',b:'态势感知 / 专项情报作战室（实体专项采集 · 态势预警分析报告 · 预警图）'},
   myfocus:{t:'我的关注',b:'态势感知 / 我的工作台'},
   datapool:{t:'数据中枢',b:'数据管理 / 数据中枢（数据源库 · 公众号采集）'},
   intel:{t:'情报影像中心',b:'监测中心 / 情报影像中心'},
@@ -4096,6 +4097,7 @@ function runViewInit(v){
     try{
       if(v==='situation'){ if(SITUATION._needsRefresh){SITUATION._needsRefresh=false;} SITUATION.init(); }
       else if(v==='workbench'){ if(typeof WORKBENCH!=='undefined')WORKBENCH.init(); }
+      else if(v==='threatroom'){ if(typeof THREATROOM!=='undefined')THREATROOM.init(); }
       else if(v==='myfocus'){ if(typeof MYFOCUS!=='undefined')MYFOCUS.init(); }
       else if(v==='intel'){ INTELCENTER.init(); }
       else if(v==='monitor'){ MONITOR.init(); }

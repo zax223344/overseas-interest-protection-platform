@@ -27,7 +27,7 @@
   };
 
   const VIEW_LABELS = {
-    situation:'态势总览', workbench:'联合作业台', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
+    situation:'态势总览', workbench:'联合作业台', threatroom:'专项情报作战室', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
     intel:'情报影像中心', alerts:'预警中心', country:'国别档案', countryfile:'国家档案总表', reports:'情报报告中心',
     datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
     /* 合并前的旧键（兼容跳转用） */
@@ -42,12 +42,13 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','myfocus','command','monitor','intel','alerts','country','countryfile','reports','datapool','datagov','settings']
+    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','country','countryfile','reports','datapool','datagov','settings']
   };
 
   const PERMISSION_MATRIX = [
     { key: 'situation', label: '态势总览', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'workbench', label: '联合作业台（任务工作区+情报图层+安全指数）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'threatroom', label: '专项情报作战室（实体专项采集+态势预警分析报告+预警图）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'myfocus', label: '我的关注', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'alerts', label: '预警中心（实时队列+智能联动+异动信号）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'country', label: '国别档案（矩阵+推演+企业资产）', roles: ['mfa','mofcom','mps','enterprise'] },

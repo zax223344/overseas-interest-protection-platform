@@ -65,7 +65,7 @@
   function _assetList() {
     var out = [];
     try {
-      if (typeof ENTERPRISES !== 'undefined') ENTERPRISES.forEach(function (e) { (e.projects || []).forEach(function (p) { out.push({ type: 'project', name: p.name, country: p.country, enterprise: e.name, lat: p.lat, lng: p.lng }); }); });
+      if (typeof ENTERPRISES !== 'undefined') ENTERPRISES.forEach(function (e) { (e.projects || []).forEach(function (p) { out.push({ type: 'project', name: p.name || p.n, country: p.country || p.c, enterprise: e.name, lat: p.lat, lng: p.lng }); }); });
       if (typeof ASSETS !== 'undefined') ASSETS.forEach(function (a) { (a.items || []).forEach(function (it) { out.push({ type: it.type || 'asset', name: it.name, country: it.country || a.country, enterprise: a.enterprise || '', lat: it.lat, lng: it.lng }); }); });
     } catch (e) {}
     return out;
