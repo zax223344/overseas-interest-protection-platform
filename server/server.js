@@ -453,7 +453,7 @@ async function _generateDailyReport(dateKey) {
   const rawTotal = items.length;
   const chinaItems = uniq.filter(i => i.china && !i.negative);
   const negItems = uniq.filter(i => i.negative);
-  const reds = uniq.filter(i => i.severity === 'red');
+  const reds = uniq.filter(i => i.severity === 'red' && (i.china || i.negative)); /* 2026-09-01 根治：涉华严重事件节必须涉华（用户实测：英国火车站刺杀/印度拘留/尼日利亚土匪等非涉华红色全涌入本节）——isChinaRelatedStrict 与 negative 同口径，非涉华红色留在十二类全景/多源印证节 */
   const byType = {}; uniq.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
   const byCountry = {}; uniq.forEach(i => { const c = _reportEventCountry(i) || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
   const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
