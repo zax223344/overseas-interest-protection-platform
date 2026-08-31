@@ -205,7 +205,68 @@
     { id: 'COASTAL2', name: '沿海二期燃煤电站', en: 'Duyen Hai II Power Plant', country: '越南', tier: 3, corp: ['POWERCHINA'], alias: ['Duyen Hai 2', '沿海电厂'] },
     { id: 'RAMADANCITY', name: '斋月十日城市郊轻轨', en: '10th of Ramadan City LRT', country: '埃及', tier: 2, corp: ['AVIC', 'CRRC'], alias: ['10th Ramadan LRT'] },
     { id: 'TANGERTECH', name: '丹吉尔科技城', en: 'Tangier Tech City', country: '摩洛哥', tier: 3, corp: ['CCCC'], alias: ['Tangier Tech'] },
-    { id: 'EASTWEST', name: '东西高速公路', en: 'East-West Highway', country: '阿尔及利亚', tier: 2, corp: ['CITIC', 'CSCEC'], alias: ['East-West expressway'] }
+    { id: 'EASTWEST', name: '东西高速公路', en: 'East-West Highway', country: '阿尔及利亚', tier: 2, corp: ['CITIC', 'CSCEC'], alias: ['East-West expressway'] },
+    /* ══ 2026-08-31 二次扩充（用户指令：全网按商务部/国资委/一带一路网口径全面补充；
+     * 50 项新增，苏丹/伊拉克/津巴布韦/巴新等安全高风险国别优先；来源：商务部国别指南、
+     * 中国一带一路网、国资委央企报道、新华社/人民日报、格鲁吉亚中资企业商会 ══ */
+    // 苏丹（安全风险高发国——战乱区中资存量资产）
+    { id: 'MEROWE', name: '麦洛维大坝', en: 'Merowe Dam', country: '苏丹', tier: 1, corp: ['POWERCHINA'], alias: ['Merowe', '麦洛维水电站', '印在苏丹钞票的大坝'] },
+    { id: 'UPPERATBARA', name: '上阿特巴拉大坝', en: 'Upper Atbara Dam', country: '苏丹', tier: 3, corp: ['POWERCHINA'], alias: ['Upper Atbara', 'Setit'] },
+    // 非洲新增
+    { id: 'KRIBIHWY', name: '克里比-罗拉贝高速公路', en: 'Kribi-Lolabe Highway', country: '喀麦隆', tier: 2, corp: ['CCCC'], alias: ['Kribi highway'] },
+    { id: 'SAKAISOLAR', name: '萨卡伊光伏电站', en: 'Sakai Solar Plant', country: '中非共和国', tier: 3, corp: ['ENERGYCHINA'], alias: ['Sakai solar', '中非光伏'] },
+    { id: 'KINGFISHER', name: '翠鸟油田与东非原油管道', en: 'Kingfisher & EACOP', country: '乌干达', tier: 1, corp: ['CNOOC'], alias: ['Kingfisher', 'EACOP', 'East African Crude Oil Pipeline'] },
+    { id: 'KALETA', name: '凯乐塔水电站', en: 'Kaleta Hydropower', country: '几内亚', tier: 3, corp: ['POWERCHINA'], alias: ['Kaleta'] },
+    { id: 'SOUAPITI', name: '苏阿皮蒂水利枢纽（西非三峡）', en: 'Souapiti Hydropower', country: '几内亚', tier: 1, corp: ['CCCC'], alias: ['Souapiti', '苏阿皮蒂'] },
+    { id: 'AUHQ', name: '非盟会议中心', en: 'AU Conference Center', country: '埃塞俄比亚', tier: 2, corp: ['CSCEC'], alias: ['African Union headquarters', '非盟总部'] },
+    { id: 'ADAMAWIND', name: '阿达玛风电项目', en: 'Adama Wind Farm', country: '埃塞俄比亚', tier: 3, corp: ['POWERCHINA'], alias: ['Adama wind'] },
+    { id: 'MAPUTOBRIDGE', name: '马普托大桥', en: 'Maputo Bridge', country: '莫桑比克', tier: 2, corp: ['CCCC'], alias: ['Maputo-Katembe Bridge', '非洲第一大悬索桥'] },
+    { id: 'WALVISBAYOIL', name: '鲸湾油码头', en: 'Walvis Bay Oil Terminal', country: '纳米比亚', tier: 3, corp: ['CCCC'], alias: ['Walvis Bay', '鲸湾港'] },
+    { id: 'DANGOTE', name: '丹格特炼油厂（中企承建）', en: 'Dangote Refinery', country: '尼日利亚', tier: 2, corp: ['SINOMACH'], alias: ['Dangote', '莱基炼厂'] },
+    { id: 'LAGOSBLUE', name: '拉各斯轻轨蓝线', en: 'Lagos Blue Line Rail', country: '尼日利亚', tier: 3, corp: ['CRCC'], alias: ['Lagos light rail', 'Lagos Blue Line'] },
+    { id: 'DEZIWA', name: '迪兹瓦铜钴矿', en: 'Deziwa Copper-Cobalt', country: '刚果（金）', tier: 2, corp: ['CNMC'], alias: ['Deziwa', '迪兹瓦矿业'] },
+    { id: 'LUANSHYA', name: '中色卢安夏铜矿', en: 'CNMC Luanshya Copper', country: '赞比亚', tier: 3, corp: ['CNMC'], alias: ['Luanshya', '卢安夏'] },
+    { id: 'ARCADIA', name: '华友阿卡迪亚锂矿（非洲首座硫酸锂厂）', en: 'Arcadia Lithium Mine', country: '津巴布韦', tier: 1, corp: ['TSINGSHAN'], alias: ['Arcadia', 'Prospect Lithium', '华友津巴布韦'] },
+    { id: 'BIKITA', name: '中矿Bikita锂矿', en: 'Bikita Minerals', country: '津巴布韦', tier: 2, corp: ['CNMC'], alias: ['Bikita', '中矿资源津巴布韦'] },
+    { id: 'DINSON', name: '鼎森钢铁Manhize钢厂', en: 'Dinson Manhize Steel', country: '津巴布韦', tier: 2, corp: ['TSINGSHAN'], alias: ['Manhize', 'Dinson Iron and Steel'] },
+    { id: 'ABIDJANTERM', name: '阿比让港第二集装箱码头', en: 'Abidjan Terminal 2', country: '科特迪瓦', tier: 2, corp: ['CCCC'], alias: ['Abidjan port', '阿比让港'] },
+    // 中东新增
+    { id: 'ALKARSAA', name: '阿尔卡萨光伏电站（世界杯绿色能源）', en: 'Al Kharsaah Solar', country: '卡塔尔', tier: 1, corp: ['POWERCHINA'], alias: ['Al Kharsaah', 'Alcazar solar', '卡塔尔光伏'] },
+    { id: 'QATARWATER', name: '卡塔尔国家超大型蓄水池', en: 'Qatar Mega Reservoir', country: '卡塔尔', tier: 2, corp: ['ENERGYCHINA'], alias: ['Mega Reservoir', '卡塔尔蓄水池'] },
+    { id: 'JAZAN', name: '吉赞燃机联合循环电站', en: 'Jizan Power Plant', country: '沙特阿拉伯', tier: 2, corp: ['POWERCHINA'], alias: ['Jizan', '吉赞电站'] },
+    { id: 'YANBU3', name: '延布三期燃油电站', en: 'Yanbu Phase 3', country: '沙特阿拉伯', tier: 2, corp: ['POWERCHINA'], alias: ['Yanbu 3', '延布电站'] },
+    { id: 'RABIGH3', name: '拉比格三期海水淡化', en: 'Rabigh 3 Desalination', country: '沙特阿拉伯', tier: 3, corp: ['POWERCHINA'], alias: ['Rabigh III', '拉比格'] },
+    { id: 'SHUAIBAH', name: '阿尔舒巴赫2.6GW光伏', en: 'Al Shuaibah Solar', country: '沙特阿拉伯', tier: 2, corp: ['ENERGYCHINA'], alias: ['Shuaibah', 'ASB solar'] },
+    { id: 'REDSEA', name: '红海新城公用事业基础设施', en: 'Red Sea Utilities', country: '沙特阿拉伯', tier: 2, corp: ['POWERCHINA'], alias: ['Red Sea Project', 'NEOM', '红海新城'] },
+    { id: 'KUWAITUNIV', name: '科威特大学城', en: 'Kuwait University City', country: '科威特', tier: 3, corp: ['POWERCHINA'], alias: ['Sabah Al-Salem University'] },
+    { id: 'IQSCHOOLS', name: '伊拉克679所学校项目群', en: 'Iraq 679 Schools Program', country: '伊拉克', tier: 2, corp: ['POWERCHINA'], alias: ['Iraq schools', '伊拉克学校'] },
+    { id: 'RATAWI', name: '拉塔维1GW光伏电站（巴士拉）', en: 'Al-Ratawi Solar', country: '伊拉克', tier: 2, corp: ['ENERGYCHINA'], alias: ['Ratawi', 'Ratavi', '巴士拉光伏'] },
+    { id: 'UMMQUWAIN', name: '乌姆盖万海水淡化厂', en: 'Umm Al Quwain Desal', country: '阿联酋', tier: 3, corp: ['ENERGYCHINA'], alias: ['Umm Al Quwain'] },
+    { id: 'MANAH2', name: 'Manah II 光伏电站', en: 'Manah II Solar', country: '阿曼', tier: 3, corp: ['ENERGYCHINA'], alias: ['Manah solar', 'Ibri'] },
+    // 高加索/欧洲新增
+    { id: 'E60HWY', name: 'E60高速公路改造', en: 'E60 Highway', country: '格鲁吉亚', tier: 2, corp: ['CCCC', 'CSCEC'], alias: ['E60 expressway', '格鲁吉亚E60'] },
+    { id: 'GEORAIL', name: '格鲁吉亚现代化铁路（泽斯塔波尼-哈舒里）', en: 'Georgian Modern Railway', country: '格鲁吉亚', tier: 2, corp: ['CREC'], alias: ['Zestafoni-Khashuri', '中间走廊铁路'] },
+    { id: 'POTITERM', name: '波季港多式联运集装箱堆场', en: 'Poti Container Yard', country: '格鲁吉亚', tier: 3, corp: ['CREC'], alias: ['Poti port', '波季港'] },
+    { id: 'ZEMUNBRIDGE', name: '泽蒙-博尔察大桥（中企欧洲首桥）', en: 'Zemun-Borc? Bridge', country: '塞尔维亚', tier: 2, corp: ['CCCC'], alias: ['Zemun-Borca', 'Mihajlo Pupin Bridge', '中国桥'] },
+    { id: 'E763HWY', name: 'E763高速公路', en: 'E763 Highway', country: '塞尔维亚', tier: 2, corp: ['CCCC'], alias: ['E763', '塞高速'] },
+    { id: 'LINGLONG', name: '玲珑轮胎兹雷尼亚宁工厂', en: 'Linglong Zrenjanin Plant', country: '塞尔维亚', tier: 3, corp: [], alias: ['Linglong Tire Serbia'] },
+    // 南亚/印度洋新增
+    { id: 'SINOMABRIDGE', name: '中马友谊大桥（印度洋首座跨海大桥）', en: 'China-Maldives Friendship Bridge', country: '马尔代夫', tier: 1, corp: ['CCCC'], alias: ['Sinamalé Bridge', '中马大桥'] },
+    { id: 'VELANA', name: '维拉纳国际机场扩建', en: 'Velana Airport Expansion', country: '马尔代夫', tier: 3, corp: ['CCCC'], alias: ['Velana', '马累机场'] },
+    // 东南亚新增
+    { id: 'PHNOMHWY', name: '金港高速公路（柬埔寨首条高速）', en: 'Phnom Penh-Sihanoukville Expressway', country: '柬埔寨', tier: 1, corp: ['CCCC'], alias: ['金港高速', 'GS Expressway'] },
+    { id: 'BATAANPP', name: '巴丹燃煤电厂码头工程', en: 'Bataan Power Plant Jetty', country: '菲律宾', tier: 3, corp: ['CCCC'], alias: ['Bataan', 'Mariveles'] },
+    // 中亚新增
+    { id: 'BARSKOON', name: '巴尔斯科恩-别迭里公路', en: 'Barskoon-Bedery Highway', country: '吉尔吉斯斯坦', tier: 3, corp: ['CCCC'], alias: ['Barskoon', '别迭里口岸公路'] },
+    // 拉美/加勒比新增
+    { id: 'LAPAZWATER', name: '拉巴斯供水项目', en: 'La Paz Water Supply', country: '玻利维亚', tier: 3, corp: ['POWERCHINA'], alias: ['Taipichaca', '拉巴斯大坝'] },
+    { id: 'JAMNORTH', name: '牙买加南北高速公路', en: 'Jamaica North-South Highway', country: '牙买加', tier: 2, corp: ['CCCC'], alias: ['North-South Highway', '牙买加高速'] },
+    { id: 'ARIMAHOSP', name: '阿利玛总医院', en: 'Arima General Hospital', country: '特立尼达和多巴哥', tier: 3, corp: ['CRCC'], alias: ['Arima hospital'] },
+    { id: 'CJIATERM', name: '切迪·贾根国际机场扩建', en: 'Cheddi Jagan Airport Expansion', country: '圭亚那', tier: 3, corp: ['CCCC'], alias: ['Cheddi Jagan', 'Timehri'] },
+    // 太平洋岛国新增
+    { id: 'NORDCENTER', name: '巴新诺德中心（南太第一高楼）', en: 'Nord Center', country: '巴布亚新几内亚', tier: 3, corp: ['CRCC'], alias: ['Nord Center', '莫尔兹比港诺德'] },
+    { id: 'HIGHLANDHWY', name: '巴新高地高速公路', en: 'PNG Highlands Highway', country: '巴布亚新几内亚', tier: 3, corp: ['MINMETALS'], alias: ['Highlands Highway Phase 2'] },
+    { id: 'FRIEDARIVER', name: '弗里达河铜金矿', en: 'Frieda River Copper-Gold', country: '巴布亚新几内亚', tier: 2, corp: ['MINMETALS'], alias: ['Frieda River', 'PanAust', 'Sepik'] }
   ];
 
   /* ============================================================
