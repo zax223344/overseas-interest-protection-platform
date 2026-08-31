@@ -3,6 +3,14 @@
  * ③ PDF / Word 文件导出。全部数据来自服务端 /api/reports/daily（当日 DB 真实数据，零虚构）。
  * 结构：交互版（条目抽屉详情 + 人工编辑：改标题/摘要、删除、调序，PUT 存回 DB 并留修订痕迹）
  *       公文版（服务端渲染红头公文 HTML，红头可开关，导出 PDF=iframe 打印 / 导出 Word=.doc Blob）。 */
+/* 12 类情报类型中文名（客户端版；与服务端 _DR_TYPE_NAMES 同步） */
+var _DR_TYPE_NAMES_C = {
+  terror_events: '恐怖袭击/武装袭击', military_conflicts: '武装冲突', social_unrest: '社会动荡',
+  political_events: '政治政局', economic_risk: '经济风险', sanctions_data: '制裁与合规',
+  legal_compliance: '法律合规', cyber_security: '网络安全', infrastructure: '基础设施与供应链',
+  natural_disasters: '自然灾害', public_health: '公共卫生', security_events: '治安事件',
+  geopolitical_intel: '地缘动态', osint_intel: '开源情报综合'
+};
 var DAILY_REPORT = {
   _list: [],
   _current: '',
@@ -12,6 +20,16 @@ var DAILY_REPORT = {
   _editMode: false,
   _red: true,       /* 公文红头开关（默认开） */
   _styleDone: false,
+  /* 2026-09-01 交互复合化：管理面板 + 采集库抽屉 */
+  _mgmtOpen: false,
+  _collectOpen: false,
+  _collectList: [],
+  _collectTotal: 0,
+  _collectOffset: 0,
+  _collectLimit: 50,
+  _collectSel: {},  /* {intelId:true} 选中集合 */
+  _collectFilters: { q: '', type: '', country: '', severity: '' },
+  _undoStack: [],   /* 最近操作，可一键回滚（add/remove 倒序） */
 
   init: function () { this.render(); },
 
@@ -34,7 +52,40 @@ var DAILY_REPORT = {
       + '.dr-tag{display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:9px;font-size:11px;border:1px solid var(--border);}'
       + '.dr-govwrap{background:#9a9a9a;padding:24px 10px;border-radius:10px;overflow:auto;}'
       + '.dr-viewtab{display:inline-block;padding:6px 16px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;cursor:pointer;font-size:12px;font-weight:600;background:var(--panel2);color:var(--text3);}'
-      + '.dr-viewtab.active{color:var(--cyan);border-color:var(--cyan);background:var(--panel);border-bottom:2px solid var(--cyan);margin-bottom:-1px;}';
+      + '.dr-viewtab.active{color:var(--cyan);border-color:var(--cyan);background:var(--panel);border-bottom:2px solid var(--cyan);margin-bottom:-1px;}'
+      /* ===== 2026-09-01 简报交互复合化：深空蓝黑情报指挥中心风格 ===== */
+      + '#dr-mgmt{background:linear-gradient(180deg,#0a1226 0%,#050a18 100%);border:1px solid #1a2a4a;border-radius:8px;padding:14px 16px;box-shadow:inset 0 1px 0 rgba(0,200,255,0.08);margin-bottom:14px;}'
+      + '.dr-mgmt-card{background:rgba(10,20,50,0.5);border:1px solid #1a3a5a;border-radius:6px;padding:10px 14px;margin-bottom:8px;}'
+      + '.dr-mgmt-stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}'
+      + '.dr-mgmt-stat{flex:1;min-width:90px;background:rgba(8,16,40,0.6);border:1px solid #122540;border-radius:6px;padding:8px 10px;text-align:center;}'
+      + '.dr-mgmt-stat .v{font-size:20px;font-weight:800;color:var(--cyan);line-height:1;margin-bottom:2px;}'
+      + '.dr-mgmt-stat .l{font-size:10px;color:var(--text3);}'
+      + '.dr-mgmt-row{display:flex;gap:8px;padding:6px 10px;background:rgba(8,16,40,0.4);border:1px solid #122540;border-radius:5px;margin-bottom:3px;font-size:12px;align-items:center;}'
+      + '.dr-mgmt-row:hover{border-color:#2a5a8a;background:rgba(0,80,160,0.08);}'
+      + '.dr-mgmt-badge{padding:1px 7px;border-radius:9px;font-size:10px;font-weight:600;white-space:nowrap;}'
+      + '.dr-mgmt-badge.auto{background:rgba(0,150,200,0.15);color:#4dabff;border:1px solid #1f6a9a;}'
+      + '.dr-mgmt-badge.manual{background:rgba(255,140,0,0.18);color:#ff9933;border:1px solid #8a5520;}'
+      + '.dr-mgmt-badge.lv-red{background:rgba(255,51,85,0.18);color:#ff3355;border:1px solid #8a2030;}'
+      + '.dr-mgmt-badge.lv-orange{background:rgba(255,136,0,0.18);color:#ff8800;border:1px solid #8a5010;}'
+      + '.dr-mgmt-badge.lv-yellow{background:rgba(255,204,0,0.18);color:#ffcc00;border:1px solid #8a7000;}'
+      + '.dr-mgmt-badge.lv-blue{background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid #106070;}'
+      + '.dr-mgmt-rm{background:transparent;color:#ff5577;border:1px solid #5a2030;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;}'
+      + '.dr-mgmt-rm:hover{background:rgba(255,85,119,0.1);border-color:#ff5577;}'
+      + '.dr-history{font-size:11px;color:var(--text3);padding:6px 10px;background:rgba(8,16,40,0.3);border-radius:5px;margin-top:6px;}'
+      + '.dr-history-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #0a1a30;}'
+      + '.dr-history-row:last-child{border-bottom:none;}'
+      + '.dr-collect-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:10000;display:none;}'
+      + '.dr-collect-overlay.show{display:block;}'
+      + '.dr-collect-modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:92vw;max-width:1020px;height:88vh;max-height:840px;background:linear-gradient(180deg,#050b1e 0%,#0a142a 100%);border:1px solid #1a3a6a;border-radius:10px;box-shadow:0 0 40px rgba(0,150,255,0.18),inset 0 1px 0 rgba(0,200,255,0.1);z-index:10001;display:flex;flex-direction:column;overflow:hidden;}'
+      + '.dr-collect-hd{padding:14px 18px;border-bottom:1px solid #1a3a5a;display:flex;align-items:center;gap:10px;background:linear-gradient(90deg,rgba(0,80,160,0.15),transparent);}'
+      + '.dr-collect-bd{flex:1;overflow-y:auto;padding:12px 18px;}'
+      + '.dr-collect-ft{padding:10px 18px;border-top:1px solid #1a3a5a;display:flex;gap:8px;align-items:center;background:rgba(0,0,0,0.2);}'
+      + '.dr-collect-row{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;margin-bottom:6px;background:rgba(10,22,50,0.4);border:1px solid #122848;border-radius:6px;transition:all 0.15s;}'
+      + '.dr-collect-row.selected{border-color:var(--cyan);background:rgba(0,150,255,0.10);box-shadow:0 0 12px rgba(0,200,255,0.18);}'
+      + '.dr-collect-row:hover{border-color:#2a5a8a;}'
+      + '.dr-collect-row input[type=checkbox]{margin-top:4px;cursor:pointer;}'
+      + '.dr-collect-actions{display:flex;gap:6px;align-items:center;margin-left:auto;}'
+      + '.dr-collect-meta{font-size:10px;color:var(--text3);margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;}';
     document.head.appendChild(st);
     /* 抽屉 DOM（单例，懒创建） */
     if (!document.getElementById('dr-drawer')) {
@@ -183,14 +234,289 @@ var DAILY_REPORT = {
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
       + '<span style="font-size:11px;color:var(--text3)">点击条目可查看完整详情（摘要、来源、原文链接）' + (rev.length ? ' · 修订 ' + rev.length + ' 次' + (lastRev ? '，最近 ' + String(lastRev.at || '').slice(0, 16).replace('T', ' ') + '（' + (lastRev.user || '') + '）' : '') : '') + '</span>'
       + '<span style="flex:1"></span>'
+      + '<button class="btn sm" onclick="DAILY_REPORT.toggleMgmt()" title="简报条目管理：查看结构总览、自动 vs 手动条目区分、移除/撤销">' + (this._mgmtOpen ? '📊 关闭管理面板' : '📊 管理面板') + '</button>'
+      + '<button class="btn sm primary" onclick="DAILY_REPORT.openCollectDrawer()" title="从数据中心采集库搜索条目并加入简报">📦 从采集库添加</button>'
       + (manual ? '<button class="btn sm" onclick="DAILY_REPORT.revertEdits()" title="丢弃人工修改，恢复自动生成版本">↩ 撤销人工修改</button>' : '')
       + (this._editMode
         ? '<button class="btn sm primary" onclick="DAILY_REPORT.saveEdits()">💾 保存修改</button>'
         + '<button class="btn sm" onclick="DAILY_REPORT.cancelEdit()">✖ 放弃修改</button>'
         : '<button class="btn sm" onclick="DAILY_REPORT.startEdit()" title="编辑条目标题/摘要、删除、调整顺序">✏️ 编辑简报</button>')
-      + '</div>';
-    body.innerHTML = hdr + '<div id="dr-rows"' + (this._editMode ? ' class="dr-editing"' : '') + '>' + (this._data.html || '') + '</div>';
+      + '</div>'
+      + (this._mgmtOpen ? this._renderMgmtPanel() : '')
+      + '<div id="dr-rows"' + (this._editMode ? ' class="dr-editing"' : '') + '>' + (this._data.html || '') + '</div>';
+    body.innerHTML = hdr;
     if (this._editMode) this._applyEditControls();
+  },
+
+  /* ===================== 管理面板：结构总览 + 自动 vs 手动条目区分 + 操作历史 + 撤销 ===================== */
+  _renderMgmtPanel: function () {
+    var d = this._data;
+    var items = (d.items || []);
+    var autoN = items.filter(function (it) { return !it.manual; }).length;
+    var manualN = items.filter(function (it) { return !!it.manual; }).length;
+    var stats =
+      '<div class="dr-mgmt-stats">'
+      + '<div class="dr-mgmt-stat"><div class="v">' + items.length + '</div><div class="l">条目总数</div></div>'
+      + '<div class="dr-mgmt-stat"><div class="v" style="color:#4dabff">' + autoN + '</div><div class="l">自动生成</div></div>'
+      + '<div class="dr-mgmt-stat"><div class="v" style="color:#ff9933">' + manualN + '</div><div class="l">手动添加</div></div>'
+      + '<div class="dr-mgmt-stat"><div class="v" style="color:#ff3355">' + ((d.summary && d.summary.red) || 0) + '</div><div class="l">红色事件</div></div>'
+      + '<div class="dr-mgmt-stat"><div class="v" style="color:#ff8800">' + ((d.summary && d.summary.china) || 0) + '</div><div class="l">涉华</div></div>'
+      + '<div class="dr-mgmt-stat"><div class="v">' + ((d.summary && d.summary.sources) || 0) + '</div><div class="l">信源</div></div>'
+      + '</div>';
+    /* 各节条目（按当前 sections 顺序） */
+    var me = this;
+    var sectionsHtml = '';
+    (d.sections || []).forEach(function (sec) {
+      var icon = sec.icon || '·';
+      var rows = '';
+      if (sec.subs && sec.subs.length) {
+        sec.subs.forEach(function (sub) {
+          var subN = (sub.items || []).length;
+          rows += '<div style="font-size:11px;color:var(--text3);padding:4px 10px">↳ ' + (_DR_TYPE_NAMES_C[sub.type] || sub.type) + '（' + subN + '）</div>';
+          (sub.items || []).forEach(function (idx) { rows += me._renderMgmtRow(items[idx], idx); });
+        });
+      } else {
+        if (!(sec.items || []).length) rows = '<div style="font-size:11px;color:var(--text3);padding:4px 10px">' + (sec.emptyText || '当日无条目') + '</div>';
+        else (sec.items || []).forEach(function (idx) { rows += me._renderMgmtRow(items[idx], idx); });
+      }
+      sectionsHtml += '<div class="dr-mgmt-card"><div style="font-size:13px;font-weight:700;margin-bottom:6px;color:var(--cyan)">' + icon + ' ' + (sec.title || sec.key) + '</div>' + rows + '</div>';
+    });
+    /* 操作历史（来自 _undoStack 与 revision 最后 5 条） */
+    var rev = (d.revision || []).slice(-5).reverse();
+    var undoN = this._undoStack.length;
+    var historyHtml = '<div class="dr-history"><div style="font-weight:600;margin-bottom:4px;color:var(--text2)">🕓 操作历史</div>'
+      + '<div class="dr-history-row"><span style="color:var(--cyan)">可撤销</span><span>本次会话 ' + undoN + ' 次增/删操作可一键回滚</span></div>';
+    if (undoN) historyHtml += '<div class="dr-history-row"><button class="btn sm" onclick="DAILY_REPORT.undoLast()">↶ 撤销最近一次操作</button></div>';
+    rev.forEach(function (r) { historyHtml += '<div class="dr-history-row"><span style="color:var(--text3)">' + String(r.at || '').slice(11, 16) + '</span><span>' + (r.note || '') + '</span><span style="color:var(--text3);margin-left:auto">' + (r.user || '') + '</span></div>'; });
+    historyHtml += '</div>';
+    return '<div id="dr-mgmt">' + stats + sectionsHtml + historyHtml + '</div>';
+  },
+  _renderMgmtRow: function (it, idx) {
+    if (!it) return '';
+    var lv = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[it.severity] || it.severity || '—';
+    var lvCls = 'lv-' + (it.severity || 'blue');
+    var src = (it.eventCountry || it.country || '未标注');
+    var title = String(it.title || '').slice(0, 80);
+    var me = this;
+    return '<div class="dr-mgmt-row">'
+      + '<span class="dr-mgmt-badge ' + (it.manual ? 'manual' : 'auto') + '">' + (it.manual ? '✋ 手动' : '🖱 自动') + '</span>'
+      + '<span class="dr-mgmt-badge ' + lvCls + '">' + lv + '</span>'
+      + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + '<span style="font-weight:600">' + title + '</span>'
+      + ' <span style="color:var(--text3);font-size:10px">· 📍' + src + (it.source ? ' · ' + it.source : '') + ' · #' + idx + '</span>'
+      + '</span>'
+      + '<button class="dr-mgmt-rm" onclick="DAILY_REPORT.removeFromReport(' + idx + ')">移除</button>'
+      + '</div>';
+  },
+  toggleMgmt: function () {
+    this._mgmtOpen = !this._mgmtOpen;
+    this._renderCurrent();
+  },
+  removeFromReport: function (idx) {
+    var it = (this._data && this._data.items || [])[idx];
+    if (!it) { showToast('⚠️ 条目不存在'); return; }
+    var me = this;
+    if (!confirm('确认从简报中移除该条目？\n' + String(it.title || '').slice(0, 60))) return;
+    var tok = (typeof APIClient !== 'undefined' && APIClient.getToken()) || '';
+    if (!tok) { showToast('⚠️ 请先登录'); return; }
+    fetch('/api/reports/daily/' + this._current + '/items/remove', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify({ idx: idx })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }).then(function (d) {
+      if (d.ok && d.j.ok) {
+        showToast('✅ 已移除（undo 可一键回滚）');
+        me._undoStack.push({ type: 'remove', date: me._current, idx: idx, item: it });
+        me.load(me._current);
+        me.render();
+      } else showToast('⚠️ 移除失败：' + ((d.j && d.j.error) || '未知错误'));
+    }).catch(function (e) { showToast('⚠️ 移除失败：' + e.message); });
+  },
+  undoLast: function () {
+    var op = this._undoStack.pop();
+    if (!op) { showToast('⚠️ 暂无可撤销操作'); return; }
+    var me = this;
+    var tok = (typeof APIClient !== 'undefined' && APIClient.getToken()) || '';
+    var p = new URLSearchParams();
+    if (op.type === 'remove') {
+      /* 反向：把刚才移除的条目再加回来（用其完整 id/title） */
+      /* 若有 intelId，从 candidates 思路：服务器 add 端需要 intelId；为简化，调用 add 端用 id（其已是 DB id） */
+      fetch('/api/reports/daily/' + op.date + '/items/add', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+        body: JSON.stringify({ intelId: op.item.id })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }).then(function (d) {
+        if (d.ok && d.j.ok) { showToast('↶ 已恢复移除的条目'); me.load(me._current); me.render(); }
+        else showToast('⚠️ 撤销失败：' + ((d.j && d.j.error) || '未知'));
+      }).catch(function (e) { showToast('⚠️ ' + e.message); });
+    } else if (op.type === 'add') {
+      /* 反向：移除刚才添加的条目（其 idx 已记下） */
+      fetch('/api/reports/daily/' + op.date + '/items/remove', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+        body: JSON.stringify({ idx: op.idx })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }).then(function (d) {
+        if (d.ok && d.j.ok) { showToast('↶ 已撤销添加'); me.load(me._current); me.render(); }
+        else showToast('⚠️ 撤销失败：' + ((d.j && d.j.error) || '未知'));
+      }).catch(function (e) { showToast('⚠️ ' + e.message); });
+    }
+  },
+
+  /* ===================== 采集库抽屉：搜索/筛选/批量添加采集条目到简报 ===================== */
+  openCollectDrawer: function () {
+    var tok = (typeof APIClient !== 'undefined' && APIClient.getToken()) || '';
+    if (!tok) { showToast('⚠️ 请先登录'); return; }
+    if (!document.getElementById('dr-collect-overlay')) {
+      var ov = document.createElement('div'); ov.id = 'dr-collect-overlay'; ov.className = 'dr-collect-overlay';
+      ov.onclick = function (e) { if (e.target === ov) DAILY_REPORT.closeCollectDrawer(); };
+      var mo = document.createElement('div'); mo.id = 'dr-collect-modal'; mo.className = 'dr-collect-modal';
+      document.body.appendChild(ov); document.body.appendChild(mo);
+    }
+    this._collectOpen = true;
+    document.getElementById('dr-collect-overlay').classList.add('show');
+    this._collectOffset = 0; this._collectSel = {};
+    this._loadCandidates();
+  },
+  closeCollectDrawer: function () {
+    this._collectOpen = false;
+    var ov = document.getElementById('dr-collect-overlay');
+    if (ov) ov.classList.remove('show');
+  },
+  _loadCandidates: function () {
+    var me = this;
+    var f = this._collectFilters;
+    var qs = '?limit=' + this._collectLimit + '&offset=' + this._collectOffset;
+    if (f.q) qs += '&q=' + encodeURIComponent(f.q);
+    if (f.type) qs += '&type=' + encodeURIComponent(f.type);
+    if (f.country) qs += '&country=' + encodeURIComponent(f.country);
+    if (f.severity) qs += '&severity=' + encodeURIComponent(f.severity);
+    var tok = (typeof APIClient !== 'undefined' && APIClient.getToken()) || '';
+    var modal = document.getElementById('dr-collect-modal');
+    if (modal) modal.innerHTML = '<div class="dr-collect-hd" style="color:var(--cyan)">⟳ 加载候选条目…</div>';
+    fetch('/api/reports/daily/' + this._current + '/candidates' + qs, { headers: { 'Authorization': 'Bearer ' + tok } })
+      .then(function (r) { return r.json(); }).then(function (d) {
+        me._collectList = (d && d.items) || [];
+        me._collectTotal = (d && d.total) || 0;
+        me._renderCollectModal();
+      }).catch(function (e) {
+        if (modal) modal.innerHTML = '<div class="dr-collect-hd" style="color:#ff5577">⚠️ 加载失败：' + e.message + '</div>';
+      });
+  },
+  _renderCollectModal: function () {
+    var f = this._collectFilters;
+    var me = this;
+    var esc = function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+    var lv = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' };
+    var selN = Object.keys(this._collectSel).length;
+    var start = this._collectOffset + 1;
+    var end = Math.min(this._collectOffset + this._collectList.length, this._collectTotal);
+    var rows = this._collectList.map(function (c) {
+      var lvCls = 'lv-' + (c.severity || 'blue');
+      return '<div class="dr-collect-row' + (me._collectSel[c.id] ? ' selected' : '') + '" data-cid="' + c.id + '">'
+        + '<input type="checkbox"' + (me._collectSel[c.id] ? ' checked' : '') + ' onchange="DAILY_REPORT._toggleSel(' + c.id + ', this.checked)">'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600;line-height:1.5">' + esc(c.title) + '</div>'
+        + '<div class="dr-collect-meta">'
+        + '<span class="dr-mgmt-badge ' + lvCls + '">' + (lv[c.severity] || c.severity || '—') + '</span>'
+        + '<span class="dr-mgmt-badge auto">' + (_DR_TYPE_NAMES_C[c.type] || c.type) + '</span>'
+        + (c.china ? '<span class="dr-mgmt-badge auto" style="color:#0a84ff;border-color:#0a84ff">涉华</span>' : '')
+        + '<span>📍 ' + esc(c.eventCountry || c.country || '未标注') + '</span>'
+        + '<span>· ' + esc(c.source || '—') + '</span>'
+        + '<span>· ID ' + c.id + '</span>'
+        + '</div>'
+        + (c.preview ? '<div style="font-size:11px;color:var(--text3);margin-top:4px;line-height:1.5;max-height:38px;overflow:hidden">' + esc(c.preview) + '</div>' : '')
+        + '</div>'
+        + '<div class="dr-collect-actions"><button class="btn sm primary" onclick="DAILY_REPORT.addCandidate(' + c.id + ')">加入简报</button></div>'
+        + '</div>';
+    }).join('');
+    var modal = document.getElementById('dr-collect-modal');
+    if (!modal) return;
+    modal.innerHTML =
+      '<div class="dr-collect-hd">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--cyan)">📦 采集库候选 · ' + this._current + '</div>'
+      + '<span style="flex:1"></span>'
+      + '<span style="font-size:11px;color:var(--text3)">命中 ' + this._collectTotal + ' 条（不含已入简报）</span>'
+      + '<button class="btn sm" onclick="DAILY_REPORT.closeCollectDrawer()">✖ 关闭</button>'
+      + '</div>'
+      + '<div class="dr-collect-bd" style="background:rgba(0,0,0,0.15)">'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #1a3a5a">'
+      + '<input id="dr-coll-q" placeholder="搜索标题/摘要…" value="' + esc(f.q) + '" style="flex:2;min-width:180px;padding:6px 10px;background:#0a142a;border:1px solid #1a3a5a;border-radius:6px;color:var(--text);font-size:12px" oninput="DAILY_REPORT._setFilter(\'q\', this.value)">'
+      + '<select id="dr-coll-type" onchange="DAILY_REPORT._setFilter(\'type\', this.value)" style="padding:6px 10px;background:#0a142a;border:1px solid #1a3a5a;border-radius:6px;color:var(--text);font-size:12px">'
+      + '<option value="">全部类型</option>'
+      + Object.keys(_DR_TYPE_NAMES_C).map(function (k) { return '<option value="' + k + '"' + (f.type === k ? ' selected' : '') + '>' + _DR_TYPE_NAMES_C[k] + '</option>'; }).join('')
+      + '</select>'
+      + '<select id="dr-coll-sev" onchange="DAILY_REPORT._setFilter(\'severity\', this.value)" style="padding:6px 10px;background:#0a142a;border:1px solid #1a3a5a;border-radius:6px;color:var(--text);font-size:12px">'
+      + '<option value="">全部级别</option>'
+      + '<option value="red"' + (f.severity === 'red' ? ' selected' : '') + '>红色</option>'
+      + '<option value="orange"' + (f.severity === 'orange' ? ' selected' : '') + '>橙色</option>'
+      + '<option value="yellow"' + (f.severity === 'yellow' ? ' selected' : '') + '>黄色</option>'
+      + '<option value="blue"' + (f.severity === 'blue' ? ' selected' : '') + '>蓝色</option>'
+      + '</select>'
+      + '<input id="dr-coll-country" placeholder="国别…" value="' + esc(f.country) + '" style="flex:1;min-width:120px;padding:6px 10px;background:#0a142a;border:1px solid #1a3a5a;border-radius:6px;color:var(--text);font-size:12px" oninput="DAILY_REPORT._setFilter(\'country\', this.value)">'
+      + '<button class="btn sm" onclick="DAILY_REPORT._collectOffset=0;DAILY_REPORT._loadCandidates()">🔍 搜索</button>'
+      + '</div>'
+      + (rows ? rows : '<div style="padding:30px;text-align:center;color:var(--text3)">当前筛选条件下无候选条目（可能已全部入简报）</div>')
+      + '</div>'
+      + '<div class="dr-collect-ft">'
+      + '<span style="font-size:11px;color:var(--text3)">' + (this._collectList.length ? start + '–' + end : '0') + ' / ' + this._collectTotal + '</span>'
+      + '<button class="btn sm" onclick="DAILY_REPORT._collectOffset=Math.max(0,DAILY_REPORT._collectOffset-DAILY_REPORT._collectLimit);DAILY_REPORT._loadCandidates()"' + (this._collectOffset === 0 ? ' disabled style="opacity:.35"' : '') + '>◀ 上一页</button>'
+      + '<button class="btn sm" onclick="DAILY_REPORT._collectOffset+=DAILY_REPORT._collectLimit;DAILY_REPORT._loadCandidates()"' + (end >= this._collectTotal ? ' disabled style="opacity:.35"' : '') + '>下一页 ▶</button>'
+      + '<span style="flex:1"></span>'
+      + '<span style="font-size:11px;color:var(--text3)">已选 ' + selN + ' 条</span>'
+      + '<button class="btn sm primary" onclick="DAILY_REPORT.addBatchCandidates()" ' + (selN ? '' : 'disabled style="opacity:.4"') + '>📥 批量加入简报（' + selN + '）</button>'
+      + '</div>';
+  },
+  _setFilter: function (k, v) {
+    this._collectFilters[k] = v;
+    /* 输入防抖（仅对文本类） */
+    var me = this;
+    clearTimeout(this._filterTimer);
+    this._filterTimer = setTimeout(function () { me._collectOffset = 0; me._loadCandidates(); }, 350);
+  },
+  _toggleSel: function (id, on) {
+    if (on) this._collectSel[id] = true; else delete this._collectSel[id];
+    this._renderCollectModal();
+  },
+  addCandidate: function (intelId) {
+    var me = this;
+    var tok = (typeof APIClient !== 'undefined' && APIClient.getToken()) || '';
+    fetch('/api/reports/daily/' + this._current + '/items/add', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify({ intelId: intelId })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }).then(function (d) {
+      if (d.ok && d.j.ok) {
+        showToast('✅ 已加入：' + (d.j.section || '相应节') + '（采集编号 ' + intelId + '）');
+        delete me._collectSel[intelId];
+        me._undoStack.push({ type: 'add', date: me._current, idx: d.j.idx, item: { id: intelId } });
+        me.load(me._current);
+        me.render();
+        me._loadCandidates(); /* 候选列表移除已加入条目 */
+      } else showToast('⚠️ 加入失败：' + ((d.j && d.j.error) || '未知错误'));
+    }).catch(function (e) { showToast('⚠️ ' + e.message); });
+  },
+  addBatchCandidates: function () {
+    var ids = Object.keys(this._collectSel).map(Number).filter(Boolean);
+    if (!ids.length) { showToast('⚠️ 未选中任何条目'); return; }
+    var me = this;
+    var tok = (typeof APIClient !== 'undefined' && APIClient.getToken()) || '';
+    showToast('⏳ 批量加入 ' + ids.length + ' 条…');
+    var done = 0, fail = [];
+    var next = function () {
+      if (!ids.length) {
+        if (done) showToast('✅ 批量加入完成（成功 ' + done + (fail.length ? '、失败 ' + fail.length : '') + '）');
+        me._collectSel = {};
+        me.load(me._current); me.render();
+        me._loadCandidates();
+        return;
+      }
+      var id = ids.shift();
+      fetch('/api/reports/daily/' + me._current + '/items/add', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+        body: JSON.stringify({ intelId: id })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }).then(function (d) {
+        if (d.ok && d.j.ok) done++;
+        else fail.push(id + (d.j && d.j.error ? ('：' + d.j.error) : ''));
+        next();
+      }).catch(function (e) { fail.push(id + '：' + e.message); next(); });
+    };
+    next();
   },
 
   _applyEditControls: function () {
