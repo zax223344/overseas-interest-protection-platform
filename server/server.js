@@ -466,6 +466,75 @@ function _govZhDigest(i, maxLen) {
   const src = String(i.source || '待核').replace(/https?:\/\/\S+/g, '').replace(/[·\s]*[\w.\-]+\.(com|net|org|cn|io|ru|fr|de|uk|info|news)\b/gi, '').replace(/[·\s]{2,}/g, ' ').trim() || '待核';
   return (c ? c + '方向' : '相关方向') + '监测到该事件，原文为外文语种、正文摘录从略（信源' + src + '，采集编号' + (i.id || '—') + '）';
 }
+/* ===== 2026-09-01 简报交互复合化：用户可向简报增/删采集库条目 ===== */
+function _reportEventCountryGlobal(i) {
+  const t = String((i && i.title) || '');
+  const c = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t);
+  return c || String((i && i.country) || '');
+}
+function _buildItemFromIntel(r, manualFlag) {
+  const j = r.data_json || {};
+  const title = j.title_zh || r.title || '';
+  const country = r.country || j.country_cn || '';
+  const item = {
+    id: r.id, type: r.data_type, title: title, country: country,
+    eventCountry: _reportEventCountryGlobal({ title: title, country: country }),
+    severity: j.level_norm || r.severity || 'yellow', source: r.source || j.source || '',
+    time: j.publish_time || r.event_date || '',
+    url: j.url || '',
+    digest: String(j.content_zh || j.summary || j.content || '')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+      .replace(/<[^>]*>/g, ' ').replace(/<[^>]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+    china: scrapers.isChinaRelatedStrict((r.title || '') + ' ' + (j.title_zh || '')),
+    assets: j.asset_tags || [], cred: j.credibility || '', corr: j.corroboration || 0,
+    negative: j._chinaNegative === true || j._chinaNegative === 'true',
+    _sig: j._eventSig || '',
+    manual: !!manualFlag
+  };
+  return item;
+}
+/* 根据条目属性决定应归入哪个交互节（与 _generateDailyReport 互斥优先级一致） */
+function _assignSectionKey(item) {
+  if (item.severity === 'red' && (item.china || item.negative)) return 'red';
+  if (item.assets && item.assets.length) return 'asset';
+  if (item.china) return 'china';
+  if (item.negative) return 'neg';
+  if (item.type === 'sanctions_data') return 'sanc';
+  if ((item.corr || 0) >= 2) return 'corr';
+  return 'types12:' + item.type;
+}
+function _recomputeSummary(items, sourceCount) {
+  const chinaN = items.filter(i => i.china && !i.negative).length;
+  const negN = items.filter(i => i.negative).length;
+  const redN = items.filter(i => i.severity === 'red' && (i.china || i.negative)).length;
+  const byType = {}; items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+  const byCountry = {}; items.forEach(i => { const c = i.eventCountry || i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+  const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  return { total: items.length, china: chinaN, negative: negN, red: redN, sources: sourceCount || 0, byType, topCountries };
+}
+/* 将人工编辑覆盖层按 item.id 重映射到新的 items 数组（保留用户的标题/摘要修改） */
+function _remapEditedById(oldEdited, newItems) {
+  if (!oldEdited || !Array.isArray(oldEdited.items)) return null;
+  const idToNewIdx = {}; newItems.forEach((it, n) => { if (it && it.id != null) idToNewIdx[it.id] = n; });
+  const oldItems = oldEdited.items;
+  newItems.forEach(it => {
+    const old = oldItems.find(o => o && o.id === it.id);
+    if (old) { it.title = old.title; it.digest = old.digest; }
+  });
+  const oldIdxToId = {}; oldItems.forEach((it, i) => { if (it && it.id != null) oldIdxToId[i] = it.id; });
+  const oldSections = oldEdited.sections || [];
+  const newSections = oldSections.map(s => {
+    const ns = Object.assign({}, s);
+    ns.items = (s.items || []).map(oldIx => { const id = oldIdxToId[oldIx]; return id != null ? idToNewIdx[id] : undefined; }).filter(v => v !== undefined);
+    if (s.subs) ns.subs = s.subs.map(sub => {
+      const ns2 = Object.assign({}, sub);
+      ns2.items = (sub.items || []).map(oldIx => { const id = oldIdxToId[oldIx]; return id != null ? idToNewIdx[id] : undefined; }).filter(v => v !== undefined);
+      return ns2;
+    });
+    return ns;
+  });
+  return { items: newItems, sections: newSections };
+}
 /* ===== 2026-09-01 日报三大升级（用户指令：条目可交互可修改 + 公文格式报告 + PDF/Word 导出）=====
  * 结构化重构：_generateDailyReport 不再直接拼最终 HTML，而是产出
  *   items   = 当日全部独立事件（含标题/摘要/来源/原文URL/级别/涉华标记/资产标签等完整字段）
@@ -2944,6 +3013,141 @@ app.delete('/api/reports/daily/:date/edits', authMiddleware, async (req, res) =>
       revision = COALESCE(revision, '[]'::jsonb) || $4::jsonb WHERE report_date=$1`,
       [date, html, govHtml, JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '撤销人工编辑，恢复自动生成版本' })]);
     res.json({ ok: true, date });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ===== 2026-09-01 简报交互复合化：用户可向简报增/删采集库条目（保持 manual_edit / revision）===== */
+/* 候选采集库条目：报告当日采集范围内、未在当前简报 items 列表中、可按 q/type/country/severity 筛选分页 */
+app.get('/api/reports/daily/:date/candidates', authMiddleware, async (req, res) => {
+  try {
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+    const parts = date.split('-').map(Number);
+    const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+    const end = new Date(start.getTime() + 24 * 3600 * 1000);
+    const q = String((req.query.q || '')).trim();
+    const fType = String((req.query.type || '')).trim();
+    const fCountry = String((req.query.country || '')).trim();
+    const fSev = String((req.query.severity || '')).trim();
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    /* 取当前简报已包含的 ID，用于排除 */
+    const cur = await query(`SELECT items FROM daily_reports WHERE report_date=$1`, [date]);
+    let inIds = [];
+    if (cur.rows.length && Array.isArray(cur.rows[0].items)) {
+      cur.rows[0].items.forEach(it => { if (it && it.id != null) inIds.push(it.id); });
+    }
+    const sqlParams = [start, end];
+    let where = `WHERE collect_time >= $1 AND collect_time < $2 AND audit_status='approved'`;
+    if (q) { sqlParams.push('%' + q + '%'); where += ' AND (title ILIKE $' + sqlParams.length + ' OR data_json->>\'title_zh\' ILIKE $' + sqlParams.length + ' OR data_json->>\'content_zh\' ILIKE $' + sqlParams.length + ')'; }
+    if (fType) { sqlParams.push(fType); where += ' AND data_type = $' + sqlParams.length; }
+    if (fSev) { sqlParams.push(fSev); where += ' AND (data_json->>\'level_norm\' = $' + sqlParams.length + ' OR severity = $' + sqlParams.length + ')'; }
+    if (fCountry) { sqlParams.push('%' + fCountry + '%'); where += ' AND (country ILIKE $' + sqlParams.length + ' OR data_json->>\'country_cn\' ILIKE $' + sqlParams.length + ' OR title ILIKE $' + sqlParams.length + ')'; }
+    if (inIds.length) {
+      sqlParams.push(inIds);
+      where += ' AND id <> ALL($' + sqlParams.length + '::bigint[])';
+    }
+    const countSql = 'SELECT COUNT(*) c FROM intel_data ' + where;
+    const cntRes = await query(countSql, sqlParams);
+    const total = parseInt(cntRes.rows[0].c, 10);
+    sqlParams.push(limit); sqlParams.push(offset);
+    const listSql = 'SELECT id, data_type, title, country, severity, source, event_date, collect_time, data_json FROM intel_data ' + where
+      + ' ORDER BY collect_time DESC LIMIT $' + (sqlParams.length - 1) + ' OFFSET $' + sqlParams.length;
+    const list = await query(listSql, sqlParams);
+    const items = list.rows.map(r => {
+      const j = r.data_json || {};
+      return {
+        id: r.id, type: r.data_type, title: j.title_zh || r.title || '', country: r.country || j.country_cn || '',
+        eventCountry: _reportEventCountryGlobal({ title: j.title_zh || r.title || '', country: r.country || j.country_cn || '' }),
+        severity: j.level_norm || r.severity || 'yellow', source: r.source || j.source || '',
+        time: j.publish_time || r.event_date || '',
+        preview: String(j.content_zh || j.summary || j.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200),
+        china: scrapers.isChinaRelatedStrict((r.title || '') + ' ' + (j.title_zh || ''))
+      };
+    });
+    res.json({ total, limit, offset, items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+/* 添加条目到简报：body {intelId}，按 _assignSectionKey 自动归入交互节；手动标记 manual:true；
+ * edited 覆盖层按 item.id 重映射保留用户的标题/摘要修改。 */
+app.post('/api/reports/daily/:date/items/add', express.json(), authMiddleware, async (req, res) => {
+  try {
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+    const intelId = parseInt((req.body && req.body.intelId), 10);
+    if (!intelId) return res.status(400).json({ error: '参数 intelId 缺失' });
+    const ir = await query("SELECT id, data_type, title, country, severity, source, event_date, collect_time, data_json FROM intel_data WHERE id=$1 AND audit_status='approved'", [intelId]);
+    if (!ir.rows.length) return res.status(404).json({ error: '采集条目不存在或未审核' });
+    const cur = await query(`SELECT items, sections, meta FROM daily_reports WHERE report_date=$1`, [date]);
+    if (!cur.rows.length) return res.status(404).json({ error: '该日简报不存在' });
+    let items = Array.isArray(cur.rows[0].items) ? cur.rows[0].items.slice() : [];
+    let sections = Array.isArray(cur.rows[0].sections) ? cur.rows[0].sections.map(s => Object.assign({}, s, { items: (s.items || []).slice(), subs: (s.subs || []).map(sub => Object.assign({}, sub, { items: (sub.items || []).slice() })) })) : [];
+    const meta = cur.rows[0].meta || {};
+    /* 防重复：若 id 已存在则直接拒绝（PG bigint 经 JSON 序列化变字符串，统一按字符串比较） */
+    if (items.some(it => it && String(it.id) === String(intelId))) return res.status(409).json({ error: '该条目已在简报中', id: intelId });
+    const newItem = _buildItemFromIntel(ir.rows[0], true);
+    const newIdx = items.length;
+    items.push(newItem);
+    /* 归入相应交互节 */
+    const key = _assignSectionKey(newItem);
+    if (key.indexOf('types12:') === 0) {
+      const t = key.slice(8);
+      let sec = sections.find(s => s.key === 'types12');
+      if (!sec) { sec = { key: 'types12', icon: '🗂️', title: '十二类情报全景', subs: [], emptyText: '' }; sections.push(sec); }
+      let sub = (sec.subs || []).find(sb => sb.type === t);
+      if (!sub) { sub = { type: t, items: [] }; sec.subs = sec.subs || []; sec.subs.push(sub); }
+      sub.items.push(newIdx);
+    } else {
+      let sec = sections.find(s => s.key === key);
+      if (!sec) { sec = { key: key, icon: '', title: key, items: [], emptyText: '' }; sections.push(sec); }
+      sec.items.push(newIdx);
+    }
+    /* edited 按 id 重映射（保留人工标题/摘要修改） */
+    const curEdit = await query(`SELECT edited FROM daily_reports WHERE report_date=$1`, [date]);
+    const oldEdited = curEdit.rows.length ? curEdit.rows[0].edited : null;
+    const remapped = _remapEditedById(oldEdited, items) || { items: items, sections: sections };
+    const html = _renderDailyReportHTML(remapped.items, remapped.sections, meta);
+    const govHtml = _buildGovDailyReport(date, remapped.items, meta, meta.judg || [], meta.sugg || []);
+    const summary = _recomputeSummary(items, meta.sourceCount);
+    await query(`UPDATE daily_reports SET items=$2, sections=$3, edited=$4, manual_edit=TRUE, html=$5, gov_html=$6, summary=$7,
+      revision = COALESCE(revision, '[]'::jsonb) || $8::jsonb WHERE report_date=$1`,
+      [date, JSON.stringify(items), JSON.stringify(sections), JSON.stringify(remapped), html, govHtml, JSON.stringify(summary),
+        JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '手动添加条目：采集编号 ' + intelId })]);
+    res.json({ ok: true, date, id: intelId, idx: newIdx, section: key });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+/* 从简报移除条目：body {idx}，按 idx 拼接 items、更新所有 section.items、重映射 edited、刷新渲染 */
+app.post('/api/reports/daily/:date/items/remove', express.json(), authMiddleware, async (req, res) => {
+  try {
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+    const idx = parseInt((req.body && req.body.idx), 10);
+    if (!Number.isInteger(idx) || idx < 0) return res.status(400).json({ error: '参数 idx 非法' });
+    const cur = await query(`SELECT items, sections, meta FROM daily_reports WHERE report_date=$1`, [date]);
+    if (!cur.rows.length) return res.status(404).json({ error: '该日简报不存在' });
+    let items = Array.isArray(cur.rows[0].items) ? cur.rows[0].items.slice() : [];
+    let sections = Array.isArray(cur.rows[0].sections) ? cur.rows[0].sections.map(s => Object.assign({}, s, { items: (s.items || []).slice(), subs: (s.subs || []).map(sub => Object.assign({}, sub, { items: (sub.items || []).slice() })) })) : [];
+    const meta = cur.rows[0].meta || {};
+    if (idx >= items.length) return res.status(400).json({ error: 'idx 越界' });
+    const removedId = items[idx].id;
+    items.splice(idx, 1);
+    /* section items 重映射：删除 idx，所有 > idx 的 -1；移除该 idx 引用 */
+    const remap = i => (i === idx ? null : (i > idx ? i - 1 : i));
+    sections.forEach(s => {
+      s.items = (s.items || []).map(remap).filter(v => v !== null && v !== undefined);
+      if (s.subs) s.subs.forEach(sub => { sub.items = (sub.items || []).map(remap).filter(v => v !== null && v !== undefined); });
+    });
+    const curEdit = await query(`SELECT edited FROM daily_reports WHERE report_date=$1`, [date]);
+    const oldEdited = curEdit.rows.length ? curEdit.rows[0].edited : null;
+    const remapped = _remapEditedById(oldEdited, items) || { items: items, sections: sections };
+    const html = _renderDailyReportHTML(remapped.items, remapped.sections, meta);
+    const govHtml = _buildGovDailyReport(date, remapped.items, meta, meta.judg || [], meta.sugg || []);
+    const summary = _recomputeSummary(items, meta.sourceCount);
+    await query(`UPDATE daily_reports SET items=$2, sections=$3, edited=$4, manual_edit=TRUE, html=$5, gov_html=$6, summary=$7,
+      revision = COALESCE(revision, '[]'::jsonb) || $8::jsonb WHERE report_date=$1`,
+      [date, JSON.stringify(items), JSON.stringify(sections), JSON.stringify(remapped), html, govHtml, JSON.stringify(summary),
+        JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '手动移除条目：原采集编号 ' + (removedId || '—') })]);
+    res.json({ ok: true, date, removedId, removedIdx: idx });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
