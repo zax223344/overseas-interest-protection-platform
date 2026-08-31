@@ -2775,7 +2775,18 @@ app.post('/api/threatroom/collect', async (req, res) => {
         inserted = (r2 && r2.inserted) || 0;
       }
       console.log('[THREATROOM] 专项采集 ' + q + '（' + type + '）：检索 ' + arts.length + ' / 过滤后 ' + batch.length + ' / 入库 ' + inserted + ' / 前置拒 ' + rejected + '，耗时 ' + (Date.now() - t0) + 'ms');
-      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, ms: Date.now() - t0 });
+      /* v6（任务 #517 用户指令「要全网的数据，不是数据库的数据」）：把本次通过双要素闸的全网
+       * 实时结果随响应直出——无论 URL 是否已在库（已入库条目仍是本轮全网检索命中的活数据），
+       * 前端优先渲染 fresh，库内 GET data 仅作补充分区 */
+      const fresh = batch.slice(0, 60).map(it => ({
+        title: it.title || '', title_zh: it.title_zh || '', url: it.url || '',
+        source: it.source || '', country: it.country || '', country_cn: it.country_cn || '',
+        description: String(it.description || it.content || '').slice(0, 600),
+        publish_time: it.publish_time || it.publishedAt || it.date || '',
+        data_type: it.data_type || '', chinaRelated: it.chinaRelated === true,
+        level: it.level || '', _web: true
+      }));
+      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, ms: Date.now() - t0, fresh });
     } finally {
       _threatroomBusyUntil = 0; /* 采集结束即解锁（异常也解锁，防止 5min 假锁） */
     }

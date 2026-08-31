@@ -594,7 +594,7 @@ var THREATROOM = {
     var e = this._detectEntity(raw);
     if (!e) { this._toast('请输入实体名称（国家 / 组织 / 项目 / 关键词）'); return; }
     this._busy = true;
-    this._entity = e; this._items = []; this._collect = null;
+    this._entity = e; this._items = []; this._collect = null; this._fresh = [];
     var self = this;
     var rep = document.getElementById('tr-rep');
     if (rep) { rep.style.display = 'none'; rep.innerHTML = ''; }
@@ -614,6 +614,7 @@ var THREATROOM = {
     }).then(function (r) { return r.ok ? r.json() : { ok: false, error: 'HTTP ' + r.status }; })
       .then(function (j) {
         self._collect = j;
+        self._fresh = (j && j.ok && Array.isArray(j.fresh)) ? j.fresh : [];
         /* 服务端权威实体类型同步（gdCode 自动升级：前端 COUNTRIES 未收录的国家，服务端已按国家采集） */
         if (j && j.ok && j.type && j.type !== self._entity.type) { self._entity.type = j.type; }
         /* 阶段二完成 → 阶段三：库内联动 */
@@ -628,9 +629,13 @@ var THREATROOM = {
       })
       .then(function (r) { return r.ok ? r.json() : []; })
       .then(function (items) {
-        self._items = Array.isArray(items) ? items : [];
+        var dbItems = Array.isArray(items) ? items : [];
+        /* v6（任务 #517）：本轮全网实时结果优先——collect 直出的 fresh 条目（已过双要素闸
+         * +翻译+富化）排最前带「🌐 本次全网」徽标，库内条目按 URL/标题去重后作补充 */
+        self._items = self._mergeFresh(dbItems);
+        var webN = (self._fresh || []).length, dbN = self._items.length - webN;
         /* 阶段四：生成报告 */
-        self._stage('库内联动 ' + self._items.length + ' 条 → 生成态势预警分析报告…');
+        self._stage('全网实时命中 ' + webN + ' 条 + 库内联动补充 ' + dbN + ' 条 → 生成态势预警分析报告…');
         setTimeout(function () {
           self._renderReport();
           self._stage(null); /* 完成隐藏进度条 */
@@ -649,6 +654,23 @@ var THREATROOM = {
         self._busy = false;
         self._toast('采集失败：' + self._esc(err.message || String(err)) + '（GDELT 可能限流，稍后重试；也可直接查库内数据）');
       });
+  },
+
+  /* fresh（本轮全网检索直出）与库内条目合并：fresh 在前，URL/标题去重防重复卡 */
+  _mergeFresh: function (dbItems) {
+    var fresh = (this._fresh || []).filter(function (x) { return x && (x.title || x.url); });
+    if (!fresh.length) return dbItems;
+    var seen = {}, out = [];
+    fresh.forEach(function (it) {
+      var k = it.url || ('t:' + String(it.title || ''));
+      if (seen[k]) return; seen[k] = 1;
+      it._web = true; out.push(it);
+    });
+    dbItems.forEach(function (it) {
+      var k = it.url || ('t:' + String(it.title || ''));
+      if (seen[k]) return; seen[k] = 1; out.push(it);
+    });
+    return out;
   },
 
   _stage: function (html) {
@@ -758,7 +780,9 @@ var THREATROOM = {
     html += this._kpi('橙色预警', st.orange + ' 条', 'var(--orange,#f59e0b)');
     html += this._kpi('涉华关联', st.cn + ' 条', 'var(--orange,#f59e0b)');
     html += this._kpi('核心威胁', st.core + ' 条', 'var(--red,#ef4444)');
-    if (this._collect && this._collect.ok) html += this._kpi('本轮新采集入库', this._collect.inserted + ' / ' + this._collect.collected + ' 条', 'var(--green,#22c55e)');
+    var webN = this._items.filter(function (x) { return x._web; }).length;
+    if (this._fresh && this._fresh.length) html += this._kpi('本轮全网命中', this._fresh.length + ' 条', 'var(--green,#22c55e)');
+    if (this._collect && this._collect.ok) html += this._kpi('本轮新采集入库', this._collect.inserted + ' / ' + this._collect.collected + ' 条', 'var(--cyan,#00d4ff)');
     html += '</div>';
     /* v4：主题→外文关键字链路（用户铁律：引擎是中转点，把主题译成外文全网碰撞） */
     if (this._collect && this._collect.ok && this._collect.keywords && this._collect.keywords.length) {
@@ -872,23 +896,24 @@ var THREATROOM = {
 
     /* ── 情报卡片流 ── */
     html += '<div class="card" style="padding:12px">';
-    html += '<div class="card-tt"><span class="ic">📡</span>专项情报流<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">' + st.n + ' 条 · 点击查看详情 · 实体词已高亮</span></div>';
+    html += '<div class="card-tt"><span class="ic">📡</span>专项情报流<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3,#7a8aa3)">' + st.n + ' 条（🌐 本次全网 ' + webN + ' · 库内联动 ' + (st.n - webN) + '）· 点击查看详情 · 实体词已高亮</span></div>';
     var feed = this._items.slice(0, 80);
     if (feed.length) {
       html += '<div style="margin-top:8px;max-height:520px;overflow-y:auto" id="tr-feed">';
       feed.forEach(function (it) {
         var lc = THREATROOM._lvColor(it.level || '');
-        html += '<div class="tr-item" style="border-left-color:' + lc + '" data-i="' + THREATROOM._idx(it) + '">' +
+        html += '<div class="tr-item" style="border-left-color:' + (it._web ? 'var(--green,#22c55e)' : lc) + '" data-i="' + THREATROOM._idx(it) + '">' +
           '<div class="t">' + THREATROOM._hl(THREATROOM._title(it), e) + '</div>' +
           '<div class="m"><span>' + THREATROOM._esc(it.source || '—') + '</span><span>' + THREATROOM._when(it) + '</span>' +
           '<span>' + (THREATROOM.DT_CN[it.data_type] || it.data_type || '开源情报') + '</span>' +
           (it.country ? '<span>📍' + THREATROOM._esc(it.country) + '</span>' : '') +
+          (it._web ? '<span class="tr-badge" style="color:var(--green,#22c55e);border-color:var(--green,#22c55e)55">🌐 本次全网</span>' : '') +
           (it.chinaRelated === true ? '<span class="tr-badge" style="color:var(--orange,#f59e0b);border-color:var(--orange,#f59e0b)55">涉华</span>' : '') +
           (it.is_core ? '<span class="tr-badge" style="color:var(--red,#ef4444);border-color:var(--red,#ef4444)55">★核心</span>' : '') +
           (it.level ? '<span class="tr-badge" style="color:' + lc + ';border-color:' + lc + '55">' + THREATROOM._lvCN(it.level) + '</span>' : '') + '</div></div>';
       });
       html += '</div>';
-    } else html += '<div style="font-size:12px;color:var(--text3,#7a8aa3);padding:14px 0">通道预留：库内暂无该实体数据。点击「重新采集」或在顶部换关键词重试。</div>';
+    } else html += '<div style="font-size:12px;color:var(--text3,#7a8aa3);padding:14px 0">通道预留：本轮全网与库内均无该主题数据。点击「重新采集」或在顶部换关键词重试。</div>';
     html += '</div>';
 
     rep.innerHTML = html;
