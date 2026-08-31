@@ -4576,6 +4576,31 @@ function _saveDailyStats() {
   } catch (e) {}
 }
 let _dailyStats = _loadDailyStats() || { date: _todayKey(), total: 0, linked: 0, china: 0, chinaNegative: 0, rounds: 0, lastRound: null };
+
+/* ===== 闸门拒收漏斗累加器（2026-08-31 任务 #521）=====
+ * 用户原话：「今天采集了近600条数据，为什么只有100多条进入了预警中心」——
+ * 实际是各闸门合理去重（事件签名重复/URL重复是正常防刷屏），但拒收明细只打 console 不暴露，
+ * 用户看不到每类闸门拒了多少条 → 误以为「系统漏了 500 条」。
+ * 改造：在 _ingestLinkedItems 内部把 11 类拒收累加到 _rejectsSession，/api/media/daily-stats 暴露给前端可视化。 */
+let _rejectsSession = _loadRejectsSession() || {
+  date: _todayKey(),
+  collected: 0, linked: 0,            /* 原始抓取数 / 过兴趣关联闸门数（用户看到的"采集 600"实际是 linked） */
+  inserted: 0,                         /* 真正入库数 */
+  dupUrl: 0,                           /* 库内已有 URL */
+  dupTitle: 0,                         /* 标题/实体重复 */
+  dupEvent: 0,                         /* 事件签名重复（同事件多源/多进展） */
+  domestic: 0,                         /* 国内数据被 chinaOverseasGate 拦 */
+  badTitle: 0,                         /* 烂标题（翻译质量/外文主体） */
+  historical: 0,                       /* 历史旧案回顾否决 */
+  stale: 0,                            /* 超 24h 旧闻 */
+  ruUa: 0,                             /* 俄乌超配额 */
+  catStruct: 0,                        /* 类别结构帽让位 */
+  noUrl: 0,                            /* 无 url/标题 */
+  insertErr: 0,                        /* 插入失败 */
+  bySource: {}                         /* 各 sourceType 分桶拒收 */
+};
+function _loadRejectsSession() { try { const p = require('path').join(__dirname, 'rejects_session.json'); if (require('fs').existsSync(p)) { return JSON.parse(require('fs').readFileSync(p, 'utf8')); } } catch (e) {} return null; }
+function _saveRejectsSession() { try { const p = require('path').join(__dirname, 'rejects_session.json'); require('fs').writeFileSync(p, JSON.stringify(_rejectsSession)); } catch (e) {} }
 if (_dailyStats.date !== _todayKey()) {
   _dailyStats = { date: _todayKey(), total: 0, linked: 0, china: 0, chinaNegative: 0, rounds: 0, lastRound: null };
 }
@@ -4710,6 +4735,15 @@ async function _ingestLinkedItems(items, tag, note) {
       dup.rows.forEach(r => { if (r.url) existing.add(r.url); });
     }
     console.log('[' + tag + '] urls=' + urls.length + ' existing=' + existing.size);
+    /* 拒收漏斗累加（2026-08-31 任务 #521）：在闸门判定的同时把分类数累加到 _rejectsSession */
+    const _rj = _rejectsSession; const _d = _todayKey();
+    if (_rj.date !== _d) { _rj.date = _d; _rj.collected = 0; _rj.linked = 0; _rj.inserted = 0; _rj.dupUrl = 0; _rj.dupTitle = 0; _rj.dupEvent = 0; _rj.domestic = 0; _rj.badTitle = 0; _rj.historical = 0; _rj.stale = 0; _rj.ruUa = 0; _rj.catStruct = 0; _rj.noUrl = 0; _rj.insertErr = 0; _rj.bySource = {}; }
+    _rj.linked += linked.length;
+    _rj.collected += items.length;     /* 原始抓取数 = 调用方传入的 items 数组长度（含被 gate 过滤掉的） */
+    if (!_rj.bySource[tag]) _rj.bySource[tag] = { collected: 0, linked: 0, inserted: 0, rejected: 0 };
+    _rj.bySource[tag].linked += linked.length;
+    _rj.bySource[tag].collected += items.length;
+    const _bumpRej = (code) => { _rj.bySource[tag].rejected++; if (code === 'dup-url') _rj.dupUrl++; else if (code === 'dup-title' || code === 'dup-title-zh' || code === 'dup-entity') _rj.dupTitle++; else if (code === 'dup-event' || code === 'event-flood') _rj.dupEvent++; else if (code === 'domestic') _rj.domestic++; else if (code === 'bad-title') _rj.badTitle++; else if (code === 'historical') _rj.historical++; else if (code === 'stale') _rj.stale++; else if (code === 'ruua-quota' || code === 'dominant-quota') _rj.ruUa++; else if (code === 'cat-struct') _rj.catStruct++; else if (code === 'no-url') _rj.noUrl++; else if (code === 'insert-err') _rj.insertErr++; };
     let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0, skippedCatStruct = 0;
     let chinaInserted = 0, chinaNegativeInserted = 0;
     const titleKeys = await _getRecentTitleKeys();
@@ -4718,15 +4752,15 @@ async function _ingestLinkedItems(items, tag, note) {
       const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
       if (!gate.ok) {
         gate.code.forEach(c => {
-          if (c === 'no-url-title') skippedNoUrl++;
-          else if (c === 'url-dup') skippedDup++;
-          else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') skippedDupTitle++;
-          else if (c === 'event-sig-dup') skippedEventSig++;
-          else if (c === 'event-flood') skippedEventSig++; /* 事件簇变体刷屏（计数并入签名重复便于观察） */
-          else if (c === 'cat-structure') skippedCatStruct++; /* 类别结构帽：安全类超占比让位弱类 */
-          else if (c === 'domestic-china') skippedDomestic++;
-          else if (c === 'bad-title') skippedBadTitle++;
-          else if (c === 'historical-retrospect') skippedHistorical++;
+          if (c === 'no-url-title') { skippedNoUrl++; _bumpRej('no-url'); }
+          else if (c === 'url-dup') { skippedDup++; _bumpRej('dup-url'); }
+          else if (c === 'title-dup' || c === 'title-zh-dup' || c === 'entity-dup') { skippedDupTitle++; _bumpRej('dup-title'); }
+          else if (c === 'event-sig-dup') { skippedEventSig++; _bumpRej('dup-event'); }
+          else if (c === 'event-flood') { skippedEventSig++; _bumpRej('event-flood'); } /* 事件簇变体刷屏（计数并入签名重复便于观察） */
+          else if (c === 'cat-structure') { skippedCatStruct++; _bumpRej('cat-struct'); } /* 类别结构帽：安全类超占比让位弱类 */
+          else if (c === 'domestic-china') { skippedDomestic++; _bumpRej('domestic'); }
+          else if (c === 'bad-title') { skippedBadTitle++; _bumpRej('bad-title'); }
+          else if (c === 'historical-retrospect') { skippedHistorical++; _bumpRej('historical'); }
         });
         /* 2026-08-28：被拦条目入非预警数据池（url/标题重复除外——同条已有库内版本，入池即刷屏） */
         if (!gate.code.includes('url-dup') && !gate.code.includes('title-dup') && !gate.code.includes('title-zh-dup') && !gate.code.includes('entity-dup')) {
@@ -4734,9 +4768,9 @@ async function _ingestLinkedItems(items, tag, note) {
         }
         continue;
       }
-      if (!_isFreshEnough(it)) { skippedStale++; _sidepool(it, 'stale-over24h', tag); continue; }
-      if (!_ruUaQuotaOk(it)) { skippedRuUa++; _sidepool(it, 'ruua-quota', tag); continue; }
-      if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; _sidepool(it, 'dominant-quota', tag); continue; }
+      if (!_isFreshEnough(it)) { skippedStale++; _bumpRej('stale'); _sidepool(it, 'stale-over24h', tag); continue; }
+      if (!_ruUaQuotaOk(it)) { skippedRuUa++; _bumpRej('ruua-quota'); _sidepool(it, 'ruua-quota', tag); continue; }
+      if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; _bumpRej('dominant-quota'); _sidepool(it, 'dominant-quota', tag); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
         /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
@@ -4764,12 +4798,14 @@ async function _ingestLinkedItems(items, tag, note) {
         );
         if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
         inserted++;
+        _rj.inserted++; _rj.bySource[tag].inserted++;
         if (_isChinaNegative(it)) chinaNegativeInserted++;
         else if (_isChinaLinked(it)) chinaInserted++;
-      } catch (e) { insertErr++; console.warn('[' + tag + '] INSERT ERR:', e.message); }
+      } catch (e) { insertErr++; _bumpRej('insert-err'); console.warn('[' + tag + '] INSERT ERR:', e.message); }
     }
     _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted);
     _logDailyStats();
+    _saveRejectsSession();
     console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，类别结构帽 ' + skippedCatStruct + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
     return { inserted };
   } catch (e) {
@@ -6849,6 +6885,28 @@ app.get('/api/media/daily-stats', async (req, res) => {
       gaps: { total: Math.max(0, 500 - Math.max(s.total, dbTotal)), china: Math.max(0, 80 - Math.max(s.china, dbChina)), chinaNegative: Math.max(0, 50 - Math.max(s.chinaNegative, dbChinaNeg)) },
       patrol: _patrolState, /* 巡检哨兵状态（2026-08-15）：档位/最近动作对前端可见 */
       bri: { total: _briStats.total, pakistan: _briStats.pakistan, rounds: _briStats.rounds, lastRun: _briStats.lastRun, targetTotal: 100, targetPakistan: 40 },
+      /* 闸门拒收漏斗（2026-08-31 任务 #521）：用户问"600 采集 100 入库"——
+       * 实际是各闸门合理去重（事件签名重复/URL 重复是正常防刷屏），现在暴露给前端可视化 */
+      funnel: {
+        date: _rejectsSession.date,
+        collected: _rejectsSession.collected,        /* 原始抓取数（用户看到的"采集 X"） */
+        linked: _rejectsSession.linked,              /* 过兴趣关联闸后 */
+        inserted: _rejectsSession.inserted,          /* 真正入库数 */
+        rejected: _rejectsSession.collected - _rejectsSession.inserted,
+        /* 拒收分桶 */
+        dupUrl: _rejectsSession.dupUrl,              /* 库内已有 URL */
+        dupTitle: _rejectsSession.dupTitle,          /* 标题/实体重复 */
+        dupEvent: _rejectsSession.dupEvent,          /* 事件签名重复（防刷屏，正常的同事件多源去重） */
+        domestic: _rejectsSession.domestic,          /* 国内数据被 chinaOverseasGate 拦 */
+        badTitle: _rejectsSession.badTitle,          /* 烂标题（翻译质量/外文主体） */
+        historical: _rejectsSession.historical,      /* 历史旧案回顾否决 */
+        stale: _rejectsSession.stale,                /* 超 24h 旧闻 */
+        ruUa: _rejectsSession.ruUa,                  /* 俄乌超配额 */
+        catStruct: _rejectsSession.catStruct,        /* 类别结构帽让位 */
+        noUrl: _rejectsSession.noUrl,
+        insertErr: _rejectsSession.insertErr,
+        bySource: _rejectsSession.bySource
+      },
       nextRoundSec: GLOBAL_MEDIA_INTERVAL_MS / 1000
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }

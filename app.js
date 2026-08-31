@@ -8939,6 +8939,7 @@ const SITUATION={
               self._dailyStats.nextRoundSec=res.nextRoundSec||30;
               self._dailyStats.patrol=res.patrol||null;
               self._dailyStats.bri=res.bri||null;
+              self._dailyStats.funnel=res.funnel||null;   /* 采集漏斗（#521）：拒收分桶可视化 */
               self.renderDailyStatsMini();
             }
           }catch(e){}
@@ -8975,6 +8976,40 @@ const SITUATION={
         var actTxt=(ds.patrol.actions&&ds.patrol.actions.length)?' · 最近动作: '+ds.patrol.actions[ds.patrol.actions.length-1]:'';
         patrolTxt='<span style="color:var(--text3)" title="30分钟巡检哨兵：采集落后自动升档加速，空转自动修复">🛡️哨兵 '+ds.patrol.gear+actTxt+'</span>';
       }
+      /* 采集漏斗（2026-08-31 任务 #521）：用户原话"600 采集 100 入库"——实际是各闸门合理去重。
+       * 把拒收分桶画成可点击的漏斗，让用户看清 600 是怎么漏成 100 的，不是"系统漏了 500 条"。 */
+        var funnelHtml='';
+      if(ds.funnel && (ds.funnel.collected>0 || ds.funnel.inserted>0)){
+        var f=ds.funnel;
+        var col=Math.max(0,f.collected-f.inserted);
+        /* 拒收分桶标签——给每类一个白话注释 */
+        var buckets=[
+          {k:'dupEvent',n:f.dupEvent, ic:'🔁', l:'同事件多源', tip:'同一恐袭/绑架不同来源报道去重（防刷屏，正常）'},
+          {k:'dupUrl',n:f.dupUrl, ic:'🔗', l:'URL已入库', tip:'库内已有该 URL（之前几小时入过，正常）'},
+          {k:'dupTitle',n:f.dupTitle, ic:'📑', l:'标题重复', tip:'标题/实体重复（防同条刷屏，正常）'},
+          {k:'stale',n:f.stale, ic:'⏰', l:'超24h旧闻', tip:'发布时间超过24小时（铁律"杜绝旧闻刷屏"）'},
+          {k:'badTitle',n:f.badTitle, ic:'🗑', l:'烂标题', tip:'翻译质量不达标（半中半英/纯外文主体/机翻残留）'},
+          {k:'domestic',n:f.domestic, ic:'🇨🇳', l:'国内新闻', tip:'chinaOverseasGate 拦掉的纯国内新闻'},
+          {k:'ruUa',n:f.ruUa, ic:'🇷🇺', l:'俄乌超配', tip:'俄乌冲突配额超限（铁律每日≤15条）'},
+          {k:'historical',n:f.historical, ic:'📜', l:'历史旧案', tip:'N年前旧案回顾（铁律拒绝陈年旧事混入）'},
+          {k:'catStruct',n:f.catStruct, ic:'⚖', l:'类占比让位', tip:'类别结构帽：安全类当日占比超45%让位弱类'},
+          {k:'noUrl',n:f.noUrl, ic:'🚫', l:'无URL', tip:'无 url/标题（采集异常数据）'},
+          {k:'insertErr',n:f.insertErr, ic:'💥', l:'入库失败', tip:'PostgreSQL INSERT 异常'}
+        ];
+        var bucketHtml=buckets.filter(function(b){return b.n>0;}).sort(function(a,b){return b.n-a.n;}).map(function(b){
+          return '<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.05);font-size:9px;color:var(--text2)" title="'+b.tip+'">'+b.ic+' '+b.l+' <b style="color:var(--orange)">'+b.n+'</b></span>';
+        }).join('');
+        funnelHtml='<div class="funnel-row" style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;margin-bottom:4px;background:linear-gradient(90deg,rgba(255,165,0,0.06),rgba(0,212,255,0.06));border:1px solid rgba(255,165,0,0.18);border-radius:8px;font-size:11px">'+
+          '<span style="font-weight:700;color:var(--orange);cursor:pointer;user-select:none" onclick="var n=this.parentNode.querySelector(\'.funnel-detail\');if(n.style.display===\'none\'){n.style.display=\'flex\';this.textContent=\'🔽 采集漏斗\';}else{n.style.display=\'none\';this.textContent=\'▶ 采集漏斗\';}" title="点击展开/折叠 11 类闸门拒收分桶">▶ 采集漏斗</span>'+
+          '<span style="color:var(--text3)">采集 <b style="color:var(--text1)">'+f.collected+'</b></span>'+
+          '<span style="color:var(--text3)">→</span>'+
+          '<span style="color:var(--text3)">拒收 <b style="color:var(--orange)">'+col+'</b></span>'+
+          '<span style="color:var(--text3)">→</span>'+
+          '<span style="color:var(--text3)">入库 <b style="color:var(--green)">'+f.inserted+'</b></span>'+
+          '<span style="color:var(--text3);font-size:10px" title="拒收以同事件多源去重/URL已入库为主——同一恐袭/绑架的十几篇报道只留最优一条，属正常防刷屏去重，不是漏采。今日累计入库见上方「总量(全库)」">（拒收均为防刷屏去重 · 今日累计入库见上方指标）</span>'+
+          '<span class="funnel-detail" style="display:none;flex-basis:100%;flex-wrap:wrap;gap:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06)">'+bucketHtml+'</span>'+
+          '</div>';
+      }
       var html='<div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 10px;margin-bottom:4px;background:linear-gradient(90deg,rgba(0,212,255,0.08),rgba(255,51,85,0.06));border:1px solid rgba(0,212,255,0.15);border-radius:8px;font-size:11px">'+
         '<span style="font-weight:700;color:var(--text1)">📈 今日采集指标</span>'+
         '<span style="color:var(--text3)" title="全库口径：今日全类型实际入库，与顶栏「今日+N」同源">总量(全库) '+total+'/500 '+bar(totalPct,total>=500?'var(--green)':'var(--cyan)')+'</span>'+
@@ -8983,7 +9018,8 @@ const SITUATION={
         (ds.bri?'<span style="color:var(--text3)" title="一带一路/中巴经济走廊/中欧班列专项采集（每5分钟一轮）">🛤️BRI '+(ds.bri.total||0)+'/100 '+bar(Math.min(100,(ds.bri.total||0)),'var(--cyan)')+' 巴 '+(ds.bri.pakistan||0)+'/40</span>':'')+
         patrolTxt+
         '<span style="color:var(--text3);margin-left:auto">已跑 '+ds.rounds+' 轮 · 下轮 '+ds.nextRoundSec+'s</span>'+
-        '</div>';
+        '</div>'+
+        funnelHtml;
       var el=document.getElementById('sit-stats');
       if(el){
         var existing=el.querySelector('.daily-stats-mini');
