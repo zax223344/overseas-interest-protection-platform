@@ -6373,7 +6373,11 @@ async function _catGnewsRss(q, max) {
  *   无任何可感事件信号，不产生情报价值，不入库；
  * ② 非拉丁外文未翻译——孟加拉/乌克兰/罗马尼亚语等翻译链成功率低，翻译失败即拒绝
  *   （落库即中文铁律：不可读外文标题对中文预警平台是垃圾数据）。 */
-const _CAT_EVENT_RE = /死亡|遇难|身亡|伤亡|失踪|受伤|袭击|攻击|爆炸|枪击|交火|冲突|炮击|空袭|绑架|劫持|扣押|逮捕|拘留|制裁|管制|封禁|禁令|反倾销|政变|抗议|示威|骚乱|罢工|洪水|地震|海啸|台风|飓风|山火|干旱|塌方|溃坝|坠机|失事|沉船|火灾|疫情|撤离|撤侨|断供|停产|停运|封锁|中断|危机|紧张|对峙|通胀|贬值|违约|债务|破产|衰退|汇率|暴跌|暴涨|断网|宕机|漏洞|黑客|勒索|数据泄露|间谍|泄密|贿赂|腐败|丑闻|审判|判决|调查|指控|宵禁|边界|争端|选举|killed|dead|death|casualt|attack|bomb|blast|shoot|clash|conflict|kidnap|hostage|seiz|detain|arrest|sanction|embargo|tariff|coup|protest|riot|strike|unrest|flood|earthquake|typhoon|hurricane|wildfire|landslide|collapse|crash|outbreak|evacuat|crisis|inflation|devalu|default|bankrupt|recession|hacked|breach|ransom|spy|corrupt|scandal|investigat|indict|curfew|dispute|elect/i;
+const _CAT_EVENT_RE = /死亡|遇难|身亡|伤亡|失踪|受伤|袭击|攻击|爆炸|枪击|交火|冲突|炮击|空袭|绑架|劫持|扣押|逮捕|拘留|制裁|管制|封禁|禁令|反倾销|政变|抗议|示威|骚乱|罢工|洪水|地震|海啸|台风|飓风|山火|干旱|塌方|溃坝|坠机|失事|沉船|火灾|疫情|撤离|撤侨|断供|停产|停运|封锁|中断|危机|紧张|对峙|通胀|贬值|违约|债务|破产|衰退|汇率|暴跌|暴涨|断网|宕机|漏洞|黑客|勒索|数据泄露|间谍|泄密|贿赂|腐败|丑闻|审判|判决|调查|指控|宵禁|边界|争端|选举|killed|dead|death|casualt|attack|bomb|blast|shoot|clash|conflict|kidnap|hostage|seiz|detain|arrest|sanction|embargo|tariff|coup|protest|riot|strike|unrest|flood|earthquake|typhoon|hurricane|wildfire|landslide|collapse|crash|outbreak|evacuat|crisis|inflation|devalu|default|bankrupt|recession|hacked|breach|ransom|spy|corrupt|scandal|investigat|indict|curfew|dispute|elect|仲裁|诉讼|起诉|上诉|裁决|庭审|开庭|罚款|罚金|没收|查封|冻结|充公|引渡|通缉|越狱|走私|贩运|洗钱|诈骗|抢劫|谋杀|凶杀|暗杀|刺杀|戒严|军管|停电|限电|断电|停摆|停工|铁路|高铁|港口|管道|油田|矿井|大坝|电网|基础设施|网络攻击|网络防御|网络威胁|威胁|军演|演习|试射|导弹|无人机|部署|进驻|巡逻|军舰|军机|战机|防空|峰会|会谈|谈判|对话|条约|断交|驱逐|遣返|难民|饥荒|霍乱|瘟疫|疫苗|中毒|辐射|泄漏|污染|短缺|涨价|失业|崩盘|抛售|挤兑|lawsuit|litigat|tribunal|verdict|arbitrat|sued|extradit|smuggl|traffick|launder|fraud|robber|murder|homicide|assassin|blackout|outage|pipeline|railway|railroad|refinery|grid|cyber|malware|phishing|threat|missile|drone|deploy|troop|warship|shelling|offensiv|summit|talks|negotiat|treaty|expel|deport|refugee|famine|cholera|epidemic|vaccine|radiation|leak|spill|shortage|layoff|unemploy|freez|frozen|confiscat|expropriat|nationaliz|\b(?:fined|port|dam|trial)\b/i;
+/* 2026-09-01 #526 自锁解环：原词表暴力/灾害主导，而缺口调度器补采的恰是法律合规/经济风险/网络安全/基础设施类——
+ * 「中国法院冻结Nexperia资产」「印度巴基斯坦水资源仲裁」「巴拿马网络防御」等合格事件全被「无事件词」误杀，
+ * 8-31 晚间实测抓 24-39 条入库 0-1 条。扩充词与 GAP_CAT_KEYWORDS 十三类抓取词一一对应（中英双语）；
+ * port/dam/trial/fined 用 \b 防误配（airport/damage/industrial/refined）。本闸仅缺口调度器单点使用，不影响主管线。 */
 const _NONLATIN_RE = /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0E00-\u0E7F\u1200-\u137F\u0590-\u05FF\u10A0-\u10FF]/; /* 西里尔/阿拉伯/梵文系(含孟加拉)/泰文/埃塞/希伯来/格鲁吉亚 */
 
 /* ===== 缺口调度器（2026-08-29 用户指令：全球均衡化、全类别化，采集有重点、预警中心有核心）=====
@@ -6425,9 +6429,12 @@ async function _runGapScheduler() {
     /* ① 当日 国别×类别 矩阵 */
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const cnt = await query('SELECT country, data_type, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1,2', [dayStart]);
+    /* 2026-09-01 #526：缩写归一——双向子串对「印尼」≠「印度尼西亚」失明，印尼计数被低估（8-31 实测 2+8 分裂） */
+    const _GAP_CN_ALIAS = { '印尼': '印度尼西亚', '南韩': '韩国', '南朝鲜': '韩国' };
     const countryN = {}, catN = {};
     cnt.rows.forEach(r => {
-      const c = String(r.country || '').trim(), ct = String(r.data_type || '');
+      const c0 = String(r.country || '').trim(), ct = String(r.data_type || '');
+      const c = _GAP_CN_ALIAS[c0] || c0;
       const n = parseInt(r.n, 10) || 0;
       if (c) countryN[c] = (countryN[c] || 0) + n;
       if (ct) catN[ct] = (catN[ct] || 0) + n;
