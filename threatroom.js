@@ -619,7 +619,7 @@ var THREATROOM = {
         if (j && j.ok && j.type && j.type !== self._entity.type) { self._entity.type = j.type; }
         /* 阶段二完成 → 阶段三：库内联动 */
         var cTxt = j && j.ok
-          ? ('全网采集完成：检索 ' + (j.collected || 0) + ' 条 / 新入库 ' + (j.inserted || 0) + ' 条 / 前置拒 ' + (j.rejected || 0) + ' 条（' + ((j.ms || 0) / 1000).toFixed(1) + 's）→ 正在拉取库内 ' + self._days + ' 天联动数据…')
+          ? ('全网采集完成：检索 ' + (j.collected || 0) + ' 条 / 库内已有 ' + (j.webHits || 0) + ' 条 / 新入库 ' + (j.inserted || 0) + ' 条 / 前置拒 ' + (j.rejected || 0) + ' 条（' + ((j.ms || 0) / 1000).toFixed(1) + 's）→ 正在拉取库内 ' + self._days + ' 天联动数据…')
           : ('全网采集未新增（' + self._esc(String((j && j.error) || j.note || '无返回')) + '）→ 正在拉取库内 ' + self._days + ' 天联动数据…');
         self._stage(cTxt);
         var qs = '?type=' + encodeURIComponent(e.type) + '&cn=' + encodeURIComponent(e.cn) +
@@ -735,10 +735,16 @@ var THREATROOM = {
     return g;
   },
 
-  _judgeText: function (e, st, grade) {
-    if (!st.n) return '库内近 ' + this._days + ' 天无「' + e.cn + '」相关数据；全网采集本轮未新增——该实体当前处于监测盲区或信息真空，建议更换关键词重试或稍后再查。';
+  _judgeText: function (e, st, grade, collect) {
+    /* #519（2026-08-31 引擎语义根治）：根据 collect 响应把「全网命中」与「库内命中」分别呈现——
+     * 即便库内 st.n=0，只要本轮全网有 fresh 命中，研判结论就改为「全网命中 N 条」，
+     * 不再说「监测盲区或信息真空」误导用户（用户原话：刚果（金）不可能没有数据）。 */
+    var webN = (collect && Array.isArray(collect.fresh)) ? collect.fresh.length : (this._fresh ? this._fresh.length : 0);
+    if (!st.n && !webN) return '「' + e.cn + '」库内近 ' + this._days + ' 天与本轮全网检索均无有效命中；可能关键词过窄或源覆盖较弱，建议放宽检索词或更换主题词重试。';
+    if (!st.n && webN) return '「' + e.cn + '」库内近 ' + this._days + ' 天无相关数据；本轮全网命中 ' + webN + ' 条（GDELT/GNews/AP 三引擎实时检索）——库内尚未沉淀，请持续关注或加入我的关注。';
     var parts = [];
     parts.push('「' + e.cn + '」（' + this._typeLabel(e.type) + '）近 ' + this._days + ' 天库内关联数据 ' + st.n + ' 条，综合威胁等级 ' + grade.t + '（' + grade.score + ' 分）');
+    if (webN) parts.push('本轮全网命中 ' + webN + ' 条已纳入研判');
     if (st.red || st.orange) parts.push('其中红色预警 ' + st.red + ' 条、橙色 ' + st.orange + ' 条');
     var dPct = st.prior ? Math.round((st.recent - st.prior) / st.prior * 100) : (st.recent ? 100 : 0);
     parts.push(dPct > 15 ? '后半窗环比上升 ' + dPct + '%，事态呈升温态势' : dPct < -15 ? '后半窗环比回落 ' + Math.abs(dPct) + '%，事态趋于缓和' : '环比基本持平');
@@ -797,7 +803,7 @@ var THREATROOM = {
     }
     /* 研判文字 */
     html += '<div style="margin-top:10px;font-size:12.5px;line-height:1.85;color:var(--text,#e8eefc)">' +
-      '<span style="color:var(--cyan,#00d4ff);font-weight:700">🧠 值班研判：</span>' + this._esc(this._judgeText(e, st, grade)) + '</div>';
+      '<span style="color:var(--cyan,#00d4ff);font-weight:700">🧠 值班研判：</span>' + this._esc(this._judgeText(e, st, grade, this._collect)) + '</div>';
     html += '</div></div>';
     /* 操作条 */
     html += '<div style="display:flex;gap:8px;margin:-4px 0 12px 2px">' +
@@ -1158,10 +1164,13 @@ var THREATROOM = {
     L1.push('报告时间：' + new Date().toLocaleString('sv-SE') + '　窗口：近 ' + this._days + ' 天');
     L1.push('综合威胁等级：' + grade.t + '（' + grade.score + ' 分）');
     L1.push('关联数据 ' + st.n + ' 条｜红 ' + st.red + '｜橙 ' + st.orange + '｜黄 ' + st.yellow + '｜涉华 ' + st.cn + '｜核心 ' + st.core);
-    if (this._collect && this._collect.ok) L1.push('本轮专项采集：检索 ' + this._collect.collected + ' 条，新入库 ' + this._collect.inserted + ' 条');
+    if (this._collect && this._collect.ok) {
+      var _wN = (this._collect.webHits || 0) + (this._collect.inserted || 0);
+      L1.push('本轮专项采集：检索 ' + this._collect.collected + ' 条 / 库内已有 ' + (this._collect.webHits || 0) + ' 条 / 新入库 ' + (this._collect.inserted || 0) + ' 条 / 全网命中合计 ' + _wN + ' 条');
+    }
     if (this._collect && this._collect.ok && this._collect.keywords && this._collect.keywords.length) L1.push('主题→外文检索词：' + this._collect.keywords.join(' / '));
     L1.push('');
-    L1.push('【值班研判】' + this._judgeText(e, st, grade));
+    L1.push('【值班研判】' + this._judgeText(e, st, grade, this._collect));
     L1.push('');
     L1.push('【类别分布】' + Object.keys(st.byType).sort(function (a, b) { return st.byType[b] - st.byType[a]; }).map(function (t) { return (THREATROOM.DT_CN[t] || t) + ' ' + st.byType[t]; }).join('、'));
     L1.push('【国别分布】' + Object.keys(st.byCountry).sort(function (a, b) { return st.byCountry[b] - st.byCountry[a]; }).slice(0, 8).map(function (k) { return k + ' ' + st.byCountry[k]; }).join('、'));

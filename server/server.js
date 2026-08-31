@@ -2580,11 +2580,11 @@ app.post('/api/threatroom/collect', async (req, res) => {
       if (type !== 'country' && crawler.gdCode(q)) type = 'country';
       /* 英文名服务端自解析：国别实体 gdEn() 唯一取源（GD_COUNTRIES），前端无需维护英文映射 */
       const enName = String(body.en || '').trim() || (type === 'country' ? crawler.gdEn(q) : '');
+      let enKws = [];   /* v4：关键词作战的英文检索词（回传前端展示"主题→外文关键字"链路） */
       if (type !== 'keyword' && enName) enKws.push(enName);
       const als = Array.isArray(body.aliases) ? body.aliases.filter(a => a && String(a).trim()) : [];
       const arts = [];
       const seen = new Set();
-      let enKws = [];   /* v4：关键词作战的英文检索词（回传前端展示"主题→外文关键字"链路） */
       let kwGroups = null;  /* v5：双要素相关性组（任务 #515，见 _kwGroup 注释） */
       const push = (list) => (list || []).forEach(a => {
         const u = String(a.url || a.title || '');
@@ -2727,6 +2727,12 @@ app.post('/api/threatroom/collect', async (req, res) => {
       /* 轻量前置过滤（噪声/无标识/同标题），全量闸门仍在 _ingestLinkedItems 内 */
       const titleKeys = await _getRecentTitleKeys();
       const batch = [];
+      /* #519（2026-08-31）：引擎语义根治——fresh 须含所有「本轮全网命中」条目，
+       * 而不仅是过 DB 标题去重后入候选库的 batch。已在库条目仍是真实全网命中（用户用「中资#抢劫」
+       * /「刚果（金）」反复检索时，被 _isDupTitle 拒掉的才是「本轮最有价值」的结果——
+       * 之前直接丢弃导致 fresh 空 + judgeText 显示「监测盲区或信息真空」，违背引擎=中转点设计理念）。
+       * 修法：把被 _isDupTitle 拒掉的也收集进 webHits（不入库，只入引擎结果） */
+      const webHits = [];
       let rejected = 0;
       /* v3 批次内标题去重：GNews+GDELT 同一事件两边捞到时（不同 URL 同标题）只入一次——
        * 精确标题指纹哈希，与 DB titleKeys 互补：前者防批内冗余，后者防与库内重复 */
@@ -2743,9 +2749,10 @@ app.post('/api/threatroom/collect', async (req, res) => {
           if (!kwGroups.every(g => _kwGroupHit(g, txt, zht))) { rejected++; continue; }
         }
         if (!it.url && !it.title) { rejected++; continue; }
-        if (_isDupTitle(titleKeys, it)) { rejected++; continue; }
+        /* #519：被 _isDupTitle 拒掉的条目进 webHits，库内已有 ≠ 本轮无命中 */
+        if (_isDupTitle(titleKeys, it)) { rejected++; webHits.push(it); continue; }
         const bk = _normTitleKey(it.title);
-        if (bk.length >= 10 && batchTitleSeen.has(bk)) { rejected++; continue; }
+        if (bk.length >= 10 && batchTitleSeen.has(bk)) { rejected++; webHits.push(it); continue; }
         if (bk.length >= 10) batchTitleSeen.add(bk);
         batch.push(it);
         if (batch.length >= 80) break;   /* 翻译批次帽 v2（80 条·并发 4 ≈ 2-3 分钟；v1 40 条砍掉一半采集量） */
@@ -2778,15 +2785,33 @@ app.post('/api/threatroom/collect', async (req, res) => {
       /* v6（任务 #517 用户指令「要全网的数据，不是数据库的数据」）：把本次通过双要素闸的全网
        * 实时结果随响应直出——无论 URL 是否已在库（已入库条目仍是本轮全网检索命中的活数据），
        * 前端优先渲染 fresh，库内 GET data 仅作补充分区 */
-      const fresh = batch.slice(0, 60).map(it => ({
+      /* v7（任务 #519 引擎语义根治）：fresh 须含「本轮全网命中」全量——
+       * webHits（被 DB/批内标题去重拒掉的） + batch（过闸且新入候选库）合并，按 URL 去重，
+       * 已入库条目（webHits）排前，新条目（batch）排后——保证重复检索同一主题时仍能看到本轮真实命中 */
+      const webSeen = new Set();
+      const freshAll = [];
+      for (const it of webHits) {
+        const k = it.url || ('t:' + _normTitleKey(it.title));
+        if (webSeen.has(k)) continue;
+        webSeen.add(k); freshAll.push(it);
+        if (freshAll.length >= 80) break;
+      }
+      for (const it of batch) {
+        const k = it.url || ('t:' + _normTitleKey(it.title));
+        if (webSeen.has(k)) continue;
+        webSeen.add(k); freshAll.push(it);
+        if (freshAll.length >= 80) break;
+      }
+      const fresh = freshAll.slice(0, 60).map(it => ({
         title: it.title || '', title_zh: it.title_zh || '', url: it.url || '',
         source: it.source || '', country: it.country || '', country_cn: it.country_cn || '',
         description: String(it.description || it.content || '').slice(0, 600),
         publish_time: it.publish_time || it.publishedAt || it.date || '',
         data_type: it.data_type || '', chinaRelated: it.chinaRelated === true,
-        level: it.level || '', _web: true
+        level: it.level || '', _web: true,
+        _alreadyIngested: webHits.indexOf(it) >= 0   /* 前端可标记「库内已有」灰底 */
       }));
-      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, ms: Date.now() - t0, fresh });
+      res.json({ ok: true, type: type, keywords: enKws, collected: arts.length, filtered: batch.length, inserted, rejected, webHits: webHits.length, ms: Date.now() - t0, fresh });
     } finally {
       _threatroomBusyUntil = 0; /* 采集结束即解锁（异常也解锁，防止 5min 假锁） */
     }
