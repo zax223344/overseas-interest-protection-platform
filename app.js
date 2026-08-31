@@ -9185,11 +9185,13 @@ const SITUATION={
       var _val=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._alertValue)?AVIEW._alertValue(a):{score:0,tags:[]};}catch(e){return {score:0,tags:[]};}};
       var _facts=function(a){try{return (typeof AVIEW!=='undefined'&&AVIEW._liteFacts)?AVIEW._liteFacts(a):[];}catch(e){return [];}};
       var _tier=function(a){var t=String(a.title||'')+String(a.title_zh||'');if(a.chinaNegative||a._chinaNegative)return 0;if(_cnRe.test(t))return 1;if(_corrRe.test(t+String(a.country||'')))return 2;return 3;};
-      /* 2026-08-31 用户指令：最新预警面板对齐预警中心大池子轮播（上百条不断轮流循环），
-       * 不再用核心事件硬闸+国别封顶1条把池子砍到两三页——
-       * 保留：24h 时效铁律（杜绝旧闻刷屏）+ 非蓝（信噪分离：蓝=普通动态不占版面）+ 事件级合并；
-       * 核心安全事件降级为排序权重（核心在前，非核心垫后循环），国别封顶放宽 3 条/国保多样性。 */
-      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && a.level!=='blue' && SITUATION._freshItem(a,24);});
+      /* 2026-08-31 用户指令（二段）：最新预警面板轮播池对齐预警中心全量数据（上百条不断轮流循环）。
+       * 实测诊断：全量 291 条中 level==='blue' 一刀砍掉 130 条（45%）、_capPerCountry(3) 再砍约一半（161→83），
+       * 两刀合计后仅剩约两三页——这就是"只有3页"的根因。
+       * 本轮放开：① 蓝色提示级不再整体排除（排序垫后循环：红>橙>黄>蓝权重已保证高级别置顶）；
+       * ② 国别封顶取消（涉华/高级别排序权重已保证优先置顶，不需要砍量）。
+       * 仍然保留：24h 时效铁律（杜绝旧闻刷屏，实测当前 0 条被砍）+ status!=='resolved' + 事件级合并 _mergeEvents（防同事件刷屏，非砍量）。 */
+      var pool=ALERTS.filter(function(a){return a.status!=='resolved' && SITUATION._freshItem(a,24);});
       if(this._laLevel!=='all')pool=pool.filter(function(a){return a.level===self._laLevel;});
       if(this._laCnOnly)pool=pool.filter(function(a){return _tier(a)<=1;});
       /* 排序：等级为主（红>橙>黄>蓝，重大事件优先）+ 涉华/高危走廊/核心事件加权 + 价值分决胜 + 时间 */
@@ -9200,10 +9202,10 @@ const SITUATION={
         var sa=_score(a),sb=_score(b);if(sa!==sb)return sb-sa;
         return String(b.time||'').localeCompare(String(a.time||''));
       });
-      /* 事件级合并：同事件多来源/多进展只留最高优先级一条，避免同一火灾/绑架反复刷屏 */
+      /* 事件级合并：同事件多来源/多进展只留最高优先级一条，避免同一火灾/绑架反复刷屏（防刷屏，非砍量） */
       sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._mergeEvents)?AVIEW._mergeEvents(sortedAlerts,'fuzzy'):sortedAlerts;
-      /* 国别封顶：同一国家最多 3 条（2026-08-31 放宽 1→3：大池轮播下保多样性也要保量） */
-      sortedAlerts=(typeof AVIEW!=='undefined'&&AVIEW._capPerCountry)?AVIEW._capPerCountry(sortedAlerts,3):sortedAlerts;
+      /* 2026-08-31：国别封顶取消——排序权重已保证涉华/高级别优先置顶，
+       * 全量轮播场景下不再按国别砍量（原 _capPerCountry(3) 会把 161 条砍到 83 条）。 */
       var totalPages=Math.max(1,Math.ceil(sortedAlerts.length/pageSize));
       if(this._alertPage>=totalPages)this._alertPage=0;
       var start=(this._alertPage%totalPages)*pageSize;
@@ -9214,11 +9216,11 @@ const SITUATION={
       var alertHtml='<div style="margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">'+
         '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:4px">'+
           '<span style="font-size:11px;font-weight:800;color:var(--text)">🚨 最新预警</span>'+
-          lvChip('all','全部','var(--cyan)')+lvChip('red','🔴红','var(--red)')+lvChip('orange','🟠橙','var(--orange)')+lvChip('yellow','🟡黄','var(--yellow)')+
+          lvChip('all','全部','var(--cyan)')+lvChip('red','🔴红','var(--red)')+lvChip('orange','🟠橙','var(--orange)')+lvChip('yellow','🟡黄','var(--yellow)')+lvChip('blue','🔵蓝','var(--cyan)')+
           '<span onclick="SITUATION._laCnOnly=!SITUATION._laCnOnly;SITUATION._alertPage=0;SITUATION.renderLiveStats()" title="只看涉我海外利益预警" style="cursor:pointer;padding:2px 7px;border-radius:5px;font-size:9px;border:1px solid '+(this._laCnOnly?'var(--cyan)':'var(--border)')+';color:'+(this._laCnOnly?'var(--cyan)':'var(--text3)')+';background:'+(this._laCnOnly?'rgba(0,212,255,0.10)':'transparent')+';font-weight:700">🇨🇳 涉华优先</span>'+
           '<button class="btn sm" style="font-size:9px;padding:2px 8px;margin-left:auto" onclick="SITUATION.refreshAlertsPage()">🔄</button>'+
         '</div>'+
-        '<div style="font-size:9px;color:var(--text3)">第 '+(this._alertPage%totalPages+1)+'/'+totalPages+' 页 · 在监 '+sortedAlerts.length+' 条 · 覆盖 '+new Set(sortedAlerts.map(function(a){return a.country||'其他';})).size+' 国 · 涉华负面→涉华→高危走廊→其他 优先 · <span id="la-countdown" style="color:var(--cyan);font-weight:700">⟳ '+_remain+'s</span></div>'+
+        '<div style="font-size:9px;color:var(--text3)">第 '+(this._alertPage%totalPages+1)+'/'+totalPages+' 页 · 轮播全量 '+sortedAlerts.length+' 条 / 共 '+totalPages+' 页（预警中心 '+ALERTS.length+' 条）· 覆盖 '+new Set(sortedAlerts.map(function(a){return a.country||'其他';})).size+' 国 · 红橙黄蓝循环 · <span id="la-countdown" style="color:var(--cyan);font-weight:700">⟳ '+_remain+'s</span></div>'+
       '</div>';
       /* 卡片：价值分 + 命中维度标签 + 五要素 + 涉我海外利益/高危走廊标记 + 时间/状态 */
       la.forEach(function(a){

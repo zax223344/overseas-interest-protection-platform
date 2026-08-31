@@ -936,7 +936,7 @@ function _srvAlertScore(it) {
 }
 /* 预警队列国别均衡帽（2026-08-25 用户指令：预警指挥台不能全是美/伊/叙，国别必须有多样性）：
  * 列表为最新在前，每国最多保留 12 条最新，超出丢弃；同时清 >72h 陈条目（旧闻双保险）。 */
-const ALERT_QUEUE_COUNTRY_CAP = 12;
+const ALERT_QUEUE_COUNTRY_CAP = 20; /* 2026-08-31 用户指令"量要大"：12→20，核心区条目本就不占帽 */
 function _capAlertQueue(list) {
   const now = Date.now();
   const seen = {};
@@ -985,13 +985,114 @@ function _partitionCore(list) {
   core.sort(byTimeDesc); rest.sort(byTimeDesc);
   return core.concat(rest);
 }
+/* ===== 国别内容校验（2026-08-31 问题五：国别均衡化）=====
+ * 审计实测（近7天 3000 样本）：terror_attack/frontend_post 等通道把大量美伊战争、
+ * 美俄动态新闻贴上巴基斯坦/叙利亚/阿富汗等国标签——挂某国标签的数据内容却不是该国的事。
+ * 规则：标记国别的关键词在标题+译题+摘要中零命中，且存在另一国别命中≥2个独立关键词 →
+ * 改标为内容主导国别（原标签存 country_orig 保留审计痕迹）。
+ * 标记国别命中任一关键词、或无法判定主导国别（含多国并列/零命中）→ 保持原样。 */
+const _CTRY_PATTERNS = [
+  ['中国', ['中国', '中资', '中企', '华人', '华商', '北京', 'Chinese', 'China']],
+  ['美国', ['美国', '美军', '白宫', '五角大楼', '特朗普', '华盛顿', 'United States', 'American', 'Washington', 'Trump']],
+  ['俄罗斯', ['俄罗斯', '俄军', '莫斯科', '克里姆林宫', 'Russia', 'Russian', 'Moscow']],
+  ['伊朗', ['伊朗', '德黑兰', '革命卫队', 'Iran', 'Iranian', 'Tehran', 'IRGC']],
+  ['乌克兰', ['乌克兰', '基辅', 'Ukraine', 'Ukrainian', 'Kyiv', '泽连斯基']],
+  ['以色列', ['以色列', '特拉维夫', 'Israel', 'Israeli', 'IDF']],
+  ['巴基斯坦', ['巴基斯坦', '伊斯兰堡', 'Pakistan', 'Pakistani', 'Islamabad', '俾路支', '开伯尔']],
+  ['阿富汗', ['阿富汗', '喀布尔', 'Afghanistan', 'Afghan', 'Kabul', '塔利班', 'Taliban']],
+  ['印度', ['印度', '新德里', 'India', 'Indian', 'Delhi']],
+  ['菲律宾', ['菲律宾', '马尼拉', 'Philippine', 'Manila']],
+  ['越南', ['越南', '河内', 'Vietnam', 'Vietnamese', 'Hanoi']],
+  ['缅甸', ['缅甸', '仰光', 'Myanmar', 'Burma', 'Yangon', '军政府']],
+  ['泰国', ['泰国', '曼谷', 'Thailand', 'Bangkok']],
+  ['印度尼西亚', ['印度尼西亚', '印尼', '雅加达', 'Indonesia', 'Indonesian', 'Jakarta']],
+  ['马来西亚', ['马来西亚', 'Malaysia', 'Malaysian', '吉隆坡']],
+  ['哈萨克斯坦', ['哈萨克', 'Kazakhstan', 'Kazakh', '阿斯塔纳', '阿特劳']],
+  ['乌兹别克斯坦', ['乌兹别克', 'Uzbekistan', 'Uzbek', '塔什干']],
+  ['沙特阿拉伯', ['沙特', 'Saudi', '利雅得', 'Riyadh']],
+  ['阿联酋', ['阿联酋', 'UAE', '迪拜', 'Dubai', 'Abu Dhabi', '阿布扎比']],
+  ['卡塔尔', ['卡塔尔', 'Qatar', '多哈', 'Doha']],
+  ['土耳其', ['土耳其', 'Turkish', 'Turkey', 'Turkiye', '安卡拉', '埃尔多安', 'Erdogan']],
+  ['埃及', ['埃及', 'Egypt', 'Egyptian', '开罗', 'Cairo']],
+  ['苏丹', ['苏丹', 'Sudan', '喀土穆', 'Khartoum', 'RSF', '快速支援部队']],
+  ['南苏丹', ['南苏丹', 'South Sudan', '朱巴']],
+  ['埃塞俄比亚', ['埃塞俄比亚', 'Ethiopia', 'Addis Ababa', '亚的斯亚贝巴']],
+  ['肯尼亚', ['肯尼亚', 'Kenya', 'Kenyan', '内罗毕', 'Nairobi']],
+  ['尼日利亚', ['尼日利亚', 'Nigeria', 'Nigerian', '拉各斯', 'Lagos', '阿布贾', 'Abuja']],
+  ['尼日尔', ['尼日尔', 'Niamey', '尼亚美']],
+  ['马里', ['马里', 'Mali', 'Bamako', '巴马科']],
+  ['布基纳法索', ['布基纳法索', 'Burkina Faso', 'Ouagadougou']],
+  ['乍得', ['乍得', "N'Djamena", '恩贾梅纳']],
+  ['刚果（金）', ['刚果', 'Congo', 'Kinshasa', '金沙萨', 'M23', '基伍']],
+  ['莫桑比克', ['莫桑比克', 'Mozambique', 'Maputo', '德尔加杜角']],
+  ['南非', ['南非', 'South Africa', '约翰内斯堡', '开普敦', 'Pretoria']],
+  ['索马里', ['索马里', 'Somalia', 'Mogadishu', '摩加迪沙', '青年党', 'Shabaab']],
+  ['利比亚', ['利比亚', 'Libya', 'Tripoli', '的黎波里']],
+  ['阿尔及利亚', ['阿尔及利亚', 'Algeria', 'Algiers', '阿尔及尔']],
+  ['墨西哥', ['墨西哥', 'Mexico', 'Mexican']],
+  ['哥伦比亚', ['哥伦比亚', 'Colombia', 'Bogota', '波哥大']],
+  ['委内瑞拉', ['委内瑞拉', 'Venezuela', 'Caracas', '加拉加斯', '马杜罗', 'Maduro']],
+  ['巴西', ['巴西', 'Brazil', 'Brazilian', '巴西利亚']],
+  ['阿根廷', ['阿根廷', 'Argentina', 'Buenos Aires', '布宜诺斯艾利斯']],
+  ['秘鲁', ['秘鲁', 'Peru', 'Peruvian', 'Lima', '利马']],
+  ['智利', ['智利', 'Chile', 'Chilean', 'Santiago']],
+  ['叙利亚', ['叙利亚', 'Syria', 'Syrian', 'Damascus', '大马士革', '阿萨德']],
+  ['伊拉克', ['伊拉克', 'Iraq', 'Iraqi', 'Baghdad', '巴格达']],
+  ['也门', ['也门', 'Yemen', 'Houthi', '胡塞', 'Sanaa', '萨那']],
+  ['黎巴嫩', ['黎巴嫩', 'Lebanon', 'Beirut', '贝鲁特', '真主党', 'Hezbollah']],
+  ['约旦', ['约旦', 'Jordan', 'Amman', '安曼']],
+  ['日本', ['日本', 'Japan', 'Japanese', '东京', 'Tokyo']],
+  ['韩国', ['韩国', 'South Korea', 'Seoul', '首尔', '朝鲜半岛']],
+  ['吉尔吉斯斯坦', ['吉尔吉斯', 'Kyrgyz', '比什凯克']],
+  ['塔吉克斯坦', ['塔吉克', 'Tajik', 'Dushanbe']],
+  ['尼泊尔', ['尼泊尔', 'Nepal', 'Kathmandu', '加德满都']],
+  ['斯里兰卡', ['斯里兰卡', 'Sri Lanka', 'Colombo', '科伦坡']],
+  ['孟加拉国', ['孟加拉', 'Bangladesh', 'Dhaka', '达卡']],
+  ['英国', ['英国', 'United Kingdom', 'British', 'London', '伦敦']],
+  ['法国', ['法国', 'France', 'French', 'Paris', '巴黎']],
+  ['德国', ['德国', 'Germany', 'German', 'Berlin', '柏林']],
+  ['意大利', ['意大利', 'Italy', 'Italian', 'Rome', '罗马']],
+  ['西班牙', ['西班牙', 'Spain', 'Spanish', 'Madrid', '马德里']],
+  ['澳大利亚', ['澳大利亚', 'Australia', 'Australian', 'Sydney']],
+  ['加拿大', ['加拿大', 'Canada', 'Canadian', 'Ottawa']],
+  ['墨西哥湾', ['墨西哥湾', 'Gulf of Mexico']]
+];
+function _contentCountryFix(it) {
+  try {
+    if (!it) return false;
+    const labeled = String(it.country || it.country_cn || '').trim();
+    if (!labeled || labeled === '国际' || labeled === '泛非') return false;
+    const txt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.desc || it.content || '').slice(0, 400);
+    if (txt.replace(/\s+/g, '').length < 12) return false;
+    /* 标记国别关键词命中 → 标签可信，保持 */
+    const lblPat = _CTRY_PATTERNS.find(p => labeled.indexOf(p[0]) >= 0 || p[0].indexOf(labeled) >= 0);
+    if (lblPat && lblPat[1].some(k => txt.includes(k))) return false;
+    /* 找内容主导国别：命中≥2个独立关键词才算（1个可能是顺带提及） */
+    let best = null, bestN = 0;
+    for (const p of _CTRY_PATTERNS) {
+      if (p === lblPat) continue;
+      const n = p[1].filter(k => txt.includes(k)).length;
+      if (n > bestN) { bestN = n; best = p[0]; }
+    }
+    if (best && bestN >= 2 && best !== labeled) {
+      it.country_orig = labeled;
+      it.country = best;
+      if (it.country_cn) it.country_cn = best;
+      return true;
+    }
+    return false;
+  } catch (e) { return false; }
+}
 async function _serverAlertGen() {
   try {
     /* 2026-08-26 修复：15 分钟窗口过窄，入库与生成器错车（或重启/风控延迟）导致高价值条目
      * 漏生成预警。放宽到 24 小时。是否已生成以 datahub_store 中是否真实存在该预警 ID 为准，
      * 不再依赖内存 _alertGenSeen——否则跨天被“今日化”清理后，内存记录会阻止重新生成。 */
+    /* 2026-08-31 入库率修复（问题一）：LIMIT 300 是结构性瓶颈——日采集 800+ 条时，
+     * 只有最新 300 条被评估预警资格，60%+ 的合格条目从未进过闸门就被遗忘。
+     * 提高到 1000 覆盖 24h 全量视野（已生成条目靠 haveIds 秒跳，增量成本极低）。 */
     const { rows } = await query(
-      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '24 hours' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 300"
+      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '24 hours' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 1000"
     );
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
@@ -1026,6 +1127,36 @@ async function _serverAlertGen() {
       }
       if (_dualMerged) { alerts = kept; console.log('[ALERT-GEN] #522 双形态合并 ' + _dualMerged + ' 组（SRV-/裸 id 同条去重）'); }
     } catch (e) { console.warn('[ALERT-GEN] 双形态合并异常:', e.message); }
+    /* 2026-08-31 标题级跨形态去重（用户铁证：预警中心实测 27 组标题重复对）：
+     * 双形态合并只处理 SRV-/裸数字 id 对；前端分发路径的 1788xxx 时间戳 id、
+     * ANOM- 异动形态与生成器产物因 id 键不同永远错开，造成同题双条刷屏。
+     * 按归一化标题键去重：保留优先级 SRV- > 裸数字 id（可溯源 intel_data）> 其他形态；
+     * 空字段互补后丢弃多余条目。 */
+    let _titleDedup = 0;
+    try {
+      const _idRank = (a) => { const id = String((a && a.id) || ''); if (id.indexOf('SRV-') === 0) return 0; if (/^\d+$/.test(id)) return 1; return 2; };
+      const byTkey = new Map();
+      const keptT = [];
+      for (const a of alerts) {
+        if (!a) continue;
+        const k = String(a.title || a.title_zh || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
+        if (!k) { keptT.push(a); continue; }
+        const prev = byTkey.get(k);
+        if (!prev) { byTkey.set(k, a); keptT.push(a); continue; }
+        const keep = _idRank(a) < _idRank(prev) ? a : prev;
+        const drop = (keep === a) ? prev : a;
+        /* 空字段互补：被丢弃条目的独有信息转移到保留条 */
+        for (const f of ['desc', 'title_zh', 'url', 'country', 'publishedAt', 'risk_score', 'risk_zone', 'asset_tags', 'core_threat_name', 'channel_tags']) {
+          if ((keep[f] == null || keep[f] === '') && drop[f] != null && drop[f] !== '') keep[f] = drop[f];
+        }
+        if (keep.is_core !== true && drop.is_core === true) keep.is_core = true;
+        const di = keptT.indexOf(drop); if (di >= 0) keptT.splice(di, 1);
+        const pj = keptT.indexOf(prev); if (pj >= 0) keptT[pj] = keep;
+        byTkey.set(k, keep);
+        _titleDedup++;
+      }
+      if (_titleDedup) { alerts = keptT; console.log('[ALERT-GEN] 标题跨形态去重 ' + _titleDedup + ' 组（前端时间戳/异动 id 与 DB 形态同题去重）'); }
+    } catch (e) { console.warn('[ALERT-GEN] 标题跨形态去重异常:', e.message); }
     /* 2026-08-29 存量清扫：预警队列里的历史旧案回顾（1988 泛美103审判类）逐轮剔除，
      * 与新生成否决同源判定——用户删不干净的这类旧案报道由生成器自动出清。 */
     let _histSwept = 0;
@@ -1067,6 +1198,8 @@ async function _serverAlertGen() {
       const it = r.data_json || {};
       it.title = it.title || r.title || '';
       it.country = it.country || r.country || '';
+      /* 2026-08-31 国别内容校验：存量错标条目（标签国与内容国不符）在生成预警时改标 */
+      _contentCountryFix(it);
       /* 2026-08-26 赋分改革：预警等级一律由 0-100 分数驱动；老数据无分数现场补算 */
       if (it.risk_score == null || !it.risk_zone) {
         try {
@@ -1080,8 +1213,12 @@ async function _serverAlertGen() {
       /* 2026-08-17 用户指令日产≥200：蓝色提示级凡利益关联分≥10 一并入队（队列内显示为提示级，不与高优预警混淆） */
       if (_isShellAlert(it)) { _gateAudit('预警生成', 'shell', it.title); continue; }
       if (_isRuUaNoLink(it)) { _gateAudit('预警生成', 'ruua-nolink', it.title); continue; }
-      /* 2026-08-20 铁律：服务端生成预警必须过 chinaOverseasGate，防止秦皇岛火灾等纯国内事件入库 */
-      const _gtxt = String(it.title || '') + ' ' + String(it.content || it.desc || '');
+      /* 2026-08-20 铁律：服务端生成预警必须过 chinaOverseasGate，防止秦皇岛火灾等纯国内事件入库
+       * 2026-08-31 入库率修复：闸门文本此前只拼 title+content，title_zh 与 country 全部缺席。
+       * "伊朗袭击美国在约旦的基地"（重放样本）等条目 content 短、title 已译但英文源字段为空时，
+       * 闸门看不到任何国名/事件锚 → indirect-no-china-link / foreign-irrelevant 误杀。
+       * 补拼 title_zh + country 后此类条目正常过闸。纯国内拦截本体不变。 */
+      const _gtxt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.country || '') + ' ' + String(it.content || it.desc || '');
       if (typeof scrapers !== 'undefined' && scrapers.chinaOverseasGate && !scrapers.chinaOverseasGate(_gtxt).pass) {
         _gateAudit('预警生成', 'domestic', it.title); continue;
       }
@@ -1127,8 +1264,11 @@ async function _serverAlertGen() {
       have.add(tkey);
       haveIds.add(genId);
     }
-    if (added.length || backfilled || _histSwept || coreBackfilled) {
-      const merged = _partitionCore(_capAlertQueue(added.concat(alerts))).slice(0, 300);
+    /* 2026-08-31 根因修复（重复问题）：_dualMerged/_titleDedup 此前不在写回条件里——
+     * 合并结果只在内存里算完就丢，只有 added/backfilled 等其他标志触发时才被顺带持久化，
+     * 导致 27 组重复对长期滞留。现在合并自身即触发写回。 */
+    if (added.length || backfilled || _histSwept || coreBackfilled || _dualMerged || _titleDedup) {
+      const merged = _partitionCore(_capAlertQueue(added.concat(alerts))).slice(0, 500); /* 2026-08-31 入库率修复：预警中心硬上限 300→500（用户指令量要大） */
       await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
       console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条（核心区 ' + added.filter(a => a.is_core).length + '），共享库现有 ' + merged.length + ' 条'
         + (_histSwept ? '，剔除历史旧案回顾 ' + _histSwept + ' 条' : '')
@@ -1310,7 +1450,7 @@ async function _runAnomalyWatch() {
           if (sc.score >= 10) { added.unshift(s.alert); haveIds.add(s.alert.id); s.inAlert = true; pushed++; }
         }
         if (added.length) {
-          const merged = _capAlertQueue(added.concat(alerts)).slice(0, 300);
+          const merged = _capAlertQueue(added.concat(alerts)).slice(0, 500); /* 2026-08-31 与 _serverAlertGen 同上限：300→500 */
           await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
           console.log('[ANOMALY] 风险异动信号写入预警中心 ' + added.length + ' 条 / 共检出 ' + signals.length + ' 项（扫描 ' + scanned + ' 个方向）');
         }
@@ -4821,7 +4961,7 @@ async function _ingestLinkedItems(items, tag, note) {
           it.zhq = zhRewrite.quality(it.title);
           if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
         }
-        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv;
+        _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv;
         /* 专项采集器（如 core-threat-watch）已明确 data_type，不再被通用分类器覆盖 */
         let _dt = (it._forceDataType && it.data_type) ? it.data_type : _classifyIntelType(it);
         /* 涉华安全类必须真实命中中国要素，否则降级为开源情报 */
@@ -5044,7 +5184,7 @@ async function _runNeonSync() {
         if (!_dominantQuotaOk(it)) { skipped++; continue; }
         try {
           _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
-          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
           it.source = it.source || '云端采集';
           const _ins = await query(
             `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
@@ -5245,7 +5385,7 @@ async function _runChinaFocus() {
           it.zhq = zhRewrite.quality(it.title);
           if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
         }
-        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
           [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '涉华专项监测', JSON.stringify(it), 'approved']
@@ -5462,7 +5602,7 @@ async function _runChinaNegative() {
           it.zhq = zhRewrite.quality(it.title);
           if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
         }
-        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
           [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '境外涉华负面监测', JSON.stringify(it), 'approved']
@@ -5739,7 +5879,7 @@ async function _runBriFocus() {
         if (!_ruUaQuotaOk(it)) { skippedRuUa++; continue; }
         try {
           _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
-          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
           const _ins = await query(
             `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
             [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || 'BRI专项采集', JSON.stringify(it), 'approved']
@@ -5825,7 +5965,7 @@ async function _runCnMedia() {
         if (!_isFreshEnough(it)) { skippedStale++; continue; }
         try {
           _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
-          _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+          _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
           const _ins = await query(
             `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
             [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || it.publish_time || '', _lv, it.content || '', it.source || '中文媒体监测', JSON.stringify(it), 'approved']
@@ -5913,7 +6053,7 @@ async function _wechatIngest(items) {
           it.zhq = zhRewrite.quality(it.title);
           if (it.zhq < 60 && _ZHQ_LOG_N < 12) { _ZHQ_LOG_N++; console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60)); }
         }
-        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
+        _contentCountryFix(it); _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv; const _dt = _classifyIntelType(it); it.data_type = _dt;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
           [_dt, it.title || '', it.country || it.country_cn || '', it.location || it.city || '', it.date || it.publishedAt || '', _lv, it.content || '', it.source || '公众号监测', JSON.stringify(it), 'approved']
@@ -8761,7 +8901,7 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
           } catch (e) {}
         }
         const clientKept = data.length;
-        data = _partitionCore(_capAlertQueue(data.concat(preserved))).slice(0, 300);
+        data = _partitionCore(_capAlertQueue(data.concat(preserved))).slice(0, 500); /* 2026-08-31 与 _serverAlertGen 同上限：300→500 */
         console.log('[DATAHUB] alerts 权威合并: 客户端 ' + clientKept + ' 条 + 服务端保留 ' + preserved.length + ' 条 → ' + data.length + ' 条');
       } catch (e) { console.warn('[DATAHUB] alerts 合并异常（回退全量覆盖）:', e.message); }
     } else if (INTEL_TYPES.includes(collection) && collection !== 'collect_logs') {
