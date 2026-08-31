@@ -13650,57 +13650,170 @@ const AVIEW={
   renderCorrelation(){
     var el=document.getElementById('alert-correlation');
     if(!el)return;
-    var nodes=[];var edges=[];var regions={};
-    ALERTS.forEach(function(a){
-      var c=COUNTRIES.find(function(x){return x.name===a.country;});
-      var reg=c?c.region:'其他';
-      if(!regions[reg])regions[reg]={count:0,alerts:[],types:{}};
-      regions[reg].count++;regions[reg].alerts.push(a);
-      regions[reg].types[a.type]=(regions[reg].types[a.type]||0)+1;
-    });
-    var regs=Object.keys(regions);
-    var cx=300,cy=250;
-    regs.forEach(function(r,i){
-      var angle=(i/regs.length)*Math.PI*2-Math.PI/2;
-      var x=cx+Math.cos(angle)*180;var y=cy+Math.sin(angle)*130;
-      var d=regions[r];
-      var maxRisk=d.alerts.some(function(a){return a.level==='red';});
-      var color=maxRisk?'#ff3355':d.alerts.some(function(a){return a.level==='orange';})?'#ff8800':'#00d4ff';
-      nodes.push({x:x,y:y,r:r,d:d,color:color});
-    });
-    var svg='<svg viewBox="0 0 600 500" style="width:100%;height:auto">';
-    svg+='<defs><radialGradient id="cg" cx="50%" cy="50%"><stop offset="0%" stop-color="rgba(0,212,255,0.1)"/><stop offset="100%" stop-color="rgba(0,212,255,0)"/></radialGradient></defs>';
-    svg+='<circle cx="300" cy="250" r="220" fill="url(#cg)"/>';
-    for(var i=0;i<nodes.length;i++){
-      for(var j=i+1;j<nodes.length;j++){
-        var n1=nodes[i],n2=nodes[j];
-        if(n1.d.alerts.some(function(a){return n2.d.alerts.some(function(b){return a.type===b.type;});})){
-          svg+='<line x1="'+n1.x+'" y1="'+n1.y+'" x2="'+n2.x+'" y2="'+n2.y+'" stroke="rgba(0,212,255,0.15)" stroke-width="1" stroke-dasharray="3,3"/>';
-        }
-      }
+    /* #524 关联分析交互化重构（2026-08-31 用户指令四）：
+     * 原版=静态区域划线（节点是"区域"、虚线只看"有无共同类型"），无交互、无结论、无数据支撑。
+     * 新版=自动关联发现引擎，四类关联簇，每簇带研判结论，成员预警可点击下钻 showAlertDetail：
+     * ①跨国同类型聚集——同威胁类型在≥2国接连出现（跨国连锁迹象）
+     * ②涉华安全聚集——涉华/核心预警在同一东道国成串出现
+     * ③中资资产关联——多条预警命中同一资产标签（项目/企业暴露面）
+     * ④核心威胁主题——同一 core_threat 主题多条预警汇聚
+     * 时间窗 24h/72h/7天 可切换（AVIEW._corrWin 会话内保持）。 */
+    var WIN_H={'24h':24,'72h':72,'7d':168};
+    if(!WIN_H[this._corrWin])this._corrWin='72h';
+    var win=this._corrWin;
+    var cutoff=Date.now()-WIN_H[win]*3600000;
+    var _t=function(s){var t=new Date(String(s||'').replace(/-/g,'/')).getTime();return isNaN(t)?0:t;};
+    var pool=ALERTS.filter(function(a){return a&&a.time&&_t(a.time)>=cutoff;});
+    var escId=function(x){return String(x==null?'':x).replace(/\\/g,'\\\\').replace(/'/g,"\\'");};
+    var lvC=function(l){return l==='red'?'var(--red)':l==='orange'?'var(--orange)':l==='yellow'?'#eab308':'var(--cyan)';};
+
+    /* ---- 簇发现引擎 ---- */
+    var clusters=[];
+    function pushCluster(kind,icon,title,members,concl){
+      if(!members||members.length<2)return;
+      var cs={};members.forEach(function(a){var c=a.country||'未知';cs[c]=(cs[c]||0)+1;});
+      var countries=Object.keys(cs);
+      var hasRed=members.some(function(a){return a.level==='red';});
+      var redN=members.filter(function(a){return a.level==='red';}).length;
+      clusters.push({kind:kind,icon:icon,title:title,members:members,countries:countries,byCountry:cs,
+        hasRed:hasRed,redN:redN,concl:concl,
+        score:members.length*2+countries.length*3+(hasRed?4:0)});
     }
-    nodes.forEach(function(n){
-      var size=20+Math.min(n.d.count*3,25);
-      svg+='<circle cx="'+n.x+'" cy="'+n.y+'" r="'+size+'" fill="'+n.color+'" fill-opacity="0.12" stroke="'+n.color+'" stroke-width="1.5"/>';
-      svg+='<circle cx="'+n.x+'" cy="'+n.y+'" r="'+(size-6)+'" fill="'+n.color+'" fill-opacity="0.25"/>';
-      svg+='<text x="'+n.x+'" y="'+(n.y-2)+'" text-anchor="middle" fill="'+n.color+'" font-size="11" font-weight="700">'+n.r+'</text>';
-      svg+='<text x="'+n.x+'" y="'+(n.y+12)+'" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-size="9">'+n.d.count+'条</text>';
+    /* ① 跨国同类型聚集 */
+    (function(){
+      var byType={};
+      pool.forEach(function(a){var t=a.type||'其他';(byType[t]=byType[t]||[]).push(a);});
+      Object.keys(byType).forEach(function(t){
+        var arr=byType[t];if(arr.length<4)return;
+        var cs={};arr.forEach(function(a){var c=a.country||'未知';cs[c]=(cs[c]||0)+1;});
+        var ks=Object.keys(cs);if(ks.length<2)return;
+        var top=ks.slice().sort(function(x,y){return cs[y]-cs[x];})[0];
+        pushCluster('type','🌐','多国「'+t+'」聚集',arr,
+          win+'内 '+ks.length+' 国接连出现「'+t+'」类预警 '+arr.length+' 起，其中'+top+' '+cs[top]+' 起，呈跨国连锁迹象，建议关注同类型事件向我方利益所在国蔓延。');
+      });
+    })();
+    /* ② 涉华安全聚集（东道国成串） */
+    (function(){
+      var cn=pool.filter(function(a){return a.chinaRelated===true||a.is_core===true||/中资|中企|中方|华人|华侨|中国公民/.test(String(a.title||'')+String(a.title_zh||''));});
+      var byC={};cn.forEach(function(a){(byC[a.country||'未知']=byC[a.country||'未知']||[]).push(a);});
+      Object.keys(byC).forEach(function(c){
+        var arr=byC[c];if(arr.length<2)return;
+        pushCluster('cn','🇨🇳','涉华安全·'+c,arr,
+          win+'内 '+c+' 涉华/核心预警 '+arr.length+' 起，同一东道国涉华事件成串出现，建议核查我在该国人员、企业与项目暴露面并提示驻外机构。');
+      });
+    })();
+    /* ③ 中资资产标签关联 */
+    (function(){
+      var byTag={};
+      pool.forEach(function(a){
+        var tags=a.asset_tags||[];
+        if(typeof tags==='string')tags=[tags];
+        tags.forEach(function(tag){var t=String(tag||'').trim();if(!t)return;(byTag[t]=byTag[t]||[]).push(a);});
+      });
+      Object.keys(byTag).forEach(function(tag){
+        var arr=byTag[tag];if(arr.length<2)return;
+        pushCluster('asset','🎯','资产「'+tag+'」关联',arr,
+          win+'内 '+arr.length+' 条预警命中中资资产「'+tag+'」，该资产所在区域风险抬头，建议联动资产档案复核安保等级与撤离预案。');
+      });
+    })();
+    /* ④ 核心威胁主题关联 */
+    (function(){
+      var byT={};
+      pool.forEach(function(a){var t=String(a.core_threat_name||'').trim();if(t)(byT[t]=byT[t]||[]).push(a);});
+      Object.keys(byT).forEach(function(t){
+        var arr=byT[t];if(arr.length<2)return;
+        pushCluster('threat','🚨','核心威胁「'+t+'」',arr,
+          win+'内核心威胁主题「'+t+'」关联预警 '+arr.length+' 条、跨 '+arr.filter(function(a,i){return i===arr.findIndex(function(b){return (b.country||'')===(a.country||'');});}).length+' 国，属重点类目，建议优先处置并向上报告。');
+      });
+    })();
+    clusters.sort(function(x,y){return y.score-x.score;});
+    clusters=clusters.slice(0,9);
+
+    /* ---- 顶栏：时间窗切换 + 样本统计 ---- */
+    var html='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+    ['24h','72h','7d'].forEach(function(w){
+      html+='<span data-w="'+w+'" class="corr-win-chip" style="cursor:pointer;user-select:none;font-size:11px;padding:3px 12px;border-radius:12px;border:1px solid '+(win===w?'var(--cyan)':'var(--border)')+';color:'+(win===w?'var(--cyan)':'var(--text3)')+';background:'+(win===w?'rgba(0,212,255,0.08)':'transparent')+';font-weight:'+(win===w?'700':'400')+'">'+(w==='7d'?'7天':w)+'</span>';
     });
-    svg+='<text x="300" y="30" text-anchor="middle" fill="rgba(0,212,255,0.8)" font-size="12" font-weight="700">预警区域关联网络</text>';
-    svg+='<text x="300" y="480" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="9">节点大小=预警数量 | 虚线=共同威胁类型 | 颜色=最高风险等级</text>';
-    svg+='</svg>';
-    var cluster='<div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">';
-    regs.forEach(function(r){
-      var d=regions[r];
-      var maxRisk=d.alerts.some(function(a){return a.level==='red';});
-      var color=maxRisk?'var(--red)':d.alerts.some(function(a){return a.level==='orange';})?'var(--orange)':'var(--cyan)';
-      var types=Object.keys(d.types).map(function(t){return '<span style="font-size:9px;padding:1px 4px;background:rgba(0,212,255,0.1);border-radius:3px;margin:1px">'+t+'x'+d.types[t]+'</span>';}).join(' ');
-      cluster+='<div style="background:var(--panel2);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:6px;padding:8px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><strong style="font-size:12px;color:'+color+'">'+r+'</strong><span style="font-size:14px;font-weight:800;color:'+color+'">'+d.count+'</span></div>'+
-        '<div style="display:flex;flex-wrap:wrap;gap:2px">'+types+'</div></div>';
+    html+='<span style="flex:1"></span><span style="font-size:10.5px;color:var(--text3)">分析样本 '+pool.length+' 条 · 发现关联簇 '+clusters.length+' 组</span></div>';
+    if(!pool.length){
+      html+='<div style="text-align:center;padding:26px 8px;font-size:12px;color:var(--text3)">'+win+' 时间窗内暂无预警样本，可切换 7天 窗口查看</div>';
+    }else if(!clusters.length){
+      html+='<div style="text-align:center;padding:26px 8px;font-size:12px;color:var(--text3)">'+win+'内 '+pool.length+' 条预警暂未发现跨条目关联（孤立分散事件），引擎持续监测中</div>';
+    }
+
+    /* ---- 关联发现网络图（簇为节点，点击节点定位并展开簇卡片） ---- */
+    if(clusters.length){
+      var cx=300,cy=205,n=clusters.length;
+      var svg='<svg viewBox="0 0 600 410" style="width:100%;height:auto">';
+      svg+='<defs><radialGradient id="cg2" cx="50%" cy="50%"><stop offset="0%" stop-color="rgba(0,212,255,0.08)"/><stop offset="100%" stop-color="rgba(0,212,255,0)"/></radialGradient></defs>';
+      svg+='<circle cx="300" cy="205" r="185" fill="url(#cg2)"/>';
+      svg+='<circle cx="300" cy="205" r="27" fill="rgba(0,212,255,0.15)" stroke="var(--cyan)" stroke-width="1.5"/>';
+      svg+='<text x="300" y="202" text-anchor="middle" fill="var(--cyan)" font-size="10" font-weight="700">关联</text>';
+      svg+='<text x="300" y="214" text-anchor="middle" fill="var(--cyan)" font-size="10" font-weight="700">引擎</text>';
+      clusters.forEach(function(c,i){
+        var ang=(i/n)*Math.PI*2-Math.PI/2;
+        var x=Math.round(cx+Math.cos(ang)*150),y=Math.round(cy+Math.sin(ang)*128);
+        var size=20+Math.min(c.members.length*3,18);
+        var col=c.hasRed?'#ff3355':(c.kind==='cn'?'#ffb454':(c.kind==='threat'?'#b366ff':(c.kind==='asset'?'#22c55e':'#00d4ff')));
+        c._col=col;
+        svg+='<line x1="300" y1="205" x2="'+x+'" y2="'+y+'" stroke="'+col+'" stroke-opacity="0.35" stroke-width="'+Math.min(1+c.members.length*0.4,3.5).toFixed(1)+'"/>';
+        svg+='<g style="cursor:pointer" data-c="'+i+'"><circle cx="'+x+'" cy="'+y+'" r="'+size+'" fill="'+col+'" fill-opacity="0.12" stroke="'+col+'" stroke-width="1.5"><title>'+esc(c.title)+'（'+c.members.length+'条）点击定位关联簇</title></circle>';
+        svg+='<circle cx="'+x+'" cy="'+y+'" r="'+(size-7)+'" fill="'+col+'" fill-opacity="0.22"/>';
+        svg+='<text x="'+x+'" y="'+(y+2)+'" text-anchor="middle" fill="'+col+'" font-size="9.5" font-weight="700">'+esc(c.title.length>9?c.title.slice(0,9)+'…':c.title)+'</text>';
+        svg+='<text x="'+x+'" y="'+(y+14)+'" text-anchor="middle" fill="rgba(255,255,255,0.55)" font-size="8.5">'+c.members.length+'条/'+c.countries.length+'国</text></g>';
+      });
+      svg+='<text x="300" y="22" text-anchor="middle" fill="rgba(0,212,255,0.8)" font-size="12" font-weight="700">自动关联发现网络（点击节点定位关联簇）</text>';
+      svg+='<text x="300" y="396" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="9">节点=关联簇 | 大小=成员数 | 连线粗细=聚集强度 | 红=含红色预警</text>';
+      svg+='</svg>';
+      html+='<div style="background:var(--bg2);border-radius:8px;padding:6px 4px 0;margin-bottom:10px">'+svg+'</div>';
+    }
+
+    /* ---- 簇卡片：结论 + 可下钻成员预警 ---- */
+    clusters.forEach(function(c,i){
+      var col=c.hasRed?'var(--red)':(c.kind==='cn'?'var(--orange)':(c.kind==='threat'?'var(--purple)':(c.kind==='asset'?'var(--green)':'var(--cyan)')));
+      html+='<div id="corr-card-'+i+'" style="background:var(--panel2);border:1px solid var(--border);border-left:3px solid '+col+';border-radius:8px;padding:10px 12px;margin-bottom:10px">';
+      html+='<div style="display:flex;align-items:flex-start;gap:8px;cursor:pointer" data-toggle="'+i+'">';
+      html+='<span style="font-size:15px;line-height:1.3">'+c.icon+'</span>';
+      html+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:'+col+'">'+esc(c.title)+(c.hasRed?' <span style="font-size:10px;color:var(--red)">（含红色 '+c.redN+' 起）</span>':'')+'</div>';
+      html+='<div style="font-size:10.5px;color:var(--text3);margin-top:3px;line-height:1.6">💡 '+esc(c.concl)+'</div></div>';
+      html+='<span style="font-size:12px;font-weight:800;color:'+col+';flex:none">'+c.members.length+'<span style="font-size:9px;font-weight:400">条</span></span>';
+      html+='<span class="corr-arrow" style="font-size:10px;color:var(--text3);transition:.2s;flex:none">▾</span></div>';
+      html+='<div class="corr-members" data-members="'+i+'" style="display:'+(i<2?'block':'none')+';margin-top:8px;border-top:1px dashed var(--border);padding-top:6px">';
+      c.members.slice(0,8).forEach(function(a){
+        var id=escId(a.id);
+        html+='<div onclick="showAlertDetail(\''+id+'\')" style="display:flex;align-items:flex-start;gap:7px;padding:5px 6px;border-radius:5px;margin-bottom:3px;cursor:pointer;background:var(--panel)" onmouseover="this.style.background=\'rgba(0,212,255,0.07)\'" onmouseout="this.style.background=\'var(--panel)\'">';
+        html+='<span style="width:7px;height:7px;border-radius:50%;background:'+lvC(a.level)+';margin-top:5px;flex:none"></span>';
+        html+='<div style="flex:1;min-width:0"><div style="font-size:11.5px;line-height:1.45;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(stripTags(String(a.title_zh||a.title||'')).substring(0,64))+'</div>';
+        html+='<div style="font-size:9.5px;color:var(--text3);margin-top:1px">📍'+esc(a.country||'未知')+' · '+esc(String(a.time||'').substring(0,16))+(a.source?' · '+esc(String(a.source).substring(0,22)):'')+'</div></div></div>';
+      });
+      if(c.members.length>8)html+='<div style="font-size:10px;color:var(--text3);text-align:center;padding:2px">仅列前 8 条，共 '+c.members.length+' 条（点成员查看详情）</div>';
+      html+='</div></div>';
     });
-    cluster+='</div>';
-    el.innerHTML=svg+cluster;
+    if(clusters.length)html+='<div style="text-align:center;font-size:10px;color:var(--text3);padding:4px 0 8px">关联簇由引擎按 跨国同类型 / 涉华聚集 / 资产命中 / 核心威胁 四规则自动发现 · 点成员下钻预警详情</div>';
+    el.innerHTML=html;
+
+    /* ---- 交互绑定：窗口切换 / 卡片折叠 / 网络图定位 ---- */
+    Array.prototype.forEach.call(el.querySelectorAll('.corr-win-chip'),function(chip){
+      chip.addEventListener('click',function(){AVIEW._corrWin=chip.getAttribute('data-w');AVIEW.renderCorrelation();});
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('[data-toggle]'),function(h){
+      h.addEventListener('click',function(){
+        var box=el.querySelector('[data-members="'+h.getAttribute('data-toggle')+'"]');
+        if(!box)return;var closed=box.style.display==='none';
+        box.style.display=closed?'block':'none';
+        var ar=h.querySelector('.corr-arrow');if(ar)ar.style.transform=closed?'':'rotate(-90deg)';
+      });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('svg g[data-c]'),function(g){
+      g.addEventListener('click',function(){
+        var ci=g.getAttribute('data-c');
+        var card=el.querySelector('#corr-card-'+ci);
+        if(card){card.scrollIntoView({behavior:'smooth',block:'center'});
+          card.style.transition='box-shadow .3s';card.style.boxShadow='0 0 0 2px rgba(0,212,255,0.6)';
+          setTimeout(function(){card.style.boxShadow='';},1200);}
+        var box=el.querySelector('[data-members="'+ci+'"]');if(box)box.style.display='block';
+      });
+    });
   },
   renderTracking(){
     var el=document.getElementById('alert-tracking');

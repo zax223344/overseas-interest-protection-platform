@@ -1143,7 +1143,12 @@ var THREATROOM = {
       desc = desc.replace(/<[^>]+>/g, '').slice(0, 3000);
       html += '<div style="margin-top:12px;font-size:12.5px;line-height:1.9;color:var(--text2,#aab8d0);white-space:pre-wrap;max-height:340px;overflow-y:auto">' + this._hl(desc, e) + '</div>';
     } else html += '<div style="margin-top:12px;font-size:11.5px;color:var(--text3,#7a8aa3)">（正文未入库：检索通道仅返回标题，可点原文链接查看）</div>';
-    if (it.url) html += '<div style="margin-top:14px"><a href="' + this._esc(it.url) + '" target="_blank" rel="noopener" style="color:var(--cyan,#00d4ff);font-size:12px">🔗 查看原文 →</a></div>';
+    /* #524 用户指令八：作战室采集结果一键推送预警中心（TR- 前缀防重复） */
+    html += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">';
+    if (it.url) html += '<a href="' + this._esc(it.url) + '" target="_blank" rel="noopener" style="color:var(--cyan,#00d4ff);font-size:12px">🔗 查看原文 →</a>';
+    html += '<span style="flex:1"></span>';
+    html += '<button onclick="THREATROOM._pushAlert(' + i + ')" style="background:rgba(0,212,255,0.12);border:1px solid var(--cyan,#00d4ff);color:var(--cyan,#00d4ff);border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:700">📤 推送预警中心</button>';
+    html += '</div>';
     html += '</div></div>';
     var old = document.getElementById('tr-modal');
     if (old) old.remove();
@@ -1154,6 +1159,48 @@ var THREATROOM = {
   _closeDetail: function () {
     var m = document.getElementById('tr-modal');
     if (m) m.remove();
+  },
+
+  /* ═══════════ 推送预警中心（#524 用户指令八） ═══════════
+   * 采集流详情里发现合适情报，一键转入预警中心参与态势/研判/处置流程。
+   * 双重防重复：① TR- 前缀 id 记录源条目 _trSrcId；② 标题归一键（去空格小写前20字符包含匹配）查同题。 */
+  _pushAlert: function (i) {
+    var it = this._items[i];
+    if (!it) return;
+    if (typeof DataHub === 'undefined' || typeof ALERTS === 'undefined') { this._toast('预警中心数据层未就绪'); return; }
+    var title = this._title(it);
+    var tkey = String(title || '').replace(/\s+/g, '').toLowerCase();
+    var dup = null;
+    for (var k = 0; k < ALERTS.length; k++) {
+      var a = ALERTS[k];
+      if (String(a.id || '').indexOf('TR-') === 0 && String(a._trSrcId || '') === String(it.id || '') && String(it.id || '') !== '') { dup = a; break; }
+      var kk = String(a.title || a.title_zh || '').replace(/\s+/g, '').toLowerCase();
+      if (tkey && kk && kk.length > 15 && tkey.length > 15 && (kk.indexOf(tkey.slice(0, 15)) >= 0 || tkey.indexOf(kk.slice(0, 15)) >= 0)) { dup = a; break; }
+    }
+    if (dup) { this._toast('该情报已在预警中心（同题条目存在），未重复推送'); return; }
+    var now = new Date();
+    var pad = function (x) { return (x < 10 ? '0' : '') + x; };
+    var desc = String(it.description || it.content || it.desc || it.summary || '').replace(/<[^>]+>/g, '').slice(0, 600);
+    var obj = {
+      id: 'TR-' + String(it.id || (Date.now() + '-' + i)),
+      _trSrcId: String(it.id || ''),
+      title: title,
+      title_zh: it.title_zh || title,
+      desc: desc,
+      level: it.level || 'blue',
+      type: it.data_type || 'osint_intel',
+      country: it.country || '国际',
+      time: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()),
+      publishedAt: it.publishedAt || it.time || '',
+      source: it.source || '专项情报作战室',
+      url: it.url || '',
+      status: 'active',
+      chinaRelated: it.chinaRelated === true,
+      is_core: it.is_core === true,
+      _sourceType: 'threatroom_push'
+    };
+    DataHub.add('alerts', obj);
+    this._toast('已推送预警中心：' + String(title).slice(0, 32) + (String(title).length > 32 ? '…' : ''));
   },
 
   /* ═══════════ 报告导出 ═══════════ */
