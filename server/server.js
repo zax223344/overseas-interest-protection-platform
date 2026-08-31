@@ -440,15 +440,73 @@ async function _generateDailyReport(dateKey) {
     return true;
   });
   const seen = new Map();
+  /* 2026-09-01 二级宽松签名归并（用户实测：马里同一事件两条 _eventSig 不同——
+   * '马里|撤离+死亡|2026-08-31' vs '马里|撤离+死亡+袭击|2026-08-31'，事件词集差异
+   * （一条标题含"袭击"一条不含）导致精确键对不上，同事件多来源未归一。
+   * 宽松匹配：国别+日期相同且事件词交集≥2 即同事件；词集并集滚动扩大匹配面。
+   * 凯尼耶巴事件（国别'国际'）与马里事件国别不同不会被误合。对历史数据同样生效。 */
+  const _sigParts = [];   /* [mapKey, {country, words:Set, date}] */
+  const _parseSig = s => {
+    const p = String(s || '').split('|');
+    if (p.length !== 3) return null;
+    const words = (p[1] || '').split('+').filter(Boolean);
+    if (!words.length) return null;
+    return { country: p[0], words: new Set(words), date: p[2] };
+  };
   itemsClean.forEach(i => {
     const k = _sigOf(i);
     if (!k || k === 't:') return;
+    const parts = _parseSig(i._sig);
+    if (parts) {
+      for (const pair of _sigParts) {
+        const mp = pair[1];
+        if (mp.country !== parts.country || mp.date !== parts.date) continue;
+        let inter = 0;
+        parts.words.forEach(w => { if (mp.words.has(w)) inter++; });
+        if (inter >= 2) {
+          /* 宽松命中：归并进既有键，词集并集，保留更优条目（级别>印证） */
+          parts.words.forEach(w => mp.words.add(w));
+          const prev = seen.get(pair[0]);
+          const better = (_lvW[i.severity] || 0) * 100 + (i.corr || 0) * 10 > (_lvW[prev.severity] || 0) * 100 + (prev.corr || 0) * 10;
+          if (better) seen.set(pair[0], i);
+          return;
+        }
+      }
+    }
     const prev = seen.get(k);
-    if (!prev) { seen.set(k, i); return; }
+    if (!prev) { seen.set(k, i); if (parts) _sigParts.push([k, parts]); return; }
     const better = (_lvW[i.severity] || 0) * 100 + (i.corr || 0) * 10 > (_lvW[prev.severity] || 0) * 100 + (prev.corr || 0) * 10;
-    if (better) seen.set(k, i);
+    if (better) { seen.set(k, i); if (parts) { const mp = _sigParts.find(x => x[0] === k); if (mp) { parts.words.forEach(w => mp[1].words.add(w)); } } }
   });
-  const uniq = Array.from(seen.values());
+  let uniq = Array.from(seen.values());
+  /* 2026-09-01 三级届次锚归并（瓜达尔第9次联合工作组会议三版本实测）：系列性事件
+   * （第N次会议/峰会/大选等）不同来源措辞差异极大，且会议类标题无事件词 → 无 _eventSig，
+   * country 还被来源国污染（国际/巴基斯坦混杂）——签名/标题键/词交集全对不上。
+   * 规则：届次相同（第9次=第九次，中文数字归一）+ 标题含系列词 + 共享≥1个域内专名 → 同事件。
+   * 无届次锚的条目（项目审查/凯尼耶巴/达喀尔）不进本通道，零误合。 */
+  const _cn2num = s => { const d = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }; let n = 0, cur = 0; for (const ch of s) { if (d[ch] !== undefined) cur = d[ch]; else if (ch === '十') { n += (cur || 1) * 10; cur = 0; } else if (ch === '百') { n += (cur || 1) * 100; cur = 0; } } return String(n + cur); };
+  const _editionOf = t => { const m = String(t || '').match(/第\s*([0-9一二三四五六七八九十百零两]+)\s*[届次轮]/); if (!m) return ''; let n = m[1]; if (!/^\d+$/.test(n)) n = _cn2num(n); return 'E' + n; };
+  const _FAC_TOK = /瓜达尔|中巴经济走廊|CPEC|一带一路|上合组织|金砖|G7|G20|APEC|东盟|联合国|大使馆|使馆|红海|苏伊士|霍尔木兹|中欧班列|雅万高铁|中老铁路|蒙内铁路|汉班托塔|比雷埃夫斯|皎漂|西芒杜|卡莫阿|钱凯港|莱基/g;
+  const _SERIES_RE = /会议|峰会|工作组|大选|选举|公投|审判|判决|论坛|会晤|联大/;
+  const _edGroups = []; const _edMerged = new Set();
+  uniq.forEach(i => {
+    const ed = _editionOf(i.title);
+    if (!(ed && _SERIES_RE.test(String(i.title || '')))) return;
+    const facs = new Set((String(i.title || '').match(_FAC_TOK) || []));
+    if (!facs.size) return;
+    for (const g of _edGroups) {
+      if (g.ed !== ed) continue;
+      let share = false; facs.forEach(f => { if (g.facs.has(f)) share = true; });
+      if (!share) continue;
+      const better = (_lvW[i.severity] || 0) * 100 + (i.corr || 0) * 10 > (_lvW[g.item.severity] || 0) * 100 + (g.item.corr || 0) * 10;
+      _edMerged.add(better ? g.item : i);
+      if (better) g.item = i;
+      facs.forEach(f => g.facs.add(f));
+      return;
+    }
+    _edGroups.push({ ed, facs, item: i });
+  });
+  if (_edMerged.size) uniq = uniq.filter(i => !_edMerged.has(i));
   const total = uniq.length;
   const rawTotal = items.length;
   const chinaItems = uniq.filter(i => i.china && !i.negative);
