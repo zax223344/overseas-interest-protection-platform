@@ -3484,6 +3484,7 @@ var DataHub={
               /* 清理历史蓝色级别普通涉华新闻：预警中心只保留红/橙/黄风险预警级 */
               ALERTS=(parsed||[]).filter(function(a){
                 if(!a) return false;
+                if(a.is_manual) return true; /* 2026-09-01 手动录入铁律：手动条目豁免蓝色清理与启动闸门——永不丢失 */
                 if(a.level==='blue') return false;
                 /* 对无明确 level 的历史数据，按内容风险实质重新判定 */
                 if(!a.level){
@@ -3613,6 +3614,7 @@ var DataHub={
       if(!isArr) return;
       var _gPass=function(it){
         if(!it) return false;
+        if(it.is_manual) return true; /* 2026-09-01 手动录入铁律：手动条目豁免下发闸门 */
         if(typeof GATE==='undefined' || !GATE.chinaOverseasGate) return true;
         if(GATE._isProtected && GATE._isProtected(it)) return true;
         var txt=String(it.title||it.title_zh||'')+' '+String(it.desc||it.content||it.description||'');
@@ -3986,6 +3988,7 @@ const VIEW_MAP={
   countryfile:{t:'国家档案总表',b:'分析研判 / 国家档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（研判简报 · AI分析报告）'},
   datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
+  'manual-entry':{t:'手动录入工作区',b:'数据管理 / 手动录入工作区（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
   threatorgs:{t:'威胁组织',b:'监测中心 / 威胁组织'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
@@ -4161,6 +4164,7 @@ function runViewInit(v){
       else if(v==='command'){ if(typeof COMMAND!=='undefined'){ if(!COMMAND._incidents)COMMAND.init(); else COMMAND.render(); } }
       else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
       else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
+      else if(v==='manual-entry'){ if(typeof MANUALENTRY!=='undefined')MANUALENTRY.init(); }
       else if(v==='role'){ if(typeof ROLE_UI!=='undefined')ROLE_UI.render(); }
     }catch(e){ console.error('runViewInit('+v+')错误:',e); }
   },0);
@@ -12971,6 +12975,7 @@ const AVIEW={
     var self=this;
     var keyFn=(mode==='fuzzy'&&self._eventKeyFuzzy)?self._eventKeyFuzzy:function(x){return self._eventKey(x);};
     list.forEach(function(a){
+      if(a && a.is_manual){ out.push(a); return; } /* 2026-09-01 手动录入铁律：手动条目不参与事件级合并，始终独立展示 */
       var k;
       try{ k=keyFn.call(self,a); }catch(err){ k=self._eventKey(a); }
       if(!k || k.replace(/\|/g,'').length<6){ out.push(a); return; }
@@ -13081,7 +13086,7 @@ const AVIEW={
     /* 2026-08-28 信噪分离（用户指令：预警中心只展红橙黄）：
      * 蓝色=普通动态/分析文章，默认折叠不进队列——除非用户显式选"蓝色"或"全部等级"要看的。
      * 蓝色仍留在数据中心/实时情报流可查，只是不占预警中心版面。 */
-    if(this.filterLevel==='all')alerts=alerts.filter(function(a){return a.level!=='blue'||AVIEW._showBlue;});
+    if(this.filterLevel==='all')alerts=alerts.filter(function(a){return a.is_manual||a.level!=='blue'||AVIEW._showBlue;}); /* 2026-09-01 手动条目豁免蓝色折叠 */
     else if(this.filterLevel!=='blue')alerts=alerts.filter(function(a){return a.level===AVIEW.filterLevel;});
     else alerts=alerts.filter(function(a){return a.level==='blue';});
     if(this.filterStatus!=='all')alerts=alerts.filter(function(a){return a.status===AVIEW.filterStatus;});
@@ -13125,6 +13130,7 @@ const AVIEW={
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
         (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
+        (a.is_manual?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(0,255,159,.12);border:1px solid #00ff9f;color:#00ff9f;font-weight:800" title="手动录入条目（手动录入工作区提交 · 不受时效窗/上限约束 · 仅可人工删除）">✍手动</span>':'')+
         (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
         stripTags(a.title_zh||a.title)+'</div>'+
@@ -13285,6 +13291,7 @@ const AVIEW={
       return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
         (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
+        (a.is_manual?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(0,255,159,.12);border:1px solid #00ff9f;color:#00ff9f;font-weight:800" title="手动录入条目（手动录入工作区提交 · 不受时效窗/上限约束 · 仅可人工删除）">✍手动</span>':'')+
         (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
         stripTags(a.title_zh||a.title)+'</div>'+
@@ -19440,6 +19447,7 @@ function _purgeAlertsNotToday(){
   var _tk=String(dayStart.getFullYear())+String(dayStart.getMonth()+1).padStart(2,'0')+String(dayStart.getDate()).padStart(2,'0');
   var before=ALERTS.length;
   ALERTS=ALERTS.filter(function(a){
+    if(a.is_manual) return true; /* 2026-09-01 手动录入铁律：手动条目永不过期，只能人工删除 */
     if(_isStaleSeed(a)) return false;
     if(_isStaleEvent(a)) return false;   /* 2026-08-28 旧闻硬否决：事件超 72h 一律剔除（伦敦使馆旧闻根治） */
     var t=_alertTsRaw(a);
@@ -19919,7 +19927,7 @@ function initApp(){
       }
       return false;
     }
-    if(typeof ALERTS!=='undefined'){ ALERTS=ALERTS.filter(function(a){return !_isBlueRisk(a);}); }
+    if(typeof ALERTS!=='undefined'){ ALERTS=ALERTS.filter(function(a){return a.is_manual||!_isBlueRisk(a);}); } /* 2026-09-01 手动条目豁免蓝色清理 */
     if(typeof EVENTS!=='undefined'){ EVENTS=EVENTS.filter(function(a){return !_isBlueRisk(a);}); }
     if(typeof TERROR_EVENTS!=='undefined'){ TERROR_EVENTS=TERROR_EVENTS.filter(function(a){return !_isBlueRisk(a);}); }
     console.log('[initApp] 蓝色级别清理完成: ALERTS='+ALERTS.length+' EVENTS='+EVENTS.length+' TERROR_EVENTS='+TERROR_EVENTS.length);
