@@ -1,0 +1,11 @@
+const d = JSON.parse(require('fs').readFileSync(process.argv[2] || '/tmp/dr31.json', 'utf8'));
+console.log('keys:', Object.keys(d).join(','));
+console.log('items:', (d.items || []).length, '| sections:', (d.sections || []).map(s => s.key + (s.subs ? '(' + s.subs.length + ' subs)' : '(' + (s.items || []).length + ')')).join(' '));
+console.log('manual_edit:', d.manual_edit, '| edited:', !!d.edited, '| revision:', (d.revision || []).length);
+console.log('gov_html len:', (d.gov_html || '').length, '| html len:', (d.html || '').length);
+const it = (d.items || [])[5] || {};
+console.log('sample item:', JSON.stringify({ id: it.id, title: String(it.title).slice(0, 30), url: String(it.url).slice(0, 40), digest: String(it.digest).slice(0, 40), sev: it.severity, china: it.china, assets: it.assets }));
+const g = d.gov_html || '';
+console.log('gov checks:', 'redhead=' + (g.indexOf('drg-redhead') >= 0), 'title=' + (g.indexOf('海外利益安全日报') >= 0), 'svg=' + (g.indexOf('<svg') >= 0), 'table=' + (g.indexOf('drg-table') >= 0), 'sign=' + (g.indexOf('drg-sign') >= 0), 'footer=' + (g.indexOf('drg-footer') >= 0), 'h1count=' + (g.match(/drg-h1/g) || []).length);
+console.log('issueNo:', d.meta && d.meta.issueNo, '| judg:', d.meta && d.meta.judg && d.meta.judg.length, '| sugg:', d.meta && d.meta.sugg && d.meta.sugg.length);
+console.log('drawer click attrs in html:', (d.html || '').match(/DAILY_REPORT\.openDrawer/g) ? (d.html.match(/DAILY_REPORT\.openDrawer/g)).length : 0);

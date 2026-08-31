@@ -846,6 +846,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-group">数据管理</div>
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
 <div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
+<div class="sb-item" data-view="manual-entry" onclick="navigateTo('manual-entry')"><span class="ic">✍️</span><span class="lb">手动录入工作区</span></div>
 <div class="sb-group">系统</div>
 <div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
 <!-- 合并后保留的隐藏徽章（代码仍会更新计数，避免空指针） -->
@@ -1140,10 +1141,13 @@ select.intel-input{cursor:pointer}
 
 <!-- 采集库已与"结构化情报数据库"合并：采集数据自动镜像入总库(待审核)，消除功能区重叠 -->
 
-<div class="card mt-12"><div class="card-tt"><span class="ic">✏️</span>手动数据录入</div>
+<div class="card mt-12"><div class="card-tt"><span class="ic">✏️</span>手动数据录入 <button class="btn sm" style="margin-left:10px;font-size:10px;padding:2px 10px;background:rgba(0,212,255,.12);color:var(--cyan)" onclick="navigateTo('manual-entry')">✍️ 前往独立工作区（结构化智能录入 · 并发安全）→</button></div>
 <div id="dc-manual-form"></div>
 </div>
 </div>
+
+<!-- VIEW: MANUAL ENTRY WORKSPACE (manual-entry.js 整视图渲染) -->
+<div class="view" id="view-manual-entry"><div id="manual-entry-root"></div></div>
 
 <!-- VIEW: SETTINGS -->
 <div class="view" id="view-settings">
@@ -1221,16 +1225,17 @@ function closeMobileMenu(){
 <script src="distribute.js?v=2"></script>
 <script src="datasources.js?v=26"></script>
 <script src="threats.js?v=7"></script>
-<script src="aireport.js?v=3"></script>
+<script src="aireport.js?v=4"></script>
 <script src="autoalert-v3.js?v=8"></script>
 <script src="geoint_live.js?v=5"></script>
 <script src="gate-admin.js?v=2"></script>
 <script src="deepsearch.js?v=2"></script>
 <script src="socmint.js?v=4"></script>
+<script src="manual-entry.js?v=1"></script>
 <script src="command-center.js?v=3"></script>
 <script src="explanability.js?v=2"></script>
 <script src="role-ui.js?v=6"></script>
-<script src="dailyreport.js?v=5"></script>
+<script src="dailyreport.js?v=6"></script>
 <script src="wechat.js?v=4"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
 <script src="linkgraph.js?v=5"></script>

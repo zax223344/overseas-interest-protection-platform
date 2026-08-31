@@ -41,6 +41,7 @@ const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
 const wmFeed = require('./wm-feed'); /* WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO领事警示/断网/疫情/新闻摘要，30分钟一轮） */
+const manualEntryApi = require('./manual-entry'); /* 手动录入工作区 API（2026-09-01：结构化录入+并发安全+铁律入预警中心，挂载见 DataHub API 段） */
 const { spawn } = require('child_process');
 
 const app = express();
@@ -404,6 +405,232 @@ function _prevDayKey(dateKey) {
   const d = new Date(parts[0], parts[1] - 1, parts[2] - 1);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
+/* ===== 2026-09-01 日报三大升级（用户指令：条目可交互可修改 + 公文格式报告 + PDF/Word 导出）=====
+ * 结构化重构：_generateDailyReport 不再直接拼最终 HTML，而是产出
+ *   items   = 当日全部独立事件（含标题/摘要/来源/原文URL/级别/涉华标记/资产标签等完整字段）
+ *   sections= 各节条目索引（供前端交互渲染与人工编辑）
+ *   meta    = 渲染元信息（原始条数/信源数/研判结论/建议，人工编辑后重渲染仍引用）
+ * 交互版 HTML（_renderDailyReportHTML）与公文版 HTML（_buildGovDailyReport）均由
+ * 同一份结构化数据渲染；人工编辑保存后服务端用同一函数重建，双视图强一致、零虚构。 */
+function _drRowHtml(i, idx, extra) {
+  const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
+  const lvColor = { red: '#ff3355', orange: '#ff8800', yellow: '#ffcc00', blue: '#00d4ff' }[i.severity] || '#888';
+  const cty = i.eventCountry || i.country || '';
+  return '<div data-dri="' + idx + '" onclick="DAILY_REPORT.openDrawer(' + idx + ')" style="padding:8px 10px;border-left:3px solid ' + lvColor + ';background:rgba(128,128,128,0.06);border-radius:6px;margin-bottom:6px;cursor:pointer">'
+    + '<div style="font-size:13px;font-weight:600">' + _escapeHtml(i.title) + '</div>'
+    + '<div style="font-size:11px;opacity:0.65;margin-top:2px">'
+    + '<span style="color:' + lvColor + '">' + lvName + '</span>'
+    + (cty ? ' · 📍' + _escapeHtml(cty) : '')
+    + (i.time ? ' · 🕐' + _escapeHtml(String(i.time).slice(0, 16)) : '')
+    + ' · ' + _escapeHtml(i.source)
+    + (i.cred ? ' · 信源' + i.cred + '级' : '')
+    + (i.corr > 1 ? ' · 🔗×' + i.corr + ' 印证' : '')
+    + (extra || '')
+    + '</div></div>';
+}
+function _drSectionHtml(key, title, icon, innerHtml, emptyText) {
+  return '<div data-drs="' + key + '" style="margin:18px 0"><div style="font-size:15px;font-weight:700;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(128,128,128,0.25)">' + icon + ' ' + title + '</div>'
+    + (innerHtml || '<div style="opacity:0.5;font-size:12px">' + (emptyText || '当日无相关条目') + '</div>') + '</div>';
+}
+/* 交互版 HTML 渲染（生成与人工编辑保存共用；meta.judgementHtml 为生成时研判结论） */
+function _renderDailyReportHTML(items, sections, meta) {
+  const total = items.length;
+  const chinaItems = items.filter(i => i.china && !i.negative);
+  const negItems = items.filter(i => i.negative);
+  const reds = items.filter(i => i.severity === 'red' && (i.china || i.negative));
+  const byType = {}; items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+  const byCountry = {}; items.forEach(i => { const c = i.eventCountry || i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+  const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  let html = '';
+  html += '<div style="opacity:0.7;font-size:12px;margin-bottom:12px">本报告由系统基于当日实际采集入库数据自动汇总生成，未使用任何生成式模型，所有条目均可回溯至数据中心原始记录。</div>';
+  const typeRows = Object.entries(byType).sort((a, b) => b[1] - a[1])
+    .map(e => '<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 10px;background:rgba(0,150,255,0.08);border-radius:10px;font-size:12px">' + (_DR_TYPE_NAMES[e[0]] || e[0]) + ' <b>' + e[1] + '</b></span>').join('');
+  html += _drSectionHtml('overview', '采集总览', '📊',
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">'
+    + '<span>入库总量 <b style="font-size:18px">' + total + '</b></span>'
+    + '<span>涉华 <b style="font-size:18px;color:#0a84ff">' + chinaItems.length + '</b></span>'
+    + '<span>境外涉华负面 <b style="font-size:18px;color:#ff8800">' + negItems.length + '</b></span>'
+    + '<span>红色（涉华严重） <b style="font-size:18px;color:#ff3355">' + reds.length + '</b></span>'
+    + '<span>信源 <b style="font-size:18px">' + ((meta && meta.sourceCount) || 0) + '</b> 家</span></div>'
+    + '<div>' + typeRows + '</div>');
+  (sections || []).forEach(sec => {
+    if (sec.key === 'types12') {
+      let inner = '';
+      (sec.subs || []).forEach(sub => {
+        const n = byType[sub.type] || 0;
+        inner += '<div data-drs="types12:' + sub.type + '" style="margin:10px 0"><div style="font-size:13px;font-weight:700;color:#0a84ff">' + (_DR_TYPE_NAMES[sub.type] || sub.type)
+          + ' <span style="opacity:0.6;font-weight:400">（当日 ' + n + ' 条）</span></div>'
+          + ((sub.items || []).length ? sub.items.map(idx => items[idx] ? _drRowHtml(items[idx], idx) : '').join('') : '<div style="opacity:0.45;font-size:11px;padding:2px 10px">当日无条目</div>') + '</div>';
+      });
+      html += _drSectionHtml('types12', '十二类情报全景', '🗂️', inner);
+    } else {
+      html += _drSectionHtml(sec.key, sec.title, sec.icon, (sec.items || []).map(idx => items[idx] ? _drRowHtml(items[idx], idx, sec.key === 'asset' && items[idx].assets && items[idx].assets.length ? ' · 资产：' + _escapeHtml(items[idx].assets.join('、')) : '') : '').join(''), sec.emptyText);
+    }
+  });
+  html += _drSectionHtml('countries', '重点国别分布', '🌍',
+    topCountries.map(e => {
+      const pct = total ? Math.round(e[1] / total * 100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px">'
+        + '<span style="min-width:90px">' + _escapeHtml(e[0]) + '</span>'
+        + '<div style="flex:1;height:8px;background:rgba(128,128,128,0.15);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:#0a84ff"></div></div>'
+        + '<span style="min-width:60px;text-align:right;opacity:0.7">' + e[1] + ' 条</span></div>';
+    }).join(''));
+  html += _drSectionHtml('judge', '预警研判', '🧭', ((meta && meta.judgementHtml) || []).join(''));
+  return html;
+}
+/* ===== 公文版（GB/T 9704-2012 参考版式）辅助 ===== */
+function _govCnDate(dateKey) {
+  const p = String(dateKey).split('-').map(Number);
+  return p[0] + '年' + p[1] + '月' + p[2] + '日';
+}
+/* 12 类情报分布环形图（内嵌 SVG，自包含可打印） */
+function _govDonutSVG(byType, total) {
+  let ents = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+  if (!ents.length) ents = [['暂无数据', 1]];
+  let rest = 0;
+  if (ents.length > 7) { rest = ents.slice(7).reduce((s, e) => s + e[1], 0); ents = ents.slice(0, 7); }
+  if (rest) ents.push(['其他', rest]);
+  const colors = ['#1f3a5f', '#2e5e8c', '#4a7ba6', '#6d94b8', '#8fb0c9', '#5a7d5a', '#8c8c8c', '#b8b8b8'];
+  const W = 620, H = Math.max(300, 60 + ents.length * 30), cx = 145, cy = H / 2, R = 100, ir = 56;
+  let a0 = -Math.PI / 2, segs = '';
+  ents.forEach((e, n) => {
+    const frac = total ? e[1] / total : 1 / ents.length;
+    const a1 = a0 + frac * Math.PI * 2;
+    const large = (a1 - a0) > Math.PI ? 1 : 0;
+    const p = (r, a) => (cx + r * Math.cos(a)).toFixed(1) + ' ' + (cy + r * Math.sin(a)).toFixed(1);
+    segs += '<path d="M' + p(R, a0) + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + p(R, a1) + ' L' + p(ir, a1) + ' A' + ir + ' ' + ir + ' 0 ' + large + ' 0 ' + p(ir, a0) + ' Z" fill="' + colors[n % colors.length] + '" stroke="#ffffff" stroke-width="1.5"/>';
+    a0 = a1;
+  });
+  let legend = '';
+  ents.forEach((e, n) => {
+    const y = cy - (ents.length - 1) * 15 + n * 30;
+    legend += '<rect x="290" y="' + (y - 10) + '" width="14" height="14" fill="' + colors[n % colors.length] + '"/>'
+      + '<text x="312" y="' + (y + 2) + '" font-size="12.5" fill="#000">' + _escapeHtml((_DR_TYPE_NAMES[e[0]] || e[0])) + '</text>'
+      + '<text x="600" y="' + (y + 2) + '" font-size="12.5" fill="#000" text-anchor="end">' + e[1] + ' 件</text>';
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">'
+    + segs
+    + '<text x="' + cx + '" y="' + (cy - 6) + '" font-size="17" font-weight="bold" fill="#000" text-anchor="middle" font-family="\'黑体\',\'SimHei\',sans-serif">' + total + '</text>'
+    + '<text x="' + cx + '" y="' + (cy + 14) + '" font-size="11" fill="#000" text-anchor="middle" font-family="\'黑体\',\'SimHei\',sans-serif">独立事件（件）</text>'
+    + legend + '</svg>';
+}
+/* 国别 TOP10 条形图（内嵌 SVG） */
+function _govBarSVG(topCountries, total) {
+  const ents = (topCountries || []).slice(0, 10);
+  if (!ents.length) return '<svg viewBox="0 0 620 60" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg"><text x="310" y="34" font-size="13" fill="#000" text-anchor="middle" font-family="\'黑体\',\'SimHei\',sans-serif">当日无国别标注事件</text></svg>';
+  const W = 620, rowH = 30, H = ents.length * rowH + 14, maxV = ents[0][1], barMax = 360;
+  let bars = '';
+  ents.forEach((e, n) => {
+    const y = 8 + n * rowH;
+    const bw = Math.max(3, Math.round(e[1] / maxV * barMax));
+    bars += '<text x="108" y="' + (y + 14) + '" font-size="12.5" fill="#000" text-anchor="end" font-family="\'黑体\',\'SimHei\',sans-serif">' + _escapeHtml(String(e[0]).slice(0, 6)) + '</text>'
+      + '<rect x="118" y="' + (y + 2) + '" width="' + bw + '" height="16" fill="#2e5e8c"/>'
+      + '<text x="' + (122 + bw) + '" y="' + (y + 14) + '" font-size="12" fill="#000" font-family="\'黑体\',\'SimHei\',sans-serif">' + e[1] + ' 件（' + (total ? Math.round(e[1] / total * 100) : 0) + '%）</text>';
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">' + bars + '</svg>';
+}
+/* 公文版日报构建：图、表、文字相融合；版式按 GB/T 9704-2012 参考（红头可前端开关）。
+ * 数据全部来自当日 DB 真实条目（items），研判/建议为规则化生成，零模拟数据。 */
+function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
+  const total = items.length;
+  const chinaItems = items.filter(i => i.china && !i.negative);
+  const negItems = items.filter(i => i.negative);
+  const reds = items.filter(i => i.severity === 'red' && (i.china || i.negative));
+  const oranges = items.filter(i => i.severity === 'orange');
+  const byType = {}; items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+  const byCountry = {}; const byCountryType = {};
+  items.forEach(i => {
+    const c = i.eventCountry || i.country || '未标注';
+    byCountry[c] = (byCountry[c] || 0) + 1;
+    const t = _DR_TYPE_NAMES[i.type] || i.type;
+    byCountryType[c] = byCountryType[c] || {};
+    byCountryType[c][t] = (byCountryType[c][t] || 0) + 1;
+  });
+  const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const sourceCount = (meta && meta.sourceCount) || 0;
+  const rawTotal = (meta && meta.rawTotal) || total;
+  const cnDate = _govCnDate(dateKey);
+  /* 成文/印发日期 = 日报次日（日报汇总前一日数据，次日印发，确定性生成） */
+  const pp = String(dateKey).split('-').map(Number);
+  const nd = new Date(pp[0], pp[1] - 1, pp[2] + 1);
+  const issueDate = nd.getFullYear() + '年' + (nd.getMonth() + 1) + '月' + nd.getDate() + '日';
+  /* 导语（当日总体态势一段，数据真实汇总） */
+  const sitWords = reds.length ? '涉华安全形势严峻' : (oranges.length >= 5 ? '部分区域风险明显抬头' : (chinaItems.length + negItems.length > 0 ? '涉华情报动态总体平稳、局部活跃' : '总体态势平稳'));
+  const lead = '本日报汇总' + cnDate + '0时至24时全渠道采集入库的境外安全情报' + total + '个独立事件（原始条目' + rawTotal + '条，已完成事件级去重），涉及信源' + sourceCount + '家。其中涉华情报' + chinaItems.length + '件、境外涉华负面舆情' + negItems.length + '件、红色（涉华严重）事件' + reds.length + '件、橙色事件' + oranges.length + '件。当日' + sitWords + '。';
+  /* 二、涉华重点事件：红色优先，其后橙色涉华，最多 8 条 */
+  const keyItems = [];
+  reds.forEach(i => keyItems.push(i));
+  items.filter(i => i.severity === 'orange' && (i.china || i.negative) && keyItems.indexOf(i) < 0).slice(0, 8 - keyItems.length).forEach(i => keyItems.push(i));
+  if (!keyItems.length) items.filter(i => (i.china || i.negative)).sort((a, b) => ({ red: 4, orange: 3, yellow: 2, blue: 1 }[b.severity] || 0) - ({ red: 4, orange: 3, yellow: 2, blue: 1 }[a.severity] || 0)).slice(0, 5).forEach(i => keyItems.push(i));
+  const keyHtml = keyItems.length ? keyItems.map((i, n) => {
+    const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
+    const d = i.digest ? '：' + _escapeHtml(String(i.digest).slice(0, 100)) + (String(i.digest).length > 100 ? '……' : '') : '。';
+    return '<p class="drg-p">（' + (n + 1) + '）【' + lvName + '】' + _escapeHtml(i.title) + d + '（信源：' + _escapeHtml(i.source) + '）。</p>';
+  }).join('') : '<p class="drg-p">当日无涉华重点事件。</p>';
+  /* 三、地区风险动态表 */
+  const tblRows = topCountries.map((e, n) => {
+    const c = e[0];
+    const types = Object.entries(byCountryType[c] || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]).join('、');
+    return '<tr><td>' + (n + 1) + '</td><td>' + _escapeHtml(c) + '</td><td>' + e[1] + '</td><td>' + (total ? (e[1] / total * 100).toFixed(1) : 0) + '%</td><td class="l">' + _escapeHtml(types || '—') + '</td></tr>';
+  }).join('');
+  const judgHtml = (judg || []).map((j, n) => '<p class="drg-h2">（' + ('一二三四五'[n] || (n + 1)) + '）' + _escapeHtml(j.t) + '</p><p class="drg-p">' + _escapeHtml(j.s) + '。</p>').join('');
+  const suggHtml = (sugg || []).map((s, n) => '<p class="drg-p">（' + (n + 1) + '）' + _escapeHtml(s) + '。</p>').join('');
+  return '<style>'
+    + '.drg-paper{width:21cm;max-width:100%;margin:0 auto;background:#fff;color:#000;padding:3.7cm 2.6cm 3.5cm 2.8cm;font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;font-size:16pt;line-height:28pt;box-sizing:border-box;}'
+    + '.drg-paper *{box-sizing:content-box;}'
+    + '.drg-redhead{text-align:center;font-family:"方正小标宋简体","FZXiaoBiaoSong-B05S","宋体","SimSun",serif;color:#d40000;font-size:32pt;line-height:40pt;font-weight:700;letter-spacing:5px;margin:0 0 4pt;}'
+    + '.drg-paper.nored .drg-redhead,.drg-paper.nored .drg-redline{display:none;}'
+    + '.drg-redline{border:none;border-top:3px solid #d40000;margin:2pt 0 0;}'
+    + '.drg-qihao{text-align:center;font-family:"楷体","KaiTi",serif;font-size:14pt;line-height:26pt;margin:2pt 0 0;}'
+    + '.drg-title{text-align:center;font-family:"方正小标宋简体","FZXiaoBiaoSong-B05S","宋体","SimSun",serif;font-size:22pt;line-height:34pt;font-weight:700;margin:24pt 0 6pt;}'
+    + '.drg-datebar{text-align:center;font-family:"楷体","KaiTi",serif;font-size:14pt;line-height:24pt;margin:0 0 6pt;}'
+    + '.drg-h1{font-family:"黑体","SimHei",serif;font-size:16pt;font-weight:700;line-height:28pt;margin:14pt 0 4pt;text-indent:2em;}'
+    + '.drg-h2{font-family:"楷体","KaiTi",serif;font-weight:700;line-height:28pt;margin:8pt 0 2pt;text-indent:2em;}'
+    + '.drg-p{font-size:16pt;line-height:28pt;text-indent:2em;margin:0;}'
+    + '.drg-tblwrap{margin:8pt 0;}'
+    + '.drg-table{width:100%;border-collapse:collapse;font-size:12pt;line-height:20pt;}'
+    + '.drg-table th,.drg-table td{border:1px solid #000;padding:3pt 5pt;text-align:center;font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;}'
+    + '.drg-table th{font-family:"黑体","SimHei",serif;font-weight:700;}'
+    + '.drg-table td.l,.drg-table th.l{text-align:left;}'
+    + '.drg-fig{margin:10pt 0 2pt;text-align:center;}'
+    + '.drg-figcap{text-align:center;font-family:"黑体","SimHei",serif;font-size:14pt;line-height:22pt;margin:2pt 0 12pt;}'
+    + '.drg-sign{text-align:right;margin-top:26pt;line-height:28pt;}'
+    + '.drg-sign .drg-org{padding-right:2em;}'
+    + '.drg-sign .drg-date{padding-right:4em;}'
+    + '.drg-footer{margin-top:40pt;font-size:12pt;line-height:22pt;font-family:"宋体","SimSun",serif;}'
+    + '.drg-fline{border-top:1px solid #000;margin:0;}'
+    + '.drg-frow{display:flex;justify-content:space-between;padding:2pt 0;}'
+    + '</style>'
+    + '<div class="drg-paper">'
+    + '<div class="drg-redhead">海外利益保护情报中心</div>'
+    + '<div class="drg-redline"></div>'
+    + '<div class="drg-qihao">' + cnDate + ' 总第 ' + ((meta && meta.issueNo) || '—') + ' 期</div>'
+    + '<div class="drg-title">海外利益安全日报</div>'
+    + '<div class="drg-datebar">（' + cnDate + '）</div>'
+    + '<p class="drg-p">' + lead + '</p>'
+    + '<div class="drg-h1">一、总体态势</div>'
+    + '<p class="drg-p">当日采集入库独立事件' + total + '个（原始条目' + rawTotal + '条），涉华情报' + chinaItems.length + '件、境外涉华负面舆情' + negItems.length + '件、红色（涉华严重）事件' + reds.length + '件、橙色事件' + oranges.length + '件，涉及信源' + sourceCount + '家。核心指标见表1，情报类型分布见图1，国别分布前十位见图2。</p>'
+    + '<div class="drg-tblwrap"><table class="drg-table"><thead><tr><th>指标</th><th>入库总量</th><th>涉华情报</th><th>涉华负面舆情</th><th>红色事件</th><th>橙色事件</th><th>信源数</th></tr></thead>'
+    + '<tbody><tr><td>当日数值</td><td>' + total + '</td><td>' + chinaItems.length + '</td><td>' + negItems.length + '</td><td>' + reds.length + '</td><td>' + oranges.length + '</td><td>' + sourceCount + '</td></tr></tbody></table></div>'
+    + '<div class="drg-figcap" style="margin-top:12pt">表1　当日核心指标汇总</div>'
+    + '<div class="drg-fig">' + _govDonutSVG(byType, total) + '</div>'
+    + '<div class="drg-figcap">图1　当日情报类型分布</div>'
+    + '<div class="drg-fig">' + _govBarSVG(topCountries, total) + '</div>'
+    + '<div class="drg-figcap">图2　国别分布（前十位）</div>'
+    + '<div class="drg-h1">二、涉华重点事件</div>'
+    + keyHtml
+    + '<div class="drg-h1">三、地区风险动态</div>'
+    + '<p class="drg-p">当日事件分布于' + Object.keys(byCountry).length + '个国家/地区，前十位国家/地区统计见表2' + (topCountries.length ? '，其中' + _escapeHtml(topCountries[0][0]) + '以' + topCountries[0][1] + '件居首' : '') + '。</p>'
+    + '<div class="drg-tblwrap"><table class="drg-table"><thead><tr><th>序号</th><th>国家/地区</th><th>事件数</th><th>占比</th><th class="l">当日主要类型</th></tr></thead><tbody>' + (tblRows || '<tr><td colspan="5">当日无国别标注事件</td></tr>') + '</tbody></table></div>'
+    + '<div class="drg-figcap">表2　国别风险统计（前十位）</div>'
+    + '<div class="drg-h1">四、风险研判</div>'
+    + judgHtml
+    + '<div class="drg-h1">五、工作建议</div>'
+    + suggHtml
+    + '<div class="drg-sign"><div class="drg-org">海外利益保护情报中心</div><div class="drg-date">' + issueDate + '</div></div>'
+    + '<div class="drg-footer"><div class="drg-fline"></div><div class="drg-frow"><span>抄送：中心领导，相关业务部门。</span></div><div class="drg-fline"></div><div class="drg-frow"><span>海外利益保护情报中心办公室</span><span>' + issueDate + '印发</span></div><div class="drg-fline"></div></div>'
+    + '</div>';
+}
 async function _generateDailyReport(dateKey) {
   const parts = dateKey.split('-').map(Number);
   const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
@@ -419,6 +646,14 @@ async function _generateDailyReport(dateKey) {
       id: r.id, type: r.data_type, title: j.title_zh || r.title || '', country: r.country || j.country_cn || '',
       severity: j.level_norm || r.severity || 'yellow', source: r.source || j.source || '',
       time: j.publish_time || r.event_date || '',
+      /* 2026-09-01 交互升级：条目详情浮层与公文版需要原文链接与摘要（零模拟数据，取自落库原文；
+       * 部分源 content_zh 已转义存储（&lt;a&gt;），统一反转义后剥离所有标签（含已转义的），
+       * 避免渲染时出现 &lt;a href="..."&gt; 之类的字面残留。 */
+      url: j.url || '',
+      digest: String(j.content_zh || j.summary || j.content || '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+        .replace(/<[^>]*>/g, ' ').replace(/<[^>]+/g, ' ')
+        .replace(/\s+/g, ' ').trim().slice(0, 500),
       china: scrapers.isChinaRelatedStrict((r.title || '') + ' ' + (j.title_zh || '')),
       assets: j.asset_tags || [], cred: j.credibility || '', corr: j.corroboration || 0,
       negative: j._chinaNegative === true || j._chinaNegative === 'true',
@@ -546,73 +781,31 @@ async function _generateDailyReport(dateKey) {
     return c || String(i.country || '');
   }
 
-  function row(i, extra) {
-    const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
-    const lvColor = { red: '#ff3355', orange: '#ff8800', yellow: '#ffcc00', blue: '#00d4ff' }[i.severity] || '#888';
-    const cty = _reportEventCountry(i);
-    return '<div style="padding:8px 10px;border-left:3px solid ' + lvColor + ';background:rgba(128,128,128,0.06);border-radius:6px;margin-bottom:6px">'
-      + '<div style="font-size:13px;font-weight:600">' + _escapeHtml(i.title) + '</div>'
-      + '<div style="font-size:11px;opacity:0.65;margin-top:2px">'
-      + '<span style="color:' + lvColor + '">' + lvName + '</span>'
-      + (cty ? ' · 📍' + _escapeHtml(cty) : '')
-      + (i.time ? ' · 🕐' + _escapeHtml(String(i.time).slice(0, 16)) : '')
-      + ' · ' + _escapeHtml(i.source)
-      + (i.cred ? ' · 信源' + i.cred + '级' : '')
-      + (i.corr > 1 ? ' · 🔗×' + i.corr + ' 印证' : '')
-      + (extra || '')
-      + '</div></div>';
-  }
-  function section(title, icon, innerHtml, emptyText) {
-    return '<div style="margin:18px 0"><div style="font-size:15px;font-weight:700;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(128,128,128,0.25)">' + icon + ' ' + title + '</div>'
-      + (innerHtml || '<div style="opacity:0.5;font-size:12px">' + (emptyText || '当日无相关条目') + '</div>') + '</div>';
-  }
-
-  let html = '';
-  html += '<div style="opacity:0.7;font-size:12px;margin-bottom:12px">本报告由系统基于当日实际采集入库数据自动汇总生成，未使用任何生成式模型，所有条目均可回溯至数据中心原始记录。</div>';
-  const typeRows = Object.entries(byType).sort((a, b) => b[1] - a[1])
-    .map(e => '<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 10px;background:rgba(0,150,255,0.08);border-radius:10px;font-size:12px">' + (_DR_TYPE_NAMES[e[0]] || e[0]) + ' <b>' + e[1] + '</b></span>').join('');
-  html += section('采集总览', '📊',
-    '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">'
-    + '<span>入库总量 <b style="font-size:18px">' + total + '</b></span>'
-    + '<span>涉华 <b style="font-size:18px;color:#0a84ff">' + chinaItems.length + '</b></span>'
-    + '<span>境外涉华负面 <b style="font-size:18px;color:#ff8800">' + negItems.length + '</b></span>'
-    + '<span>红色（涉华严重） <b style="font-size:18px;color:#ff3355">' + reds.length + '</b></span>'
-    + '<span>信源 <b style="font-size:18px">' + Object.keys(sources).length + '</b> 家</span></div>'
-    + '<div>' + typeRows + '</div>');
-  html += section('涉华严重事件（红色）', '🔴', take(reds, 20).map(i => row(i)).join(''), '当日无涉华严重事件');
-  html += section('中资海外资产关联警报', '🏗️', take(assetHits, 15).map(i => row(i, ' · 资产：' + _escapeHtml(i.assets.join('、')))).join(''), '当日无资产关联警报');
+  /* ===== 2026-09-01 结构化重构（日报交互/公文/导出升级）=====
+   * 各节 take() 调用顺序与原跨节互斥逻辑完全一致（红色>资产>涉华负面>涉华动态>制裁>印证>十二类），
+   * 仅把结果同时收集为结构化数据，供前端交互渲染、人工编辑与服务端双视图重渲染。 */
+  const idxOf = new Map(uniq.map((x, n) => [x, n]));
+  const redList = take(reds, 20);
+  const assetList = take(assetHits, 15);
   /* 涉华动态按级别降序（用户实测：红橙条目沉底、蓝色"学者访谈"置顶——观感差） */
   const chinaSorted = chinaItems.slice().sort((a, b) => (_lvW[b.severity] || 0) - (_lvW[a.severity] || 0) || (b.corr || 0) - (a.corr || 0));
-  html += section('涉华动态', '🇨🇳', take(chinaSorted, 15).map(i => row(i)).join(''), '当日无涉华条目');
-  html += section('境外涉华负面舆情', '⚠️', take(negItems, 10).map(i => row(i)).join(''), '当日无涉华负面条目');
-  html += section('制裁、出口管制与合规动态', '⚖️', take(sanctions, 12).map(i => row(i)).join(''), '当日无制裁合规类条目');
-  html += section('多源印证事件（≥2 方独立信源）', '🔗', take(corroborated, 12).map(i => row(i)).join(''), '当日无多源印证事件');
+  const chinaList = take(chinaSorted, 15);
+  const negList = take(negItems, 10);
+  const sancList = take(sanctions, 12);
+  const corrList = take(corroborated, 12);
   /* ===== 十二类全景（2026-08-28 用户指令：简报全覆盖，不能只盯着恐袭）=====
    * 每类列当日 TOP2 代表事件；空类如实标注"当日无条目"。 */
-  {
-    const ALL_TYPES = ['terror_events', 'military_conflicts', 'security_events', 'social_unrest', 'political_events',
-      'economic_risk', 'sanctions_data', 'legal_compliance', 'cyber_security', 'infrastructure', 'natural_disasters', 'public_health'];
-    let inner = '';
-    ALL_TYPES.forEach(t => {
-      const list = take(uniq.filter(i => i.type === t), 2);
-      const n = byType[t] || 0;
-      inner += '<div style="margin:10px 0"><div style="font-size:13px;font-weight:700;color:#0a84ff">' + (_DR_TYPE_NAMES[t] || t)
-        + ' <span style="opacity:0.6;font-weight:400">（当日 ' + n + ' 条）</span></div>'
-        + (list.length ? list.map(i => row(i)).join('') : '<div style="opacity:0.45;font-size:11px;padding:2px 10px">当日无条目</div>') + '</div>';
-    });
-    html += section('十二类情报全景', '🗂️', inner);
-  }
-  html += section('重点国别分布', '🌍',
-    topCountries.map(e => {
-      const pct = total ? Math.round(e[1] / total * 100) : 0;
-      return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px">'
-        + '<span style="min-width:90px">' + _escapeHtml(e[0]) + '</span>'
-        + '<div style="flex:1;height:8px;background:rgba(128,128,128,0.15);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:#0a84ff"></div></div>'
-        + '<span style="min-width:60px;text-align:right;opacity:0.7">' + e[1] + ' 条</span></div>';
-    }).join(''));
+  const ALL_TYPES = ['terror_events', 'military_conflicts', 'security_events', 'social_unrest', 'political_events',
+    'economic_risk', 'sanctions_data', 'legal_compliance', 'cyber_security', 'infrastructure', 'natural_disasters', 'public_health'];
+  const typeSubs = ALL_TYPES.map(t => ({ type: t, items: take(uniq.filter(i => i.type === t), 2).map(x => idxOf.get(x)) }));
+
   /* ===== 预警研判（2026-08-28 用户指令：简报要增加预警研判）=====
    * 全部结论由当日与前一日真实数据推导：总量环比、红橙态势、核心威胁区聚焦、
-   * 升温国别（较前日增量 TOP3）、明日关注建议。零虚构。 */
+   * 升温国别（较前日增量 TOP3）、明日关注建议。零虚构。
+   * judg/sugg 为同源数据产出的纯文本版，供公文版四、五两节使用。 */
+  const judg = [];
+  const sugg = [];
+  let meta = null;
   {
     let prev = null;
     try {
@@ -626,6 +819,7 @@ async function _generateDailyReport(dateKey) {
       const dp = prev.total ? Math.round(d / prev.total * 100) : 0;
       lines.push('<div style="font-size:13px;margin:6px 0">📊 <b>采集环比</b>：昨日事件 ' + prev.total + ' → 今日 ' + total + '（'
         + (d >= 0 ? '+' : '') + d + ' / ' + (dp >= 0 ? '+' : '') + dp + '%），去重后原始条目 ' + rawTotal + ' 条收敛为 ' + total + ' 个独立事件。</div>');
+      judg.push({ t: '采集环比', s: '昨日独立事件' + prev.total + '个，今日' + total + '个（环比' + (d >= 0 ? '+' : '') + d + '、' + (dp >= 0 ? '+' : '') + dp + '%），' + rawTotal + '条原始条目经事件级去重收敛为' + total + '个独立事件' });
       /* 2. 升温国别 */
       const prevC = (prev.topCountries || []);
       const rises = [];
@@ -637,19 +831,23 @@ async function _generateDailyReport(dateKey) {
       rises.sort((a, b) => b[1] - a[1]);
       if (rises.length) {
         lines.push('<div style="font-size:13px;margin:6px 0">📈 <b>升温国别</b>：' + rises.slice(0, 3).map(r => _escapeHtml(r[0]) + '（+' + r[1] + '，共' + r[2] + '条）').join('、') + '，建议关注事件升级与外溢风险。</div>');
+        judg.push({ t: '升温国别', s: rises.slice(0, 3).map(r => r[0] + '（较前日增加' + r[1] + '条，共' + r[2] + '条）').join('、') + '，存在事件升级与外溢风险，需持续跟踪' });
       }
     } else {
       lines.push('<div style="font-size:13px;margin:6px 0">📊 当日独立事件 ' + total + ' 个（原始 ' + rawTotal + ' 条，已做事件级去重）。</div>');
+      judg.push({ t: '事件总量', s: '当日独立事件' + total + '个（原始条目' + rawTotal + '条，已完成事件级去重），无前日简报可比' });
     }
     /* 3. 红橙态势 */
     const oranges = uniq.filter(i => i.severity === 'orange').length;
     lines.push('<div style="font-size:13px;margin:6px 0">🚨 <b>预警分级态势</b>：红 ' + reds.length + ' / 橙 ' + oranges + '，红色事件' + (reds.length ? '须当日核实处置闭环' : '为零（按红区铁律仅中国公民被袭/被绑/撤侨/群体枪击事件可赋红）') + '。</div>');
+    judg.push({ t: '预警分级态势', s: '当日红色事件' + reds.length + '件、橙色事件' + oranges + '件，' + (reds.length ? '红色事件须当日核实并完成处置闭环' : '红色事件为零（按红区铁律，仅中国公民被袭、被绑、撤侨、群体枪击事件可赋红）') });
     /* 4. 核心威胁区聚焦 */
     const coreByC = {};
     coreThreats.forEach(i => { const c = _reportEventCountry(i) || '未标注'; coreByC[c] = (coreByC[c] || 0) + 1; });
     const coreTop = Object.entries(coreByC).sort((a, b) => b[1] - a[1]).slice(0, 5);
     lines.push('<div style="font-size:13px;margin:6px 0">🎯 <b>核心威胁区</b>（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚）：当日恐袭/冲突/治安事件 ' + coreThreats.length + ' 条'
       + (coreTop.length ? '，集中于 ' + coreTop.map(e => _escapeHtml(e[0]) + ' ' + e[1] + ' 条').join('、') : '') + '。</div>');
+    judg.push({ t: '核心威胁区聚焦', s: '巴基斯坦/中巴经济走廊、阿富汗、非洲、中亚、东南亚等核心威胁区当日恐袭、冲突与治安事件共' + coreThreats.length + '条' + (coreTop.length ? '，集中于' + coreTop.map(e => e[0] + e[1] + '条').join('、') : '') });
     /* 5. 明日关注建议（由数据推导，不虚构） */
     const focus = [];
     if (reds.length) focus.push('红色事件处置闭环核查');
@@ -658,14 +856,62 @@ async function _generateDailyReport(dateKey) {
     if (chinaItems.length + negItems.length >= 10) focus.push('涉华情报专项复核');
     if (prev && topCountries[0]) focus.push(_escapeHtml(topCountries[0][0]) + '升温动态跟踪');
     lines.push('<div style="font-size:13px;margin:6px 0">📋 <b>明日关注建议</b>：' + (focus.length ? focus.join('；') : '常规监测') + '。</div>');
-    html += section('预警研判', '🧭', lines.join(''));
+    /* 公文版五、工作建议（由当日数据规则化推导，零虚构） */
+    if (reds.length) sugg.push('对' + reds.length + '件红色（涉华严重）事件即日启动核实处置流程，逐项跟踪闭环并登记台账');
+    if (assetHits.length) sugg.push('对当日' + assetHits.length + '件中资海外资产关联警报逐一核对项目台账，视情通知相关企业加强安全防范');
+    if (coreThreats.length >= 5) sugg.push('加强核心威胁区（' + (coreTop[0] ? coreTop[0][0] : '重点国别') + '等）24小时滚动监测，发现升级苗头即时上报');
+    if (chinaItems.length + negItems.length >= 10) sugg.push('组织涉华情报专项复核，重点甄别境外涉华负面舆情走向与扩散风险');
+    if (sugg.length < 2) sugg.push('维持常规监测频度，重点关注次日新增信源与重点国别动态');
+    if (sugg.length < 2) sugg.push('各值班岗位按预案做好信息报送与应急值守');
+    /* 研判结论（交互版）存入 meta，人工编辑重渲染时沿用 */
+    meta = { judgementHtml: lines };
   }
+
+  const sections = [
+    { key: 'red', icon: '🔴', title: '涉华严重事件（红色）', items: redList.map(x => idxOf.get(x)), emptyText: '当日无涉华严重事件' },
+    { key: 'asset', icon: '🏗️', title: '中资海外资产关联警报', items: assetList.map(x => idxOf.get(x)), emptyText: '当日无资产关联警报' },
+    { key: 'china', icon: '🇨🇳', title: '涉华动态', items: chinaList.map(x => idxOf.get(x)), emptyText: '当日无涉华条目' },
+    { key: 'neg', icon: '⚠️', title: '境外涉华负面舆情', items: negList.map(x => idxOf.get(x)), emptyText: '当日无涉华负面条目' },
+    { key: 'sanc', icon: '⚖️', title: '制裁、出口管制与合规动态', items: sancList.map(x => idxOf.get(x)), emptyText: '当日无制裁合规类条目' },
+    { key: 'corr', icon: '🔗', title: '多源印证事件（≥2 方独立信源）', items: corrList.map(x => idxOf.get(x)), emptyText: '当日无多源印证事件' },
+    { key: 'types12', icon: '🗂️', title: '十二类情报全景', subs: typeSubs }
+  ];
+  const itemsExport = uniq.map(i => ({
+    id: i.id, type: i.type, title: i.title, country: i.country, eventCountry: _reportEventCountry(i),
+    severity: i.severity, source: i.source, url: i.url, time: i.time, digest: i.digest,
+    china: i.china, negative: i.negative, assets: i.assets, cred: i.cred, corr: i.corr
+  }));
+  /* 期号：已有期号沿用（重生成不变），否则 = 已存期数 + 1 */
+  let issueNo = null;
+  try {
+    const er = await query('SELECT (meta->>\'issueNo\')::int n FROM daily_reports WHERE report_date=$1', [dateKey]);
+    if (er && er.rows && er.rows[0] && er.rows[0].n) issueNo = er.rows[0].n;
+    else { const c = await query('SELECT COUNT(*) c FROM daily_reports'); issueNo = parseInt(c.rows[0].c, 10) + 1; }
+  } catch (e) { issueNo = 1; }
+  meta.rawTotal = rawTotal;
+  meta.sourceCount = Object.keys(sources).length;
+  meta.judg = judg;
+  meta.sugg = sugg.slice(0, 4);
+  meta.issueNo = issueNo;
+  const html = _renderDailyReportHTML(itemsExport, sections, meta);
+  const govHtml = _buildGovDailyReport(dateKey, itemsExport, meta, meta.judg, meta.sugg);
 
   const summary = { total, china: chinaItems.length, negative: negItems.length, red: reds.length, sources: Object.keys(sources).length, byType, topCountries };
   await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
-  await query(`INSERT INTO daily_reports (report_date, html, summary, created_at) VALUES ($1, $2, $3, NOW())
-               ON CONFLICT (report_date) DO UPDATE SET html=$2, summary=$3, created_at=NOW()`,
-    [dateKey, html, JSON.stringify(summary)]);
+  /* 2026-09-01 交互/编辑/公文升级列：items/sections/meta 结构化数据、edited 人工编辑覆盖层、
+   * gov_html 公文版、manual_edit 人工编辑标记、revision 修订痕迹 */
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS items JSONB`);
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS sections JSONB`);
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS meta JSONB`);
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS edited JSONB`);
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS gov_html TEXT`);
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS manual_edit BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS revision JSONB`);
+  /* 注意：重生成只更新基准数据（html/items/sections/meta/gov_html/summary），
+   * 不触碰 edited/manual_edit/revision —— 人工编辑结果不会被自动重生成覆盖。 */
+  await query(`INSERT INTO daily_reports (report_date, html, summary, items, sections, meta, gov_html, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+               ON CONFLICT (report_date) DO UPDATE SET html=$2, summary=$3, items=$4, sections=$5, meta=$6, gov_html=$7, created_at=NOW()`,
+    [dateKey, html, JSON.stringify(summary), JSON.stringify(itemsExport), JSON.stringify(sections), JSON.stringify(meta), govHtml]);
   return { date: dateKey, total, html, summary };
 }
 
@@ -861,6 +1107,7 @@ async function _qualityGuardian() {
       if (r.rows.length && Array.isArray(r.rows[0].data_json)) {
         const arr = r.rows[0].data_json;
         const kept = arr.filter(a => {
+          if (a && a.is_manual === true) return true; /* 2026-09-01 手动录入铁律：手动条目豁免 24h 滚动窗巡检清理 */
           const txt = String(a.title || '') + String(a.title_zh || '');
           if (!a.url && _POST_BLOCK_RE.test(txt)) return false;
           const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
@@ -1007,6 +1254,9 @@ function _capAlertQueue(list) {
   const out = [];
   for (const a of list) {
     if (!a) continue;
+    /* 2026-09-01 手动录入铁律：手动条目(is_manual)豁免 72h 清理与国别帽——
+     * 手动数据永不过期、无上限，只能在工作区人工删除。 */
+    if (a.is_manual === true) { out.push(a); continue; }
     const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
     if (t && now - t > 72 * 3600 * 1000) continue;
     /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
@@ -1023,6 +1273,14 @@ function _capAlertQueue(list) {
     out.push(a);
   }
   return out;
+}
+/* 2026-09-01 手动录入铁律：预警中心总上限（500 条）对手动条目不生效——
+ * 手动条目全部保留，自动条目仍按 500 截断，保证"无上限可扩容"。 */
+function _capAlertTotal(list) {
+  if (!Array.isArray(list)) return list;
+  const manual = list.filter(a => a && a.is_manual === true);
+  if (!manual.length) return list.slice(0, 500);
+  return manual.concat(list.filter(a => a && a.is_manual !== true).slice(0, 500));
 }
 /* 预警两区渲染核心判定（2026-08-29 用户指令：预警中心有重点和核心）：
  * 核心区 = ①十大核心威胁命中（涉华受害/恐袭/海盗/冲突/政变/制裁…）②命中中资资产/重点项目/海上通道
@@ -1153,7 +1411,7 @@ function _contentCountryFix(it) {
  * 统一走本 helper：保留优先级 SRV- > 裸数字 id > 其他形态（TR-/ANOM-/时间戳 id），
  * 空字段互补后丢弃多余条目。日志前缀区分调用方。 */
 function _dedupAlertsByTitle(arr, logTag) {
-  const _idRank = (a) => { const id = String((a && a.id) || ''); if (id.indexOf('SRV-') === 0) return 0; if (/^\d+$/.test(id)) return 1; return 2; };
+  const _idRank = (a) => { if (a && a.is_manual === true) return -1; const id = String((a && a.id) || ''); if (id.indexOf('SRV-') === 0) return 0; if (/^\d+$/.test(id)) return 1; return 2; }; /* 2026-09-01 手动条目最高优先：人工录入绝不因同题被去重丢弃 */
   const byTkey = new Map();
   const keptT = [];
   let count = 0;
@@ -1237,8 +1495,8 @@ async function _serverAlertGen() {
     /* 2026-08-29 存量清扫：预警队列里的历史旧案回顾（1988 泛美103审判类）逐轮剔除，
      * 与新生成否决同源判定——用户删不干净的这类旧案报道由生成器自动出清。 */
     let _histSwept = 0;
-    if (alerts.some(a => a && _isHistoricalRetrospect(a))) {
-      alerts = alerts.filter(a => { if (a && _isHistoricalRetrospect(a)) { _histSwept++; return false; } return true; });
+    if (alerts.some(a => a && !a.is_manual && _isHistoricalRetrospect(a))) {
+      alerts = alerts.filter(a => { if (a && !a.is_manual && _isHistoricalRetrospect(a)) { _histSwept++; return false; } return true; }); /* 2026-09-01 手动条目豁免历史旧案清扫（铁律：只能人工删除） */
     }
     /* 2026-08-26 赋分改革回填：版本化重算，确保红区硬约束修正后存量预警同步降级 */
     let backfilled = 0;
@@ -1345,7 +1603,7 @@ async function _serverAlertGen() {
      * 合并结果只在内存里算完就丢，只有 added/backfilled 等其他标志触发时才被顺带持久化，
      * 导致 27 组重复对长期滞留。现在合并自身即触发写回。 */
     if (added.length || backfilled || _histSwept || coreBackfilled || _dualMerged || _titleDedup) {
-      const merged = _partitionCore(_capAlertQueue(added.concat(alerts))).slice(0, 500); /* 2026-08-31 入库率修复：预警中心硬上限 300→500（用户指令量要大） */
+      const merged = _capAlertTotal(_partitionCore(_capAlertQueue(added.concat(alerts)))); /* 2026-08-31 入库率修复：预警中心硬上限 300→500（用户指令量要大）；2026-09-01 手动条目豁免总帽 */
       await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
       console.log('[ALERT-GEN] 服务端生成预警 ' + added.length + ' 条（核心区 ' + added.filter(a => a.is_core).length + '），共享库现有 ' + merged.length + ' 条'
         + (_histSwept ? '，剔除历史旧案回顾 ' + _histSwept + ' 条' : '')
@@ -1527,7 +1785,7 @@ async function _runAnomalyWatch() {
           if (sc.score >= 10) { added.unshift(s.alert); haveIds.add(s.alert.id); s.inAlert = true; pushed++; }
         }
         if (added.length) {
-          const merged = _capAlertQueue(added.concat(alerts)).slice(0, 500); /* 2026-08-31 与 _serverAlertGen 同上限：300→500 */
+          const merged = _capAlertTotal(_capAlertQueue(added.concat(alerts))); /* 2026-08-31 与 _serverAlertGen 同上限：300→500；2026-09-01 手动条目豁免总帽 */
           await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$2, updated_at=NOW()', ['alerts', JSON.stringify(merged)]);
           console.log('[ANOMALY] 风险异动信号写入预警中心 ' + added.length + ' 条 / 共检出 ' + signals.length + ' 项（扫描 ' + scanned + ' 个方向）');
         }
@@ -1558,6 +1816,7 @@ async function _alertValueSentinel() {
     const kept = [], demoted = [];
     for (const a of alerts) {
       if (!a) continue;
+      if (a.is_manual === true) { kept.push(a); continue; } /* 2026-09-01 手动录入铁律：手动条目不参与哨兵降级（人工录入即研判结论） */
       /* 2026-08-17 用户指令：红/橙不再无条件保留——无利益关联的俄乌战况红橙同样移出。
        * 重大伤亡(≥10死)+20 分自然达标，重大国际事件不受影响 */
       if (_isShellAlert(a)) { demoted.push(a); continue; } /* 模板空壳一律移出 */
@@ -2148,6 +2407,247 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+/* ===== AI 深度情报分析报告·分段研判引擎（2026-09-01 用户指令重设计）=====
+ * 用户原话：报告既要有客观事实，也要有主观分析，既要有数据支撑，也要有案例分析。
+ * 设计：报告拆七段独立生成，每段独立 persona system prompt：
+ *   fact(事实汇编官)/trend+drivers+impact+scenario(资深情报分析师)/case(案例研究员)/advice(对策参谋)。
+ * 任一段云端失败→该段独立降级本地规则引擎（只引用传入真实数字，绝不编造），不影响其他段。
+ * 铁律：prompt 只给前端装配的真实系统数据；数据样本不足必须明说"研判置信度低"。 */
+function _callOpenAiCompatMsg(pv, system, user) {
+  return new Promise((resolve) => {
+    try {
+      const https = require('https');
+      const msgs = [];
+      if (system) msgs.push({ role: 'system', content: system });
+      msgs.push({ role: 'user', content: user });
+      const body = JSON.stringify({ model: pv.model, messages: msgs, max_tokens: pv.maxTokens });
+      const u = new URL(pv.base + '/chat/completions');
+      const rq = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', timeout: pv.timeout, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pv.key, 'Content-Length': Buffer.byteLength(body) } }, (llmRes) => {
+        const chunks = [];
+        llmRes.on('data', c => chunks.push(c));
+        llmRes.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let j = {};
+          try { j = JSON.parse(raw); } catch (e) { return resolve({ text: '', error: '返回解析失败(HTTP ' + llmRes.statusCode + '): ' + raw.slice(0, 160) }); }
+          if (j.error || (j.code && j.code !== 0)) {
+            const m = (j.error && j.error.message) || j.message || ('code ' + j.code);
+            return resolve({ text: '', error: 'HTTP ' + llmRes.statusCode + ' ' + m });
+          }
+          const ch = (j.choices && j.choices[0]) || {};
+          const msg = ch.message || {};
+          if (!msg.content) return resolve({ text: '', error: '空内容(finish=' + (ch.finish_reason || '—') + ')' });
+          resolve({ text: msg.content, error: '' });
+        });
+      });
+      rq.on('error', e => resolve({ text: '', error: e.message }));
+      rq.on('timeout', () => { rq.destroy(); resolve({ text: '', error: '调用超时' }); });
+      rq.end(body);
+    } catch (e) { resolve({ text: '', error: e.message }); }
+  });
+}
+/* 深度报告共享数据上下文（严格来自前端装配的真实系统数据） */
+function _deepCtx(p) {
+  const st = p.stats || {};
+  const fs = p.foresee || {};
+  const co = p.cosri || {};
+  const ev = (p.events || []).slice(0, 8);
+  const winName = ({ '24h': '24小时', '72h': '72小时', '7d': '7天' })[String(p.win || '72h')] || '72小时';
+  const evLines = ev.map((e, i) =>
+    (i + 1) + '. [' + (e.level || '—') + '][' + (e.type || '—') + '] ' + String(e.title || '').replace(/[\r\n]+/g, ' ').slice(0, 80) +
+    '（' + (e.time || '时间不详') + '，预警价值分' + (e.score != null ? e.score : '—') + '）' +
+    (e.desc && i < 3 ? '｜摘要：' + String(e.desc).replace(/[\r\n]+/g, ' ').slice(0, 220) : '')
+  ).join('\n');
+  const clLines = (p.clusters || []).slice(0, 6).map((c, i) => (i + 1) + '. ' + (c.title || '') + '：' + (c.detail || ('窗口内聚集 ' + (c.n || 0) + ' 起'))).join('\n');
+  const ast = (p.assets || []).slice(0, 10);
+  const orgs = (p.orgs || []).slice(0, 8);
+  const thin = !st.total;
+  return '【国家】' + (p.country || '—') + '　【窗口】近' + winName + '　【报告类型】' + (p.reportType || '综合情报') +
+    (thin ? '\n⚠️ 注意：窗口内预警总量为 0，数据样本不足。所有研判必须明示"数据样本不足，研判置信度低"，禁止编造任何事件或数字。' : '') + '\n\n' +
+    '【预警统计】窗口内预警总量 ' + (st.total || 0) + ' 条：红 ' + (st.red || 0) + '、橙 ' + (st.orange || 0) + '、黄 ' + (st.yellow || 0) + '、蓝 ' + (st.blue || 0) + '；涉华命中 ' + (st.china || 0) + ' 条；中资资产命中 ' + (st.assetHit || 0) + ' 条。\n\n' +
+    '【高价值事件 TOP' + ev.length + '】（前3条附事件摘要）\n' + (evLines || '窗口内无预警事件。') + '\n\n' +
+    '【八维风险推演】' + (fs.cur != null
+      ? '当前综合 ' + fs.cur + ' → 未来72小时预判 ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '，' + (fs.level || '—') + '）；主导维度 ' + (fs.domDim || '—') +
+        '；近72h事件 ' + (fs.r3 != null ? fs.r3 : '—') + ' 起 / 前72h ' + (fs.p3 != null ? fs.p3 : '—') + ' 起；驱动因素：' +
+        (((fs.contrib || []).slice(0, 5).map(x => x.label + (Number(x.v) >= 0 ? '+' : '') + x.v).join('、')) || '无显著新增信号')
+      : '系统无该国八维推演数据') + '\n\n' +
+    '【事件关联簇】\n' + (clLines || '窗口内未发现事件关联簇。') + '\n\n' +
+    '【项目暴露】' + (ast.length ? '该国在册中资项目 ' + ast.length + ' 个：' + ast.join('、') : '系统内暂无该国中资项目记录') + '\n\n' +
+    '【威胁组织】' + (orgs.length ? '关联活跃威胁组织 ' + orgs.length + ' 个：' + orgs.join('、') : '窗口内无关联威胁组织记录') + '\n\n' +
+    '【COSRI国别画像】' + (co.overall != null
+      ? '综合 ' + co.overall + '（政治 ' + ((co.scores || {}).political || '—') + '/经济 ' + ((co.scores || {}).economic || '—') + '/社会 ' + ((co.scores || {}).social || '—') + '/公共安全 ' + ((co.scores || {}).security || '—') + '）；在册项目 ' + (co.projects != null ? co.projects : '—') + ' 个；行动指引：' + ((co.guide || []).join('；') || '无')
+      : 'COSRI 库未覆盖该国') + '\n';
+}
+const _DEEP_SEGS = {
+  fact: {
+    name: 'BLUF要点摘要', maxTokens: 1500,
+    system: '你是情报机构的事实汇编官（Fact Compiler），服务于中国海外利益保护情报预警平台。你只做客观归纳：把给定系统数据压缩成决策者30秒可读的核心要点。绝不推测、绝不使用数据中没有的信息；数据不足时如实声明。全中文输出。',
+    task: '请基于上述数据输出 BLUF（Bottom Line Up Front）要点摘要，严格只输出 JSON（无代码块无其他文字）：{"bluf":["要点一","要点二","要点三"]}。3-5条，每条不超过55字；只概括硬事实（统计数字、关键事件标题、八维风险分变化、项目暴露数量）；不得出现"可能""或将""预计将"等推测性表述；若数据样本不足，bluf 只含一条："数据样本不足（窗口内预警0条），研判置信度低"。'
+  },
+  trend: {
+    name: '趋势研判', maxTokens: 2000,
+    system: '你是服务于外交部/商务部/公安部等多部门的资深情报分析师，专注态势趋势研判。你的分析必须区分"确定信号"与"推测"：确定判断锚定给定数字，推测判断明确标注"（推测）"；数据不足时直说置信度低。全中文输出。',
+    task: '输出【趋势研判】：对比窗口内数据变化——预警总量与红橙结构、八维风险 cur→pred 走势、近72h与前72h事件数对比、系统驱动因素增减——给出趋势判断与未来72小时发展方向。350字内；至少引用3个具体统计数字；不得虚构任何未给定的数据。'
+  },
+  drivers: {
+    name: '动因分析', maxTokens: 2000,
+    system: '你是资深情报分析师，专注事件动因与驱动因素剖析。你的推断必须从给定事件的类型聚集、关联簇、威胁组织、推演驱动因素中归纳，推断链路要能被数据支撑；数据不足时直说。全中文输出。',
+    task: '输出【动因分析】：剖析窗口内事件态势背后的驱动因素——从事件类型聚集结构、关联簇、威胁组织活动、八维推演驱动因素四个维度归纳，指出最主要的1-3个动因及其数据依据。350字内；每个动因须注明依据（引用具体事件或数字）；无法从数据支撑的判断标注"（推测）"。'
+  },
+  impact: {
+    name: '影响评估', maxTokens: 2000,
+    system: '你是资深情报分析师，专注评估海外安全态势对中国人员、项目、资产的影响。评估必须引用给定的项目暴露清单、涉华命中数与八维风险走势；不得虚构具体项目受损事实。全中文输出。',
+    task: '输出【影响评估】：评估当前态势对我国人员的威胁（结合涉华命中数）、对在册中资项目与资产的威胁（逐一引用项目暴露清单中的真实项目名）、对通道/供应链的潜在影响。350字内；区分"已显现的影响"（须有数据支撑）与"潜在影响（推测）"。'
+  },
+  scenario: {
+    name: '情景推演', maxTokens: 2200,
+    system: '你是资深情报分析师，擅长情景推演（Scenario Analysis）。概率须由给定数据（八维差值、红橙结构、事件增量）推导并说明理由，三情景概率合计100%；禁止拍脑袋给概率。全中文输出。',
+    task: '输出三情景推演，每情景含【概率】【触发条件】【态势描述与对我影响】：\n【乐观情景】…\n【基准情景】…\n【悲观情景】…\n概率给出推导理由（如：红橙占比X%、八维差值+Y，故悲观概率Z%）；若数据样本不足，明说概率无数据支撑、置信度低。总400字内。'
+  },
+  case: {
+    name: '案例分析', maxTokens: 3000,
+    system: '你是情报机构的案例研究员（Case Analyst），擅长对典型事件做深度剖析。剖析只能基于给定事件的真实标题、摘要与统计数据：事件摘要没有的信息，如实写"系统未收录该细节"，禁止编造案情。全中文输出。',
+    task: '从【高价值事件】中选2-3个最具代表性的典型事件（优先涉华/红色/资产命中事件）逐一深度剖析，每个案例按四段输出：\n【案例N·事件标题】\n事件全貌：（何时何地何人发生了什么，据事件摘要）\n关联脉络：（与窗口内其他事件/关联簇/威胁组织的联系，据给定数据）\n影响分析：（对我人员/项目/资产的影响，引用项目清单与命中数据）\n启示：（可提炼的情报启示，一条即可）\n每个案例200字内。'
+  },
+  advice: {
+    name: '对策建议', maxTokens: 2200,
+    system: '你是服务于部委与央企领导的对策参谋，建议必须可落地、分对象、有时限感。建议要结合给定的项目清单、COSRI行动指引与预警态势；不得空喊口号。全中文输出。',
+    task: '输出对策建议，严格分四类对象，每类2-3条可操作措施：\n【外交】（领事保护、驻在国交涉、提醒发布）\n【商务】（合规排查、合同风险、结算通道）\n【企业】（须引用项目清单中的真实项目名逐一或分类给出安保/运营措施）\n【人员安全】（外出管控、撤离预案、应急通信）\n总350字内；若数据样本不足，明说建议置信度受限。'
+  }
+};
+/* 各段本地降级引擎：只引用传入真实数字，绝不编造 */
+function _segLocalFact(p) {
+  const st = p.stats || {}, fs = p.foresee || {}, ev = (p.events || []);
+  if (!st.total) return JSON.stringify({ bluf: ['数据样本不足（窗口内预警0条），研判置信度低，建议扩大窗口或核实采集链路。'] });
+  const bluf = [];
+  bluf.push('窗口内监测预警 ' + st.total + ' 条（红' + st.red + '/橙' + st.orange + '/黄' + st.yellow + '），涉华命中 ' + st.china + ' 条、中资资产命中 ' + st.assetHit + ' 条。');
+  if (fs.cur != null) bluf.push('八维综合风险 ' + fs.cur + ' → 未来72h预判 ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '，' + (fs.level || '—') + '）' + (fs.domDim ? '，主导维度' + fs.domDim : '') + '。');
+  if (ev[0]) bluf.push('首要信号：「' + String(ev[0].title || '').replace(/[\r\n]+/g, ' ').slice(0, 40) + '」（' + (ev[0].time || '时间不详') + '，' + (ev[0].level || '—') + '级）。');
+  if ((p.clusters || []).length) bluf.push('发现事件关联簇 ' + p.clusters.length + ' 个：' + (p.clusters || []).slice(0, 2).map(c => c.title || '').join('；') + '。');
+  if ((p.assets || []).length) bluf.push('在册中资项目 ' + p.assets.length + ' 个暴露于当前风险环境：' + p.assets.slice(0, 3).join('、') + ' 等。');
+  return JSON.stringify({ bluf: bluf.slice(0, 5) });
+}
+function _segLocalTrend(p) {
+  const st = p.stats || {}, fs = p.foresee || {};
+  if (!st.total) return '【趋势研判】数据样本不足：窗口内无预警事件，无法进行趋势对比，研判置信度低。建议扩大分析窗口或核实该国采集链路。';
+  const out = [];
+  const ro = (st.red || 0) + (st.orange || 0);
+  out.push('【总量与结构】窗口内预警 ' + st.total + ' 条，其中红色 ' + (st.red || 0) + ' 条、橙色 ' + (st.orange || 0) + ' 条、黄色 ' + (st.yellow || 0) + ' 条，红橙合计占比 ' + Math.round(ro * 100 / st.total) + '%，' + (ro >= st.total * 0.3 ? '高强度信号占比较高，态势偏紧。' : '以中低强度信号为主，态势总体可控。'));
+  if (fs.cur != null && fs.r3 != null && fs.p3 != null) {
+    const diff = Number(fs.r3) - Number(fs.p3);
+    out.push('【环比变化】近72h事件 ' + fs.r3 + ' 起，前72h ' + fs.p3 + ' 起（' + (diff >= 0 ? '+' : '') + diff + ' 起，' + (Number(fs.p3) ? Math.round(diff * 100 / Number(fs.p3)) : 100) + '%）；八维风险 ' + fs.cur + ' → ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '），' + (Number(fs.delta) > 0.3 ? '上行压力明显。' : Number(fs.delta) < -0.2 ? '呈缓和迹象。' : '总体持平震荡。'));
+  } else if (fs.cur != null) {
+    out.push('【八维走势】综合风险 ' + fs.cur + ' → ' + fs.pred + '（' + (Number(fs.delta) >= 0 ? '+' : '') + fs.delta + '）' + (fs.domDim ? '，主导维度 ' + fs.domDim : '') + '。');
+  }
+  if ((fs.contrib || []).length) out.push('【驱动因素】系统推演驱动因素：' + fs.contrib.slice(0, 5).map(x => x.label + (Number(x.v) >= 0 ? '+' : '') + x.v).join('、') + '。');
+  out.push('【研判】' + (((st.red || 0) >= 2 || Number(fs.pred) >= 7) ? '当前处于高位波动区间，若红级信号24-72h内再现须升级响应（据红橙结构与八维走势推断，属规则研判）。' : '维持常态监测，重点跟踪红橙增量的边际变化（据当前结构推断，属规则研判）。'));
+  return out.join('\n');
+}
+function _segLocalDrivers(p) {
+  const st = p.stats || {};
+  if (!st.total) return '【动因分析】数据样本不足：窗口内无预警事件，无法归纳动因，研判置信度低。';
+  const ev = p.events || [];
+  const byType = {};
+  ev.forEach(e => { const t = e.type || '其他'; byType[t] = (byType[t] || 0) + 1; });
+  const types = Object.keys(byType).sort((a, b) => byType[b] - byType[a]);
+  const out = [];
+  if (types.length) out.push('【类型聚集】窗口内「' + types[0] + '」类事件 ' + byType[types[0]] + ' 起居首' + (types[1] ? '，「' + types[1] + '」类 ' + byType[types[1]] + ' 起次之' : '') + '，为当前事态的首要结构动因。');
+  if ((p.clusters || []).length) out.push('【关联脉络】' + p.clusters.slice(0, 3).map(c => (c.title || '') + '（' + (c.detail || '') + '）').join('；') + '。');
+  if ((p.orgs || []).length) out.push('【组织因素】窗口内关联活跃威胁组织 ' + p.orgs.length + ' 个（' + p.orgs.slice(0, 4).join('、') + '），须评估其针对中资目标的袭击能力。');
+  else out.push('【组织因素】窗口内未识别活跃威胁组织关联，动因以社会治安与一般性事件为主（据无组织命中推断，属推测）。');
+  const fs = p.foresee || {};
+  if ((fs.contrib || []).length) out.push('【推演驱动】系统八维推演的驱动因素为：' + fs.contrib.slice(0, 5).map(x => x.label + (Number(x.v) >= 0 ? '+' : '') + x.v).join('、') + '。');
+  out.push('【小结】综合判断，当前态势主要由' + (types[0] ? '「' + types[0] + '」类事件聚集' : '零散事件') + (p.orgs && p.orgs.length ? '与威胁组织活动' : '') + '驱动（据类型聚集结构推断，属规则研判）。');
+  return out.join('\n');
+}
+function _segLocalImpact(p) {
+  const st = p.stats || {}, fs = p.foresee || {}, co = p.cosri || {};
+  if (!st.total) return '【影响评估】数据样本不足：窗口内无预警事件，无法评估影响，研判置信度低。';
+  const ast = (p.assets || []).slice(0, 6);
+  const out = [];
+  out.push('【人员安全】窗口内涉华命中 ' + (st.china || 0) + ' 条' + ((st.china || 0) ? '，在事中方人员须逐一核实安全状况，提升外出管控等级。' : '，暂无直接涉华信号，维持常态安全管理。'));
+  out.push('【项目与资产】' + (ast.length
+    ? '在册中资项目 ' + p.assets.length + ' 个暴露于当前风险环境（' + ast.join('、') + (p.assets.length > 6 ? ' 等' : '') + '），其中 ' + (st.assetHit || 0) + ' 条预警直接命中中资资产标签，相关项目须复核安保等级与撤离预案。'
+    : '系统内暂无该国中资项目记录，以人员与驻外机构安全为主要关注面。'));
+  if (fs.pred != null) out.push('【综合评估】八维风险预判 ' + fs.pred + (Number(fs.pred) >= 6.5 ? '，处于高位区间，人员安全、业务连续性与供应链稳定性压力上升，建议压缩非必要外事活动。' : '，处于中低位区间，维持常态监测，关注红橙预警增量变化。'));
+  if (co.overall != null) out.push('【国别底数】COSRI 综合评分 ' + co.overall + '，在册项目 ' + (co.projects != null ? co.projects : '—') + ' 个' + ((co.guide || []).length ? '，行动指引可参考：' + co.guide.slice(0, 3).join('；') : '') + '。');
+  out.push('（以上为本地规则引擎基于真实装配数据的评估，云端大模型不可用时的降级产出）');
+  return out.join('\n');
+}
+function _segLocalScenario(p) {
+  const st = p.stats || {}, fs = p.foresee || {};
+  if (!st.total) return '【情景推演】数据样本不足：窗口内无预警数据，三情景概率无数据支撑，研判置信度低。\n【乐观情景】无数据支撑（名义框架）。\n【基准情景】无数据支撑（名义框架）。\n【悲观情景】无数据支撑（名义框架）。';
+  const cur = Number(fs.cur) || 5, pred = Number(fs.pred) || cur;
+  const delta = pred - cur;
+  const pBad = Math.max(20, Math.min(60, Math.round(40 + delta * 8)));
+  const pHold = Math.round((100 - pBad) * 0.55);
+  const pGood = 100 - pBad - pHold;
+  const domDim = fs.domDim || '主导维度';
+  return '【乐观情景】（概率约' + pGood + '%）：72h内无新增红级事件、' + domDim + '类信号自然衰减，风险回落至 ' + Math.max(0, cur - 0.4).toFixed(1) + '。触发条件：连续72h无红色情报入库、局势出现降温信号。\n' +
+    '【基准情景】（概率约' + pHold + '%）：信号强度维持，风险在 ' + cur + '~' + pred + ' 区间震荡。触发条件：橙级事件持续但红级清零、各方对峙常态化。\n' +
+    '【悲观情景】（概率约' + pBad + '%）：' + domDim + '类事件24-72h内再现或升级，风险突破 ' + (pred + 0.5).toFixed(1) + '。触发条件：红级事件新增≥2或出现人员伤亡、关联威胁组织针对性动作。\n' +
+    '（概率由八维推演差值（' + (delta >= 0 ? '+' : '') + delta + '）与红橙结构（红' + (st.red || 0) + '/橙' + (st.orange || 0) + '）规则推导，属本地降级研判）';
+}
+function _segLocalCase(p) {
+  const ev = (p.events || []).slice(0, 2);
+  if (!ev.length) return '【案例分析】数据样本不足：窗口内无预警事件，无法开展案例剖析，研判置信度低。';
+  const st = p.stats || {};
+  return ev.map((e, i) => {
+    const desc = String(e.desc || '').replace(/[\r\n]+/g, ' ').slice(0, 200);
+    return '【案例' + (i + 1) + '·' + String(e.title || '').replace(/[\r\n]+/g, ' ').slice(0, 32) + '】\n' +
+      '事件全貌：' + (e.time || '时间不详') + '，' + (p.country || '该国') + '发生' + (e.type || '') + '类事件（' + (e.level || '—') + '级）：' + (desc || '系统未收录该事件摘要，仅有标题信息。') + '\n' +
+      '关联脉络：' + ((p.clusters || []).length ? '窗口内存在同类关联簇（' + p.clusters.slice(0, 2).map(c => c.title || '').join('；') + '）。' : '窗口内未发现同类聚集。') + '\n' +
+      '影响分析：' + ((st.china || 0) || (st.assetHit || 0) ? '窗口内涉华命中 ' + st.china + ' 条、资产命中 ' + st.assetHit + ' 条，须评估对我人员与项目的外溢影响。' : '暂无直接涉华命中，主要影响当地安全环境。') + '\n' +
+      '启示：' + ((e.level === 'red') ? '红级事件再现即须升级响应，核查在事人员与项目。' : '跟踪同类事件边际增量，防向我方利益蔓延。');
+  }).join('\n\n');
+}
+function _segLocalAdvice(p) {
+  const st = p.stats || {}, co = p.cosri || {};
+  const ast = (p.assets || []).slice(0, 4);
+  const ro = (st.red || 0) + (st.orange || 0);
+  return '【外交】建议使馆领事部门预置领事保护联络渠道，评估安全提醒发布级别' + (ro ? '（红/橙预警在库，建议发布级别从紧）' : '') + '；推动驻在国强化对中方机构与人员的保护。' + ((co.guide || []).length ? '\n【商务】参考COSRI行动指引：' + co.guide.slice(0, 3).join('；') + '。对在执行合同评估中断与不可抗力条款，预审替代结算路径。' : '\n【商务】对高风险国别业务开展合规敞口排查，核查制裁/出口管制与资金汇出通道。') + '\n' +
+    '【企业】' + (ast.length ? '对在册中资项目逐一复核安保等级、保险覆盖与应急联络机制：' + ast.join('、') + (p.assets.length > 4 ? ' 等' : '') + '。' : '核查我在当地资产与人员台账，建立每日安全报告制度。') + '\n' +
+    '【人员安全】' + (ro ? '红/橙预警在库，立即核实在事人员安全、压缩非必要外出、明确集结点与撤离路线，确需外出配备安保。' : '保持常态警戒，全员掌握应急通信方式与撤离路线。') + '\n' +
+    '（以上为本地规则引擎结合真实数据与COSRI指引的降级建议）';
+}
+const _segLocal = { fact: _segLocalFact, trend: _segLocalTrend, drivers: _segLocalDrivers, impact: _segLocalImpact, scenario: _segLocalScenario, case: _segLocalCase, advice: _segLocalAdvice };
+const _segCache = {};
+app.post('/api/llm/report-seg', authMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const seg = String(body.segment || '');
+    const def = _DEEP_SEGS[seg];
+    if (!def) return res.status(400).json({ ok: false, error: '未知 segment: ' + seg });
+    const p = body.payload || {};
+    const sig = seg + '|' + JSON.stringify(p).slice(0, 400);
+    const ck = _segCache[sig];
+    if (ck && Date.now() - ck.at < 10 * 60 * 1000) return res.json({ ok: true, seg, text: ck.text, model: ck.model, degraded: ck.degraded, cached: true });
+    const KEY = process.env.LLM_API_KEY || '';
+    const BASE = (process.env.LLM_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/+$/, '');
+    const MODEL = process.env.LLM_MODEL || 'kimi-k2.6';
+    const user = _deepCtx(p) + '\n' + def.task;
+    const providers = [
+      { name: 'Kimi', base: BASE, key: KEY, model: MODEL, maxTokens: def.maxTokens, timeout: 120000 },
+      { name: 'Spark', base: (process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1').replace(/\/+$/, ''), key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: def.maxTokens, timeout: 90000 }
+    ].filter(x => x.key);
+    const t0 = Date.now();
+    let text = '', usedModel = '', lastErr = '';
+    for (const pv of providers) {
+      const r2 = await _callOpenAiCompatMsg(pv, def.system, user);
+      if (r2.text) { text = r2.text; usedModel = pv.model; break; }
+      lastErr = pv.name + ': ' + (r2.error || '空内容');
+      console.warn('[LLM] deep-seg ' + seg + ' 通道失败 ' + pv.name + ': ' + lastErr);
+    }
+    let degraded = false;
+    if (!text) {
+      try { text = _segLocal[seg](p); usedModel = '本地研判引擎（免费降级）'; degraded = true; }
+      catch (e) { console.warn('[LLM] deep-seg ' + seg + ' 本地降级失败:', e.message); }
+    }
+    if (!text) return res.status(502).json({ ok: false, seg: seg, error: lastErr || '大模型调用失败' });
+    _segCache[sig] = { at: Date.now(), text: text, model: usedModel, degraded: degraded };
+    res.json({ ok: true, seg: seg, text: text, model: usedModel, degraded: degraded, elapsed: ((Date.now() - t0) / 1000).toFixed(1) + 's' });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 /* ===== 活跃库滚动归档（2026-08-28 用户痛点：伦敦使馆旧闻 5 天了一直存在，删了删不掉）=====
  * 预警系统活跃库只保留近 7 天数据；更早的移入 intel_archive 归档表（可查不丢）。
  * 旧数据滞留活跃库的三大害：①数据中心/情报中心翻页看到全是旧闻；
@@ -2196,27 +2696,109 @@ setInterval(_maybeGenerateDailyReport, 60 * 1000);
 app.get('/api/reports/daily', async (req, res) => {
   try {
     await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
-    const r = await query(`SELECT report_date, summary, created_at FROM daily_reports ORDER BY report_date DESC LIMIT 60`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS manual_edit BOOLEAN DEFAULT FALSE`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS revision JSONB`);
+    const r = await query(`SELECT report_date, summary, created_at, manual_edit FROM daily_reports ORDER BY report_date DESC LIMIT 60`);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/reports/daily/:date', async (req, res) => {
   try {
-    const r = await query(`SELECT report_date, html, summary, created_at FROM daily_reports WHERE report_date=$1`, [req.params.date]);
+    await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS items JSONB`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS sections JSONB`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS meta JSONB`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS edited JSONB`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS gov_html TEXT`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS manual_edit BOOLEAN DEFAULT FALSE`);
+    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS revision JSONB`);
+    const r = await query(`SELECT report_date, html, summary, created_at, items, sections, meta, edited, gov_html, manual_edit, revision FROM daily_reports WHERE report_date=$1`, [req.params.date]);
     if (!r.rows.length) return res.status(404).json({ error: '该日简报不存在' });
-    res.json(r.rows[0]);
+    let row = r.rows[0];
+    /* 历史简报升级：老数据缺 items/sections/gov_html 时按当日 DB 真实数据补齐（无人工编辑的才自动补） */
+    if (!row.manual_edit && (!row.items || !row.gov_html || !row.sections)) {
+      try { await _generateDailyReport(req.params.date); } catch (e) {}
+      const r2 = await query(`SELECT report_date, html, summary, created_at, items, sections, meta, edited, gov_html, manual_edit, revision FROM daily_reports WHERE report_date=$1`, [req.params.date]);
+      if (r2.rows.length) row = r2.rows[0];
+    }
+    res.json(row);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/reports/daily/generate', express.json(), async (req, res) => {
   try {
     let key = req.body && req.body.date;
+    const force = !!(req.body && req.body.force);
     if (!key) {
       const y = new Date(Date.now() - 24 * 3600 * 1000);
       key = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+    /* 2026-09-01 冲突策略：人工编辑过的日期标记 manual_edit，重生成须显式 force 确认，
+     * 否则拒绝，防止人工编辑被覆盖丢失。 */
+    const ex = await query(`SELECT manual_edit FROM daily_reports WHERE report_date=$1`, [key]);
+    if (ex.rows.length && ex.rows[0].manual_edit && !force) {
+      return res.status(409).json({ error: '该日简报已有人工编辑，重新生成将覆盖人工修改。如确认请重试并选择覆盖。', manual_edit: true, date: key });
+    }
     const rep = await _generateDailyReport(key);
+    if (ex.rows.length && ex.rows[0].manual_edit && force) {
+      /* 确认覆盖：清除人工编辑覆盖层，修订痕迹保留并追加记录 */
+      await query(`UPDATE daily_reports SET edited=NULL, manual_edit=FALSE,
+        revision = COALESCE(revision, '[]'::jsonb) || $2::jsonb WHERE report_date=$1`,
+        [key, JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '系统', note: '确认覆盖重新生成，人工修改已被基准数据替换' })]);
+    }
     res.json({ ok: true, date: rep.date, total: rep.total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+/* ===== 2026-09-01 人工编辑保存：编辑条目标题/摘要、删除、调序，存为覆盖层 =====
+ * 服务端用与生成时完全相同的渲染函数重建 html/gov_html/summary，双视图强一致；
+ * manual_edit 置位后自动重生成不再覆盖（见上 force 逻辑），revision 留修订痕迹。 */
+app.put('/api/reports/daily/:date', express.json(), authMiddleware, async (req, res) => {
+  try {
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+    const r = await query(`SELECT items, sections, meta, manual_edit FROM daily_reports WHERE report_date=$1`, [date]);
+    if (!r.rows.length) return res.status(404).json({ error: '该日简报不存在' });
+    const items = req.body && req.body.items, sections = req.body && req.body.sections;
+    if (!Array.isArray(items) || !Array.isArray(sections)) return res.status(400).json({ error: '参数 items/sections 应为数组' });
+    /* 索引合法性校验，防止越界 */
+    let ok = true;
+    sections.forEach(s => {
+      (s.items || []).forEach(ix => { if (!Number.isInteger(ix) || ix < 0 || ix >= items.length) ok = false; });
+      (s.subs || []).forEach(sub => (sub.items || []).forEach(ix => { if (!Number.isInteger(ix) || ix < 0 || ix >= items.length) ok = false; }));
+    });
+    if (!ok) return res.status(400).json({ error: '存在非法条目索引' });
+    const meta = r.rows[0].meta || {};
+    const html = _renderDailyReportHTML(items, sections, meta);
+    const govHtml = _buildGovDailyReport(date, items, meta, meta.judg || [], meta.sugg || []);
+    /* summary 按编辑后内容重算（采集口径的总量/环比等仍保留在 meta/研判文本中） */
+    const chinaN = items.filter(i => i.china && !i.negative).length;
+    const negN = items.filter(i => i.negative).length;
+    const redN = items.filter(i => i.severity === 'red' && (i.china || i.negative)).length;
+    const byType = {}; items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+    const byCountry = {}; items.forEach(i => { const c = i.eventCountry || i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+    const topCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const summary = { total: items.length, china: chinaN, negative: negN, red: redN, sources: meta.sourceCount || 0, byType, topCountries };
+    await query(`UPDATE daily_reports SET edited=$2, manual_edit=TRUE, html=$3, gov_html=$4, summary=$5,
+      revision = COALESCE(revision, '[]'::jsonb) || $6::jsonb WHERE report_date=$1`,
+      [date, JSON.stringify({ items, sections }), html, govHtml, JSON.stringify(summary),
+        JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: String((req.body && req.body.note) || '人工编辑简报内容') })]);
+    res.json({ ok: true, date });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+/* 撤销人工编辑：恢复自动生成的基准版本（修订痕迹保留） */
+app.delete('/api/reports/daily/:date/edits', authMiddleware, async (req, res) => {
+  try {
+    const date = req.params.date;
+    const r = await query(`SELECT items, sections, meta FROM daily_reports WHERE report_date=$1`, [date]);
+    if (!r.rows.length) return res.status(404).json({ error: '该日简报不存在' });
+    if (!r.rows[0].items || !r.rows[0].sections) return res.status(400).json({ error: '该日简报无基准结构化数据' });
+    const items = r.rows[0].items, sections = r.rows[0].sections, meta = r.rows[0].meta || {};
+    const html = _renderDailyReportHTML(items, sections, meta);
+    const govHtml = _buildGovDailyReport(date, items, meta, meta.judg || [], meta.sugg || []);
+    await query(`UPDATE daily_reports SET edited=NULL, manual_edit=FALSE, html=$2, gov_html=$3,
+      revision = COALESCE(revision, '[]'::jsonb) || $4::jsonb WHERE report_date=$1`,
+      [date, html, govHtml, JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '撤销人工编辑，恢复自动生成版本' })]);
+    res.json({ ok: true, date });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -9061,6 +9643,7 @@ app.get('/api/datahub/:collection', async (req, res) => {
       const ds = Date.now() - 24 * 3600 * 1000;
       arr = arr.filter(a => {
         if (!a) return false;
+        if (a.is_manual === true) return true; /* 2026-09-01 手动录入铁律：手动条目豁免 24h 滚动窗与 chinaOverseasGate——永不过期，只能人工删除 */
         const t = new Date(a.time || a.date || a.publishedAt || a.collect_time || '').getTime();
         if (!(t && t >= ds)) return false;
         /* 2026-08-20 铁律：服务端下发再次过 chinaOverseasGate，防止任何持久化脏数据漏到前端 */
@@ -9133,6 +9716,9 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
       data = data.filter(a => {
         if (!a) return false;
         if (_tbPut && _tombMatchSync(_tbPut, a)) { _gateAudit('写入闸', 'tombstoned', a.title); return false; }
+        /* 2026-09-01 手动录入铁律：手动条目豁免写入闸（旧闻时限/利益关联分/chinaOverseasGate）——
+         * 墓碑命中仍在上方先行拦截（已删手动条目不可借旧客户端复活）。 */
+        if (a.is_manual === true) return true;
         const txt = String(a.title || '') + String(a.title_zh || '');
         if (!a.url && _POST_BLOCK_RE.test(txt)) { _gateAudit('写入闸', 'blacklist', a.title); return false; }
         const pt = pgTime[String(a.id)];
@@ -9167,6 +9753,9 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
         const preserved = curArr.filter(a => {
           if (!a) return false;
           if (clientIds.has(String(a.id || ''))) return false; /* 客户端已带同 id 新副本 */
+          /* 2026-09-01 手动录入铁律：手动条目永久保留（72h 时效不适用）；
+           * 墓碑命中（工作区人工删除）的除外。 */
+          if (a.is_manual === true) return !(_tbPut && _tombMatchSync(_tbPut, a));
           const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
           if (t && now2 - t > 72 * 3600 * 1000) return false; /* 超 72h 不保留 */
           /* 2026-08-29 删除保留豁免（根因④）：客户端删除后本地列表不含该条，
@@ -9197,7 +9786,7 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
           preserved.length = 0;
           preserved.push(..._tdPut.kept.filter(a => !clientIds.has(String(a.id || ''))));
         }
-        data = _partitionCore(_capAlertQueue(data.concat(preserved))).slice(0, 500); /* 2026-08-31 与 _serverAlertGen 同上限：300→500 */
+        data = _capAlertTotal(_partitionCore(_capAlertQueue(data.concat(preserved)))); /* 2026-08-31 与 _serverAlertGen 同上限：300→500；2026-09-01 手动条目豁免总帽（铁律：无上限） */
         console.log('[DATAHUB] alerts 权威合并: 客户端 ' + clientKept + ' 条 + 服务端保留 ' + preserved.length + ' 条 → ' + data.length + ' 条');
       } catch (e) { console.warn('[DATAHUB] alerts 合并异常（回退全量覆盖）:', e.message); }
     } else if (INTEL_TYPES.includes(collection) && collection !== 'collect_logs') {
@@ -9232,11 +9821,37 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+/* ===== 手动录入工作区 API（2026-09-01：server/manual-entry.js 挂载，铁律见该文件头注） ===== */
+app.use('/api/manual-entries', manualEntryApi({
+  query, authMiddleware, broadcastIntel,
+  _getTombstones, _addTombstone, _tombMatchSync,
+  INTEREST_BASE
+}));
+
 /* ===== AI 报告 API ===== */
+/* 报告行 → 前端对象：合并 content_json 中保存的扩展字段（deep 深度结构/summary/elements/
+ * dataSupport/genModel/reviewStatus），否则列表回读会丢掉深度报告结构（2026-09-01 深度报告重设计） */
+function _reportRowToJson(r) {
+  let extra = {};
+  try { extra = r.content_json ? JSON.parse(r.content_json) : {}; } catch (e) {}
+  let mats = r.materials;
+  if (typeof mats === 'string') { try { mats = JSON.parse(mats); } catch (e) {} }
+  const o = {
+    id: r.report_id || r.id, title: r.title || extra.title || '', mode: r.mode || 'elements',
+    country: r.country || extra.country || '', level: r.level || extra.threatLevel || '',
+    reportType: r.report_type || extra.reportType || '', materials: mats || (extra.materials || []),
+    threatAnalysis: r.threat_analysis || extra.threatAnalysis || '',
+    impactAnalysis: r.impact_analysis || extra.impactAnalysis || '',
+    advice: r.advice || extra.advice || '', author: r.author || extra.author || '',
+    createdAt: r.created_at
+  };
+  ['summary', 'elements', 'window', 'dataSupport', 'genModel', 'deep', 'reviewStatus', 'createTime', 'reportMode', 'threatLevel', 'updateTime'].forEach(k => { if (extra[k] !== undefined) o[k] = extra[k]; });
+  return o;
+}
 app.get('/api/reports', authMiddleware, async (req, res) => {
   try {
     const result = await query('SELECT * FROM ai_reports ORDER BY created_at DESC');
-    res.json(result.rows.map(r => ({ id: r.report_id||r.id, title: r.title, mode: r.mode, country: r.country, level: r.level, reportType: r.report_type, materials: r.materials, threatAnalysis: r.threat_analysis, impactAnalysis: r.impact_analysis, advice: r.advice, author: r.author, createdAt: r.created_at })));
+    res.json(result.rows.map(r => _reportRowToJson(r)));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -9247,8 +9862,7 @@ app.get('/api/reports/:id', authMiddleware, async (req, res) => {
     const num = parseInt(raw, 10);
     const result = await query('SELECT * FROM ai_reports WHERE report_id = $1 OR ($2::int IS NOT NULL AND id = $2::int)', [raw, Number.isFinite(num) ? num : null]);
     if (result.rows.length === 0) return res.status(404).json({ error: '报告不存在' });
-    const r = result.rows[0];
-    res.json({ id: r.report_id||r.id, title: r.title, mode: r.mode, country: r.country, level: r.level, reportType: r.report_type, materials: r.materials, threatAnalysis: r.threat_analysis, impactAnalysis: r.impact_analysis, advice: r.advice, author: r.author, createdAt: r.created_at });
+    res.json(_reportRowToJson(result.rows[0]));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
