@@ -405,6 +405,67 @@ function _prevDayKey(dateKey) {
   const d = new Date(parts[0], parts[1] - 1, parts[2] - 1);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
+/* ===== 2026-09-01 公文语体清洗（用户指令：公文版涉华节大量看不懂的中英混排/媒体尾巴/URL，
+ * 系统须自行改写为规范公文语体——去英文残留、去媒体出处尾巴、去链接与更新时间戳；
+ * 中英混合标题按词典将常见组织/地物专名替换为中文标准译名（zhq 涉华分数 + title_zh 中文标题
+ * 回退已在条目映射完成，此处为公文体语句级兜底）。全部为确定性规则，零生成式模型。 ===== */
+const _GOV_ZH_DICT = [
+  [/\bCPEC\b/g, '中巴经济走廊'], [/\bBLA\b/g, '俾路支解放军'], [/\bTTP\b/g, '巴基斯坦塔利班'],
+  [/\bISIS\b|\bISIL\b/g, '伊斯兰国'], [/\bal[- ]?Qaeda\b/gi, '基地组织'], [/\bTaliban\b/gi, '塔利班'],
+  [/\bHamas\b/g, '哈马斯'], [/\bHezbollah\b|\bHizbollah\b/g, '黎巴嫩真主党'], [/\bHouthi(e?s)?\b/g, '胡塞武装'],
+  [/\bBoko Haram\b/gi, '博科圣地'], [/\bal[- ]?Shabaab\b/gi, '青年党'], [/\bNATO\b/g, '北约'],
+  [/\bU\.N\.\b/g, '联合国'], [/\bEU\b/g, '欧盟'], [/\bIMF\b/g, '国际货币基金组织'], [/\bWTO\b/g, '世界贸易组织'],
+  [/\bASEAN\b/g, '东盟'], [/\bG7\b/g, '七国集团'], [/\bG20\b/g, '二十国集团'], [/\bBRICS\b/g, '金砖国家'],
+  [/\bUAV\b/g, '无人机'], [/\bIED\b/g, '简易爆炸装置'], [/\bGDP\b/g, '国内生产总值'],
+  [/\bUkraine\b/gi, '乌克兰'], [/\bRussia\b|\bRussian\b/gi, '俄罗斯'], [/\bKyiv\b/gi, '基辅'], [/\bMoscow\b/gi, '莫斯科'],
+  [/\bGaza\b/gi, '加沙'], [/\bIsrael\b|\bIsraeli\b/gi, '以色列'], [/\bBeirut\b/gi, '贝鲁特'], [/\bLebanon\b/gi, '黎巴嫩'],
+  [/\bSudan\b/gi, '苏丹'], [/\bKhartoum\b/gi, '喀土穆'], [/\bMali\b/gi, '马里'], [/\bNiger\b/gi, '尼日尔'],
+  [/\bNigeria\b/gi, '尼日利亚'], [/\bPakistan\b/gi, '巴基斯坦'], [/\bAfghanistan\b/gi, '阿富汗'], [/\bKabul\b/gi, '喀布尔'],
+  [/\bBalochistan\b/gi, '俾路支省'], [/\bGwadar\b/gi, '瓜达尔']
+];
+/* 公文语体清洗：反转义剥标签 → 去URL → 去媒体尾巴（据X报道/（路透社）等）→ 去更新时间戳
+ * → 去【】噪声角标 → 词典译名替换 → 句级中文过滤（无中文整句直接丢弃）→ 句界截断。 */
+function _govCleanZh(s, maxLen) {
+  let t = String(s || '');
+  t = t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    .replace(/<[^>]*>/g, ' ').replace(/<[^>]+/g, ' ');
+  t = t.replace(/https?:\/\/\S+/g, ' ').replace(/\bwww\.[\w.\-/]+/gi, ' ');
+  t = t.replace(/[（(]\s*(路透社|法新社|美联社|彭博社|新华社|卫报|泰晤士报|纽约时报|华尔街日报|CNN|BBC|Reuters|AFP|AP|Bloomberg|Guardian|NYT|WSJ)[^）)]{0,24}[）)]/gi, ' ');
+  t = t.replace(/据[^，。；,;]{1,16}(报道|消息|获悉|称|了解|披露)/g, '');
+  t = t.replace(/(外媒|媒体|消息人士|知情人士|分析人士|目击者)(报道|称|透露|表示|指出|说)/g, '');
+  t = t.replace(/(报道|消息)称[:：]?/g, '');
+  t = t.replace(/(更新(时间|于)[:：]?\s*[\d\-\/\s:年月日]+|Updated[:：]\s*[\d\-\/\s:TZ]+|Published[:：]\s*[\d\-\/\s:TZ]+)/gi, ' ');
+  t = t.replace(/【[^】]{0,10}】/g, ' ');
+  for (const d of _GOV_ZH_DICT) t = t.replace(d[0], d[1]);
+  /* 外文子句剥离：连续3个及以上拉丁词的子句整体移除（词典替换后残留的英文/法文等原题尾巴） */
+  t = t.replace(/[A-Za-zÀ-ÿ]{2,}(?:[ '’\-][A-Za-zÀ-ÿ]{2,}){2,}/g, ' ');
+  /* 残句标点清理：剥离后遗留的悬空冒号/逗号/连续句号 */
+  t = t.replace(/[：:][\s,，]*([。！？；]|$)/g, '$1').replace(/[，,]\s*[。！？；]/g, '$1').replace(/。{2,}/g, '。').replace(/(\S)\s+([。；，、！？])/g, '$1$2');
+  /* 句级中文过滤：丢弃无中文或拉丁词占多数的整句（英文整句/残留尾巴不上公文） */
+  const segs = t.split(/(?<=[。！？；!?;\n])/);
+  let kept = segs.filter(x => {
+    const cjk = (x.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const lat = (x.match(/[A-Za-zÀ-ÿ]+/g) || []).length;
+    return cjk >= 2 && cjk >= lat && !(cjk < 4 && lat > 0); /* 残句碎片（中文≤3字且含拉丁词）一并丢弃 */
+  }).join('').replace(/\s+/g, ' ').trim();
+  if (!kept) return '';
+  if (maxLen && kept.length > maxLen) {
+    let cut = kept.slice(0, maxLen);
+    const p = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('；'), cut.lastIndexOf('！'), cut.lastIndexOf('？'));
+    cut = (p > maxLen * 0.4) ? cut.slice(0, p + 1) : cut.replace(/[,，、：:\s]+$/, '');
+    kept = cut + '……';
+  }
+  return kept;
+}
+/* 公文版条目正文：优先清洗后摘要；无可用中文摘要（原文外文/未翻译）时以规范公文语句
+ * 陈述事实要素（国别+级别+信源+采集编号，均可回溯 DB），不虚构任何情节。 */
+function _govZhDigest(i, maxLen) {
+  const d = _govCleanZh(i.digest, maxLen);
+  if (d) return d;
+  const c = i.eventCountry || i.country || '';
+  const src = String(i.source || '待核').replace(/https?:\/\/\S+/g, '').replace(/[·\s]*[\w.\-]+\.(com|net|org|cn|io|ru|fr|de|uk|info|news)\b/gi, '').replace(/[·\s]{2,}/g, ' ').trim() || '待核';
+  return (c ? c + '方向' : '相关方向') + '监测到该事件，原文为外文语种、正文摘录从略（信源' + src + '，采集编号' + (i.id || '—') + '）';
+}
 /* ===== 2026-09-01 日报三大升级（用户指令：条目可交互可修改 + 公文格式报告 + PDF/Word 导出）=====
  * 结构化重构：_generateDailyReport 不再直接拼最终 HTML，而是产出
  *   items   = 当日全部独立事件（含标题/摘要/来源/原文URL/级别/涉华标记/资产标签等完整字段）
@@ -562,19 +623,99 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   reds.forEach(i => keyItems.push(i));
   items.filter(i => i.severity === 'orange' && (i.china || i.negative) && keyItems.indexOf(i) < 0).slice(0, 8 - keyItems.length).forEach(i => keyItems.push(i));
   if (!keyItems.length) items.filter(i => (i.china || i.negative)).sort((a, b) => ({ red: 4, orange: 3, yellow: 2, blue: 1 }[b.severity] || 0) - ({ red: 4, orange: 3, yellow: 2, blue: 1 }[a.severity] || 0)).slice(0, 5).forEach(i => keyItems.push(i));
-  const keyHtml = keyItems.length ? keyItems.map((i, n) => {
+  /* 2026-09-01 公文语体重做：标题/摘要一律经 _govCleanZh 清洗（去英文整句、媒体尾巴、
+   * URL、更新时间，词典译名替换），无中文摘要时以规范公文语句陈述事实要素（可回溯 DB）。 */
+  const _govItemHtml = (i, n) => {
     const lvName = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[i.severity] || i.severity;
-    const d = i.digest ? '：' + _escapeHtml(String(i.digest).slice(0, 100)) + (String(i.digest).length > 100 ? '……' : '') : '。';
-    return '<p class="drg-p">（' + (n + 1) + '）【' + lvName + '】' + _escapeHtml(i.title) + d + '（信源：' + _escapeHtml(i.source) + '）。</p>';
-  }).join('') : '<p class="drg-p">当日无涉华重点事件。</p>';
-  /* 三、地区风险动态表 */
+    const t = _govCleanZh(i.title, 100) || String(i.title || '').trim();
+    const d = _govZhDigest(i, 160);
+    return '<p class="drg-p">（' + (n + 1) + '）【' + lvName + '】' + _escapeHtml(t) + (/[。！？]$/.test(t) ? '' : '。') + _escapeHtml(d) + (/[。！？）]$/.test(d) ? '' : '。') + '</p>';
+  };
+  const keyHtml = keyItems.length ? keyItems.map(_govItemHtml).join('') : '<p class="drg-p">当日无涉华重点事件。</p>';
+  /* 三、全球重大事件分析（2026-09-01 新增）：非涉华的红/橙色事件（俄乌、中东、恐袭等），
+   * 与涉华节互斥（!china && !negative），同口径公文语体清洗。 */
+  const _lvW2 = { red: 4, orange: 3, yellow: 2, blue: 1 };
+  const globalItems = items.filter(i => !i.china && !i.negative && (_lvW2[i.severity] || 0) >= 3)
+    .sort((a, b) => (_lvW2[b.severity] || 0) - (_lvW2[a.severity] || 0) || (b.corr || 0) - (a.corr || 0)).slice(0, 8);
+  const globalRedN = globalItems.filter(i => i.severity === 'red').length;
+  const globalLead = globalItems.length
+    ? '当日全球非涉华方向共监测到红/橙色事件' + globalItems.length + '件' + (globalRedN ? '（其中红色' + globalRedN + '件）' : '') + '，主要为武装冲突、恐怖袭击与地缘政治动态，择要分析如下。'
+    : '当日全球非涉华方向未监测到红色或橙色级别事件。';
+  const globalHtml = globalItems.length ? globalItems.map(_govItemHtml).join('') : '';
+  /* 四、地区风险动态表 */
   const tblRows = topCountries.map((e, n) => {
     const c = e[0];
     const types = Object.entries(byCountryType[c] || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]).join('、');
     return '<tr><td>' + (n + 1) + '</td><td>' + _escapeHtml(c) + '</td><td>' + e[1] + '</td><td>' + (total ? (e[1] / total * 100).toFixed(1) : 0) + '%</td><td class="l">' + _escapeHtml(types || '—') + '</td></tr>';
   }).join('');
-  const judgHtml = (judg || []).map((j, n) => '<p class="drg-h2">（' + ('一二三四五'[n] || (n + 1)) + '）' + _escapeHtml(j.t) + '</p><p class="drg-p">' + _escapeHtml(j.s) + '。</p>').join('');
-  const suggHtml = (sugg || []).map((s, n) => '<p class="drg-p">（' + (n + 1) + '）' + _escapeHtml(s) + '。</p>').join('');
+  /* ===== 五、综合研判（2026-09-01 新增，四段式：总体态势判断/涉华风险趋势/区域热点分布/与前期对比）
+   * 全部由当日 items 与前日简报 summary（meta.prevSummary）推导，零虚构。 ===== */
+  const prevS = (meta && meta.prevSummary) || null;
+  const assetItems = items.filter(i => i.assets && i.assets.length);
+  const synth = [];
+  /* （一）总体态势判断 */
+  synth.push({ t: '总体态势判断', s: '当日共采集入库独立事件' + total + '个（原始条目' + rawTotal + '条，已完成事件级去重），涉华情报' + chinaItems.length + '件、境外涉华负面舆情' + negItems.length + '件、红色（涉华严重）事件' + reds.length + '件、橙色事件' + oranges.length + '件、全球非涉华红/橙事件' + globalItems.length + '件，' + sitWords + '。' });
+  /* （二）涉华风险趋势 */
+  let chinaTrend = '涉华情报' + chinaItems.length + '件、境外涉华负面舆情' + negItems.length + '件';
+  if (prevS && typeof prevS.china === 'number') {
+    const dd = (chinaItems.length + negItems.length) - ((prevS.china || 0) + (prevS.negative || 0));
+    chinaTrend += '，涉华条目总量较前日' + (dd >= 0 ? '增加' : '减少') + Math.abs(dd) + '件';
+  }
+  if (reds.length) chinaTrend += '；红色事件' + reds.length + '件，须当日核实处置闭环';
+  if (assetItems.length) chinaTrend += '；中资海外资产关联警报' + assetItems.length + '件，涉及' + assetItems.slice(0, 3).map(i => (i.assets || [])[0]).filter(Boolean).join('、') + '等资产';
+  synth.push({ t: '涉华风险趋势', s: chinaTrend + '。' });
+  /* （三）区域热点分布 */
+  const hot3 = topCountries.slice(0, 3);
+  const coreByC = {};
+  items.forEach(i => { if (/terror_events|military_conflicts|security_events/.test(i.type)) { const c = i.eventCountry || i.country || '未标注'; coreByC[c] = (coreByC[c] || 0) + 1; } });
+  const coreTop = Object.entries(coreByC).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  let regionS = hot3.length ? '当日事件集中于' + hot3.map(e => e[0] + '（' + e[1] + '件）').join('、') : '当日无国别集中态势';
+  if (coreTop.length) regionS += '；恐袭/冲突/治安类安全事件' + Object.values(coreByC).reduce((s, x) => s + x, 0) + '件，集中于' + coreTop.map(e => e[0] + '（' + e[1] + '件）').join('、');
+  synth.push({ t: '区域热点分布', s: regionS + '。' });
+  /* （四）与前期对比 */
+  let cmpS;
+  if (prevS && typeof prevS.total === 'number') {
+    const d = total - prevS.total;
+    const dp = prevS.total ? Math.round(d / prevS.total * 100) : 0;
+    const prevC = (prevS.topCountries || []);
+    const rises = [];
+    topCountries.forEach(([c, n]) => { const p = prevC.find(x => x[0] === c); const pd = p ? n - p[1] : n; if (pd > 0) rises.push([c, pd, n]); });
+    rises.sort((a, b) => b[1] - a[1]);
+    cmpS = '前一日独立事件' + prevS.total + '个、红色' + (prevS.red || 0) + '件；今日' + total + '个（环比' + (d >= 0 ? '+' : '') + d + '、' + (dp >= 0 ? '+' : '') + dp + '%）、红色' + reds.length + '件。'
+      + (rises.length ? '升温国别：' + rises.slice(0, 3).map(r => r[0] + '（较前日增加' + r[1] + '件，共' + r[2] + '件）').join('、') + '，存在事件升级与外溢风险。' : '各国别较前日无明显升温。');
+  } else {
+    cmpS = '系统内无前一日简报可比数据，建议自本期起建立逐日环比基线。';
+  }
+  synth.push({ t: '与前期对比', s: cmpS });
+  const judgHtml = synth.map((j, n) => '<p class="drg-h2">（' + ('一二三四五六'[n] || (n + 1)) + '）' + _escapeHtml(j.t) + '</p><p class="drg-p">' + _escapeHtml(j.s) + '</p>').join('');
+  /* ===== 六、工作建议（2026-09-01 重做：针对性对策——针对对象+具体动作+时限/责任维度，
+   * 绑定当日具体事件/国别/资产，禁止「加强监测」「提高警惕」类空话。 ===== */
+  const sugg2 = [];
+  keyItems.filter(i => i.severity === 'red').slice(0, 4).forEach(i => {
+    const c = i.eventCountry || i.country || '事发国';
+    const t = (_govCleanZh(i.title, 30) || String(i.title || '')).replace(/[。！？].*$/, '');
+    sugg2.push('针对' + c + '“' + t + '”红色事件：由值班处置岗牵头，今日17时前经领事保护渠道与事发地中资机构核实涉我人员伤损情况，48小时内完成处置闭环并向中心领导书面报告');
+  });
+  assetItems.slice(0, 2).forEach(i => {
+    const names = (i.assets || []).slice(0, 3).join('、');
+    const c = i.eventCountry || i.country || '所在国';
+    sugg2.push('针对' + c + names + '关联警报：项目管理岗48小时内核对' + names + '现场人员与设施状态，形成核查台账并反馈预警中心');
+  });
+  const sancItems = items.filter(i => i.type === 'sanctions_data');
+  if (sancItems.length) {
+    const st = (_govCleanZh(sancItems[0].title, 30) || String(sancItems[0].title || '')).replace(/[。！？].*$/, '');
+    sugg2.push('针对“' + st + '”等' + sancItems.length + '件制裁合规动态：合规审查岗3个工作日内核查涉及实体与我方在建项目、结算通道的关联性，出具书面风险评估意见');
+  }
+  if (coreTop.length && coreTop[0][1] >= 2) {
+    sugg2.push('针对' + coreTop[0][0] + '当日内安全类事件集中态势（' + coreTop[0][1] + '件）：驻该方向业务组3个工作日内完成在册项目安保等级与撤离路线复核，逾期未反馈的由值班领导督办');
+  }
+  if (sugg2.length < 2) {
+    sugg2.push('针对当日涉华情报' + chinaItems.length + '件、负面舆情' + negItems.length + '件：涉华情报岗今日20时前完成逐条溯源复核，黄色及以上事件48小时内复核完毕，结果登记采集台账');
+  }
+  if (sugg2.length < 2) {
+    sugg2.push('针对当日在库全部' + total + '个事件：值班岗位按预案做好信息报送与应急值守，次日8时前完成夜间时段增量事件补录核验');
+  }
+  const suggHtml = sugg2.slice(0, 6).map((s, n) => '<p class="drg-p">（' + (n + 1) + '）' + _escapeHtml(s) + '。</p>').join('');
   return '<style>'
     + '.drg-paper{width:21cm;max-width:100%;margin:0 auto;background:#fff;color:#000;padding:3.7cm 2.6cm 3.5cm 2.8cm;font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;font-size:16pt;line-height:28pt;box-sizing:border-box;}'
     + '.drg-paper *{box-sizing:content-box;}'
@@ -588,9 +729,9 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     + '.drg-h2{font-family:"楷体","KaiTi",serif;font-weight:700;line-height:28pt;margin:8pt 0 2pt;text-indent:2em;}'
     + '.drg-p{font-size:16pt;line-height:28pt;text-indent:2em;margin:0;}'
     + '.drg-tblwrap{margin:8pt 0;}'
-    + '.drg-table{width:100%;border-collapse:collapse;font-size:12pt;line-height:20pt;}'
-    + '.drg-table th,.drg-table td{border:1px solid #000;padding:3pt 5pt;text-align:center;font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;}'
-    + '.drg-table th{font-family:"黑体","SimHei",serif;font-weight:700;}'
+    + '.drg-table{width:100%;border-collapse:collapse;font-size:12pt;line-height:20pt;color:#000!important;}'
+    + '.drg-table th,.drg-table td{border:1px solid #000;padding:3pt 5pt;text-align:center;font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;color:#000!important;}'
+    + '.drg-table th{font-family:"黑体","SimHei",serif;font-weight:700;color:#000!important;}'
     + '.drg-table td.l,.drg-table th.l{text-align:left;}'
     + '.drg-fig{margin:10pt 0 2pt;text-align:center;}'
     + '.drg-figcap{text-align:center;font-family:"黑体","SimHei",serif;font-size:14pt;line-height:22pt;margin:2pt 0 12pt;}'
@@ -619,13 +760,16 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     + '<div class="drg-figcap">图2　国别分布（前十位）</div>'
     + '<div class="drg-h1">二、涉华重点事件</div>'
     + keyHtml
-    + '<div class="drg-h1">三、地区风险动态</div>'
+    + '<div class="drg-h1">三、全球重大事件分析</div>'
+    + '<p class="drg-p">' + globalLead + '</p>'
+    + globalHtml
+    + '<div class="drg-h1">四、地区风险动态</div>'
     + '<p class="drg-p">当日事件分布于' + Object.keys(byCountry).length + '个国家/地区，前十位国家/地区统计见表2' + (topCountries.length ? '，其中' + _escapeHtml(topCountries[0][0]) + '以' + topCountries[0][1] + '件居首' : '') + '。</p>'
     + '<div class="drg-tblwrap"><table class="drg-table"><thead><tr><th>序号</th><th>国家/地区</th><th>事件数</th><th>占比</th><th class="l">当日主要类型</th></tr></thead><tbody>' + (tblRows || '<tr><td colspan="5">当日无国别标注事件</td></tr>') + '</tbody></table></div>'
     + '<div class="drg-figcap">表2　国别风险统计（前十位）</div>'
-    + '<div class="drg-h1">四、风险研判</div>'
+    + '<div class="drg-h1">五、综合研判</div>'
     + judgHtml
-    + '<div class="drg-h1">五、工作建议</div>'
+    + '<div class="drg-h1">六、工作建议</div>'
     + suggHtml
     + '<div class="drg-sign"><div class="drg-org">海外利益保护情报中心</div><div class="drg-date">' + issueDate + '</div></div>'
     + '<div class="drg-footer"><div class="drg-fline"></div><div class="drg-frow"><span>抄送：中心领导，相关业务部门。</span></div><div class="drg-fline"></div><div class="drg-frow"><span>海外利益保护情报中心办公室</span><span>' + issueDate + '印发</span></div><div class="drg-fline"></div></div>'
@@ -863,8 +1007,9 @@ async function _generateDailyReport(dateKey) {
     if (chinaItems.length + negItems.length >= 10) sugg.push('组织涉华情报专项复核，重点甄别境外涉华负面舆情走向与扩散风险');
     if (sugg.length < 2) sugg.push('维持常规监测频度，重点关注次日新增信源与重点国别动态');
     if (sugg.length < 2) sugg.push('各值班岗位按预案做好信息报送与应急值守');
-    /* 研判结论（交互版）存入 meta，人工编辑重渲染时沿用 */
-    meta = { judgementHtml: lines };
+    /* 研判结论（交互版）存入 meta，人工编辑重渲染时沿用；
+     * prevSummary 供公文版「综合研判·与前期对比」节使用 */
+    meta = { judgementHtml: lines, prevSummary: prev || null };
   }
 
   const sections = [
