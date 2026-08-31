@@ -4783,6 +4783,9 @@ function switchAnalysisTab(t){
 // ===== AUTH =====
 const AUTH={
   user:null,
+  _ready:false,   /* 2026-08-31 修竞态：app.js 加载完成前登录按钮可点导致 ReferenceError
+                    引导页跳转后卡片立即渲染但 AUTH 还在加载——输入框/按钮置灰，
+                    init/_localInit 完成置 _ready=true 后再激活；按钮 onclick 也兜底守卫 */
   get currentUser(){ return this.user; },
   init(){
     // 初始化 API 客户端（检测后端）
@@ -4808,6 +4811,18 @@ const AUTH={
     if(u){try{this.user=JSON.parse(u);this.showApp();return;}catch(e){}}
     this.showLogin();
     this.startLoginAnim();
+    /* 2026-08-31 修竞态：登录卡片已渲染后激活 AUTH._ready + 启用输入框/按钮，
+       引导页跳转立即可点的卡不会因 AUTH 还在加载报 ReferenceError */
+    this._ready = true;
+    this._enableLoginUi();
+  },
+  _enableLoginUi(){
+    var ids = ['li-user','li-pass'];
+    ids.forEach(function(id){ var el = document.getElementById(id); if (el) { el.disabled = false; el.removeAttribute('aria-disabled'); } });
+    var btns = document.querySelectorAll('#auth-card-login button.auth-btn');
+    btns.forEach(function(b){ b.disabled = false; b.removeAttribute('aria-disabled'); b.style.opacity = ''; b.style.pointerEvents = ''; });
+    var hint = document.getElementById('login-hint');
+    if (hint) hint.style.display = 'none';
   },
   _countAccounts(){
     var n=0;

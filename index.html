@@ -738,9 +738,12 @@ select.intel-input{cursor:pointer}
 <div class="auth-card">
 <div id="auth-card-login">
 <h3>🔐 安全登录</h3>
-<input class="auth-input" id="li-user" placeholder="用户名">
-<input class="auth-input" id="li-pass" type="password" placeholder="密码">
-<button class="auth-btn" onclick="AUTH.login()">登 录</button>
+<input class="auth-input" id="li-user" placeholder="用户名" disabled aria-disabled="true">
+<input class="auth-input" id="li-pass" type="password" placeholder="密码" disabled aria-disabled="true">
+<!-- 2026-08-31 修竞态：app.js 加载完成前 AUTH 可能未定义，守卫后调用；输入框默认 disabled，
+     AUTH._enableLoginUi() 在 _localInit 末尾激活 -->
+<button class="auth-btn" id="btn-login" disabled aria-disabled="true" onclick="if(typeof AUTH==='undefined'||!AUTH._ready){showToast&&showToast('⏳ 正在加载，请稍候…');return;} AUTH.login()">登 录</button>
+<div id="login-hint" class="auth-hint" style="font-size:11px;color:#7a8aa5;margin-top:6px;text-align:center">⏳ 正在加载系统组件…</div>
 <div class="auth-switch">没有账号？<a onclick="AUTH.showReg()">注册</a></div>
 </div>
 <div id="auth-card-register" style="display:none">
@@ -1189,7 +1192,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=1"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=267"></script>
+<script src="app.js?v=268"></script>
 <script src="workbench.js?v=3"></script>
 <script src="threatroom.js?v=6"></script>
 <script src="foresee.js?v=2"></script>
