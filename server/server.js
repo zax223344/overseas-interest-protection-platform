@@ -5791,7 +5791,35 @@ function _eventSignature(it) {
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
   const evtDate = _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || new Date());
   const day = evtDate ? evtDate.toISOString().slice(0, 10) : String(it.publish_time || it.publishedAt || '').slice(0, 10);
+  /* 2026-09-01 退化签名细化：无事件词且无锚点的条目此前退化为「国||日期」——同国同日
+   * 第二条起全灭。近12h实测 event-sig-dup 拒收 1725 条中 1096 条(64%)是此类**独立新闻**
+   * （卢拉贸易谈判/图帕克案审判/数字卢布/中国黑客司法部…全部单源单版），非同事件变体。
+   * 修法：退化分支取标题关键词锚（英文≥4字符词/中文≥2字连续段，各取前3拼接），
+   * 独立新闻不再互撞；同故事变体若共享前3关键词仍互撞（去重精度保留）。
+   * 有事件词/有锚点的签名一律不动。 */
+  if (!ev && !anchor) {
+    const kw = _degenKw(t, ctry);
+    return ctry + '|kw|' + (kw || day);
+  }
   return ctry + '|' + ev + '|' + (anchor || day);   /* 有锚点用锚点（同事件强聚合），无锚点退日期 */
+}
+/* 退化签名关键词锚：英文取 ≥4 字符小写词（去停用词），中文取 ≥2 字连续段（已去国名），各取前3 */
+const _DEGEN_STOP = new Set(['says','said','after','from','with','this','that','have','will','what','when','they','them','their','about','over','under','into','more','than','also','been','being','were','does','doing','amid','among','while','which','where','would','could','should','report','reports','news','update','live','amid','ahead','against','between','because','before','during','other','some','such','only','same','most','much','very','just','like','make','made','take','took','give','gave']);
+function _degenKw(t, ctry) {
+  let s = String(t || '');
+  if (ctry) s = s.split(ctry).join(' ');
+  const toks = [];
+  for (const w of (s.toLowerCase().match(/[a-z][a-z'’\-]{3,}/g) || [])) {
+    if (toks.length >= 3) break;
+    if (!_DEGEN_STOP.has(w) && !toks.includes(w)) toks.push(w);
+  }
+  if (toks.length < 3) {
+    for (const w of (s.replace(/[^\u4e00-\u9fa5]+/g, ' ').split(' ').filter(x => x.length >= 2))) {
+      if (toks.length >= 3) break;
+      if (!toks.includes(w)) toks.push(w);
+    }
+  }
+  return toks.join('+');
 }
 /* ===== 事件簇产量帽（2026-08-29 三部委审查 P1-3 根因修复）=====
  * 起因：中尼边境洪灾单一事件 7 天 141 条变体入库。根因链：
