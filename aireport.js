@@ -301,6 +301,28 @@ var AIREPORT = {
     });
     html += '</div>';
 
+    /* 未完成生成草稿恢复卡片（中途刷新/崩溃的逐段保存内容） */
+    var draft = null;
+    try { draft = JSON.parse(localStorage.getItem('orps_aireport_draft') || 'null'); } catch (e) {}
+    if (draft && draft.segs && Object.keys(draft.segs).length) {
+      var SEG_NM = { fact: 'BLUF 要点摘要', trend: '趋势研判', drivers: '动因分析', impact: '影响评估', scenario: '情景推演', case: '案例分析', advice: '对策建议' };
+      var dSegs = Object.keys(draft.segs);
+      var dOk = dSegs.filter(function (k) { return draft.segs[k] && draft.segs[k].ok; }).length;
+      html += '<div class="card mt-12" style="border-color:rgba(168,85,247,0.4)"><div class="card-tt"><span class="ic">⏸</span>未完成的深度生成草稿';
+      html += '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">' + this._esc(draft.country || '') + '（近' + this._esc(String(draft.win || '')) + '）· ' + dOk + '/7 段 · ' + this._esc(String(draft.startedAt || '').slice(0, 19).replace('T', ' ')) + '</span>';
+      html += '<button class="btn sm" style="margin-left:auto;color:var(--red)" onclick="AIREPORT._dropDraft()">🗑 放弃草稿</button></div>';
+      html += '<div style="padding:10px;font-size:11px;line-height:1.7">';
+      dSegs.forEach(function (k) {
+        var s = draft.segs[k];
+        if (s && s.ok) {
+          html += '<details style="margin-bottom:6px"><summary style="cursor:pointer;color:var(--green)">✅ ' + (SEG_NM[k] || k) + '（' + (s.model || (s.degraded ? '本地降级' : 'LLM')) + '）</summary><div style="padding:6px 10px;white-space:pre-wrap;color:var(--text2);border-left:2px solid var(--border);margin:4px 0 4px 4px">' + AIREPORT._esc(String(s.text || '')) + '</div></details>';
+        } else {
+          html += '<div style="color:var(--red)">❌ ' + (SEG_NM[k] || k) + '（失败：' + AIREPORT._esc(String((s && s.err) || '未知')) + '）</div>';
+        }
+      });
+      html += '</div></div>';
+    }
+
     /* 报告列表 */
     html += '<div class="card mt-12"><div class="card-tt"><span class="ic">🤖</span>AI情报分析报告';
     html += '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 深度分层研判：客观事实+主观分析+数据支撑+案例分析，四分析师七段生成</span>';
@@ -623,6 +645,12 @@ var AIREPORT = {
     if (btn) { btn.disabled = true; btn.innerHTML = '🤖 分层研判中…'; }
     var prog = this._progPanel();
     var state = {};
+    /* 生成草稿（逐段持久化到 localStorage，防中途刷新/崩溃丢全部内容） */
+    var draft = { country: asm.country, win: asm.win, startedAt: new Date().toISOString(), segs: {} };
+    var saveDraft = function () {
+      try { localStorage.setItem('orps_aireport_draft', JSON.stringify(draft)); } catch (e) {}
+    };
+    saveDraft();
     var batches = [['fact', 'trend', 'drivers'], ['impact', 'scenario', 'case'], ['advice']];
     var runB = function (bi) {
       if (bi >= batches.length) { self._finishDeep(payload, state); return; }
@@ -631,6 +659,8 @@ var AIREPORT = {
       Promise.all(batches[bi].map(function (sg) {
         return self._callSeg(sg, payload).then(function (res) {
           state[sg] = res.ok ? { status: 'ok', res: res } : { status: 'fail', err: res.error };
+          draft.segs[sg] = res.ok ? { ok: true, text: String(res.text || '').slice(0, 8000), model: res.model || '', degraded: !!res.degraded } : { ok: false, err: String(res.error || '').slice(0, 120) };
+          saveDraft();
           self._progUpdate(prog, state);
           return res;
         });
@@ -725,6 +755,7 @@ var AIREPORT = {
     r.reviewStatus = 'pending';
     INTELCENTER._lastGenModel = deep.engine;
     this._persist(r);
+    try { localStorage.removeItem('orps_aireport_draft'); } catch (e) {} /* 已转正式报告，清草稿 */
     showToast('✅ 深度研判完成：' + okN + '段成功' + (degN ? '（' + degN + '段本地降级）' : '') + (failN ? '，' + failN + '段失败可重生成' : ''));
     this.openDetail(r.id);
   },
@@ -1120,6 +1151,12 @@ var AIREPORT = {
       return s && s.status === 'approved';
     });
     r.reviewStatus = all ? 'approved' : 'pending';
+  },
+
+  _dropDraft() {
+    try { localStorage.removeItem('orps_aireport_draft'); } catch (e) {}
+    showToast('🗑 已放弃草稿');
+    this.render();
   },
 
   /* ---------- 持久化（localStorage + API 同步 deep 结构） ---------- */
