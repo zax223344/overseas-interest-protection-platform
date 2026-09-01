@@ -136,11 +136,66 @@ function _mergePublicCache(type, incoming) {
 app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+/* ===== 性能层（2026-09-02 perf）：gzip 压缩 + 静态缓存策略 =====
+ * 公网 50 人并发（cloudflared 隧道上行带宽受限）实测基线：20.5MB/s 出口、app.js 1.7MB
+ * 每次刷新全量重下、/api/datahub/alerts 未压缩 3.7MB/s。三项治理：
+ *  1) gzip：JSON API 与静态文本走 zlib（Node 内置，零新依赖）；SSE(text/event-stream)、
+ *     已编码响应、304/204 无体响应跳过；已知 Content-Length < 1KB 的小响应跳过（省 CPU）。
+ *  2) 静态缓存：JS/CSS 引用全部走 index.html ?v=N 版本号（版本变=URL变），可安全开
+ *     max-age=86400；index.html 本身保持 no-store（保证版本号跳转即时生效）；
+ *     .json 数据文件用 no-cache 走 ETag 304 协商（改动能即时生效且省流量）。 */
+const zlib = require('zlib');
+const _GZIP_TYPES = /json|javascript|ecmascript|text\/|svg\+xml|\/xml/i;
+app.use(function (req, res, next) {
+  const ae = String(req.headers['accept-encoding'] || '');
+  if (ae.indexOf('gzip') < 0 || req.method === 'HEAD') return next();
+  const origWrite = res.write.bind(res);
+  const origEnd = res.end.bind(res);
+  let decided = false, gz = null;
+  function decide() {
+    decided = true;
+    const ct = String(res.getHeader('Content-Type') || '');
+    if (!_GZIP_TYPES.test(ct) || /event-stream/i.test(ct)) return;
+    if (res.getHeader('Content-Encoding')) return;
+    const cl = parseInt(res.getHeader('Content-Length') || '0', 10);
+    if (cl && cl < 1024) return; /* 小响应不压，省 CPU */
+    gz = zlib.createGzip({ level: 6 });
+    res.setHeader('Content-Encoding', 'gzip');
+    res.removeHeader('Content-Length');
+    const vary = String(res.getHeader('Vary') || '');
+    if (vary.indexOf('Accept-Encoding') < 0) res.setHeader('Vary', vary ? vary + ', Accept-Encoding' : 'Accept-Encoding');
+    gz.on('data', c => { try { origWrite(c); } catch (e) {} });
+    gz.on('error', () => { try { origEnd(); } catch (e) {} });
+  }
+  res.write = function (chunk, ...rest) {
+    if (!decided) { const sc = res.statusCode; if (sc === 304 || sc === 204) decided = true; else decide(); }
+    if (gz) { if (chunk) gz.write(typeof chunk === 'string' ? Buffer.from(chunk, rest[0] || 'utf8') : chunk); return true; }
+    return origWrite(chunk, ...rest);
+  };
+  res.end = function (chunk, ...rest) {
+    if (!decided) { const sc = res.statusCode; if (sc === 304 || sc === 204) decided = true; else decide(); }
+    if (gz) {
+      if (chunk) gz.write(typeof chunk === 'string' ? Buffer.from(chunk, typeof rest[0] === 'string' ? rest[0] : 'utf8') : chunk);
+      gz.end();
+      return res;
+    }
+    return origEnd(chunk, ...rest);
+  };
+  next();
+});
+
 app.use(express.static(path.join(__dirname, '..'), {
   setHeaders: function (res, filePath) {
-    // 前端代码强制不缓存：避免浏览器/代理缓存旧版 gate.js/app.js，导致国内噪声清不掉
-    if (/\.(html?|js|css|mjs|json)$/i.test(filePath)) {
+    /* 缓存策略（2026-09-02 perf）：
+     * - index.html no-store：前端每次拿到最新版本号引用，?v 跳转即时生效；
+     * - JS/CSS/图片/字体 max-age=86400：更新由 ?v=N 版本号机制保证（URL 变即换新）；
+     * - .json no-cache：ETag 304 协商缓存，命中不出body、改动即时可见。 */
+    if (/\.html?$/i.test(filePath)) {
       res.setHeader('Cache-Control', 'no-store');
+    } else if (/\.(js|mjs|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|eot|apk)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    } else if (/\.json$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache');
     }
   }
 }));
@@ -151,6 +206,66 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+/* ===== 热接口短 TTL 内存缓存（2026-09-02 perf）=====
+ * 前端 50 人对同一批全局数据接口 5-30s 定时轮询 → 同一查询每秒多次打库。
+ * 铁律不变：只缓存真实查询结果（原样回放 res.json 的 body），TTL 过期自动回源查库；
+ * 写路径（PUT/POST/DELETE）调用 _ttlInvalidate 主动失效，写入立即可见。
+ * 同 key 并发未命中合并回源（防过期瞬间 50 人齐刷刷击穿数据库）。 */
+const _ttlStore = new Map();   /* key → {at, status, body, ct} */
+const _ttlPending = new Map(); /* key → {promise, resolve} 同 key 回源合并 */
+function _ttlInvalidate(prefix) {
+  let n = 0;
+  for (const k of _ttlStore.keys()) { if (k.indexOf(prefix) === 0) { _ttlStore.delete(k); n++; } }
+  return n;
+}
+function ttlCache(ms) {
+  return function (req, res, next) {
+    if (req.method !== 'GET') return next();
+    const key = req.path; /* 按路径聚合：这些全局数据接口的查询参数只有缓存破坏参数(?t=时间戳) */
+    const hit = _ttlStore.get(key);
+    if (hit && Date.now() - hit.at < ms) {
+      res.set('X-Cache', 'HIT');
+      res.set('Content-Type', hit.ct);
+      res.status(hit.status);
+      return res.end(hit.body);
+    }
+    if (_ttlPending.has(key)) {
+      return _ttlPending.get(key).promise.then(r => {
+        if (r && r.body) {
+          res.set('X-Cache', 'HIT-JOIN');
+          res.set('Content-Type', r.ct);
+          res.status(r.status);
+          return res.end(r.body);
+        }
+        next(); /* 回源方出错（非200/异常）：本请求自行回源 */
+      });
+    }
+    let settled = false;
+    const pend = { promise: null, resolve: null };
+    pend.promise = new Promise(rs => { pend.resolve = rs; });
+    _ttlPending.set(key, pend);
+    const origJson = res.json.bind(res);
+    res.json = function (obj) {
+      if (!settled) {
+        settled = true;
+        _ttlPending.delete(key);
+        if (res.statusCode === 200) {
+          const body = JSON.stringify(obj);
+          if (_ttlStore.size > 256) _ttlStore.delete(_ttlStore.keys().next().value); /* 容量上限：淘汰最旧 */
+          _ttlStore.set(key, { at: Date.now(), status: 200, body: body, ct: 'application/json; charset=utf-8' });
+          pend.resolve({ status: 200, body: body, ct: 'application/json; charset=utf-8' });
+        } else {
+          pend.resolve(null);
+        }
+      }
+      res.set('X-Cache', 'MISS');
+      return origJson(obj);
+    };
+    res.on('finish', () => { if (!settled) { settled = true; _ttlPending.delete(key); pend.resolve(null); } });
+    next();
+  };
+}
 
 /* ===== JWT 认证 ===== */
 function authMiddleware(req, res, next) {
@@ -410,6 +525,9 @@ function _prevDayKey(dateKey) {
  * 中英混合标题按词典将常见组织/地物专名替换为中文标准译名（zhq 涉华分数 + title_zh 中文标题
  * 回退已在条目映射完成，此处为公文体语句级兜底）。全部为确定性规则，零生成式模型。 ===== */
 const _GOV_ZH_DICT = [
+  /* 专名兜底（title_zh 数据侧修复前的公文侧词典兜底）：先替换"Xi近平"再替换"国家主席Xi"/"中国Xi"；
+   * _govCleanZh 同管 title 与 digest 两条路径（09-02 第四轮修单：digest 正文 Xi 残留必须清零） */
+  [/Xi近平/g, '习近平'], [/国家主席Xi/g, '国家主席习近平'], [/中国Xi/g, '中国领导人习近平'], [/\bXi\b/g, ''],
   [/\bCPEC\b/g, '中巴经济走廊'], [/\bBLA\b/g, '俾路支解放军'], [/\bTTP\b/g, '巴基斯坦塔利班'],
   [/\bISIS\b|\bISIL\b/g, '伊斯兰国'], [/\bal[- ]?Qaeda\b/gi, '基地组织'], [/\bTaliban\b/gi, '塔利班'],
   [/\bHamas\b/g, '哈马斯'], [/\bHezbollah\b|\bHizbollah\b/g, '黎巴嫩真主党'], [/\bHouthi(e?s)?\b/g, '胡塞武装'],
@@ -436,6 +554,7 @@ function _govCleanZh(s, maxLen) {
   t = t.replace(/(报道|消息)称[:：]?/g, '');
   t = t.replace(/(更新(时间|于)[:：]?\s*[\d\-\/\s:年月日]+|Updated[:：]\s*[\d\-\/\s:TZ]+|Published[:：]\s*[\d\-\/\s:TZ]+)/gi, ' ');
   t = t.replace(/【[^】]{0,10}】/g, ' ');
+  t = t.replace(/…+/g, ''); /* 09-02 第四轮修单：省略号字符全删除（用户原话："……这种符号，全删除了"） */
   for (const d of _GOV_ZH_DICT) t = t.replace(d[0], d[1]);
   /* 外文子句剥离：连续3个及以上拉丁词的子句整体移除（词典替换后残留的英文/法文等原题尾巴） */
   t = t.replace(/[A-Za-zÀ-ÿ]{2,}(?:[ '’\-][A-Za-zÀ-ÿ]{2,}){2,}/g, ' ');
@@ -453,7 +572,7 @@ function _govCleanZh(s, maxLen) {
     let cut = kept.slice(0, maxLen);
     const p = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('；'), cut.lastIndexOf('！'), cut.lastIndexOf('？'));
     cut = (p > maxLen * 0.4) ? cut.slice(0, p + 1) : cut.replace(/[,，、：:\s]+$/, '');
-    kept = cut + '……';
+    kept = cut; /* 09-02 第四轮修单：截断不加省略号——要么取整句，要么直接截断不加任何符号 */
   }
   return kept;
 }
@@ -686,12 +805,23 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   /* 标题清洗：公文语体清洗 + 尾部媒体名剥离（"- 韩联社"/"- Xinhua Press"/"- XX日报"等，循环两层兜底） */
   const _govTitle = i => {
     let t = _govCleanZh(i.title, 40) || String(i.title || '');
-    for (let k = 0; k < 2; k++) t = t.replace(/\s*[-–—]\s*[\w\u4e00-\u9fa5]{2,20}(社|Press|Times|News|Post|Herald|Tribune|日报|周报|电视台|通讯社)\s*$/i, '');
+    for (let k = 0; k < 2; k++) t = t.replace(/\s*[-–—]\s*[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5\s]{0,24}?(社|Press|Times|News|Post|Herald|Tribune|日报|周报|电视台|通讯社)\s*$/i, '');
     return t.replace(/[。！？；;]\s*$/, '').trim();
   };
-  /* ===== 2026-09-01 代表性事件选材质量闸（用户指令：治理东道国本地治安新闻入选代表事件） ===== */
-  const _LOCAL_SEC = /逮捕|追回|破获|盗窃|交通事故|警匪|嫌疑|查获|缴获|营救|解救|获释|救出/;
-  const _VAGUE_T = /身份|名单|盘点|观察|一览|解读/;
+  /* ===== 2026-09-01 代表性事件选材质量闸（用户指令：治理东道国本地治安新闻入选代表事件；
+   * 09-02 返工：本地治安案一票排除不看 severity，红色不豁免；正向外交事件移出二节） ===== */
+  const _LOCAL_SEC = /逮捕|追回|破获|盗窃|交通事故|警匪|嫌疑|查获|缴获|营救|解救|获释|救出|抓获|获救/;
+  const _VAGUE_T = /身份|名单|盘点|观察|一览|解读|如何|为什么|为何|背后|什么原因/;
+  /* 涉华主体词（标题级精确匹配，宽泛"中国"易误吸访问类） */
+  const _CN_SUBJ = /中国公民|中国人|华人|华商|中资|中国企业|中国籍|Chinese/;
+  /* 正向外交事件判定：标题任一子句命中正向词且该子句无负面要素（访问/会晤/抵达等是正面新闻，
+   * 不属"安全事件"范畴，不进二节、不作威胁性研判） */
+  const _isPositiveDip = i => {
+    const t = String((i && i.title) || '');
+    const POS = /访问|会晤|会见|峰会|抵达|签署|合作|出访/;
+    const NEG = /制裁|威胁|抗议|袭击|冲突|死亡|伤亡|绑架|遇害|爆炸|枪击|勒索/;
+    return t.split(/[,，：:；;、]/).some(s => POS.test(s) && !NEG.test(s));
+  };
   const _repScore = i => {
     let s = 0;
     if (i.severity === 'red') s += 32; else if (i.severity === 'orange') s += 16;
@@ -699,37 +829,81 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     if (i.assets && i.assets.length) s += 8;
     if ((i.corr || 0) >= 2) s += 4;
     if (/terror_events|military_conflicts|sanctions_data|geopolitical_intel|security_events/.test(i.type)) s += 2;
+    if (_isPositiveDip(i)) s -= 40; /* 正向外交动态不作安全事件代表 */
     return s;
   };
-  /* 排除纯本地治安（非涉华、非涉我资产、非红色 且标题命中本地治安词）；清洗后>30字或空泛词跳过；最多2件，宁缺毋滥 */
+  /* 排除规则（一票否决，红色不豁免——用户指令优先于 DB severity）：
+   * 本地治安词命中 且 非涉华主体（china/negative 标志与标题涉华词均无）；
+   * 涉华治安案（如曼谷华人团伙案）保留。每主题最多2件，>30字/空泛词跳过，宁缺毋滥。 */
   const _pickRepr = arr => arr
-    .filter(i => !(!(i.severity === 'red') && !(i.china || i.negative) && !(i.assets && i.assets.length) && _LOCAL_SEC.test(String(i.title || ''))))
+    .filter(i => !(_LOCAL_SEC.test(String(i.title || '')) && !(i.china || i.negative) && !_CN_SUBJ.test(String(i.title || ''))))
+    .filter(i => !_isPositiveDip(i))
     .map(i => ({ i: i, t: _govTitle(i) }))
     .filter(x => x.t && x.t.length <= 30 && !_VAGUE_T.test(x.t))
     .sort((a, b) => _repScore(b.i) - _repScore(a.i))
     .slice(0, 2);
-  /* 案例剖析：取主题内最优1件，事件脉络取自真实 digest，性质判断与四维影响评估
-   * （人员/项目/通道/舆情，命中维度逐一评估）全部由条目字段推导，零虚构 */
+  /* ===== 09-02 返工：案例性质按条目真实类型映射（标题词优先于 type——数据侧 type 有错标，
+   * 如治安执法案标 terror_events），四维影响按性质条件触发，杜绝 blanket 错配 ===== */
+  const _caseNature = b => {
+    const t = String(b.title || '');
+    if (_isPositiveDip(b)) return { k: 'dip', s: '属高层外交动态' };
+    if (/制裁|管制|实体清单|出口管制/.test(t) || /sanctions_data/.test(b.type)) return { k: 'sanc', s: '属外部制裁与合规压力事件' };
+    if (/逮捕|营救|解救|查获|缴获|追回|破获|抓获|获救|获释|警方|执法|安全部队|谋杀|凶案|命案|杀人|突袭.{0,8}(俱乐部|窝点|团伙)/.test(t)) return { k: 'law', s: '属当地治安执法或刑事案件' };
+    if (/武装冲突|交火|炮击|空袭|军事打击|无人机打击|战斗/.test(t) || /military_conflicts/.test(b.type)) return { k: 'conflict', s: '属武装冲突' };
+    if (/袭击|爆炸|枪击|炸弹|恐袭|自杀式/.test(t) || /terror_events/.test(b.type)) return { k: 'terror', s: '属恐怖主义暴力袭击' };
+    if (/geopolitical/.test(b.type)) return { k: 'geo', s: '属地缘政治博弈动态' };
+    return { k: 'other', s: '属安全风险事件，性质待进一步核实' };
+  };
+  /* 案例用 digest 清洗：按句切分取前2句、剔除网页残留词句、超120字截断、不足20字返回空（宁缺毋滥）；
+   * 09-02 第四轮修单：digest 与标题中文二元词交集为0 → 判为多条新闻拼接/张冠李戴（如泰国案 digest
+   * 实为路透社记者人物故事），整段跳过，杜绝"据采集信息"张冠李戴 */
+  const _CASE_WEBNOISE = /Facebook|电子邮件|打印|分享|评论|Related|ADVERTISEMENT|Instagram|Twitter|Whatsapp|点击|订阅|浏览更多/i;
+  const _BG_STOP = /发生|事件|动态|表示|报道|消息|当地|一名|多名|今日|当日|已经|正在|继续|目前|针对|以及|有关|进行|开展|显示|指出|关注|以下|全文|背景|没有|可以|可能|多个|来源|星期|周一|周二|周三|周四|周五|周六|周日|他们|这个|时候|了解|证实|宣布|出现|导致|其中|之后|期间|同时/;
+  const _govDigestCase = b => {
+    let d = _govCleanZh(b.digest, 300) || '';
+    if (!d) return '';
+    const picked = [];
+    for (const s of d.split(/(?<=[。！？])/)) {
+      if (picked.length >= 2) break;
+      const ss = s.trim();
+      if (ss && !_CASE_WEBNOISE.test(ss)) picked.push(ss);
+    }
+    d = picked.join('').replace(/[。；;，,、\s]+$/, ''); /* 统一去尾句读，避免拼接出双句号 */
+    /* digest 与标题中文二元词交集校验：多新闻拼接串剔除噪声句后，剩余句可能与标题完全无关
+     * （如曼谷案实际选中"路透社记者人物故事"页脚句）→ 零交集判为张冠李戴，整段跳过 */
+    const tRaw = String(b.title || '');
+    const bg = [];
+    for (let k = 0; k < tRaw.length - 1; k++) {
+      const g = tRaw.substr(k, 2);
+      if (/^[\u4e00-\u9fa5]{2}$/.test(g) && !_BG_STOP.test(g)) bg.push(g);
+    }
+    if (bg.length >= 2 && !bg.some(g => d.indexOf(g) >= 0)) return '';
+    if (d.length > 120) {
+      let cut = d.slice(0, 120);
+      const p = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('！'), cut.lastIndexOf('？'));
+      d = (p > 40 ? cut.slice(0, p + 1) : cut.replace(/[,，、：:\s]+$/, '')).replace(/[。；;，,、\s]+$/, ''); /* 截断不加省略号（用户指令：……全删除），统一去尾句读防双句号 */
+    }
+    return d.length >= 20 ? d : '';
+  };
+  /* 案例剖析：取主题内最优1件；事件脉络取自清洗后 digest（无干净脉络则整段跳过），
+   * 性质判断按真实类型映射，四维影响（人员/项目/合规与结算/舆情）按性质条件触发，零虚构 */
   const _caseStudy = g => {
     const cand = _pickRepr(g.arr);
     if (!cand.length) return '';
     const b = cand[0].i, bt = cand[0].t;
-    const d = _govCleanZh(b.digest, 110).replace(/[。；;，,、\s]+$/, '');
-    let nature;
-    if (/terror_events/.test(b.type)) nature = '属恐怖主义暴力袭击，针对性与突发性强';
-    else if (/military_conflicts/.test(b.type)) nature = '属武装冲突行动，军事化程度与烈度较高';
-    else if (/sanctions_data/.test(b.type)) nature = '属制裁与管制措施，具有政策性与外溢合规影响';
-    else if (/geopolitical_intel/.test(b.type)) nature = '属地缘政治博弈动态，结构性影响大于即时冲击';
-    else if (b.severity === 'red') nature = '属直接危及人身安全的重大恶性事件';
-    else if (b.severity === 'orange') nature = '属中高烈度安全事件，现实威胁程度中等偏上';
-    else nature = '属一般性安全动态';
+    const d = _govDigestCase(b);
+    if (!d) return ''; /* digest 不足20字（拼接噪声/网页残留被剔除后）→ 宁缺毋滥，整段跳过 */
+    const nat = _caseNature(b);
     const dims = [];
-    if (b.china || b.negative || /terror_events|military_conflicts|security_events/.test(b.type)) dims.push('人员安全维度，我在当地人员面临' + (b.severity === 'red' ? '直接现实威胁' : '潜在波及风险'));
-    if (b.assets && b.assets.length) dims.push('项目运营维度，' + (b.assets || []).slice(0, 2).join('、') + '等在地在建在营项目的外部安全环境趋于复杂');
-    if (/military_conflicts/.test(b.type) || /边境|通道|港口|航线|撤离|封锁|断航/.test(String(b.title || ''))) dims.push('通道安全维度，相关通行与撤离路线的可靠性需重新评估');
-    if (b.negative) dims.push('舆情环境维度，事件存在被负面叙事放大的可能，或波及我整体形象与营商口碑');
-    let s = '其中，' + bt + '一案具有典型意义' + (d ? '。据采集信息，' + d : '') + '。就性质而言，该事件' + nature;
+    if (nat.k === 'terror' || nat.k === 'conflict') dims.push('人员安全维度，我在当地人员面临' + (b.severity === 'red' ? '直接现实威胁' : '潜在波及风险'));
+    if (nat.k === 'sanc') dims.push('合规与结算维度，外部管制压力或经供应链与结算通道向我方业务传导');
+    if (nat.k === 'law' && (b.china || b.negative)) dims.push('涉我人员维度，涉事人员的合规与涉讼风险需予以关注');
+    if (b.assets && b.assets.length) dims.push('项目运营维度，' + (b.assets || []).slice(0, 2).join('、') + '等在地项目的外部安全环境趋于复杂');
+    if ((nat.k === 'conflict' || nat.k === 'terror') && /边境|通道|港口|航线|撤离|封锁|断航/.test(String(b.title || ''))) dims.push('通道安全维度，相关通行与撤离路线的可靠性需重新评估');
+    if (nat.k !== 'dip' && b.negative && nat.k !== 'law') dims.push('舆情环境维度，事件存在被负面叙事放大的可能，或波及我整体形象与营商口碑');
+    let s = '其中，' + bt + '一案具有典型意义。据采集信息，' + d + '。就性质而言，该事件' + nat.s;
     if (dims.length) s += '。综合评估其对我海外利益的影响，' + dims.join('；');
+    else s += '。综合评估，该事件对我海外利益的直接影响有限，其对当地营商与安全环境的间接影响值得关注';
     return s + '。';
   };
   const _govThemeParas = (list, chinaSide) => {
@@ -796,11 +970,14 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     }
     return paras;
   };
-  /* 二、涉华重点事件分析池：全部红色涉华/负面 + 全部橙色涉华/负面；无红橙时取级别最高的前5件 */
+  /* 二、涉华重点事件分析池：全部红色涉华/负面 + 全部橙色涉华/负面；无红橙时取级别最高的前5件。
+   * 09-02 返工：正向外交事件（访问/会晤/签署等正面新闻，无负面要素）不属"安全事件"范畴，
+   * 一律移出二节（含代表事件/案例/建议引用），不再作威胁性研判。 */
+  const _nonDip = i => !_isPositiveDip(i);
   const keyItems = [];
-  reds.forEach(i => keyItems.push(i));
-  items.filter(i => i.severity === 'orange' && (i.china || i.negative) && keyItems.indexOf(i) < 0).forEach(i => keyItems.push(i));
-  if (!keyItems.length) items.filter(i => (i.china || i.negative)).sort((a, b) => (_lvW2[b.severity] || 0) - (_lvW2[a.severity] || 0)).slice(0, 5).forEach(i => keyItems.push(i));
+  reds.filter(_nonDip).forEach(i => keyItems.push(i));
+  items.filter(i => i.severity === 'orange' && (i.china || i.negative) && keyItems.indexOf(i) < 0 && _nonDip(i)).forEach(i => keyItems.push(i));
+  if (!keyItems.length) items.filter(i => (i.china || i.negative) && _nonDip(i)).sort((a, b) => (_lvW2[b.severity] || 0) - (_lvW2[a.severity] || 0)).slice(0, 5).forEach(i => keyItems.push(i));
   const keyParas = _govThemeParas(keyItems, true);
   const keyHtml = keyParas.length ? keyParas.map(p => '<p class="drg-p">' + _escapeHtml(p) + '</p>').join('') : '<p class="drg-p">当日未监测到涉华重点事件。</p>';
   /* 三、全球重大事件分析（非涉华红/橙事件，与涉华节互斥），同口径主题研判成文 */
@@ -898,37 +1075,58 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   const sancItems = items.filter(i => i.type === 'sanctions_data');
   const suggM = [], suggW = [];
   const focusCty = focus.map(f => f[0]).filter(c => c && c !== '未标注');
+  /* 09-02 第四轮修单：删除【宏观】【微观】标签字样（用户原话"要全部删除"），保留前2条宏观视角+后3条微观对策的两层结构 */
   if (focusCty.length && reds.length) {
-    suggM.push('【宏观】' + focusCty.slice(0, 2).join('、') + '等方向涉华安全事件已呈集中态势，若当前烈度延续，将对我企业在当地的存续环境与人员安全基础构成系统性压力，建议决策层将其纳入区域风险评估视野，适时启动相关应急预案的适用性检视与修编');
+    suggM.push(focusCty.slice(0, 2).join('、') + '等方向涉华安全事件已呈集中态势，若当前烈度延续，将对我企业在当地的存续环境与人员安全基础构成系统性压力，建议决策层将其纳入区域风险评估视野，适时启动相关应急预案的适用性检视与修编');
   } else if (focusCty.length) {
-    suggM.push('【宏观】' + focusCty.slice(0, 2).join('、') + '等方向事件热度上升，反映所在区域安全环境出现趋势性变化，建议从政策与机制层面预置应对方案，防止个体事件叠加演化为系统性风险');
+    suggM.push(focusCty.slice(0, 2).join('、') + '等方向事件热度上升，反映所在区域安全环境出现趋势性变化，建议从政策与机制层面预置应对方案，防止个体事件叠加演化为系统性风险');
   } else if (globalItems.length && globalRedN >= 2) {
-    suggM.push('【宏观】全球非涉华方向红色事件多发，主要方向的武装冲突外溢效应值得研判，或将通过供应链、能源价格与安全通道等渠道间接作用于我海外利益整体布局');
+    suggM.push('全球非涉华方向红色事件多发，主要方向的武装冲突外溢效应值得研判，或将通过供应链、能源价格与安全通道等渠道间接作用于我海外利益整体布局');
   }
   if (sancItems.length) {
-    suggM.push('【宏观】当日监测到' + sancItems.length + '件制裁与出口管制动态，反映外部管制工具持续扩容，对我共建项目的合规环境与结算通道构成长期变量，建议纳入中期风险评估框架专项研判');
+    suggM.push('当日监测到' + sancItems.length + '件制裁与出口管制动态，反映外部管制工具持续扩容，对我共建项目的合规环境与结算通道构成长期变量，建议纳入中期风险评估框架专项研判');
   }
-  if (!suggM.length) suggM.push('【宏观】当日态势总体平稳，建议维持既有风险评估框架，重点跟踪重点国别事件烈度与结构变化，为中期趋势研判积累基线数据');
-  keyItems.filter(i => i.severity === 'red').slice(0, 2).forEach(i => {
-    let c = i.eventCountry || i.country || '事发国';
-    let t = _govTitle(i).slice(0, 30).replace(/[。！？].*$/, '');
-    if (t.indexOf(c) === 0) t = t.slice(c.length); /* 避免国别与标题重复（如"马里"马里武装袭击…"） */
-    const lead = (c === '国际' || c === '未标注' || c === '其他方向') ? '' : c; /* 无实际国别时不作前缀 */
-    suggW.push('【微观】针对' + (lead ? lead : '') + '“' + t + '”事件，建议在该方向运营的相关企业与项目即刻复核现场安保等级，对非必要驻留人员实施分级管控，预置撤离触发条件，并核查撤离路线与应急通讯安排的可靠性');
+  if (!suggM.length) suggM.push('当日态势总体平稳，建议维持既有风险评估框架，重点跟踪重点国别事件烈度与结构变化，为中期趋势研判积累基线数据');
+  /* 09-02 第四轮修单：微观建议按事件性质分类生成（与案例剖析共用 _caseNature 映射），
+   * 撤离模板只用于恐袭/冲突类；治安刑案→领事协助与司法跟踪；制裁→结算与合规；外交/地缘→政策研判；
+   * 判不出→通用跟踪建议。同性质多案合并为一条并指明覆盖范围，杜绝同一模板套一切事件与复读。 */
+  const _SUGG_NATURE = {
+    terror: '建议在该方向运营的相关企业与项目即刻复核现场安保等级，对非必要驻留人员实施分级管控，预置撤离触发条件，并核查撤离路线与应急通讯安排的可靠性',
+    conflict: '建议评估冲突外溢波及范围，复核当地项目现场安保与撤离预案，重点关注周边通行通道与口岸的开放状态',
+    law: '建议及时对接驻外使领馆跟进司法程序与领事协助进展，提示相关中方人员注意合规涉讼风险，并跟踪当地舆情走向',
+    sanc: '建议相关企业评估结算通道敞口，对关联实体开展合规审查，防范次级制裁风险经供应链向我方业务传导',
+    dip: '建议持续研判相关政策信号对双边关系及我在当地项目环境的影响，统筹评估合作机遇与风险走向',
+    geo: '建议持续研判相关博弈态势对我海外利益布局的传导路径，评估政策信号与关系走向的演进方向',
+    other: '建议持续跟踪事件演化，及时评估对我人员和项目的影响'
+  };
+  const redCases = keyItems.filter(i => i.severity === 'red').slice(0, 3);
+  const byNat = {};
+  redCases.forEach(i => { const nk = _caseNature(i).k; (byNat[nk] = byNat[nk] || []).push(i); });
+  Object.keys(byNat).forEach(nk => {
+    const grp = byNat[nk];
+    const parts = grp.map(i => {
+      let c = i.eventCountry || i.country || '事发国';
+      let t = _govTitle(i).slice(0, 30).replace(/[。！？].*$/, '');
+      if (t.indexOf(c) === 0) t = t.slice(c.length); /* 避免国别与标题重复（如"马里"马里武装袭击…"） */
+      const lead = (c === '国际' || c === '未标注' || c === '其他方向') ? '' : c; /* 无实际国别时不作前缀 */
+      return (lead ? lead : '') + '“' + t + '”';
+    });
+    const subj = grp.length > 1 ? parts.join('、') + '等' + grp.length + '起案件' : parts[0];
+    suggW.push('针对' + subj + '，' + _SUGG_NATURE[nk]);
   });
-  assetItems.slice(0, 2).forEach(i => {
-    const names = (i.assets || []).slice(0, 3).join('、');
-    const c = i.eventCountry || i.country || '所在国';
-    suggW.push('【微观】涉及' + c + names + '，建议运营方重新评估近期通行安排与保险覆盖范围，对重点物资通道实施临时管控或绕行评估，防范突发事件向项目现场传导');
-  });
+  /* 资产关联建议：多资产合并为一条列举（不套同一模板重复多条，09-02 第四轮修单） */
+  const assetRefs = assetItems.slice(0, 3).map(i => (i.eventCountry || i.country || '所在国') + (i.assets || []).slice(0, 2).join('、')).filter(x => x);
+  if (assetRefs.length) {
+    suggW.push('涉及' + assetRefs.join('、') + '等我海外关联资产，建议运营方重新评估近期通行安排与保险覆盖范围，对重点物资通道实施临时管控或绕行评估，防范突发事件向项目现场传导');
+  }
   if (sancItems.length) {
-    suggW.push('【微观】建议合规团队对当日制裁清单涉及及毗邻实体开展关联性筛查，重点覆盖在建项目供应链与结算通道，防范次级制裁风险向我方业务传导');
+    suggW.push('建议合规团队对当日制裁清单涉及及毗邻实体开展关联性筛查，重点覆盖在建项目供应链与结算通道，防范次级制裁风险向我方业务传导');
   }
   if (suggW.length < 2) {
-    suggW.push('【微观】建议对当日' + (chinaItems.length + negItems.length) + '件涉华动态开展专项溯源与信源评估，重点甄别境外涉华负面舆情的扩散路径与叙事框架，评估其对营商环境的中期影响');
+    suggW.push('建议对当日' + (chinaItems.length + negItems.length) + '件涉华动态开展专项溯源与信源评估，重点甄别境外涉华负面舆情的扩散路径与叙事框架，评估其对营商环境的中期影响');
   }
   if (suggW.length < 2) {
-    suggW.push('【微观】建议按国别与类型对当日在库' + total + '个事件开展结构化复盘，提取高频风险场景充实案例库，为后续趋势研判与预案修编提供实证支撑');
+    suggW.push('建议按国别与类型对当日在库' + total + '个事件开展结构化复盘，提取高频风险场景充实案例库，为后续趋势研判与预案修编提供实证支撑');
   }
   const sugg2 = suggM.slice(0, 2).concat(suggW.slice(0, 3));
   const suggHtml = sugg2.map((s, n) => '<p class="drg-p">（' + (n + 1) + '）' + _escapeHtml(s) + '。</p>').join('');
@@ -1216,13 +1414,14 @@ async function _generateDailyReport(dateKey) {
     if (chinaItems.length + negItems.length >= 10) focus.push('涉华情报专项溯源');
     if (prev && topCountries[0]) focus.push(_escapeHtml(topCountries[0][0]) + '升温动态跟踪');
     lines.push('<div style="font-size:13px;margin:6px 0">📋 <b>明日关注建议</b>：' + (focus.length ? focus.join('；') : '常规研判') + '。</div>');
-    /* 工作建议（2026-09-01 站位重构：智库式宏观+微观分层，去领保值班口吻，零虚构） */
-    if (reds.length) sugg.push('【宏观】红色（涉华严重）事件' + reds.length + '件集中出现，涉我人员安全威胁进入高位区间，建议纳入区域风险评估视野，并检视相关应急预案的适用性');
-    if (assetHits.length) sugg.push('【微观】对当日' + assetHits.length + '件中资海外资产关联警报涉及的项目，建议运营方复核安保等级与保险覆盖范围，评估重点通道通行安排');
-    if (coreThreats.length >= 5) sugg.push('【微观】核心威胁区（' + (coreTop[0] ? coreTop[0][0] : '重点国别') + '等）当日安全类事件' + coreThreats.length + '条，建议相关方向项目实施人员分级管控，预置撤离触发条件');
-    if (chinaItems.length + negItems.length >= 10) sugg.push('【微观】建议对当日涉华动态开展专项溯源与信源评估，重点甄别境外涉华负面舆情的扩散路径与叙事框架');
-    if (sugg.length < 2) sugg.push('【宏观】当日态势总体平稳，建议维持既有风险评估框架，重点跟踪重点国别事件烈度与结构变化，为中期趋势研判积累基线数据');
-    if (sugg.length < 2) sugg.push('【微观】建议按国别与类型结构化复盘在库事件，提取高频风险场景充实案例库');
+    /* 工作建议（2026-09-01 站位重构：智库式宏观+微观分层，去领保值班口吻，零虚构；
+     * 09-02 第四轮修单：删除【宏观】【微观】标签字样，与公文版同口径） */
+    if (reds.length) sugg.push('红色（涉华严重）事件' + reds.length + '件集中出现，涉我人员安全威胁进入高位区间，建议纳入区域风险评估视野，并检视相关应急预案的适用性');
+    if (assetHits.length) sugg.push('对当日' + assetHits.length + '件中资海外资产关联警报涉及的项目，建议运营方复核安保等级与保险覆盖范围，评估重点通道通行安排');
+    if (coreThreats.length >= 5) sugg.push('核心威胁区（' + (coreTop[0] ? coreTop[0][0] : '重点国别') + '等）当日安全类事件' + coreThreats.length + '条，建议相关方向项目实施人员分级管控，预置撤离触发条件');
+    if (chinaItems.length + negItems.length >= 10) sugg.push('建议对当日涉华动态开展专项溯源与信源评估，重点甄别境外涉华负面舆情的扩散路径与叙事框架');
+    if (sugg.length < 2) sugg.push('当日态势总体平稳，建议维持既有风险评估框架，重点跟踪重点国别事件烈度与结构变化，为中期趋势研判积累基线数据');
+    if (sugg.length < 2) sugg.push('建议按国别与类型结构化复盘在库事件，提取高频风险场景充实案例库');
     /* 研判结论（交互版）存入 meta，人工编辑重渲染时沿用；
      * prevSummary 供公文版「综合研判·与前期对比」节使用 */
     meta = { judgementHtml: lines, prevSummary: prev || null };
@@ -2628,6 +2827,45 @@ function _callOpenAiCompat(pv, prompt) {
 }
 
 let _llmCache = { at: 0, key: '', text: '', model: '' };
+
+/* ===== LLM 外呼并发闸（2026-09-02 perf）=====
+ * AI 报告分段（report-seg）/专家研判（run）/未来预警专报（foresee-report）内部走
+ * Kimi/星火外呼，单次 10-30s+。公网 50 人同时创建报告时若无闸会瞬间打出上百路
+ * 外呼：烧穿配额、拖垮事件循环、触发隧道 524。治理三件：
+ *  1) 全局信号量：同时在飞的 LLM 任务上限（默认 6，env LLM_MAX_CONCURRENCY 可调），
+ *     超出任务 FIFO 排队——绝不丢弃，排队任务最终都会执行；
+ *  2) 同签名合并：完全相同的请求（sig 相同）在飞时后来者直接共享同一结果，
+ *     防超时重试重复烧配额；
+ *  3) 结果缓存原有 10 分钟机制保持不变。 */
+const _LLM_MAX = Math.max(1, parseInt(process.env.LLM_MAX_CONCURRENCY || '6', 10));
+let _llmActive = 0;
+const _llmQueue = [];
+function _llmSlot() {
+  return new Promise(resolve => {
+    if (_llmActive < _LLM_MAX) { _llmActive++; resolve(); }
+    else {
+      _llmQueue.push(resolve);
+      if (_llmQueue.length === 1 || _llmQueue.length % 10 === 0) console.log('[LLM-Q] 并发闸排队: ' + _llmQueue.length + ' 个任务（上限 ' + _LLM_MAX + '）');
+    }
+  });
+}
+function _llmRelease() {
+  const nxt = _llmQueue.shift();
+  if (nxt) nxt(); else _llmActive--;
+}
+const _llmInflight = new Map(); /* sig → Promise */
+function _llmRun(sig, task) {
+  if (_llmInflight.has(sig)) return _llmInflight.get(sig);
+  const p = (async () => {
+    await _llmSlot();
+    try { return await task(); } finally { _llmRelease(); }
+  })();
+  const cleanup = () => _llmInflight.delete(sig);
+  p.then(cleanup, cleanup);
+  _llmInflight.set(sig, p);
+  return p;
+}
+
 app.post('/api/llm/foresee-report', authMiddleware, async (req, res) => {
   try {
     const KEY = process.env.LLM_API_KEY || '';
@@ -2649,15 +2887,20 @@ app.post('/api/llm/foresee-report', authMiddleware, async (req, res) => {
       { name: 'Kimi', base: BASE, key: KEY, model: MODEL, maxTokens: 6000, timeout: 150000 },
       { name: 'Spark', base: (process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1').replace(/\/+$/, ''), key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: 3000, timeout: 90000 }
     ].filter(x => x.key);
+    /* perf 2026-09-02：外呼走全局并发闸（排队不丢任务）+ 同签名合并 */
     let text = '', usedModel = '', usedBy = '', lastErr = '';
-    for (const pv of providers) {
-      try {
-        const r2 = await _callOpenAiCompat(pv, prompt);
-        if (r2.text) { text = r2.text; usedModel = pv.model; usedBy = pv.name; break; }
-        lastErr = pv.name + ': ' + (r2.error || '空内容');
-      } catch (e) { lastErr = pv.name + ': ' + e.message; }
-      console.warn('[LLM] ' + pv.name + ' 失败，切换下一通道:', lastErr);
-    }
+    ({ text, usedModel, usedBy, lastErr } = await _llmRun('foresee:' + sig, async () => {
+      let _text = '', _usedModel = '', _usedBy = '', _lastErr = '';
+      for (const pv of providers) {
+        try {
+          const r2 = await _callOpenAiCompat(pv, prompt);
+          if (r2.text) { _text = r2.text; _usedModel = pv.model; _usedBy = pv.name; break; }
+          _lastErr = pv.name + ': ' + (r2.error || '空内容');
+        } catch (e) { _lastErr = pv.name + ': ' + e.message; }
+        console.warn('[LLM] ' + pv.name + ' 失败，切换下一通道:', _lastErr);
+      }
+      return { text: _text, usedModel: _usedModel, usedBy: _usedBy, lastErr: _lastErr };
+    }));
     if (!text) {
       const friendly = /insufficient balance|exceeded_current_quota/i.test(lastErr) ? '大模型账户欠费停机，充值后立即可用'
         : /HMAC|does not match|Unauthorized|401/i.test(lastErr) ? '大模型密钥鉴权失败（请核对控制台完整密钥）'
@@ -2847,13 +3090,18 @@ app.post('/api/llm/run', authMiddleware, async (req, res) => {
       { name: 'Spark', base: (process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1').replace(/\/+$/, ''), key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: 3000, timeout: 90000 }
     ].filter(x => x.key);
     const t0 = Date.now();
+    /* perf 2026-09-02：外呼走全局并发闸（排队不丢任务）+ 同签名合并 */
     let text = '', usedModel = '', lastErr = '';
-    for (const pv of providers) {
-      const r2 = await _callOpenAiCompat(pv, prompt);
-      if (r2.text) { text = r2.text; usedModel = pv.model; break; }
-      lastErr = pv.name + ': ' + (r2.error || '空内容');
-      console.warn('[LLM] ' + kind + ' 通道失败 ' + pv.name + '(' + pv.model + '): ' + (r2.error || '空内容'));
-    }
+    ({ text, usedModel, lastErr } = await _llmRun('run:' + sig, async () => {
+      let _text = '', _usedModel = '', _lastErr = '';
+      for (const pv of providers) {
+        const r2 = await _callOpenAiCompat(pv, prompt);
+        if (r2.text) { _text = r2.text; _usedModel = pv.model; break; }
+        _lastErr = pv.name + ': ' + (r2.error || '空内容');
+        console.warn('[LLM] ' + kind + ' 通道失败 ' + pv.name + '(' + pv.model + '): ' + (r2.error || '空内容'));
+      }
+      return { text: _text, usedModel: _usedModel, lastErr: _lastErr };
+    }));
     if (!text) {
       /* 本地研判引擎降级（2026-08-30）：云端大模型全失败时系统自动生成，永远有输出 */
       try {
@@ -3093,13 +3341,18 @@ app.post('/api/llm/report-seg', authMiddleware, async (req, res) => {
       { name: 'Spark', base: (process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1').replace(/\/+$/, ''), key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: def.maxTokens, timeout: 90000 }
     ].filter(x => x.key);
     const t0 = Date.now();
+    /* perf 2026-09-02：外呼走全局并发闸（排队不丢任务）+ 同签名合并 */
     let text = '', usedModel = '', lastErr = '';
-    for (const pv of providers) {
-      const r2 = await _callOpenAiCompatMsg(pv, def.system, user);
-      if (r2.text) { text = r2.text; usedModel = pv.model; break; }
-      lastErr = pv.name + ': ' + (r2.error || '空内容');
-      console.warn('[LLM] deep-seg ' + seg + ' 通道失败 ' + pv.name + ': ' + lastErr);
-    }
+    ({ text, usedModel, lastErr } = await _llmRun('seg:' + sig, async () => {
+      let _text = '', _usedModel = '', _lastErr = '';
+      for (const pv of providers) {
+        const r2 = await _callOpenAiCompatMsg(pv, def.system, user);
+        if (r2.text) { _text = r2.text; _usedModel = pv.model; break; }
+        _lastErr = pv.name + ': ' + (r2.error || '空内容');
+        console.warn('[LLM] deep-seg ' + seg + ' 通道失败 ' + pv.name + ': ' + _lastErr);
+      }
+      return { text: _text, usedModel: _usedModel, lastErr: _lastErr };
+    }));
     let degraded = false;
     if (!text) {
       try { text = _segLocal[seg](p); usedModel = '本地研判引擎（免费降级）'; degraded = true; }
@@ -3156,25 +3409,35 @@ async function _maybeGenerateDailyReport() {
 }
 setInterval(_maybeGenerateDailyReport, 60 * 1000);
 
-app.get('/api/reports/daily', async (req, res) => {
+/* perf 2026-09-02：daily_reports 建表 DDL 一次性保障（原先 GET 列表/详情每请求都跑
+ * CREATE TABLE + 多条 ALTER TABLE 共 8 条 DDL，50 人并发下是纯浪费；失败重置允许重试） */
+let _dailyReportsSchemaP = null;
+function _ensureDailyReportsSchema() {
+  if (!_dailyReportsSchemaP) {
+    _dailyReportsSchemaP = (async () => {
+      await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS items JSONB`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS sections JSONB`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS meta JSONB`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS edited JSONB`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS gov_html TEXT`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS manual_edit BOOLEAN DEFAULT FALSE`);
+      await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS revision JSONB`);
+    })().catch(e => { _dailyReportsSchemaP = null; throw e; });
+  }
+  return _dailyReportsSchemaP;
+}
+
+app.get('/api/reports/daily', ttlCache(30000), async (req, res) => {
   try {
-    await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS manual_edit BOOLEAN DEFAULT FALSE`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS revision JSONB`);
+    await _ensureDailyReportsSchema();
     const r = await query(`SELECT report_date, summary, created_at, manual_edit FROM daily_reports ORDER BY report_date DESC LIMIT 60`);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.get('/api/reports/daily/:date', async (req, res) => {
+app.get('/api/reports/daily/:date', ttlCache(10000), async (req, res) => {
   try {
-    await query(`CREATE TABLE IF NOT EXISTS daily_reports (report_date TEXT PRIMARY KEY, html TEXT, summary JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS items JSONB`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS sections JSONB`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS meta JSONB`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS edited JSONB`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS gov_html TEXT`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS manual_edit BOOLEAN DEFAULT FALSE`);
-    await query(`ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS revision JSONB`);
+    await _ensureDailyReportsSchema();
     const r = await query(`SELECT report_date, html, summary, created_at, items, sections, meta, edited, gov_html, manual_edit, revision FROM daily_reports WHERE report_date=$1`, [req.params.date]);
     if (!r.rows.length) return res.status(404).json({ error: '该日简报不存在' });
     let row = r.rows[0];
@@ -3209,6 +3472,7 @@ app.post('/api/reports/daily/generate', express.json(), async (req, res) => {
         revision = COALESCE(revision, '[]'::jsonb) || $2::jsonb WHERE report_date=$1`,
         [key, JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '系统', note: '确认覆盖重新生成，人工修改已被基准数据替换' })]);
     }
+    _ttlInvalidate('/api/reports/daily'); /* perf：简报重生成即时失效读缓存 */
     res.json({ ok: true, date: rep.date, total: rep.total });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3245,6 +3509,7 @@ app.put('/api/reports/daily/:date', express.json(), authMiddleware, async (req, 
       revision = COALESCE(revision, '[]'::jsonb) || $6::jsonb WHERE report_date=$1`,
       [date, JSON.stringify({ items, sections }), html, govHtml, JSON.stringify(summary),
         JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: String((req.body && req.body.note) || '人工编辑简报内容') })]);
+    _ttlInvalidate('/api/reports/daily'); /* perf：人工编辑保存即时失效读缓存 */
     res.json({ ok: true, date });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3261,6 +3526,7 @@ app.delete('/api/reports/daily/:date/edits', authMiddleware, async (req, res) =>
     await query(`UPDATE daily_reports SET edited=NULL, manual_edit=FALSE, html=$2, gov_html=$3,
       revision = COALESCE(revision, '[]'::jsonb) || $4::jsonb WHERE report_date=$1`,
       [date, html, govHtml, JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '撤销人工编辑，恢复自动生成版本' })]);
+    _ttlInvalidate('/api/reports/daily'); /* perf：撤销编辑即时失效读缓存 */
     res.json({ ok: true, date });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3362,6 +3628,7 @@ app.post('/api/reports/daily/:date/items/add', express.json(), authMiddleware, a
       revision = COALESCE(revision, '[]'::jsonb) || $8::jsonb WHERE report_date=$1`,
       [date, JSON.stringify(items), JSON.stringify(sections), JSON.stringify(remapped), html, govHtml, JSON.stringify(summary),
         JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '手动添加条目：采集编号 ' + intelId })]);
+    _ttlInvalidate('/api/reports/daily'); /* perf：简报增删条目即时失效读缓存 */
     res.json({ ok: true, date, id: intelId, idx: newIdx, section: key });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3396,13 +3663,14 @@ app.post('/api/reports/daily/:date/items/remove', express.json(), authMiddleware
       revision = COALESCE(revision, '[]'::jsonb) || $8::jsonb WHERE report_date=$1`,
       [date, JSON.stringify(items), JSON.stringify(sections), JSON.stringify(remapped), html, govHtml, JSON.stringify(summary),
         JSON.stringify({ at: new Date().toISOString(), user: (req.user && req.user.username) || '未知', note: '手动移除条目：原采集编号 ' + (removedId || '—') })]);
+    _ttlInvalidate('/api/reports/daily'); /* perf：简报增删条目即时失效读缓存 */
     res.json({ ok: true, date, removedId, removedIdx: idx });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* 权威统计接口（2026-08-14 用户指令：所有统计对话框实时统一数据源）：
  * 数据中心统计卡、态势总览"数据库:N条" 全部以本接口为准（PostgreSQL 实数） */
-app.get('/api/intel/stats', async (req, res) => {
+app.get('/api/intel/stats', ttlCache(30000), async (req, res) => {
   try {
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const r = await query(`SELECT data_type, COUNT(*) c, COUNT(*) FILTER (WHERE collect_time >= $1) today FROM intel_data WHERE audit_status='approved' GROUP BY 1`, [dayStart]);
@@ -3473,7 +3741,7 @@ app.get('/api/intel/ids', async (req, res) => {
  * GET /api/cosri/:country     → 单国画像（4 维 + 近 30 天事件 + 命中项目 + 命中人员 + 行动指引）
  * GET /api/cosri/top?dim=...  → 某维 top 排名（默认 security）
  */
-app.get('/api/cosri', async (req, res) => {
+app.get('/api/cosri', ttlCache(120000), async (req, res) => {
   try {
     const ind = INTEREST_BASE.COUNTRY_RISK_INDICATORS;
     const list = Object.keys(ind.scores).map(cn => {
@@ -3553,7 +3821,7 @@ function _buildCountryGuide(cn, s, recent, projects) {
  * 成功入库（intel_data 今日）→ 生成预警（datahub_store 队列今日）。
  * 每级附明细（原因分布/类别分布/通道分布/等级分布 + 样例标题），前端可点开。
  * GET /api/funnel/today */
-app.get('/api/funnel/today', async (req, res) => {
+app.get('/api/funnel/today', ttlCache(30000), async (req, res) => {
   try {
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const p = n => String(n).padStart(2, '0');
@@ -3625,9 +3893,18 @@ app.get('/api/funnel/today', async (req, res) => {
  * intel_archive 滚动归档（活跃库仅留 7 天，更早数据可查不丢）。
  * GET /api/archive/search?country=&type=&q=&since=&until=&page=&limit=
  * 明细：标题命中的中文标题优先（归档行 title_zh 为空时回落 data_json->>'title_zh'） */
+/* perf 2026-09-02：intel_archive 建表 DDL 一次性保障（原先每请求一条 CREATE TABLE） */
+let _archiveSchemaP = null;
+function _ensureArchiveSchema() {
+  if (!_archiveSchemaP) {
+    _archiveSchemaP = query(`CREATE TABLE IF NOT EXISTS intel_archive (LIKE intel_data INCLUDING ALL)`)
+      .catch(e => { _archiveSchemaP = null; throw e; });
+  }
+  return _archiveSchemaP;
+}
 app.get('/api/archive/search', async (req, res) => {
   try {
-    await query(`CREATE TABLE IF NOT EXISTS intel_archive (LIKE intel_data INCLUDING ALL)`);
+    await _ensureArchiveSchema();
     const { country, type, q, since, until } = req.query;
     const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
     const limit = Math.min(100, Math.max(5, parseInt(req.query.limit || '20', 10) || 20));
@@ -3669,24 +3946,35 @@ app.get('/api/archive/search', async (req, res) => {
 
 /* 指挥调度闭环状态（2026-08-13 体检 P1-4）：事件/工单/复盘服务端持久化，
  * 单文档状态存储，前端全量读写，本地 IndexedDB 作离线兜底 */
-app.get('/api/command/state', async (req, res) => {
+/* perf 2026-09-02：建表 DDL 改为进程内一次性保障（原先每个请求都跑 CREATE TABLE，
+ * 50 人并发轮询纯属浪费；失败时重置标记允许下次重试） */
+let _cmdStateSchemaP = null;
+function _ensureCommandStateSchema() {
+  if (!_cmdStateSchemaP) {
+    _cmdStateSchemaP = query(`CREATE TABLE IF NOT EXISTS command_state (id INT PRIMARY KEY, state JSONB, updated_at TIMESTAMPTZ DEFAULT NOW())`)
+      .catch(e => { _cmdStateSchemaP = null; throw e; });
+  }
+  return _cmdStateSchemaP;
+}
+app.get('/api/command/state', ttlCache(10000), async (req, res) => {
   try {
-    await query(`CREATE TABLE IF NOT EXISTS command_state (id INT PRIMARY KEY, state JSONB, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    await _ensureCommandStateSchema();
     const r = await query(`SELECT state, updated_at FROM command_state WHERE id=1`);
     res.json(r.rows[0] ? r.rows[0] : { state: null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.put('/api/command/state', express.json({ limit: '8mb' }), async (req, res) => {
   try {
-    await query(`CREATE TABLE IF NOT EXISTS command_state (id INT PRIMARY KEY, state JSONB, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    await _ensureCommandStateSchema();
     const st = JSON.stringify(req.body && req.body.state ? req.body.state : {});
     await query(`INSERT INTO command_state (id, state, updated_at) VALUES (1, $1::jsonb, NOW())
                  ON CONFLICT (id) DO UPDATE SET state=$1::jsonb, updated_at=NOW()`, [st]);
+    _ttlInvalidate('/api/command/state'); /* perf：指挥调度状态写入即时失效读缓存 */
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/intel/public/:type', async (req, res) => {
+app.get('/api/intel/public/:type', ttlCache(10000), async (req, res) => {
   try {
     const { type } = req.params;
     if (!PUBLIC_INTEL_TYPES.includes(type)) return res.status(403).json({ error: '该情报类型不对外公开' });
@@ -8783,7 +9071,7 @@ app.get('/api/media', async (req, res) => {
 });
 
 /* 每日采集指标：总量≥500条/天，涉华80-100条/天，境外涉华负面≥50条/天 */
-app.get('/api/media/daily-stats', async (req, res) => {
+app.get('/api/media/daily-stats', ttlCache(15000), async (req, res) => {
   try {
     /* 本地自然日 0 点边界（不能用 CURRENT_DATE——取决于 PG 会话时区，跨天可能不切换） */
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
@@ -9044,6 +9332,13 @@ function _cacheGet(text) {
   if (!v) return undefined;
   /* 自愈：缓存中可能残留占位符/编码损坏，检出即剔除并视为未命中（重新翻译且不回写垃圾） */
   if (_isGarbage(v)) { delete _transCache[k]; _transCacheDirty = true; return undefined; }
+  /* 自愈（2026-09-02 政要人名根治）：缓存命中不经过 polish 层直接返回，历史污染的
+   * "Xi近平/国家主席Xi/Trump 残留"须在读时修复（zh-polish.fixNames 同一规则）并回写，
+   * 否则缓存命中路径永远绕过人名词表。幂等，修一次后不再变化。 */
+  try {
+    const fixed = zhPolish.fixNames(v);
+    if (fixed !== v) { _transCache[k] = fixed; _transCacheDirty = true; return fixed; }
+  } catch (e) {}
   return v;
 }
 function _cacheSet(text, val) { if (val && !_isGarbage(val)) { _transCache[_tkey(text)] = val; _transCacheDirty = true; } }
@@ -10617,7 +10912,7 @@ app.delete('/api/intel/:type/all', authMiddleware, adminOnly, async (req, res) =
 });
 
 /* ===== DataHub 数据集 API ===== */
-app.get('/api/datahub/:collection', async (req, res) => {
+app.get('/api/datahub/:collection', ttlCache(10000), async (req, res) => {
   try {
     const { collection } = req.params;
     if (!DH_COLLECTIONS.includes(collection)) return res.status(400).json({ error: '无效的集合名' });
@@ -10804,6 +11099,7 @@ app.put('/api/datahub/:collection', authMiddleware, async (req, res) => {
       } catch (e) {}
     }
     await query('INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (collection) DO UPDATE SET data_json = $2, updated_at = NOW()', [collection, JSON.stringify(data)]);
+    _ttlInvalidate('/api/datahub/' + collection); /* perf：写入即时失效读缓存（TTL 兜底 10s） */
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
