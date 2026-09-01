@@ -165,6 +165,7 @@ app.use(function (req, res, next) {
     const vary = String(res.getHeader('Vary') || '');
     if (vary.indexOf('Accept-Encoding') < 0) res.setHeader('Vary', vary ? vary + ', Accept-Encoding' : 'Accept-Encoding');
     gz.on('data', c => { try { origWrite(c); } catch (e) {} });
+    gz.on('end', () => { try { origEnd(); } catch (e) {} });
     gz.on('error', () => { try { origEnd(); } catch (e) {} });
   }
   res.write = function (chunk, ...rest) {
@@ -2832,12 +2833,13 @@ let _llmCache = { at: 0, key: '', text: '', model: '' };
  * AI 报告分段（report-seg）/专家研判（run）/未来预警专报（foresee-report）内部走
  * Kimi/星火外呼，单次 10-30s+。公网 50 人同时创建报告时若无闸会瞬间打出上百路
  * 外呼：烧穿配额、拖垮事件循环、触发隧道 524。治理三件：
- *  1) 全局信号量：同时在飞的 LLM 任务上限（默认 6，env LLM_MAX_CONCURRENCY 可调），
+ *  1) 全局信号量：同时在飞的 LLM 任务上限（默认 4，env LLM_MAX_CONCURRENCY 可调；
+ *     实测 15 路并发时 Kimi 在 6 并发下约 1/4 请求被限流降级，4 并发失败率更低），
  *     超出任务 FIFO 排队——绝不丢弃，排队任务最终都会执行；
  *  2) 同签名合并：完全相同的请求（sig 相同）在飞时后来者直接共享同一结果，
  *     防超时重试重复烧配额；
  *  3) 结果缓存原有 10 分钟机制保持不变。 */
-const _LLM_MAX = Math.max(1, parseInt(process.env.LLM_MAX_CONCURRENCY || '6', 10));
+const _LLM_MAX = Math.max(1, parseInt(process.env.LLM_MAX_CONCURRENCY || '4', 10));
 let _llmActive = 0;
 const _llmQueue = [];
 function _llmSlot() {

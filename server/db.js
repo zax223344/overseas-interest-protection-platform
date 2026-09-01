@@ -12,7 +12,9 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'orps_db',
   user: process.env.DB_USER || 'orps_user',
   password: process.env.DB_PASS || 'orps_dev_pass_2026',
-  max: 20,
+  /* 2026-09-02 perf：公网 50 人并发 + 轮询类接口，max 20 会排队。
+   * PG max_connections=100（实测），常驻系统占用 ~3，提到 40 留足余量。 */
+  max: parseInt(process.env.DB_POOL_MAX || '40', 10),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
 });
