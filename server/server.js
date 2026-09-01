@@ -5137,10 +5137,14 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
     走廊控制塔是涉华情报监测（chinaRelated 双标），非国内新闻；不加豁免会被国内闸误杀 4 条/日 */
     || (it._sourceType === 'threatroom' && it.chinaRelated === true) /* 2026-08-31：专项作战室检索
     中资项目/涉华实体时，涉华条目正是检索目标（如搜"华为/中老铁路"），不能当国内新闻拦杀 */
-    || (it._sourceType === 'gap_scheduler' && it.chinaRelated === true); /* 2026-09-01：缺口调度涉华
+    || (it._sourceType === 'gap_scheduler' && it.chinaRelated === true) /* 2026-09-01：缺口调度涉华
     条目正是海外利益目标（闻泰向荷兰 Nexperia 索赔=中企海外资产纠纷，中文报道+中文实体名被
     _isDomesticChina 误判国内新闻拦杀 8 条/轮）；与 threatroom/wm_feed 同款 chinaRelated 双标豁免，
     纯国内新闻（无涉华海外关联）仍被拦 */
+    || (it.chinaRelated === true && it.country && it.country !== '中国' && it.country !== '国际'); /* 2026-09-01
+    通用国别锚豁免：涉华+国别已定为外国=海外涉华新闻，定义上非国内新闻（生产日志实证：SOURCES-PACK
+    "Albanese 因台湾警告而反击中国"——澳洲对华政治，中文标题无'澳大利亚'字样被误杀）。国别字段由采集端
+    查询词/信源确定，纯国内新闻不会有外国国别；预警生成侧 chinaOverseasGate 仍是第二道闸 */
   if (!_cnsecExempt && globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
   }
