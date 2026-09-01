@@ -3989,6 +3989,7 @@ const VIEW_MAP={
   country:{t:'国别档案',b:'分析研判 / 国别档案（风险矩阵 · 预测推演 · 企业资产）'},
   countryfile:{t:'国家档案总表',b:'分析研判 / 国家档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（研判简报 · AI分析报告）'},
+  models:{t:'专题分析模型',b:'分析研判 / 专题分析模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
   datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
   'manual-entry':{t:'手动录入工作区',b:'数据管理 / 手动录入工作区（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
@@ -4167,6 +4168,7 @@ function runViewInit(v){
       else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
       else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
       else if(v==='manual-entry'){ if(typeof MANUALENTRY!=='undefined')MANUALENTRY.init(); }
+      else if(v==='models'){ if(typeof MODELS_ANALYSIS!=='undefined')MODELS_ANALYSIS.init(); }
       else if(v==='role'){ if(typeof ROLE_UI!=='undefined')ROLE_UI.render(); }
     }catch(e){ console.error('runViewInit('+v+')错误:',e); }
   },0);
