@@ -5135,8 +5135,12 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const _cnsecExempt = it._cnsecWatch === true || it._sourceType === 'cnsec_watch'
     || (it._sourceType === 'wm_feed' && it.chinaRelated === true) /* 2026-08-31：WM 中国决策信号/
     走廊控制塔是涉华情报监测（chinaRelated 双标），非国内新闻；不加豁免会被国内闸误杀 4 条/日 */
-    || (it._sourceType === 'threatroom' && it.chinaRelated === true); /* 2026-08-31：专项作战室检索
+    || (it._sourceType === 'threatroom' && it.chinaRelated === true) /* 2026-08-31：专项作战室检索
     中资项目/涉华实体时，涉华条目正是检索目标（如搜"华为/中老铁路"），不能当国内新闻拦杀 */
+    || (it._sourceType === 'gap_scheduler' && it.chinaRelated === true); /* 2026-09-01：缺口调度涉华
+    条目正是海外利益目标（闻泰向荷兰 Nexperia 索赔=中企海外资产纠纷，中文报道+中文实体名被
+    _isDomesticChina 误判国内新闻拦杀 8 条/轮）；与 threatroom/wm_feed 同款 chinaRelated 双标豁免，
+    纯国内新闻（无涉华海外关联）仍被拦 */
   if (!_cnsecExempt && globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
   }
@@ -6504,7 +6508,7 @@ async function _ingestLinkedItems(items, tag, note) {
           else if (c === 'event-sig-dup') { skippedEventSig++; _bumpRej('dup-event'); }
           else if (c === 'event-flood') { skippedEventSig++; _bumpRej('event-flood'); } /* 事件簇变体刷屏（计数并入签名重复便于观察） */
           else if (c === 'cat-structure') { skippedCatStruct++; _bumpRej('cat-struct'); } /* 类别结构帽：安全类超占比让位弱类 */
-          else if (c === 'domestic-china') { skippedDomestic++; _bumpRej('domestic'); }
+          else if (c === 'domestic-china') { skippedDomestic++; _bumpRej('domestic'); if (skippedDomestic <= 3 || skippedDomestic % 10 === 0) console.log('[GATE] domestic-china #' + skippedDomestic + ' [' + tag + ']: ' + String(it.title || '').slice(0, 80)); }
           else if (c === 'bad-title') { skippedBadTitle++; _bumpRej('bad-title'); }
           else if (c === 'historical-retrospect') { skippedHistorical++; _bumpRej('historical'); }
         });
