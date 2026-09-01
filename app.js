@@ -4479,7 +4479,7 @@ const ANOMALY_VIEW={
     var host=document.getElementById('anomaly-content');
     if(!host) return;
     host.innerHTML=
-      '<div class="card"><div class="card-tt"><span class="ic">📈</span>风险异动信号 · 类别×国家基线环比监测</div>'+
+      '<div class="card"><div class="card-tt"><span class="ic">📈</span>风险异动信号 · 统计触发 × 内容实质校验</div>'+
       '<div id="anomaly-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>'+
       '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">'+
         '<span class="dc-tab" id="anomaly-refresh" style="cursor:pointer">🔄 立即检测</span>'+
@@ -4513,40 +4513,53 @@ const ANOMALY_VIEW={
     if(!this._data) return;
     var self=this, d=this._data;
     var meta=document.getElementById('anomaly-meta');
-    if(meta) meta.textContent='最近检测：'+(d.at?new Date(d.at).toLocaleString('zh-CN'):'—')+' · 扫描 '+((d.scanned||0))+' 个方向';
+    if(meta) meta.textContent='最近检测：'+(d.at?new Date(d.at).toLocaleString('zh-CN'):'—')+' · 扫描 '+((d.scanned||0))+' 个方向 · 含内容实质校验';
+    /* 2026-09-01 面板重做：信号按性质分栏——真实安全异动（内容实质校验通过）排前，
+     * 媒体舆论异动（媒体编辑政策/措辞类报道聚集，非安全事件）与单事件多源转载弱化置底。
+     * 用户指令原话：风险异常信息要基于数据及数据表述的内容进行预测，不能看到恐袭的数据就是恐袭异常信号。 */
+    var sigs=(d.signals||[]).slice().sort(function(a,b){
+      var na=(a.mediaBuzz?2:0)+(a.singleEvt?1:0), nb=(b.mediaBuzz?2:0)+(b.singleEvt?1:0);
+      return na-nb || (b.risk_score||0)-(a.risk_score||0);
+    });
+    d.signals=sigs;
+    var realN=sigs.filter(function(s){return !s.mediaBuzz&&!s.singleEvt;}).length;
+    var mediaN=sigs.filter(function(s){return s.mediaBuzz;}).length;
+    var homoN=sigs.filter(function(s){return s.singleEvt;}).length;
     var st=document.getElementById('anomaly-stats');
     if(st){
-      var maxR=0; (d.signals||[]).forEach(function(s){ if((s.ratio||0)>maxR)maxR=s.ratio; });
+      var maxR=0; sigs.forEach(function(s){ if((s.ratio||0)>maxR)maxR=s.ratio; });
       st.innerHTML=
-        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:var(--cyan)">'+(d.signals||[]).length+'</div><div class="stat-l">触发异动信号</div></div>'+
-        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v">'+(d.scanned||0)+'</div><div class="stat-l">监测方向（类别×国家）</div></div>'+
-        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:'+(maxR>=3?'#ff3355':'#ffcc00')+'">'+(maxR?maxR+' 倍':'—')+'</div><div class="stat-l">最高环比倍数</div></div>'+
-        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:var(--green)">'+(d.pushed||0)+'</div><div class="stat-l">已推送预警中心</div></div>';
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:'+(realN?'#ff8800':'var(--text3)')+'">'+realN+'</div><div class="stat-l">真实安全异动</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:var(--text3)">'+mediaN+'</div><div class="stat-l">媒体舆论异动（非安全）</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v" style="color:var(--text3)">'+homoN+'</div><div class="stat-l">单事件多源聚集</div></div>'+
+        '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-v">'+(d.scanned||0)+'</div><div class="stat-l">监测方向</div></div>';
     }
     var list=document.getElementById('anomaly-list');
-    var sigs=d.signals||[];
     if(!sigs.length){
-      list.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3)">当前各方向情报量均在 7 日基线正常区间内，暂无异动信号<div style="font-size:11px;margin-top:6px">判定口径：有效基线（7 天总量≥3）今日≥4 条且≥日均 1.8 倍=升温；无基线今日≥6 条=突发</div></div>';
+      list.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3)">当前各方向情报量均在 7 日基线正常区间内，暂无异动信号<div style="font-size:11px;margin-top:6px">判定口径：有效基线（7 天总量≥3）今日≥4 条且≥日均 1.8 倍=升温；无基线今日≥6 条=突发；暴力安全类信号须通过内容实质校验（样例实质事件词命中率≥30%）</div></div>';
       var det=document.getElementById('anomaly-detail'); if(det) det.innerHTML='';
       return;
     }
     var html='<div class="table-wrap" style="max-height:420px;overflow-y:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:var(--bg2)">'+
       '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">#</th>'+
       '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">国家/方向</th>'+
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">性质</th>'+
       '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">今日/7日均</th>'+
       '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">环比倍数</th>'+
-      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">等级</th>'+
-      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">状态</th></tr></thead><tbody>';
+      '<th style="text-align:left;padding:8px;font-size:11px;color:var(--text2)">等级</th></tr></thead><tbody>';
     sigs.forEach(function(s,i){
       var tierBadge=s.tier==='TIER1'?' <span class="badge b-red" style="font-size:9px">TIER1</span>':s.tier==='TIER2'?' <span class="badge b-orange" style="font-size:9px">TIER2</span>':'';
-      var inAlert=s.inAlert?'<span style="color:var(--green);font-size:11px">已进预警中心</span>':'<span style="color:var(--text3);font-size:11px">仅监测'+((s.interestScore!=null)?'（关联分 '+s.interestScore+'）':'')+'</span>';
-      html+='<tr data-i="'+i+'" style="cursor:pointer;border-bottom:1px solid var(--border)">'+
+      var natureTag, dim='';
+      if(s.mediaBuzz){ natureTag='<span class="badge" style="font-size:9px;background:rgba(110,119,135,0.25);color:var(--text3);border:1px solid var(--border)">📰媒体舆论</span>'; dim='opacity:0.62'; }
+      else if(s.singleEvt){ natureTag='<span class="badge" style="font-size:9px;background:rgba(0,212,255,0.12);color:var(--cyan);border:1px solid rgba(0,212,255,0.3)">🔁单事件多源</span>'; dim='opacity:0.8'; }
+      else natureTag='<span class="badge b-orange" style="font-size:9px">🛡真实异动</span>';
+      html+='<tr data-i="'+i+'" style="cursor:pointer;border-bottom:1px solid var(--border);'+dim+'">'+
         '<td style="padding:6px 8px;color:var(--text3);font-size:11px;width:28px">'+(i+1)+'</td>'+
         '<td style="padding:6px 8px"><b style="color:var(--text1)">'+s.country+'</b>'+tierBadge+'<span style="font-size:10px;color:var(--text3)"> · '+s.typeLabel+'</span></td>'+
-        '<td style="padding:6px 8px;font-size:12px"><b style="color:'+(s.today>=8?'#ff3355':'var(--orange)')+'">'+s.today+'</b><span style="color:var(--text3)"> / '+(s.avg||0)+'</span></td>'+
-        '<td style="padding:6px 4px;width:28%;min-width:140px"><div style="display:flex;align-items:center;gap:8px">'+self._bar(s.ratio||0)+'<span style="font-size:12px;font-weight:700;width:52px;text-align:right;color:'+(s.ratio>=3?'#ff3355':s.ratio>=1.8?'#ffcc00':'var(--cyan)')+'">'+(s.ratio?s.ratio+'倍':'突发')+'</span></div></td>'+
-        '<td style="padding:6px 8px">'+self._lvlBadge(s.level)+'</td>'+
-        '<td style="padding:6px 8px">'+inAlert+'</td></tr>';
+        '<td style="padding:6px 8px">'+natureTag+'</td>'+
+        '<td style="padding:6px 8px;font-size:12px"><b style="color:'+(s.today>=8&&!s.mediaBuzz?'#ff3355':'var(--orange)')+'">'+s.today+'</b><span style="color:var(--text3)"> / '+(s.avg||0)+'</span></td>'+
+        '<td style="padding:6px 4px;width:26%;min-width:130px"><div style="display:flex;align-items:center;gap:8px">'+self._bar(s.ratio||0)+'<span style="font-size:12px;font-weight:700;width:52px;text-align:right;color:'+(s.ratio>=3&&!s.mediaBuzz?'#ff3355':s.ratio>=1.8?'#ffcc00':'var(--cyan)')+'">'+(s.ratio?s.ratio+'倍':'突发')+'</span></div></div></td>'+
+        '<td style="padding:6px 8px">'+self._lvlBadge(s.level)+'</td></tr>';
     });
     html+='</tbody></table></div>';
     list.innerHTML=html;
@@ -4569,23 +4582,41 @@ const ANOMALY_VIEW={
     var samples=(s.samples||[]).map(function(t){
       return '<div style="padding:5px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2)">· '+t+'</div>';
     }).join('')||'<div style="padding:10px;color:var(--text3)">无样例</div>';
+    /* 2026-09-01 研判文案重做：按信号性质分支——媒体舆论异动明确说明"非安全事件聚集，
+     * 不构成安全风险异动信号"；单事件多源说明"非独立事件聚集"；真实异动保留升温/突发研判。
+     * 倍数只是触发器，性质由内容实质校验决定，杜绝"看到恐袭数据就是恐袭异动"。 */
+    var verdict, vStyle;
+    if(s.mediaBuzz){
+      vStyle='background:rgba(110,119,135,0.12);border-left:3px solid var(--text3)';
+      verdict='<b style="color:var(--text2)">【内容实质校验结论：媒体舆论动态，非安全风险】</b>该方向今日情报量达 7 日均值的 '+(s.ratio||'—')+' 倍，触发统计阈值；但经对样例标题的内容实质校验，该批条目为<b>媒体编辑政策/措辞类报道</b>（如新闻机构调整用语规范、标签政策等），非真实恐怖袭击/安全事件聚集。<b style="color:var(--text2)">情报量倍数由媒体舆论动态驱动，不构成安全风险异动信号</b>，已降级为黄色观察且不推送预警中心。后续若该方向出现实质安全事件（袭击/爆炸/伤亡等），将按内容校验重新定级。';
+    } else if(s.singleEvt){
+      vStyle='background:rgba(0,212,255,0.08);border-left:3px solid var(--cyan)';
+      verdict='<b style="color:var(--text2)">【内容实质校验结论：单一事件多源报道】</b>该方向情报量倍数由同一事件的多家媒体转载报道聚集形成（样例标题高度同质），<b style="color:var(--text2)">非多个独立事件聚集</b>，属信息印证而非风险扩散。级别已封顶黄色，建议核实信源独立性与事件实际规模后再定跟进级别。';
+    } else if(s.kind==='升温'){
+      vStyle='background:rgba(255,204,0,0.08);border-left:3px solid var(--orange)';
+      verdict='该方向今日情报量达 7 日均值的 '+(s.ratio||'—')+' 倍，超出异动阈值（1.8 倍），且样例通过内容实质校验（含真实安全事件要素），风险呈升温态势。';
+    } else {
+      vStyle='background:rgba(255,204,0,0.08);border-left:3px solid var(--orange)';
+      verdict='近 7 天无基线记录，今日集中入库 '+s.today+' 条，属突发聚集，需核实是否单源刷量或事件爆发。';
+    }
+    var natureBadge=s.mediaBuzz?'<span class="badge" style="font-size:10px;background:rgba(110,119,135,0.25);color:var(--text3)">📰媒体舆论异动</span>':s.singleEvt?'<span class="badge" style="font-size:10px;background:rgba(0,212,255,0.12);color:var(--cyan)">🔁单事件多源</span>':'<span class="badge b-orange" style="font-size:10px">🛡真实安全异动</span>';
     host.innerHTML=
-      '<div class="card" style="margin-top:14px;border:1px solid var(--cyan);box-shadow:0 0 20px rgba(0,212,255,0.1)"><div class="card-tt"><span class="ic">🎯</span>'+s.country+' · '+s.typeLabel+' 异动详情 '+this._lvlBadge(s.level)+
-      '<span style="margin-left:auto;font-size:11px;color:var(--text3)">赋分 '+s.risk_score+'</span></div>'+
+      '<div class="card" style="margin-top:14px;border:1px solid '+(s.mediaBuzz?'var(--border)':'var(--cyan)')+';box-shadow:0 0 20px rgba(0,212,255,0.1)"><div class="card-tt"><span class="ic">🎯</span>'+s.country+' · '+s.typeLabel+' 异动详情 '+this._lvlBadge(s.level)+' '+natureBadge+
+      '<span style="margin-left:auto;font-size:11px;color:var(--text3)">赋分 '+s.risk_score+(s.mediaBuzz?'（黄色封顶）':'')+'</span></div>'+
       '<div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">'+
         '<div>'+
           '<div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">'+
-            '<div><div style="font-size:10px;color:var(--text3)">今日入库</div><div style="font-size:22px;font-weight:700;color:'+(s.today>=8?'#ff3355':'var(--orange)')+'">'+s.today+' 条</div></div>'+
+            '<div><div style="font-size:10px;color:var(--text3)">今日入库</div><div style="font-size:22px;font-weight:700;color:'+(s.today>=8&&!s.mediaBuzz?'#ff3355':'var(--orange)')+'">'+s.today+' 条</div></div>'+
             '<div><div style="font-size:10px;color:var(--text3)">7 日日均</div><div style="font-size:22px;font-weight:700;color:var(--cyan)">'+(s.avg||0)+' 条</div></div>'+
-            '<div><div style="font-size:10px;color:var(--text3)">环比倍数</div><div style="font-size:22px;font-weight:700;color:'+(s.ratio>=3?'#ff3355':s.ratio>=1.8?'#ffcc00':'var(--cyan)')+'">'+(s.ratio?s.ratio+' 倍':'突发（无基线）')+'</div></div>'+
+            '<div><div style="font-size:10px;color:var(--text3)">环比倍数</div><div style="font-size:22px;font-weight:700;color:'+(s.ratio>=3&&!s.mediaBuzz?'#ff3355':s.ratio>=1.8?'#ffcc00':'var(--cyan)')+'">'+(s.ratio?s.ratio+' 倍':'突发（无基线）')+'</div></div>'+
           '</div>'+
-          '<div style="padding:8px 10px;background:rgba(255,204,0,0.08);border-left:3px solid var(--orange);border-radius:0 6px 6px 0;font-size:12px;line-height:1.7;color:var(--text2)">'+
-            (s.kind==='升温'?'该方向今日情报量达 7 日均值的 '+s.ratio+' 倍，超出异动阈值（1.8 倍），风险呈升温态势。':'近 7 天无基线记录，今日集中入库 '+s.today+' 条，属突发聚集，需核实是否单源刷量或事件爆发。')+
-            (s.alert&&s.alert.risk_rationale?'<br>'+s.alert.risk_rationale:'')+
+          '<div style="padding:8px 10px;'+vStyle+';border-radius:0 6px 6px 0;font-size:12px;line-height:1.7;color:var(--text2)">'+
+            verdict+
+            (s.alert&&s.alert.risk_rationale?'<br><span style="color:var(--text3)">技术口径：</span>'+s.alert.risk_rationale:'')+
           '</div>'+
-          (s.alert?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,255,159,0.06);border-left:3px solid var(--green);border-radius:0 6px 6px 0;font-size:12px;color:var(--text2)">处置建议：'+s.alert.zone_action+'</div>':'')+
+          (s.alert&&!s.mediaBuzz?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,255,159,0.06);border-left:3px solid var(--green);border-radius:0 6px 6px 0;font-size:12px;color:var(--text2)">处置建议：'+s.alert.zone_action+'</div>':'')+
         '</div>'+
-        '<div><div class="card-tt"><span class="ic">📰</span>今日样例标题（真实入库数据）</div><div style="max-height:200px;overflow-y:auto">'+samples+'</div></div>'+
+        '<div><div class="card-tt"><span class="ic">📰</span>今日样例标题（内容实质校验依据）</div><div style="max-height:200px;overflow-y:auto">'+samples+'</div></div>'+
       '</div></div>';
   }
 };
