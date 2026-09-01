@@ -1881,6 +1881,89 @@ function _anomIso2cn(c) {
   if (/[\u4e00-\u9fa5]/.test(s)) return s; /* 已是中文 */
   return _ANOM_ISO2CN[s.toUpperCase()] || s; /* 未收录码原样返回（不丢方向） */
 }
+/* ===== 2026-09-01 内容实质校验层（根因修复：CBC 改 9·11"恐怖袭击"标签政策被误判为加拿大恐袭风险异动）=====
+ * 统计异动只看数量不看内容 → 媒体编辑政策类新闻多源跟进被当成安全事件聚集（用户投诉原话：
+ * "风险异常信息，要基于数据及数据表述的内容进行预测，不能看到恐袭的数据，就是恐袭异常信号"）。
+ * 三层校验（作用于信号生成前，仅用 sampleMap 已有样例标题，零额外 DB 查询）：
+ *   1) 暴力安全类（terror_events/security_events/military_conflicts）样例标题实质事件词命中率 < 30% → 抑制该信号；
+ *   2) 媒体编辑政策/措辞类标题占主导（≥50%）→ 改判"媒体舆论异动"：降级黄色、标题注明、不入预警中心；
+ *   3) 样例标题高度同质（同一事件多源报道）→ 注明"系单一事件多源报道，非独立事件聚集"，级别封顶黄色。 */
+const _ANOM_VIOLENT_CATS = new Set(['terror_events', 'security_events', 'military_conflicts']);
+/* 实质暴力/安全事件词（标题描述真实事件实质，而非引述性提及如"恐怖袭击标签"） */
+const _ANOM_SUBSTANCE_RE = /(袭击|爆炸|枪击|伤亡|死亡|击毙|击伤|绑架|交火|空袭|无人机打击|自杀式|路边炸弹|冲突升级|劫持|纵火|袭击者|武装分子|恐袭|扫射|炸弹|火箭弹|迫击炮|暗杀|伏击|炮击|开火|遇袭|丧生|死伤|炸死|炸伤|打死|枪杀|屠杀|发动攻击|bomb(?:ing|ed|s)?\b|attack(?:ed|s|ers?)?\b|airstrike|drone strike|shootout|gunfight|gunfire|kidnap\w*|explosion|blast|clash(?:es|ed)?\b|militant|insurgent|suicide|casualt\w*|killed|slain|death toll|massacre|hostage|hijack\w*|arson|ambush)/i;
+/* 媒体编辑政策/舆论操作词（措辞、标签、称谓类报道——数量异动≠安全风险） */
+const _ANOM_MEDIA_POLICY_RE = /(标签|措辞|称谓|改称|不再称|不要称|不再将|不再使用|弃用|改口|报道政策|报道方针|编辑方针|编辑政策|用语|风格指南|措辞指南|style\s*guide|wording|terminology)/i;
+/* 标题三元组集合（去空白与标点，用于相似度计算） */
+function _anomTitleTri(s) {
+  const t = new Set();
+  const cs = String(s).replace(/[\s，。：:、,·"'“”‘’（）()【】\[\]!?！？\-—]+/g, '');
+  for (let i = 0; i + 3 <= cs.length; i++) t.add(cs.substr(i, 3));
+  return t;
+}
+/* 标题两两相似度：三元组 Jaccard（0~1） */
+function _anomTitleSim(a, b) {
+  const A = _anomTitleTri(a), B = _anomTitleTri(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+/* 最长公共锚点子串：在 ≥60% 标题中连续出现的 ≥5 字公共片段（同一事件多源报道的实体锚，如"加拿大广播公司"） */
+function _anomAnchor(titles) {
+  const need = Math.ceil(titles.length * 0.6);
+  const maxLen = Math.min(30, Math.min.apply(null, titles.map(t => t.length)));
+  for (let len = maxLen; len >= 5; len--) {
+    const counts = new Map();
+    for (const t of titles) {
+      const seen = new Set();
+      for (let i = 0; i + len <= t.length; i++) {
+        const s = t.substr(i, len);
+        if (!seen.has(s)) { seen.add(s); counts.set(s, (counts.get(s) || 0) + 1); }
+      }
+    }
+    for (const s of counts.keys()) if (counts.get(s) >= need) return s;
+  }
+  return '';
+}
+/* 同质性判定：锚点 ≥6 字且覆盖 ≥60%（同一实体事件的 paraphrase 簇），或平均两两相似度 ≥0.5（转载近重复） */
+function _anomHomoCheck(titles) {
+  if (titles.length < 3) return { homo: false, anchor: '', avgSim: 0, cover: 0 };
+  let sum = 0, pairs = 0;
+  for (let i = 0; i < titles.length; i++) {
+    for (let j = i + 1; j < titles.length; j++) { sum += _anomTitleSim(titles[i], titles[j]); pairs++; }
+  }
+  const avgSim = pairs ? sum / pairs : 0;
+  const anchor = _anomAnchor(titles);
+  const cover = anchor ? titles.filter(t => t.indexOf(anchor) >= 0).length / titles.length : 0;
+  const homo = (anchor.length >= 6 && cover >= 0.6) || avgSim >= 0.5;
+  return { homo, anchor, avgSim: Math.round(avgSim * 100) / 100, cover: Math.round(cover * 100) / 100 };
+}
+/* 内容实质校验主入口：返回 { action: 'pass'|'suppress'|'media'|'homo', reason, mediaRatio, anchor } */
+function _anomSubstanceCheck(cat, titles) {
+  const ts = (titles || []).map(s => String(s || '').trim()).filter(Boolean);
+  if (ts.length < 3) return { action: 'pass', reason: '样例不足3条，不做内容校验', mediaRatio: null, anchor: '' };
+  const total = ts.length;
+  const mediaFlags = ts.map(t => _ANOM_MEDIA_POLICY_RE.test(t));
+  const mediaHits = mediaFlags.filter(Boolean).length;
+  const mediaRatio = mediaHits / total;
+  if (_ANOM_VIOLENT_CATS.has(cat)) {
+    /* 实质命中 = 含事件词且非媒体政策类标题（防"恐怖袭击"标签这类引述词误命中：先判媒体政策再数事件词） */
+    const substHits = ts.filter((t, i) => !mediaFlags[i] && _ANOM_SUBSTANCE_RE.test(t)).length;
+    const substRatio = substHits / total;
+    if (substRatio < 0.3) {
+      if (mediaRatio >= 0.5) {
+        return { action: 'media', reason: '样例 ' + mediaHits + '/' + total + ' 条为媒体编辑政策/措辞类报道，实质事件词命中率仅 ' + Math.round(substRatio * 100) + '%', mediaRatio, anchor: '' };
+      }
+      return { action: 'suppress', reason: '样例实质暴力/安全事件词命中率 ' + Math.round(substRatio * 100) + '%（阈值 30%），非真实安全事件聚集', mediaRatio, anchor: '' };
+    }
+  }
+  /* 同质性轻度校验（全类别）：单一事件多源印证 vs 独立事件聚集 */
+  const ho = _anomHomoCheck(ts);
+  if (ho.homo) {
+    return { action: 'homo', reason: '样例标题高度同质（公共锚点「' + ho.anchor + '」覆盖 ' + Math.round(ho.cover * 100) + '%，平均相似度 ' + ho.avgSim + '），系单一事件多源报道', mediaRatio, anchor: ho.anchor };
+  }
+  return { action: 'pass', reason: '', mediaRatio, anchor: '' };
+}
 async function _runAnomalyWatch() {
   try {
     /* 本地自然日 0 点作边界（禁用 CURRENT_DATE——PG 会话时区可能非中国时区） */
@@ -1941,20 +2024,32 @@ async function _runAnomalyWatch() {
         kind = '突发';
       }
       if (!kind) continue;
+      /* 2026-09-01 内容实质校验层：统计异动必须过内容实质关，抑制"数量异动≠内容异动"的误报 */
+      const sub = _anomSubstanceCheck(r.t, sampleMap[k] || []);
+      if (sub.action === 'suppress') {
+        console.log('[ANOMALY] 抑制 ' + cn + '·' + (_ANOM_CAT_LABELS[r.t] || r.t) + ' 信号：今日 ' + today + ' 条' + (kind === '突发' ? '（突发簇）' : '（' + (Math.round(ratio * 10) / 10) + ' 倍）') + '——' + sub.reason);
+        continue;
+      }
+      const mediaBuzz = sub.action === 'media';
+      const singleEvt = sub.action === 'homo';
+      if (mediaBuzz || singleEvt) console.log('[ANOMALY] 改判 ' + cn + '·' + (_ANOM_CAT_LABELS[r.t] || r.t) + ' 信号（今日 ' + today + ' 条，降级黄色）：' + sub.reason);
       const tier = INTEREST_BASE.getTier ? INTEREST_BASE.getTier(cn) : null;
       const cosriS = INTEREST_BASE.COUNTRY_RISK_INDICATORS ? INTEREST_BASE.COUNTRY_RISK_INDICATORS.scores[cn] : null;
       let level = 'yellow';
       if (ratio >= 4.5 && today >= 10 && (tier === 'TIER1' || (cosriS && cosriS.security >= 8))) level = 'red';
       else if (ratio >= 3 && today >= 8) level = 'orange';
-      const score = level === 'red' ? Math.min(85, 61 + Math.round(ratio))
+      if (mediaBuzz || singleEvt) level = 'yellow'; /* 内容校验降级封顶：媒体舆论异动 / 单一事件多源报道不作为高等级风险 */
+      let score = level === 'red' ? Math.min(85, 61 + Math.round(ratio))
         : Math.min(60, Math.round(26 + ratio * 9 + Math.min(12, today)));
+      if (mediaBuzz || singleEvt) score = Math.min(score, 45); /* 风险分同步封顶黄区，与降级一致 */
       const zone = score >= 61 ? 'red' : score >= 46 ? 'orange' : 'yellow';
       const catLabel = _ANOM_CAT_LABELS[r.t] || r.t;
       const samples = (sampleMap[k] || []).slice(0, 5).map(s => String(s).slice(0, 60));
       const ratioTxt = kind === '突发' ? '无基线' : (Math.round(ratio * 10) / 10) + '倍';
-      const title = '【风险' + kind + '】' + cn + '·' + catLabel + '情报量异动：7日均 ' + (Math.round(avg * 10) / 10) + ' → 今日 ' + today + ' 条' + (kind === '升温' ? '（' + ratioTxt + '）' : '');
+      const title = (mediaBuzz ? '【媒体舆论异动】' : '【风险' + kind + '】') + cn + '·' + catLabel + '情报量异动：7日均 ' + (Math.round(avg * 10) / 10) + ' → 今日 ' + today + ' 条' + (kind === '升温' ? '（' + ratioTxt + '）' : '') + (mediaBuzz ? '（媒体舆论异动，非安全事件聚集）' : singleEvt ? '（系单一事件多源报道，非独立事件聚集）' : '');
       const desc = ('近 7 天该方向日均值 ' + (Math.round(avg * 10) / 10) + ' 条，今日已入库 ' + today + ' 条' +
         (kind === '升温' ? '，环比 ' + ratioTxt + '，超出异动阈值（1.8 倍）' : '，近 7 天无基线记录，属突发聚集') +
+        (mediaBuzz ? '。注意：该异动主要来自媒体编辑政策/措辞类报道的多源跟进，非真实安全事件聚集' : singleEvt ? '。注意：样例标题高度同质，系单一事件多源报道，非独立事件聚集' : '') +
         '。样例：' + samples.join('；')).slice(0, 300);
       const ckey = (cn + String(r.t)).replace(/[^\u4e00-\u9fa5a-z0-9]/gi, '').slice(0, 24);
       const alert = {
@@ -1968,17 +2063,17 @@ async function _runAnomalyWatch() {
         chinaRelated: /中国|华人|中资|中企|中方|涉华|CPEC|一带一路/i.test(title + desc),
         publishedAt: now.toISOString(),
         risk_score: score, risk_zone: zone,
-        risk_rationale: '基于近 7 天类别×国家入库基线的统计异动（' + kind + '，今日 ' + today + ' vs 日均 ' + (Math.round(avg * 10) / 10) + '）',
+        risk_rationale: '基于近 7 天类别×国家入库基线的统计异动（' + kind + '，今日 ' + today + ' vs 日均 ' + (Math.round(avg * 10) / 10) + '）' + (mediaBuzz ? '；内容校验：媒体舆论动态，非安全风险' : singleEvt ? '；内容校验：单一事件多源报道，非独立事件聚集' : ''),
         zone_action: level === 'red' ? '立即核查该国项目/人员暴露，启动应急联络'
           : level === 'orange' ? '加密监测频次，通知该国项目组加强防范'
             : '保持关注，核实是否单源聚集导致',
-        _riskVersion: 3, _anomaly: true,
+        _riskVersion: 3, _anomaly: true, mediaBuzz, singleEvt,
         anomaly: { kind, today, avg: Math.round(avg * 10) / 10, ratio: Math.round(ratio * 10) / 10, samples }
       };
       signals.push({
         country: cn, type: r.t, typeLabel: catLabel, tier, kind,
         today, avg: Math.round(avg * 10) / 10, ratio: Math.round(ratio * 10) / 10,
-        level, risk_score: score, samples, alert
+        level, risk_score: score, samples, alert, mediaBuzz, singleEvt
       });
     }
     signals.sort((a, b) => (b.ratio || 99) - (a.ratio || 99) || b.today - a.today);
@@ -1992,6 +2087,7 @@ async function _runAnomalyWatch() {
         const haveIds = new Set(alerts.map(a => String((a && a.id) || '')));
         const added = [];
         for (const s of top) {
+          if (s.mediaBuzz) continue; /* 2026-09-01 内容校验：媒体舆论异动不入预警中心（风险信号误报根治） */
           const sc = _alertInterestScore(s.alert);
           s.interestScore = sc.score; s.interestHits = sc.hits;
           s.alert._interestScore = sc.score; s.alert._interestHits = sc.hits;
