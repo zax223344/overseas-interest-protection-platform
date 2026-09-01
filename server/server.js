@@ -1958,7 +1958,13 @@ const _ANOM_ISO2CN = {
   BF:'布基纳法索', CM:'喀麦隆', CI:'科特迪瓦', SG:'新加坡', PH:'菲律宾', MN:'蒙古',
   PL:'波兰', BY:'白俄罗斯', RO:'罗马尼亚', CZ:'捷克', SK:'斯洛伐克', BG:'保加利亚',
   FI:'芬兰', SE:'瑞典', NO:'挪威', DK:'丹麦', NL:'荷兰', BE:'比利时', CH:'瑞士',
-  AT:'奥地利', IT:'意大利', ES:'西班牙', PT:'葡萄牙', IE:'爱尔兰', NZ:'新西兰'
+  AT:'奥地利', IT:'意大利', ES:'西班牙', PT:'葡萄牙', IE:'爱尔兰', NZ:'新西兰',
+  /* 2026-09-01 英文全名补入（root fix：intel_data 近7天实测残留 United States/Iran/China/Israel
+   * 等英文国名——上游通道直接落英文值，国别矩阵/梯队查询/前端显示全部失明） */
+  'UNITED STATES':'美国', 'UNITED KINGDOM':'英国', 'CHINA':'中国', 'IRAN':'伊朗', 'ISRAEL':'以色列',
+  'RUSSIA':'俄罗斯', 'SAUDI ARABIA':'沙特阿拉伯', 'TURKEY':'土耳其', 'JAPAN':'日本', 'SOUTH KOREA':'韩国',
+  'NORTH KOREA':'朝鲜', 'BRAZIL':'巴西', 'FRANCE':'法国', 'GERMANY':'德国', 'ITALY':'意大利',
+  'INDIA':'印度', 'PAKISTAN':'巴基斯坦', 'MONGOLIA':'蒙古', 'INDONESIA':'印度尼西亚', 'NIGERIA':'尼日利亚'
 };
 function _anomIso2cn(c) {
   const s = String(c || '').trim();
@@ -5111,6 +5117,21 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    * 2026-08-30 二次修复：标题只含地区名（俾路支/伦敦/内罗毕）时走 _REGION_COUNTRY 地区映射。
    * 2026-08-30 三次修复（采集端 root fix）：国名/地区/查询词兜底全失败 → 涉华或国际组织条归"国际"，
    * 其余直接拒收（no-country）——空 country 条目对国别矩阵/预警两区渲染是负资产，不再积累。 */
+  /* 2026-09-01 国别归一化（root fix）：上游通道落 ISO 码（PK/SA）或英文国名
+   * （United States/Iran/China）时统一转中文标准名——国别矩阵、梯队查询、前端显示
+   * 同源受益。映射与异动监测 _anomIso2cn 同源；英文全名回退查国别回填索引。
+   * 仅处理纯英文/纯码值，已含中文或"国际"的原样放行，绝不误伤。 */
+  {
+    const _c0 = String(it.country || '').trim();
+    if (_c0 && _c0 !== '国际' && !/[\u4e00-\u9fa5]/.test(_c0)) {
+      let _cn = _anomIso2cn(_c0);
+      if (_cn === _c0) {
+        const _e = _bfIndex().en.find(e => e.re.test(_c0) && _c0.replace(e.re, '').replace(/[\s·.,()]+/g, '').length === 0);
+        if (_e) _cn = _e.cn;
+      }
+      if (_cn !== _c0) it.country = _cn;
+    }
+  }
   if (!String(it.country || '').trim()) {
     const _t = String(it.title || '') + ' ' + String(it.title_zh || '');
     const _sc = _SIG_COUNTRIES.find(x => _t.indexOf(x) >= 0) || _regionToCountry(_t);
