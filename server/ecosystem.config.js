@@ -10,8 +10,8 @@ module.exports = {
       name: 'orps-server',
       script: path.join(__dirname, 'server.js'),
       cwd: __dirname,
-      // 显式指定 Node 路径，避免依赖系统 PATH
-      interpreter: 'C:/Users/28737/.workbuddy/binaries/node/versions/22.22.2/node.exe',
+      // 显式指定 Node 路径，避免依赖系统 PATH（2026-09-01 修复：22.22.2 目录已不存在，实际为 22.22.2-2）
+      interpreter: 'C:/Users/28737/.workbuddy/binaries/node/versions/22.22.2-2/node.exe',
       instances: 1,
       exec_mode: 'fork',
       // 内存上限 400M：系统总内存仅 16GB，WorkBuddy 等进程已占 3.5GB+，
