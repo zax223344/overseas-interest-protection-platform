@@ -56,6 +56,75 @@ function _wrapHeaders(raw) {
   return { get: (n) => raw[String(n).toLowerCase()] !== undefined ? raw[String(n).toLowerCase()] : null };
 }
 
+/* 直连腿 GET：原生 https.request + family:4（锁 IPv4）+ 手动跟随重定向（最多 5 跳）。
+ * 2026-09-01 根因修复：服务进程内 undici fetch 出现系统性 UND_ERR_CONNECT_TIMEOUT
+ * （独立进程同调用 238ms 正常、服务进程 100% 连接超时，采集侧原生 https.request 全程
+ * 存活）——直连腿改走与代理腿同一套原生栈，彻底绕开 undici。 */
+function _directGet(url, headers, timeout, hops) {
+  hops = hops || 0;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = https.request(url, { timeout, family: 4, headers }, (res) => {
+      const code = res.statusCode || 0;
+      if (code >= 300 && code < 400 && res.headers.location && hops < 5) {
+        res.resume();
+        const next = new URL(res.headers.location, url).toString();
+        settled = true;
+        _directGet(next, headers, timeout, hops + 1).then(resolve, reject);
+        return;
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        const buf = Buffer.concat(chunks);
+        resolve({
+          ok: code >= 200 && code < 300,
+          status: code,
+          statusText: res.statusMessage || '',
+          headers: _wrapHeaders(res.headers),
+          text: async () => buf.toString('utf8'),
+          json: async () => JSON.parse(buf.toString('utf8')),
+        });
+      });
+      res.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    });
+    req.on('timeout', () => { req.destroy(); if (!settled) { settled = true; reject(new Error('direct timeout')); } });
+    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    req.end();
+  });
+}
+
+/* 直连腿 POST：原生 https.request + family:4（与 _directGet 同批引入，绕开 undici） */
+function _directPost(url, headers, body, timeout) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = https.request(url, { timeout, family: 4, headers, method: 'POST' }, (res) => {
+      const code = res.statusCode || 0;
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        const buf = Buffer.concat(chunks);
+        resolve({
+          ok: code >= 200 && code < 300,
+          status: code,
+          statusText: res.statusMessage || '',
+          headers: _wrapHeaders(res.headers),
+          text: async () => buf.toString('utf8'),
+          json: async () => JSON.parse(buf.toString('utf8')),
+        });
+      });
+      res.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    });
+    req.on('timeout', () => { req.destroy(); if (!settled) { settled = true; reject(new Error('direct timeout')); } });
+    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+    req.end(body);
+  });
+}
+
 /* 代理腿：https.request + HttpsProxyAgent，手动跟随重定向（最多 5 跳） */
 function _proxyGet(url, headers, timeout, hops) {
   hops = hops || 0;
@@ -119,11 +188,9 @@ async function smartFetch(url, opts) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (leg === 'direct') {
-          /* 直连腿超时封顶 12s：被墙源的典型症状就是挂满整个 timeout */
-          const r = await fetch(url, {
-            headers, redirect: 'follow',
-            signal: AbortSignal.timeout(Math.min(timeout, 12000)),
-          });
+          /* 直连腿走原生 https.request（2026-09-01：绕开服务进程内 undici 连接超时）；
+           * 直连腿超时封顶 12s：被墙源的典型症状就是挂满整个 timeout */
+          const r = await _directGet(url, headers, Math.min(timeout, 12000), 0);
           _remember(host, 'direct');
           return r;
         }
@@ -195,10 +262,8 @@ async function smartPost(url, opts) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (leg === 'direct') {
-          const r = await fetch(url, {
-            method: 'POST', headers, body, redirect: 'follow',
-            signal: AbortSignal.timeout(Math.min(timeout, 12000)),
-          });
+          /* 直连腿走原生 https.request（2026-09-01：绕开服务进程内 undici 连接超时） */
+          const r = await _directPost(url, headers, body, Math.min(timeout, 12000));
           _remember(host, 'direct');
           return r;
         }

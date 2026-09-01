@@ -9016,9 +9016,9 @@ async function _getEdgeJwt() {
   // 沙箱内 edge.microsoft.com/translate/auth 偶发 ECONNRESET，重试 3 次避免瞬时抽风打死整段翻译
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await fetch('https://edge.microsoft.com/translate/auth', {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' },
-        signal: AbortSignal.timeout(4000)
+      const r = await netx.smartFetch('https://edge.microsoft.com/translate/auth', {
+        timeout: 4000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' }
       });
       if (!r.ok) throw new Error('edge auth ' + r.status);
       _edgeJwt = (await r.text()).trim();
@@ -9033,16 +9033,14 @@ async function _tryEdge(texts) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const jwt2 = await _getEdgeJwt();
-      const r = await fetch('https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans', {
-        method: 'POST',
+      const r = await netx.smartPost('https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans', {
+        timeout: 4000,
         headers: { 'Authorization': 'Bearer ' + jwt2, 'Content-Type': 'application/json' },
-        body: JSON.stringify(texts.map(t => ({ Text: t }))),
-        signal: AbortSignal.timeout(4000)
+        body: JSON.stringify(texts.map(t => ({ Text: t })))
       });
       if (!r.ok) throw new Error('translate ' + r.status);
-      /* 强制 UTF-8 解码，避免微软接口按 latin1 误解码产生乱码 */
-      const buf = await r.arrayBuffer();
-      const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
+      /* netx 原生腿 UTF-8 解码（原 fetch arrayBuffer+TextDecoder 等价替换） */
+      const j = await r.json();
       _edgeOk = true;
       /* 过滤乱码/占位符结果（Edge 对非拉丁语向常返回双重误编码乱码），避免污染译文与缓存 */
       return (j || []).map(x => {
@@ -9074,7 +9072,7 @@ async function _myMemoryOne(t, key) {
   if (_trFuseOpen('MyMemory')) return '';
   let url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q) + '&langpair=' + _guessLang(q) + '|zh-CN';
   if (key) url += '&key=' + encodeURIComponent(key); // 注册 key 提升免费配额至 50000 字符/日
-  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const r = await netx.smartFetch(url, { timeout: 8000 });
   if (!r.ok) {
     if (r.status === 429) _trFuseTrip('MyMemory', '429 限频/额度耗尽'); /* 2026-09-01：429 → 12h 熔断 */
     throw new Error('mymemory ' + r.status);
@@ -9138,11 +9136,10 @@ async function _tryLibreTranslate(texts) {
   for (let attempt = 0; attempt < _LIBRE_ENDPOINTS.length; attempt++) {
     const ep = _LIBRE_ENDPOINTS[(_libreIdx + attempt) % _LIBRE_ENDPOINTS.length];
     try {
-      const r = await fetch(ep + '/translate', {
-        method: 'POST',
+      const r = await netx.smartPost(ep + '/translate', {
+        timeout: 10000,
         headers: { 'Content-Type': 'application/json' },
-        body,
-        signal: AbortSignal.timeout(10000)
+        body
       });
       if (!r.ok) continue;
       const j = await r.json();
@@ -9176,11 +9173,10 @@ async function _translateViaBaidu(texts, appid, key) {
       const salt = Date.now() + '' + Math.floor(Math.random() * 10000);
       const sign = _baiduSign(q, appid, key, salt);
       const body = 'q=' + encodeURIComponent(q) + '&from=auto&to=zh&appid=' + encodeURIComponent(appid) + '&salt=' + salt + '&sign=' + sign;
-      const r = await fetch('https://fanyi-api.baidu.com/api/trans/vip/translate', {
-        method: 'POST',
+      const r = await netx.smartPost('https://fanyi-api.baidu.com/api/trans/vip/translate', {
+        timeout: 8000,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal: AbortSignal.timeout(8000)
+        body
       });
       if (!r.ok) throw new Error('baidu ' + r.status);
       const j = await r.json();
@@ -9421,9 +9417,11 @@ async function _tryTranSmart(text, from, to) {
   const src = String(text || '').slice(0, 2000);
   if (!src.trim()) return '';
   from = from || 'auto'; to = to || 'zh';
-  const res = await fetch('https://transmart.qq.com/api/imt', {
-    method: 'POST',
-    signal: AbortSignal.timeout(8000),
+  /* 2026-09-01 直连栈切换：服务进程内 undici fetch 系统性 UND_ERR_CONNECT_TIMEOUT
+   * （独立进程 238ms 正常），翻译通道统一改走 netx（原生 https.request 直连+代理回落，
+   * 与采集侧同栈——采集侧全程存活是实证）。 */
+  const res = await netx.smartPost('https://transmart.qq.com/api/imt', {
+    timeout: 15000,
     headers: {
       'Content-Type': 'application/json',
       'User-Agent': _TRANS_UA,
@@ -9435,8 +9433,7 @@ async function _tryTranSmart(text, from, to) {
       model_category: 'normal',
       source: { lang: from, text_list: ['', src, ''] },
       target: { lang: to }
-    }),
-    signal: AbortSignal.timeout(15000)
+    })
   });
   if (!res.ok) throw new Error('TranSmart HTTP ' + res.status);
   const j = await res.json();
@@ -9446,11 +9443,10 @@ async function _tryTranSmart(text, from, to) {
 async function _tryYoudao(text) {
   const src = String(text || '').slice(0, 2000);
   if (!src.trim()) return '';
-  const res = await fetch('https://aidemo.youdao.com/trans', {
-    method: 'POST',
+  const res = await netx.smartPost('https://aidemo.youdao.com/trans', {
+    timeout: 15000,
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': _TRANS_UA },
-    body: 'q=' + encodeURIComponent(src) + '&from=Auto&to=Auto',
-    signal: AbortSignal.timeout(15000)
+    body: 'q=' + encodeURIComponent(src) + '&from=Auto&to=Auto'
   });
   if (!res.ok) throw new Error('Youdao HTTP ' + res.status);
   const j = await res.json();
@@ -9591,7 +9587,7 @@ async function _translateAnyRaw(text) {
       } catch (e) {
         if (_trErrFused('TranSmart', e)) break; /* 429 → 置熔断并立即换下一通道，不再退避重试 */
         if (att === 0) { await new Promise(rs => setTimeout(rs, 800)); continue; }
-        console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message);
+        console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message, '| cause:', e.cause ? String(e.cause.code || e.cause.message || e.cause) : 'none');
       }
     }
   }
