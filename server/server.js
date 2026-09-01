@@ -9470,7 +9470,12 @@ function _translationOk(src, dst) {
      Action as foreign terrorist group 这类明显未翻译的完整英文片段），判定为不合格，
      宁可保留原文打 _untranslated 标记，也不入库混排标题。 */
   const enWords = b.match(/[A-Za-z]{3,}/g) || [];
-  const longEnPhrases = enWords.filter(function(w) { return w.length >= 4; }).length;
+  /* 2026-09-01 修复：专名密集型标题（人名/地名/机构名，如 Trishuli/Prithvi/Krishnabhir、
+   * Sherry Wellmans/PIMS）合格译文必然保留多个英文专名，旧规则把"专名≥3"一律判为
+   * 半中半英拒绝 → 全通道不合格 → _untranslated 存量堆积（今日 26 条根因）。
+   * 收紧判定：只统计小写开头的普通英文实词（真未译片段），首字母大写的专名不算；
+   * 专名交由出口处 _fixMixedZh 片段级二次翻译处理（译不出则保英文，既定策略）。 */
+  const longEnPhrases = enWords.filter(function(w) { return w.length >= 4 && w[0] === w[0].toLowerCase(); }).length;
   if (longEnPhrases >= 3 && cjk / b.length < 0.5) return false;
   /* 常见未翻译英文短语黑名单 */
   const untranslatedPhrases = /US designates|UK-based|Action as foreign|terrorist group|as foreign|designates.*as|said in a statement|according to.*said/i;
