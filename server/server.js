@@ -6286,7 +6286,7 @@ function _dedupByUrl(arr) {
  * 铁律：仅 country 为空时回填，绝不覆盖已有国别；零虚构——证据必须真实出现在标题/URL 中，
  * 不确定就不填（宁可不救）；不放宽任何闸门，只救国别字段缺失。
  * 回填条目打 _countryBackfilled=true（随 data_json 入库，可观测审计）。 */
-const _BF_CN_ALIAS = { '刚果金': '刚果（金）', '印尼': '印度尼西亚', '南韩': '韩国', '南朝鲜': '韩国' };
+const _BF_CN_ALIAS = { '刚果金': '刚果（金）', '刚果民主共和国': '刚果（金）', '印尼': '印度尼西亚', '南韩': '韩国', '南朝鲜': '韩国' };
 const _BF_EN_EXTRA = {
   'Philippines': '菲律宾', 'Kenya': '肯尼亚', 'Nigeria': '尼日利亚', 'Somalia': '索马里', 'Ethiopia': '埃塞俄比亚',
   'Ghana': '加纳', 'Mali': '马里', 'Chad': '乍得', 'Cameroon': '喀麦隆', 'Niger': '尼日尔', 'South Africa': '南非',
