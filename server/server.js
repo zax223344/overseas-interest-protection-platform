@@ -4603,7 +4603,7 @@ const TT_PRIORITY_COUNT = 15;    // 中国/亚太专项智库每轮必抓
 let TT_ROTATE_COUNT = 20;      // 每轮轮询智库源数量（调速器可动态扩大）
 let CHINA_FOCUS_COUNT = 40;    // 涉华专项源每轮必抓（调速器可动态扩大）
 let THEME_ROTATE_COUNT = 4;    // GDELT/AP 主题词每轮轮换数（调速器可动态扩大）
-const RSS_CONCURRENCY = 6;       // RSS 并发请求数（系统内存 96%，必须降低并发）
+const RSS_CONCURRENCY = 10;      // RSS 并发请求数（2026-09-01 扩容 6→10：单轮 12-16min 拖垮吞吐，网络 IO 型负载内存增量有限）
 const RSS_TIMEOUT_MS = 7000;     // 单个 RSS 超时 7 秒
 const GLOBAL_MEDIA_INTERVAL_MS = 60 * 1000; // 每 60 秒运行一轮，降低内存/GC 压力
 
@@ -5557,7 +5557,9 @@ function _ruUaQuotaOk(it) {
  * 与俄乌配额同思路：保证拉美/非洲/中亚/欧洲在库里有位置。
  * 2026-08-28 实测 24h 分布（尼泊尔50/尼日利亚47/巴基斯坦40/伊朗38/印度35）后：
  * 新增 尼泊尔/尼日利亚/印度 三国帽，伊朗 45→35。 */
-const DOMINANT_DAILY_CAP = { '伊朗': 35, '美国': 45, '巴基斯坦': 55, '阿富汗': 45, '巴勒斯坦': 30, '以色列': 25, '尼泊尔': 40, '尼日利亚': 40, '印度': 40 };
+/* 2026-09-01 扩容：×2.5 匹配日目标 2000（原帽在 500 目标下定的均衡线，新目标下核心国会提前触帽断供；
+ * 比例关系不变：巴基斯坦>美国/阿富汗>伊朗>尼泊尔/尼日利亚/印度>巴勒斯坦>以色列，国别均衡逻辑保留） */
+const DOMINANT_DAILY_CAP = { '伊朗': 90, '美国': 110, '巴基斯坦': 130, '阿富汗': 110, '巴勒斯坦': 70, '以色列': 60, '尼泊尔': 100, '尼日利亚': 100, '印度': 100 };
 const _domCounts = { date: '', by: {}, t: 0 };
 function _dominantQuotaOk(it) {
   const ctry = String(it.country || it.country_cn || '');
@@ -6254,11 +6256,11 @@ function _bumpDailyStats(inserted, linked, china, chinaNegative) {
 }
 function _logDailyStats() {
   const s = _dailyStats;
-  const totalGap = Math.max(0, 500 - s.total);
+  const totalGap = Math.max(0, 2000 - s.total);
   const chinaGap = Math.max(0, 80 - s.china);
   const chinaCap = Math.max(0, s.china - 100);
   const negGap = Math.max(0, 50 - s.chinaNegative);
-  console.log('[DAILY STATS] 今日 ' + s.date + ' | 总量 ' + s.total + '（下限500，还差' + totalGap + '，不设上限）| 涉华 ' + s.china + '（目标80-100，差' + chinaGap + '，超' + chinaCap + '）| 境外涉华负面 ' + s.chinaNegative + '（目标≥50，差' + negGap + '）| 已跑' + s.rounds + '轮');
+  console.log('[DAILY STATS] 今日 ' + s.date + ' | 总量 ' + s.total + '（下限2000，还差' + totalGap + '，不设上限）| 涉华 ' + s.china + '（目标80-100，差' + chinaGap + '，超' + chinaCap + '）| 境外涉华负面 ' + s.chinaNegative + '（目标≥50，差' + negGap + '）| 已跑' + s.rounds + '轮');
 }
 function _dedupByUrl(arr) {
   const seen = new Set();
@@ -6426,7 +6428,7 @@ async function _runGlobalMedia() {
     const [rss, tanks, gnews, social, channel] = await Promise.all([
       globalmedia.scrapeDirectRss({ sources: rssSources, concurrency: RSS_CONCURRENCY, timeout: RSS_TIMEOUT_MS }),
       globalmedia.scrapeThinkTanks({ sources: ttSources, concurrency: RSS_CONCURRENCY, timeout: RSS_TIMEOUT_MS }),
-      globalmedia.scrapeGdeltThemes({ queries: gnChina.concat(gnRotated), maxPerQuery: 20 }).catch(e => { console.warn('[GLOBALMEDIA] GDELT主题通道异常:', e.message); return { count: 0, items: [] }; }),
+      globalmedia.scrapeGdeltThemes({ queries: gnChina.concat(gnRotated), maxPerQuery: 40 }).catch(e => { console.warn('[GLOBALMEDIA] GDELT主题通道异常:', e.message); return { count: 0, items: [] }; }),
       /* 社交媒体通道（Telegram 公开频道网页预览 + Reddit RSS，2026-08-13 并入主循环；模块内部5分钟节流） */
       socialmedia.scrapeSocialMedia().catch(e => { console.warn('[GLOBALMEDIA] 社媒通道异常:', e.message); return { count: 0, items: [] }; }),
       /* 航道与走廊安全专项通道（2026-08-14：海盗/航运要道/中欧班列，11个专业源） */
@@ -6649,7 +6651,7 @@ async function _runChinaFocus() {
     const sources = (globalmedia.CHINA_FOCUS_SOURCES || []).slice();
     // 若当日涉华已达标，减少专项源数量避免过度采集；若不足则全量抓
     const s = _dailyStats;
-    const needChina = Math.max(0, 90 - s.china);
+    const needChina = Math.max(0, 150 - s.china); /* 2026-09-01 扩容：涉华达标线 90→150（总量目标 2000 下涉华占比不应萎缩） */
     const batchSize = needChina <= 0 ? Math.min(10, sources.length) : Math.min(CHINA_FOCUS_COUNT, sources.length);
     // 关键修复：轮询源，避免每轮都抓前 N 个源导致大量重复 URL
     const start = (_chinaFocusRoundIndex * batchSize) % Math.max(1, sources.length);
@@ -6672,7 +6674,7 @@ async function _runChinaFocus() {
       ];
       const gdeltRes = await Promise.all(gdeltQueries.map(q =>
         Promise.race([
-          crawler.gdeltSearch(q, { timespan: '2d', maxrecords: 15 }),
+          crawler.gdeltSearch(q, { timespan: '2d', maxrecords: 30 }),
           new Promise(resolve => setTimeout(() => resolve([]), 15000))
         ]).catch(() => [])
       ));
@@ -7027,9 +7029,10 @@ async function _runChinaNegative() {
  * 达标后自动降档回常态。全程无人值守。 */
 let _governorLevel = 0; /* 0=常态 1=加速 2=全力 */
 const GOVERNOR_LEVELS = [
-  { name: '常态', rssRotate: 30, ttRotate: 20, themeRotate: 4, negApMs: 5 * 60 * 1000 },
-  { name: '加速', rssRotate: 50, ttRotate: 30, themeRotate: 6, negApMs: 3 * 60 * 1000 },
-  { name: '全力', rssRotate: 80, ttRotate: 40, themeRotate: 9, negApMs: 2 * 60 * 1000 }
+  /* 2026-09-01 扩容：三档轮询窗口翻倍（982 路 RSS 原常态仅 30 路/轮，全量轮一遍要 33 轮） */
+  { name: '常态', rssRotate: 60, ttRotate: 30, themeRotate: 6, negApMs: 5 * 60 * 1000 },
+  { name: '加速', rssRotate: 90, ttRotate: 40, themeRotate: 8, negApMs: 3 * 60 * 1000 },
+  { name: '全力', rssRotate: 120, ttRotate: 59, themeRotate: 12, negApMs: 2 * 60 * 1000 }
 ];
 function _governorApply(level) {
   const L = GOVERNOR_LEVELS[level];
@@ -7046,8 +7049,8 @@ function _governorCheck() {
     if (elapsedMin < 30) return; /* 凌晨前30分钟不评估，避免误加码 */
     const dayRatio = elapsedMin / 1440;
     const s = _dailyStats;
-    /* 期望值 = 目标 × 时间进度 × 0.8 容差 */
-    const expTotal = 500 * dayRatio * 0.8;
+    /* 期望值 = 目标 × 时间进度 × 0.8 容差（2026-09-01 扩容：总量目标 500→2000，用户指令日几千条） */
+    const expTotal = 2000 * dayRatio * 0.8;
     const expChina = 80 * dayRatio * 0.8;
     const expNeg = 50 * dayRatio * 0.8;
     const behind = (s.total < expTotal ? 1 : 0) + (s.china < expChina ? 1 : 0) + (s.chinaNegative < expNeg ? 1 : 0);
@@ -7086,7 +7089,7 @@ async function _patrolSentinel() {
     const elapsedMin = now.getHours() * 60 + now.getMinutes();
     if (elapsedMin < 20) { _patrolState.lastDbTotal = dbToday; _patrolState.lastCheck = now.toISOString(); return; } /* 凌晨前20分钟只记基线 */
     const dayRatio = elapsedMin / 1440;
-    const expected = 500 * dayRatio * 0.8;
+    const expected = 2000 * dayRatio * 0.8;   /* 2026-09-01 扩容：巡检期望 500→2000（与调速器/gap 地板同步） */
     const gain = _patrolState.lastDbTotal > 0 ? (dbToday - _patrolState.lastDbTotal) : -1; /* -1=首次巡检无基线 */
     const acts = [];
     /* 1) 总量落后 → 升档 + 立即补跑 */
@@ -7755,10 +7758,12 @@ const _NONLATIN_RE = /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0E0
 
 /* ===== 缺口调度器（2026-08-29 用户指令：全球均衡化、全类别化，采集有重点、预警中心有核心）=====
  * 合并取代区域/类别两个均衡器，统一为「目标矩阵 × 差额调度」闭环：
- * ① 目标矩阵：国家梯队（TIER1 ≥12 条/国/日、TIER2 ≥6 条/国/日——54 国底数库利益密度分层）
- *   × 12 大类别（每类 ≥30 条/日；地缘兜底类不设目标——未命中信号全归它，量永远最大）；
+ * ① 目标矩阵：国家梯队（TIER1 ≥40 条/国/日、TIER2 ≥20、TIER3 ≥6——54 国底数库利益密度分层；
+ *   2026-09-01 扩容：TIER3 26 国纳入扫描，覆盖全量 58 国，原值 12/6/—）
+ *   × 12 大类别（每类 ≥80 条/日，原 30；地缘兜底类不设目标——未命中信号全归它，量永远最大）；
  * ② 每轮统计当日入库矩阵，算缺口率（(目标-实际)/目标），优先补最空的格子（自限防过采）；
- *   2026-08-30 地板驱动：总量未达 500 下限时自动加力（补国/补类翻倍、单轮回填放宽），
+ *   2026-08-30 地板驱动：总量未达下限时自动加力（补国/补类翻倍、单轮回填放宽；
+ *   2026-09-01 扩容：地板 500→2000），
  *   矩阵全绿但地板未达时转地板补采模式——采集只设下限，不设上限；
  * ③ 国别缺口：GDELT sourcecountry:<FIPS 码> × 当前最缺类别事件词矩阵 定向采集（FIPS→英文国名双试 + AP 兜底）；
  *   类别缺口：GNews 原子查询（CAT_GNEWS_PACKS，已验证稳定）→ GDELT → AP 三级兜底；
@@ -7793,7 +7798,13 @@ const GAP_COUNTRY_EN = {
   '越南': 'Vietnam', '泰国': 'Thailand', '马来西亚': 'Malaysia', '缅甸': 'Myanmar', '斯里兰卡': 'Sri Lanka', '吉布提': 'Djibouti',
   '埃及': 'Egypt', '埃塞俄比亚': 'Ethiopia', '肯尼亚': 'Kenya', '几内亚': 'Guinea', '秘鲁': 'Peru', '巴西': 'Brazil',
   '阿根廷': 'Argentina', '老挝': 'Laos', '柬埔寨': 'Cambodia', '孟加拉国': 'Bangladesh', '阿尔及利亚': 'Algeria',
-  '阿联酋': 'United Arab Emirates', '希腊': 'Greece', '巴拿马': 'Panama', '乌兹别克斯坦': 'Uzbekistan', '塔吉克斯坦': 'Tajikistan'
+  '阿联酋': 'United Arab Emirates', '希腊': 'Greece', '巴拿马': 'Panama', '乌兹别克斯坦': 'Uzbekistan', '塔吉克斯坦': 'Tajikistan',
+  /* 2026-09-01 扩容：TIER3 全量国别补入（原 26 国零缺口覆盖——小语种/欧美无 GDELT 英文名试码与 AP 兜底） */
+  '美国': 'United States', '英国': 'United Kingdom', '德国': 'Germany', '法国': 'France', '意大利': 'Italy',
+  '荷兰': 'Netherlands', '加拿大': 'Canada', '澳大利亚': 'Australia', '日本': 'Japan', '新加坡': 'Singapore',
+  '塞尔维亚': 'Serbia', '匈牙利': 'Hungary', '新西兰': 'New Zealand', '智利': 'Chile', '墨西哥': 'Mexico',
+  '蒙古': 'Mongolia', '莫桑比克': 'Mozambique', '南非': 'South Africa', '安哥拉': 'Angola', '苏丹': 'Sudan',
+  '马里': 'Mali', '布基纳法索': 'Burkina Faso', '尼日尔': 'Niger', '毛里塔尼亚': 'Mauritania'
 };
 let _gapSchedBusyUntil = 0;
 async function _runGapScheduler() {
@@ -7814,16 +7825,21 @@ async function _runGapScheduler() {
       if (c) countryN[c] = (countryN[c] || 0) + n;
       if (ct) catN[ct] = (catN[ct] || 0) + n;
     });
-    /* ② 国别缺口（双向子串聚合，兼容"刚果/刚果（金）"写法差异） */
+    /* ② 国别缺口（双向子串聚合，兼容"刚果/刚果（金）"写法差异）
+     * 2026-09-01 扩容：TIER3 26 国纳入缺口扫描（下限 6 条/国/日）——小语种国与欧美经贸国
+     * 此前零缺口覆盖，国别均衡从 TIER1/TIER2 32 国扩至全量 58 国。 */
     const countryGaps = [];
-    for (const tier of ['TIER1', 'TIER2']) {
+    for (const tier of ['TIER1', 'TIER2', 'TIER3']) {
       const target = GAP_COUNTRY_TARGET[tier];
       for (const x of INTEREST_BASE.COUNTRY_TIERS[tier]) {
         const n = Object.keys(countryN).reduce((s, k) => (k === x.cn || k.indexOf(x.cn) >= 0 || x.cn.indexOf(k) >= 0 ? s + countryN[k] : s), 0);
         if (n < target) countryGaps.push({ cn: x.cn, iso: x.iso, tier, n, target, rate: (target - n) / target });
       }
     }
-    countryGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
+    /* 梯队加权排序（重点核心突出）：TIER1 缺口率 ×1.3、TIER2 ×1.15——同样 0/满 的格子里
+     * 核心梯队优先补，TIER3 断粮国仍可被选中但排在同缺口率的核心国之后。 */
+    const _GAP_TIER_W = { TIER1: 1.3, TIER2: 1.15, TIER3: 1.0 };
+    countryGaps.sort((a, b) => (b.rate * _GAP_TIER_W[b.tier]) - (a.rate * _GAP_TIER_W[a.tier]) || a.n - b.n);
     /* ③ 类别缺口（缺口率排序） */
     const catGaps = [];
     for (const ct of Object.keys(GAP_CAT_KEYWORDS)) {
@@ -7832,17 +7848,18 @@ async function _runGapScheduler() {
       if (n < GAP_CAT_TARGET) catGaps.push({ ct, n, target: GAP_CAT_TARGET, rate: (GAP_CAT_TARGET - n) / GAP_CAT_TARGET });
     }
     catGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
-    /* 2026-08-30 用户铁律「采集的数据不设上限，设下限，500 目标是下限」：
-     * ① 总量未达 500 地板 → 调度器自动加力：补国 3→6、补类 3→6、单轮回填 8→14；
+    /* 2026-08-30 用户铁律「采集的数据不设上限，设下限，500 目标是下限」；
+     * 2026-09-01 扩容：地板 500→2000（用户指令日几千条），加力参数同步放大：
+     * ① 总量未达 2000 地板 → 调度器自动加力：补国 6→12、补类 6→12、单轮回填 14→40；
      * ② 安全类占比 > 45% → 弱类再多补 2 格稀释结构（纯补弱，绝不砍强）；
      * ③ 矩阵全绿但地板未达 → 不空闲，转"地板补采"模式（最空类别 × 最少 TIER1 国继续采）。 */
     const dayTotal = Object.keys(catN).reduce((s, k) => s + catN[k], 0);
     const secN = _SEC_STRUCT_TYPES.reduce((s, ct) => s + (catN[ct] || 0), 0);
     const secShare = dayTotal ? secN / dayTotal : 0;
-    const shortOfFloor = Math.max(0, 500 - dayTotal);
-    const nCountry = shortOfFloor > 0 ? 6 : 3;
-    const nCat = (shortOfFloor > 0 ? 6 : 3) + (secShare > SEC_STRUCT_SHARE_MAX ? 2 : 0);
-    const roundCap = shortOfFloor > 0 ? 14 : 8;
+    const shortOfFloor = Math.max(0, 2000 - dayTotal);
+    const nCountry = shortOfFloor > 0 ? 12 : 6;
+    const nCat = (shortOfFloor > 0 ? 12 : 6) + (secShare > SEC_STRUCT_SHARE_MAX ? 2 : 0);
+    const roundCap = shortOfFloor > 0 ? 40 : 20;
     let pickCountries = countryGaps.slice(0, nCountry);
     let pickCats = catGaps.slice(0, nCat);
     /* 2026-09-01 白天验证修复：纯缺口率排序下 TIER2 断粮国（rate=1.0）永远压过 TIER1 半满国
@@ -7856,14 +7873,15 @@ async function _runGapScheduler() {
         for (const g of t1Gaps) {
           if (have >= need) break;
           if (pickCountries.includes(g)) continue;
-          const rIdx = [...pickCountries].map((p, i) => ({ p, i })).reverse().find(x => x.p.tier === 'TIER2');
+          const rIdx = [...pickCountries].map((p, i) => ({ p, i })).reverse().find(x => x.p.tier === 'TIER3') ||
+                       [...pickCountries].map((p, i) => ({ p, i })).reverse().find(x => x.p.tier === 'TIER2');
           if (rIdx === undefined) break;
           pickCountries[rIdx.i] = g; have++;
         }
       }
     }
     if (!pickCountries.length && !pickCats.length) {
-      if (dayTotal >= 500) { console.log('[GAP-SCHED] 目标矩阵全达标且已达下限500，本轮空闲'); return; }
+      if (dayTotal >= 2000) { console.log('[GAP-SCHED] 目标矩阵全达标且已达下限2000，本轮空闲'); return; }
       /* 地板补采模式 */
       pickCats = Object.keys(GAP_CAT_KEYWORDS).filter(ct => ct !== 'geopolitical_intel')
         .sort((a, b) => (catN[a] || 0) - (catN[b] || 0)).slice(0, 3)
@@ -7871,7 +7889,7 @@ async function _runGapScheduler() {
       pickCountries = INTEREST_BASE.COUNTRY_TIERS.TIER1.slice(0, 20)
         .map(x => ({ cn: x.cn, iso: x.iso, tier: 'TIER1', n: Object.keys(countryN).reduce((s, k) => (k === x.cn || k.indexOf(x.cn) >= 0 || x.cn.indexOf(k) >= 0 ? s + countryN[k] : s), 0), target: GAP_COUNTRY_TARGET.TIER1, rate: 0 }))
         .sort((a, b) => a.n - b.n).slice(0, 3);
-      console.log('[GAP-SCHED] 矩阵全绿但总量 ' + dayTotal + ' < 下限500，启动地板补采模式');
+      console.log('[GAP-SCHED] 矩阵全绿但总量 ' + dayTotal + ' < 下限2000，启动地板补采模式');
     }
     const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
     let fetched = 0, inserted = 0, rejected = 0;
@@ -7936,7 +7954,7 @@ async function _runGapScheduler() {
         it.interestLinked = true;
         batch.push(it);
         cap++;
-        if (cap >= roundCap) break;   /* 单缺口单轮回填上限（地板未达500时自动放宽到14），均衡铺开 */
+        if (cap >= roundCap) break;   /* 单缺口单轮回填上限（地板未达2000时自动放宽到40），均衡铺开 */
       }
       return batch;
     };
@@ -7953,14 +7971,14 @@ async function _runGapScheduler() {
       const _fips = crawler.gdCode(g.cn); if (_fips) isoTry.push(_fips);
       const _en = GAP_COUNTRY_EN[g.cn]; if (_en) isoTry.push('"' + _en + '"');
       for (const iso of isoTry) {
-        try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' sourcelang:english ' + kw, { timespan: '1d', maxrecords: 12 }); } catch (e) {}
+        try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' sourcelang:english ' + kw, { timespan: '1d', maxrecords: 40 }); } catch (e) {}
         if (arts.length) break;
-        try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' ' + kw, { timespan: '1d', maxrecords: 12 }); } catch (e) {}
+        try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' ' + kw, { timespan: '1d', maxrecords: 40 }); } catch (e) {}
         if (arts.length) break;
       }
       if (!arts.length) {
         const en = GAP_COUNTRY_EN[g.cn];
-        if (en) { try { arts = await crawler.apSearch(en + ' ' + kw.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), { maxrecords: 10, pages: 1 }); } catch (e) {} }
+        if (en) { try { arts = await crawler.apSearch(en + ' ' + kw.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), { maxrecords: 20, pages: 1 }); } catch (e) {} }
       }
       fetched += arts.length;
       await _postFetch(arts);
@@ -7975,17 +7993,20 @@ async function _runGapScheduler() {
       let arts = [];
       const gpk = CAT_GNEWS_PACKS[g.ct];
       if (gpk && gpk.length) {
-        for (const gq of [gpk[cyc % gpk.length], gpk[(cyc + 2) % gpk.length]]) {
-          try { const a1 = await _catGnewsRss(gq, 12); if (a1.length) arts = arts.concat(a1); } catch (e) {}
+        /* 三条轮换原子查询（pack 长度 4-5，跳过与已选下标重复的查询避免同词重复抓） */
+        const _idx = [cyc % gpk.length, (cyc + 2) % gpk.length, (cyc + 4) % gpk.length]
+          .filter((v, i, a) => a.indexOf(v) === i);
+        for (const gq of _idx.map(i => gpk[i])) {
+          try { const a1 = await _catGnewsRss(gq, 25); if (a1.length) arts = arts.concat(a1); } catch (e) {}
         }
       }
       const pack = CATEGORY_PACKS[g.ct];
       if (!arts.length && pack) {
-        try { arts = await crawler.gdeltSearch(pack.queries[cyc % pack.queries.length], { timespan: '1d', maxrecords: 15 }); } catch (e) {}
+        try { arts = await crawler.gdeltSearch(pack.queries[cyc % pack.queries.length], { timespan: '1d', maxrecords: 40 }); } catch (e) {}
       }
       if (!arts.length && pack) {
         try { const apq = pack.queries[cyc % pack.queries.length].replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
-          arts = await crawler.apSearch(apq, { maxrecords: 10, pages: 1 }); } catch (e) {}
+          arts = await crawler.apSearch(apq, { maxrecords: 20, pages: 1 }); } catch (e) {}
       }
       fetched += arts.length;
       await _postFetch(arts);
@@ -7995,7 +8016,7 @@ async function _runGapScheduler() {
       });
       if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + (pack ? pack.name : g.ct) + '）'); inserted += (res && res.inserted) || 0; }
     }
-    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限500，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
+    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限2000，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
   } catch (e) { console.warn('[GAP-SCHED] 采集失败:', e.message); }
   finally { _gapSchedBusyUntil = 0; }
 }
@@ -8009,7 +8030,7 @@ async function _runCoreThreatWatch() {
   if (Date.now() < _coreThreatBusyUntil) return;
   _coreThreatBusyUntil = Date.now() + 90000; /* 单轮 90 秒锁，避免 GDELT 慢响应重叠 */
   try {
-    const r = await coreThreatWatch.runCoreThreatWatch({ maxPerQuery: 12 });
+    const r = await coreThreatWatch.runCoreThreatWatch({ maxPerQuery: 25 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[CORE-THREAT] 翻译异常:', e.message); }
@@ -8033,7 +8054,7 @@ async function _runChannelWatch() {
   if (Date.now() < _channelWatchBusyUntil) return;
   _channelWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await channelWatch.runChannelWatch({ maxPerQuery: 12 });
+    const r = await channelWatch.runChannelWatch({ maxPerQuery: 25 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) {}
@@ -8057,7 +8078,7 @@ async function _runComplianceWatch() {
   if (Date.now() < _complianceWatchBusyUntil) return;
   _complianceWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await complianceWatch.runComplianceWatch({ maxPerQuery: 12 });
+    const r = await complianceWatch.runComplianceWatch({ maxPerQuery: 25 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) {}
@@ -8081,7 +8102,7 @@ async function _runConsularWatch() {
   if (Date.now() < _consularWatchBusyUntil) return;
   _consularWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await consularWatch.runConsularWatch({ maxPerQuery: 12 });
+    const r = await consularWatch.runConsularWatch({ maxPerQuery: 25 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) {}
@@ -8131,7 +8152,7 @@ async function _runCoreThreatSentinel() {
   if (Date.now() < _ctSentinelBusyUntil) return;
   _ctSentinelBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await coreThreatSentinel.runCoreThreatWatch({ maxPerQuery: 12 });
+    const r = await coreThreatSentinel.runCoreThreatWatch({ maxPerQuery: 25 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) {}
@@ -8163,7 +8184,7 @@ async function _runProjectWatch() {
   if (Date.now() < _projectWatchBusyUntil) return;
   _projectWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await projectWatch.runProjectWatch({ maxPerQuery: 10 });
+    const r = await projectWatch.runProjectWatch({ maxPerQuery: 20 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) {}
@@ -8195,7 +8216,7 @@ async function _runSourcesCollector() {
   if (Date.now() < _sourcesPackBusyUntil) return;
   _sourcesPackBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await sourcesCollector.runSourcesCollector({ maxPerFeed: 10, maxPerQuery: 10 });
+    const r = await sourcesCollector.runSourcesCollector({ maxPerFeed: 20, maxPerQuery: 20 });
     const items = r.items || [];
     if (!items.length) return;
     try { await _translateListToZhParallel(items, 4); } catch (e) {}

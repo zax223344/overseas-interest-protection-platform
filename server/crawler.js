@@ -532,7 +532,15 @@ const GD_COUNTRIES = {
   '利比亚': ['LY', 'Libya'], '苏丹': ['SU', 'Sudan'], '摩洛哥': ['MO', 'Morocco'],
   '突尼斯': ['TS', 'Tunisia'], '赞比亚': ['ZA', 'Zambia'], '津巴布韦': ['ZI', 'Zimbabwe'],
   '莫桑比克': ['MZ', 'Mozambique'], '安哥拉': ['AO', 'Angola'], '尼泊尔': ['NP', 'Nepal'],
-  '喀麦隆': ['CM', 'Cameroon'], '乍得': ['CD', 'Chad']
+  '喀麦隆': ['CM', 'Cameroon'], '乍得': ['CD', 'Chad'],
+  /* 2026-09-01 扩容：TIER3 国别 FIPS 码补入（gap_scheduler 缺口扫描扩至 58 国后，
+   * 这些国家的 sourcecountry 定向采集此前无码可试、直接空转跳到 AP 兜底） */
+  '美国': ['US', 'United States'], '英国': ['UK', 'United Kingdom'], '德国': ['GM', 'Germany'],
+  '法国': ['FR', 'France'], '意大利': ['IT', 'Italy'], '荷兰': ['NL', 'Netherlands'],
+  '加拿大': ['CA', 'Canada'], '澳大利亚': ['AS', 'Australia'], '日本': ['JA', 'Japan'],
+  '新加坡': ['SN', 'Singapore'], '塞尔维亚': ['RI', 'Serbia'], '匈牙利': ['HU', 'Hungary'],
+  '新西兰': ['NZ', 'New Zealand'], '智利': ['CI', 'Chile'], '墨西哥': ['MX', 'Mexico'],
+  '蒙古': ['MG', 'Mongolia'], '毛里塔尼亚': ['MR', 'Mauritania']
 };
 /* GDELT 返回的 sourcecountry 是英文国名 → 中文（反查用） */
 const GD_EN2CN = {};
