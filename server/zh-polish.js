@@ -32,6 +32,91 @@ const NAMES = {
   'Atiku': '阿提库',              /* 尼日利亚前副总统，样本 5 次 */
 };
 
+/* ============ ①b 权威人名词表（2026-09-02 用户指令：政要人名错译残留全系统根治）============
+ * 根因实测：部分翻译通道对政要人名不译或半译——"Xi近平""国家主席Xi""Xi Jinping""Xi在/Xi与/和Xi"
+ * 直接残留入库（intel_data.title 45 条、翻译缓存 507 条；缓存另有 Trump 103 / Putin 30 / Jinping 26 条）。
+ * 设计铁律：
+ *   ① 只作用于含中文的文本（纯英文未译标题不动，避免制造新的中英混排）；
+ *   ② "Xi" 用上下文锚定替换，并以板球语境守卫兜底——缓存实测 "India vs Sri Lanka XI"（11 人代表队）
+ *      8 条，若裸替换会把"斯里兰卡Xi队"错改成"斯里兰卡习近平队"；守卫命中时全部裸 Xi 规则跳过；
+ *   ③ (?<!陈) 负向保护："国防部发言人陈Xi"（陈姓人名罗马化残留）不是习近平，绝不误替换；
+ *   ④ 括号剥离/全名模式优先于姓氏兜底，防"唐纳德·特朗普（唐纳德·特朗普）"重复（收尾有同词去重规则）；
+ *   ⑤ 规则幂等：替换结果不再含可匹配模式，可安全重跑。
+ * 挂点：polish() 内（_translateAny 产出必经，title/content/digest 全路径）+ server.js _cacheGet 读时自愈
+ * + server/_backfill_names.js 存量清洗（三处共用本词表，单一事实源）。 */
+
+/* 板球语境守卫：命中即跳过全部裸 Xi 规则（比分/热身赛/三柱门等为板球报道特有词汇） */
+const CRICKET_RE = /比分|直播|热身|练习赛|树桩|三柱门|击球|投球|板球|科隆博|检票员|巡边员|比赛|对阵|击败|Stumps|Warm-?up|Innings|\bODI\b|\bT20\b|\bSquad\b/i;
+
+/* 无条件安全规则：括号原文剥离 + 其他政要全名/姓氏 + 窄域单字"习"规则 */
+const NAME_FIX = [
+  /* 先剥离"译名（原文）"括号（防替换后产生"唐纳德·特朗普（唐纳德·特朗普）"重复） */
+  [/特朗普\s*（\s*Donald\s+Trump\s*）/g, '特朗普'],
+  [/普京\s*（\s*Vladimir\s+Putin\s*）/g, '普京'],
+  [/莫迪\s*（\s*Narendra\s+Modi\s*）/g, '莫迪'],
+  [/拜登\s*（\s*Joe\s+Biden\s*）/g, '拜登'],
+  [/马克龙\s*（\s*Emmanuel\s+Macron\s*）/g, '马克龙'],
+  [/习近平\s*（\s*Xi\s+Jinping\s*）/g, '习近平'],
+  [/金正恩\s*（\s*Kim\s+Jong\s+Un\s*）/g, '金正恩'],
+  [/泽连斯基\s*（\s*Volodymyr\s+Zelensky\s*）/g, '泽连斯基'],
+  /* "习、莫迪、普京将会晤"：单字"习"紧跟顿号且后接另一位政要 → 习近平（学习，等常用词不受影响） */
+  [/习(?=[、，](?:莫迪|普京|拜登|特朗普|泽连斯基|金正恩|内塔尼亚胡))/g, '习近平'],
+  /* 其他高频政要：全名优先，姓氏兜底（词边界防子串误伤） */
+  [/Donald\s+Trump/g, '唐纳德·特朗普'],
+  [/Vladimir\s+Putin/g, '弗拉基米尔·普京'],
+  [/Narendra\s+Modi/g, '纳伦德拉·莫迪'],
+  [/Joe\s+Biden/g, '乔·拜登'],
+  [/Emmanuel\s+Macron/g, '埃马纽埃尔·马克龙'],
+  [/Kim\s+Jong\s+Un/g, '金正恩'],
+  [/Trump(?![A-Za-z0-9])/g, '特朗普'],
+  [/Putin(?![A-Za-z0-9])/g, '普京'],
+  [/Modi(?![A-Za-z0-9])/g, '莫迪'],
+  [/Biden(?![A-Za-z0-9])/g, '拜登'],
+  [/Macron(?![A-Za-z0-9])/g, '马克龙'],
+  [/Zelensky(?![A-Za-z0-9])|Zelenskyy(?![A-Za-z0-9])/g, '泽连斯基'],
+  [/Netanyahu(?![A-Za-z0-9])/g, '内塔尼亚胡'],
+  [/Lavrov(?![A-Za-z0-9])/g, '拉夫罗夫'],
+  [/Merkel(?![A-Za-z0-9])/g, '默克尔'],
+];
+
+/* 裸 Xi 上下文规则（板球语境守卫 + 陈姓负向保护下运行）：
+ * 全名 → 混排"Xi近平" → 头衔在前 → 前置虚词（的/在/对/和…，Xi 紧跟单字虚词=人名用法）
+ * → 动词/语境词在后 → 与特朗普配对 → 逗号后同位头衔 → 国别前缀 → 英文属格 */
+const NAME_FIX_XI = [
+  [/Xi\s*Jinping/gi, '习近平'],
+  [/Xi近平/g, '习近平'],
+  [/(国家主席|总书记|主席|领导人|总统)Xi(?![A-Za-z0-9])/g, '$1习近平'],
+  [/([的一是对而和跟为到让称向同应与祝就也才又但及或并据实会邀迎接])Xi(?![A-Za-z0-9])/g, '$1习近平'],
+  [/在Xi(?!和\s*[A-Z])(?![A-Za-z0-9])/g, '在习近平'],            /* "在Xi预计访问"修，"在Xi和Fergana"（地名配对）不修 */
+  [/'?s\s*Xi(?![A-Za-z0-9])/g, '的习近平'],                       /* "中国's Xi arrives" 类混排属格 */
+  [/Xi's(?=\s*[一-龥])/g, '习近平的'],                             /* "cast Xi's 埃及 visit" 属格+中文 */
+  [/(?<!陈)Xi(主席|总书记|委员长|总理|访问|抵达|会晤|会见|承诺|表示|指出|呼吁|强调|签署|出席|主持|通话|致电|致贺|视察|慰问|敦促|提出|宣布|欢迎|离开|解雇|启程|开始|出访|撰文|信号|发表|峰会|邀请|结束|乘坐|同意|设置|十年|即将|将|应|在|对|与|的|说|告诉|认为|感到|要求|计划|纪念|聚焦|似乎|此|自|政府|很|预计|拒绝|否认|警告|批评|祝贺)/g, '习近平$1'],
+  [/Xi和(?=[一-龥]|Kim|Trump|Putin|Modi|Biden|Macron|金正恩|普京|特朗普)/g, '习近平和'], /* "Xi和Fergana"地名除外 */
+  [/Xi(?=\s*[-–—~]\s*(?:特朗普|Trump))/g, '习近平'],              /* "Xi-特朗普峰会" */
+  [/Xi(?=[，,][一-龥]{0,6}国家主席)/g, '习近平'],                  /* "Xi，中国国家主席"同位语 */
+  [/中国Xi(?![A-Za-z0-9])/g, '中国领导人习近平'],
+  /* 中英混排句式：Xi 后跟空格+英文谓语动词（"Xi says 中国…" / "President Xi welcomed by…" /
+   * "Xi to Make First 埃及 Trip"）。lookahead 限定动词词表，"Xinhua"（Xi 后紧跟字母）不会命中 */
+  [/Xi(?=\s+(?:says|said|calls?|called|arrives?|arrived|leaves?|left|signals?|signalled|kicks?|kicked|holds?|held|welcomes?|welcomed|meets?|met|urges?|urged|pledges?|pledged|vows?|vowed|warns?|warned|tells?|told|makes?|made|visits?|visited|attends?|attended|thanks?|thanked|hosts?|hosted|sends?|sent|receives?|received|launches?|launched|signs?|signed|addresses?|addressed|invites?|invited|begins?|began|starts?|started|ends?|ended|joins?|joined|set|to|is|was|will|has|had)\b)/g, '习近平'],
+  /* 领导人列举："普京，Xi，佩泽什基安参加…"——Xi 后逗号（中/英文）紧跟另一位政要 */
+  [/Xi(?=\s*[，,]\s*(?:Pezeshkian|Putin|Modi|Trump|Kim|Biden|Macron|Lavrov|佩泽什基安|普京|特朗普|莫迪|金正恩|拜登|马克龙|拉夫罗夫))/g, '习近平'],
+  /* 谐音错译兜底："思思呼吁在习近平访问之前"——紧跟"呼吁在习近平"的极窄窗口，普通昵称"思思"不误伤 */
+  [/思思(?=呼吁在习近平)/g, '习近平'],
+];
+
+/* 人名修正：只作用于含中文的文本（纯英文未译文本原样返回），供 polish() 与存量清洗/缓存自愈共用 */
+function fixNames(t) {
+  let s = String(t || '');
+  if (!s || !/[\u4e00-\u9fa5]/.test(s)) return s;
+  for (const rule of NAME_FIX) s = s.replace(rule[0], rule[1]);
+  if (!CRICKET_RE.test(s)) {                 /* 板球报道中 "XI"=11 人队，跳过全部裸 Xi 规则 */
+    for (const rule of NAME_FIX_XI) s = s.replace(rule[0], rule[1]);
+  }
+  /* 收尾去重："X（X）"同词括号回声（多规则叠加偶发） */
+  s = s.replace(/([一-龥·]{2,6})（\s*\1\s*）/g, '$1');
+  return s;
+}
+
 /* ============ ② 媒体自称词表（尾部剥离用） ============ */
 /* 英文媒体名/域名：尾部命中即剥离（大小写不敏感） */
 const MEDIA_EN = [
@@ -127,6 +212,8 @@ function polish(text) {
   t = t.replace(/\s*@[A-Za-z0-9_]{2,20}\s*$/, '');
   /* 标点/数字硬伤 */
   for (const [re, to] of PUNCT_FIX) t = t.replace(re, to);
+  /* 权威人名词表修正（2026-09-02：Xi近平/国家主席Xi/Trump 等政要错译残留，见 NAME_FIX 注释） */
+  t = fixNames(t);
   /* 缩写替换（左右非字母数字边界） */
   for (const [k, v] of Object.entries(ABBR)) {
     t = t.replace(new RegExp('(?<![A-Za-z0-9])' + k + '(?![A-Za-z0-9])', 'g'), v);
@@ -147,4 +234,4 @@ function polishTitle(text) {
   return t;
 }
 
-module.exports = { polish, polishTitle, ABBR, NAMES, MEDIA_EN, MEDIA_ZH };
+module.exports = { polish, polishTitle, fixNames, ABBR, NAMES, NAME_FIX, MEDIA_EN, MEDIA_ZH };
