@@ -9012,16 +9012,21 @@ async function _runTerrorAttacks() {
       if (!_ruUaQuotaOk(it)) { skippedRuUa++; _sidepool(it, 'ruua-quota', 'TERROR'); continue; }
       try {
         it._eventSig = _eventSignature(it);
-        _tagAssets(it); it.level_norm = it.level || 'yellow';
+        /* 2026-09-02 红区铁律修复：TERROR/KIDNAP 专项通道此前直接采信采集器 it.level
+         * （"提及中国即红"），是全项目唯一绕过 _normLevelForStore 统一评分的入库通道，
+         * 叠加 globalmedia /BRI/i 子串误匹配（Brigade/briefing/bring/debris），
+         * 造成"卡诺警方逮捕244人"等本地治安案误入红区（全库该通道 18 条 red 100% 误赋）。
+         * 现统一走 _normLevelForStore：red 必须过 RED_ELIGIBLE_RE（中国公民被袭被绑/撤侨/群体枪击）。 */
+        _tagAssets(it); const _lv = _normLevelForStore(it); it.level_norm = _lv;
         const _ins = await query(
           `INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-          ['terror_events', it.title, it.country_cn || '', '', it.publish_time || '', it.level || 'yellow', it.content || '', it.source || '', JSON.stringify(it), 'approved']
+          ['terror_events', it.title, it.country_cn || '', '', it.publish_time || '', _lv, it.content || '', it.source || '', JSON.stringify(it), 'approved']
         );
         _addTitleKey(titleKeys, it);
         if (_ins && _ins.rows && _ins.rows[0]) _markCorroboration(_ins.rows[0].id, it);
         inserted++;
-        if (it.level === 'red') redCount++;
-        else if (it.level === 'orange') orangeCount++;
+        if (it.level_norm === 'red') redCount++;
+        else if (it.level_norm === 'orange') orangeCount++;
       } catch (e) { console.warn('[TERROR] 入库失败:', e.message); }
     }
     const sec = ((Date.now() - t0) / 1000).toFixed(1);

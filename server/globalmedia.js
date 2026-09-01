@@ -1160,8 +1160,11 @@ function _isTerrorLike(txt) {
 /* 绑架案专项正则（全球，不限中国要素） */
 const _KIDNAP_RE = /kidnap|kidnapped|kidnapping|abduct|abducted|abduction|hostage|ransom|绑架|绑架案|劫持|劫持案|人质|赎金/i;
 
-/* 涉及中国人的刑事案件正则 */
-const _CHINA_CRIME_RE = /中国|Chinese|China|Beijing|中资|中企|华人|华侨|华裔|留学生|游客|公民|公民遇害|公民被绑|公民遭袭/i;
+/* 涉及中国人的刑事案件正则
+ * 2026-09-02 词边界修复：China/Chinese 未加 \b 时 Chinatown/Indochina 等子串误命中；
+ * 中文泛词"留学生|游客|公民"不带国别限定，任何国家的游客/公民都会命中，仅作 chinaRelated 弱标记
+ * （等级裁决已收归 server.js _normLevelForStore 红区铁律，此处不再直接决定 red）。 */
+const _CHINA_CRIME_RE = /中国|中资|中企|华人|华侨|华裔|公民遇害|公民被绑|公民遭袭|\bChinese\b|\bChina\b|\bBeijing\b/i;
 
 async function scrapeTerrorAttacks(opts) {
   opts = opts || {};
@@ -1191,8 +1194,12 @@ async function scrapeTerrorAttacks(opts) {
           if (!a.url) continue;
           const txt = (a.title || '');
           if (!_isTerrorLike(txt)) continue;
-          /* 涉华要素判定 */
-          const hasChina = /中国|Chinese|China|Beijing|中资|中企|华人|华侨|一带一路|Belt and Road|BRI/i.test(txt);
+          /* 涉华要素判定
+           * 2026-09-02 词边界修复：BRI 未加 \b 时 Brigade/briefing/bring/debris 等高频词
+           * 全部子串误命中"一带一路"→误判涉华→误赋红（实测全库该通道 18 条 red 全部由此误赋，
+           * 如"卡诺警方逮捕244嫌疑人"命中 press briefing）。hasChina 仅作 chinaRelated 标记，
+           * 等级由 server.js _normLevelForStore 统一评分裁决。 */
+          const hasChina = /中国|中资|中企|华人|华侨|一带一路|Belt and Road|\bBRI\b|\bChinese\b|\bChina\b|\bBeijing\b/i.test(txt);
           /* 预警等级：直接涉及中国=红色，高危国家=橙色，一般=黄色 */
           let level = 'yellow';
           if (hasChina) level = 'red';
@@ -1223,7 +1230,8 @@ async function scrapeTerrorAttacks(opts) {
           if (!_isRssFresh(it.pubDate)) continue;
           const txt = (it.title || '') + ' ' + (it.description || '');
           if (!_isTerrorLike(txt)) continue;
-          const hasChina = /中国|Chinese|China|Beijing|中资|中企|华人|华侨|一带一路|Belt and Road|BRI/i.test(txt);
+          /* 2026-09-02 词边界修复：同 GDELT 通道，BRI/China/Chinese 加 \b 防 Brigade/briefing 子串误命中 */
+          const hasChina = /中国|中资|中企|华人|华侨|一带一路|Belt and Road|\bBRI\b|\bChinese\b|\bChina\b|\bBeijing\b/i.test(txt);
           let level = 'yellow';
           if (hasChina) level = 'red';
           else if (c.prio === 1) level = 'orange';
