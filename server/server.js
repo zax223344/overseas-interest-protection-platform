@@ -8829,15 +8829,21 @@ function _guessLang(t) {
 async function _myMemoryOne(t, key) {
   const q = String(t || '').slice(0, 500);
   if (!q.trim()) return '';
+  /* 2026-09-01 通道熔断：额度耗尽/429 触发的 12h 熔断期间直接返回空（不发请求），
+   * 交由后继通道兜底——覆盖 _translateViaMyMemory 批量路径等全部调用方 */
+  if (_trFuseOpen('MyMemory')) return '';
   let url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q) + '&langpair=' + _guessLang(q) + '|zh-CN';
   if (key) url += '&key=' + encodeURIComponent(key); // 注册 key 提升免费配额至 50000 字符/日
   const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!r.ok) throw new Error('mymemory ' + r.status);
+  if (!r.ok) {
+    if (r.status === 429) _trFuseTrip('MyMemory', '429 限频/额度耗尽'); /* 2026-09-01：429 → 12h 熔断 */
+    throw new Error('mymemory ' + r.status);
+  }
   /* 强制 UTF-8 解码，规避 MyMemory 偶发 charset 声明错误导致的乱码/问号 */
   const buf = await r.arrayBuffer();
   const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
   const tr = (j && j.responseData && j.responseData.translatedText) || '';
-  if (/YOU USED ALL AVAILABLE FREE/.test(tr)) return '__QUOTA__'; // 配额耗尽
+  if (/YOU USED ALL AVAILABLE FREE/.test(tr)) { _trFuseTrip('MyMemory', '免费额度耗尽'); return '__QUOTA__'; } // 配额耗尽 → 12h 熔断
   if (/MYMEMORY WARNING/.test(tr)) return '';
   if (/\*不清楚\*|\*未翻译\*|\* NOT TRANSLATED \*/.test(tr)) return ''; // 占位符（MyMemory 不支持该语向）
   if (/^\?+$/.test(tr.trim())) return ''; // 编码损坏（纯问号）
@@ -8973,6 +8979,8 @@ app.post('/api/translate', async (req, res) => {
     for (const t of uniq) {
       const cached = _cacheGet(t);
       if (cached) { out.push(cached); continue; }
+      /* 2026-09-01 预检：中文为主文本无需翻译，直接回显原文（省配额，避免后续通道白跑） */
+      if (_trZhDominated(t)) { out.push(t); continue; }
       const r = await _translateAny(t);
       if (r && r.trim() && r.trim() !== t.trim()) { out.push(r.trim()); _cacheSet(t, r.trim()); }
       else { out.push(''); okAll = false; }
@@ -8982,10 +8990,10 @@ app.post('/api/translate', async (req, res) => {
     if (!okAll) console.warn('[TRANSLATE] 部分条目首选通道未译，交由后续通道补翻');
   } catch (e) { console.warn('[TRANSLATE] 首选通道异常，降级:', e.message); resUniq = null; }
 
-  // 1) 可选百度密钥（仅在首选通道整体失败时启用）
-  if (!resUniq && baiduId && baiduKey) {
+  // 1) 可选百度密钥（仅在首选通道整体失败时启用；2026-09-01：54004 熔断期间直接跳过）
+  if (!resUniq && baiduId && baiduKey && !_trFuseOpen('Baidu')) {
     try { resUniq = await _translateViaBaidu(uniq, baiduId, baiduKey); engine = 'baidu'; }
-    catch (e) { console.warn('[TRANSLATE] Baidu通道失败，降级MyMemory:', e.message); resUniq = null; }
+    catch (e) { _trErrFused('Baidu', e); console.warn('[TRANSLATE] Baidu通道失败，降级MyMemory:', e.message); resUniq = null; }
   }
   // 2) MyMemory（带缓存）
   let quotaExhausted = false;
@@ -9133,6 +9141,9 @@ function _baiduThrottle() {
 }
 async function _baiduTranslateRetry(text, id, key, attempt) {
   attempt = attempt || 0;
+  /* 2026-09-01 通道级熔断：54004 触发的 12h 熔断期间直接跳过（不发请求、不等 1 QPS 节流抛错），
+   * 覆盖所有调用方（_translateAnyRaw 主链 + translate-backfill 回填端点） */
+  if (_trFuseOpen('Baidu')) throw new Error('baidu err 54004(熔断中，跳过)');
   try {
     await _baiduThrottle();
     const r = await _translateViaBaidu([String(text || '')], id, key);
@@ -9145,6 +9156,7 @@ async function _baiduTranslateRetry(text, id, key, attempt) {
     _baiduProbeInFlight = false;
     /* 54004 = 账户余额/月配额耗尽：退避重试无意义，熔断至次日 0 点（2026-08-24 实测） */
     if (/54004/.test(e.message)) {
+      _trFuseTrip('Baidu', '54004 余额耗尽'); /* 2026-09-01：外层状态机熔断 12h，主链快速跳过 */
       const tmr = new Date(); tmr.setHours(24, 0, 5, 0);
       if (_baiduDisabledUntil < tmr.getTime()) {
         _baiduDisabledUntil = tmr.getTime();
@@ -9264,6 +9276,56 @@ async function _fixMixedZh(zh) {
     return out;
   } catch (e) { return zh; }
 }
+/* ===== [TR-FUSE-BEGIN] 翻译通道熔断状态机（2026-09-01 翻译链路扩兜底+熔断）=====
+ * 背景：采集扩容（日目标 2000+ 条）后翻译请求 ×3，Baidu 54004（日额度耗尽）与
+ * MyMemory 匿名 5000 字符/日额度均会在日内耗尽。旧链虽有 8 路兜底，但对已耗尽通道
+ * 仍逐条发请求/逐条等节流抛错再换路——单条翻译白耗数秒，日志被 54004 刷屏。
+ * 本状态机：通道命中"通道级不可恢复错误"即熔断一段时间，期间调用链直接跳过
+ * （不发请求、立即进入下一通道），到时自动解除并放行试探（失败即再熔断）。
+ * 铁律：熔断只挡通道级错误，不绕过 _translationOk 质量底线（译文级不合格仍返回空）。 */
+const _TR_FUSE = new Map(); /* channel -> { until, lastErr }，进程内存，到时自动解除 */
+const _TR_FUSE_CONF = {
+  TranSmart:      { ms: 5 * 60 * 1000,    label: '5min', re: /429/ },                 /* 429 限频 */
+  Youdao:         { ms: 60 * 1000,        label: '1min', re: /411/ },                 /* 411 频率限制 */
+  Baidu:          { ms: 12 * 3600 * 1000, label: '12h',  re: /54004/ },              /* 54004 余额/日额度耗尽 */
+  MyMemory:       { ms: 12 * 3600 * 1000, label: '12h',  re: /quota|429|__QUOTA__/i },/* 免费额度耗尽/429 */
+  LibreTranslate: { ms: 2 * 60 * 1000,    label: '2min' },                            /* 5xx/网络错 */
+  Edge:           { ms: 2 * 60 * 1000,    label: '2min' },                            /* 5xx/网络错 */
+  'Google web':   { ms: 2 * 60 * 1000,    label: '2min' }                             /* 5xx/网络错 */
+};
+function _trFuseOpen(ch) {
+  const f = _TR_FUSE.get(ch);
+  if (!f) return false;
+  if (Date.now() >= f.until) {
+    _TR_FUSE.delete(ch);
+    console.log('[TRANSLATE] ' + ch + ' 熔断解除');
+    return false;
+  }
+  return true;
+}
+function _trFuseTrip(ch, reason) {
+  const conf = _TR_FUSE_CONF[ch] || { ms: 2 * 60 * 1000, label: '2min' };
+  const f = _TR_FUSE.get(ch);
+  if (f && f.until - Date.now() > conf.ms / 2) return; /* 已熔断且剩余过半：不重复置、不重复报 */
+  _TR_FUSE.set(ch, { until: Date.now() + conf.ms, lastErr: String(reason || '').slice(0, 100) });
+  console.warn('[TRANSLATE] ' + ch + ' 熔断 ' + conf.label + ' (' + reason + ')');
+}
+/* 按错误信息判定是否命中通道熔断条件；命中则置熔断并返回 true（调用方据此放弃本通道重试） */
+function _trErrFused(ch, e) {
+  const conf = _TR_FUSE_CONF[ch];
+  const msg = String((e && e.message) || e || '');
+  if (conf && conf.re && conf.re.test(msg)) { _trFuseTrip(ch, msg); return true; }
+  return false;
+}
+/* 翻译前预检：输入已是中文（或以中文为主）→ 无需翻译。
+ * 规则：CJK 字符 ≥ 6 个，或 CJK / 总字符 ≥ 60%。命中则各通道全部跳过，节省配额。 */
+function _trZhDominated(s) {
+  const t = String(s || '');
+  if (!t.trim()) return false;
+  const cjk = (t.match(/[一-龥]/g) || []).length;
+  return cjk >= 6 || cjk / t.length >= 0.6;
+}
+/* ===== [TR-FUSE-END] ===== */
 async function _translateAny(text) {
   const zh = await _translateAnyRaw(text);
   /* 2026-08-30 排雷：_fixMixedZh 是 async 函数，漏 await 会把 Promise 传给 polish →
@@ -9275,70 +9337,93 @@ async function _translateAnyRaw(text) {
   const baiduKey = process.env.BAIDU_TRANSLATE_KEY;
   const src = String(text || '');
   if (!src.trim()) return '';
+  /* 0) 预检（2026-09-01 熔断改造）：输入已是中文/中文为主（CJK≥6 或 CJK 占比≥60%）
+   *    → 无需翻译，直接返回原文（调用方保留中文原文），全通道零请求，节省配额 */
+  if (_trZhDominated(src)) return src;
   /* 1) 腾讯 TranSmart（auto 源语言，2026-08-17 修：原来写死 en→小语种必出乱码；
    *    2026-08-24 修：瞬时 429/网络抖动不再一次打死，800ms 退避重试一次） */
-  for (let att = 0; att < 2; att++) {
-    try {
-      const r = await _tryTranSmart(src);
-      if (_translationOk(src, r)) return r;
-      break; /* 返回了但质量不合格 → 换通道，不重试 */
-    } catch (e) {
-      if (att === 0) { await new Promise(rs => setTimeout(rs, 800)); continue; }
-      console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message);
+  if (!_trFuseOpen('TranSmart')) { /* 2026-09-01：429 触发 5min 熔断，期间直接跳过 */
+    for (let att = 0; att < 2; att++) {
+      try {
+        const r = await _tryTranSmart(src);
+        if (_translationOk(src, r)) return r;
+        break; /* 返回了但质量不合格 → 换通道，不重试 */
+      } catch (e) {
+        if (_trErrFused('TranSmart', e)) break; /* 429 → 置熔断并立即换下一通道，不再退避重试 */
+        if (att === 0) { await new Promise(rs => setTimeout(rs, 800)); continue; }
+        console.warn('[TRANSLATE] TranSmart 失败，试有道:', e.message);
+      }
     }
   }
   /* 2) 有道（from=Auto 本就支持自动识别；2026-08-24 修：411 频率限制 1.5s 退避重试一次） */
-  for (let att = 0; att < 2; att++) {
-    try {
-      const r = await _tryYoudao(src);
-      if (_translationOk(src, r)) return r;
-      break;
-    } catch (e) {
-      if (att === 0) { await new Promise(rs => setTimeout(rs, 1500)); continue; }
-      console.warn('[TRANSLATE] 有道失败，试 Baidu:', e.message);
+  if (!_trFuseOpen('Youdao')) { /* 2026-09-01：411 触发 1min 熔断，期间直接跳过 */
+    for (let att = 0; att < 2; att++) {
+      try {
+        const r = await _tryYoudao(src);
+        if (_translationOk(src, r)) return r;
+        break;
+      } catch (e) {
+        if (_trErrFused('Youdao', e)) break; /* 411 → 置熔断并立即换下一通道 */
+        if (att === 0) { await new Promise(rs => setTimeout(rs, 1500)); continue; }
+        console.warn('[TRANSLATE] 有道失败，试 Baidu:', e.message);
+      }
     }
   }
-  /* 3) Baidu */
-  if (baiduId && baiduKey) {
+  /* 3) Baidu（2026-09-01：54004 触发 12h 熔断，期间整段跳过——不发请求、不等 1 QPS 节流抛错） */
+  if (baiduId && baiduKey && !_trFuseOpen('Baidu')) {
     try {
       const r = await _baiduTranslateRetry(src, baiduId, baiduKey);
       if (_translationOk(src, r)) return r.trim();
-    } catch (e) { console.warn('[TRANSLATE] Baidu 失败，试 MyMemory:', e.message); }
+    } catch (e) { _trErrFused('Baidu', e); console.warn('[TRANSLATE] Baidu 失败，试 MyMemory:', e.message); }
   }
-  /* 4) MyMemory */
-  try {
-    const tr = await _myMemoryOne(src.slice(0, 500), MYMEMORY_KEY);
-    if (_translationOk(src, tr)) return tr.trim();
-  } catch (e) {}
-  /* 5) LibreTranslate */
-  try {
-    const lr = await _tryLibreTranslate([src.slice(0, 500)]);
-    if (lr && lr[0] && _translationOk(src, lr[0])) return lr[0].trim();
-  } catch (e) {}
+  /* 4) MyMemory（2026-09-01：额度耗尽/429 触发 12h 熔断，期间整段跳过） */
+  if (!_trFuseOpen('MyMemory')) {
+    try {
+      const tr = await _myMemoryOne(src.slice(0, 500), MYMEMORY_KEY);
+      if (tr === '__QUOTA__') _trFuseTrip('MyMemory', '免费额度耗尽');
+      else if (_translationOk(src, tr)) return tr.trim();
+    } catch (e) { _trErrFused('MyMemory', e); }
+  }
+  /* 5) LibreTranslate（2026-09-01：公共实例全部不可达/网络错 → 熔断 2min） */
+  if (!_trFuseOpen('LibreTranslate')) {
+    try {
+      const lr = await _tryLibreTranslate([src.slice(0, 500)]);
+      if (!lr) _trFuseTrip('LibreTranslate', '公共实例全部不可达');
+      else if (lr[0] && _translationOk(src, lr[0])) return lr[0].trim();
+    } catch (e) { _trFuseTrip('LibreTranslate', e.message); }
+  }
   /* 6) 小语种 pivot（2026-08-17 用户指令：小语种先译英文再译中文）：
    * 直译全部不合格时，先 auto→en（TranSmart 英译覆盖好），en 再→zh 走主链 */
-  try {
-    const en = await _tryTranSmart(src, 'auto', 'en');
-    if (en && en.trim() && en.trim() !== src.trim() && /[a-zA-Z]{4}/.test(en)) {
-      const zh = await _tryTranSmart(en, 'en', 'zh').catch(() => '');
-      if (_translationOk(en, zh)) { console.log('[TRANSLATE] pivot(en) 成功:', src.slice(0, 24)); return zh.trim(); }
-      const zh2 = await _tryYoudao(en).catch(() => '');
-      if (_translationOk(en, zh2)) { console.log('[TRANSLATE] pivot(en) 成功(有道):', src.slice(0, 24)); return zh2.trim(); }
-    }
-  } catch (e) {}
-  /* 7) Edge 微软翻译 */
-  try {
-    const er = await _tryEdge([src.slice(0, 500)]);
-    if (er && er[0] && _translationOk(src, er[0])) return er[0].trim();
-  } catch (e) {}
+  if (!_trFuseOpen('TranSmart')) { /* 2026-09-01：pivot 全依赖 TranSmart，其熔断期间同步跳过 */
+    try {
+      const en = await _tryTranSmart(src, 'auto', 'en');
+      if (en && en.trim() && en.trim() !== src.trim() && /[a-zA-Z]{4}/.test(en)) {
+        const zh = await _tryTranSmart(en, 'en', 'zh').catch(() => '');
+        if (_translationOk(en, zh)) { console.log('[TRANSLATE] pivot(en) 成功:', src.slice(0, 24)); return zh.trim(); }
+        const zh2 = await _tryYoudao(en).catch(() => '');
+        if (_translationOk(en, zh2)) { console.log('[TRANSLATE] pivot(en) 成功(有道):', src.slice(0, 24)); return zh2.trim(); }
+      }
+    } catch (e) { _trErrFused('TranSmart', e); }
+  }
+  /* 7) Edge 微软翻译（2026-09-01：不可达/网络错 → 外层熔断 2min，配合通道内原有 30min 长熔断） */
+  if (!_trFuseOpen('Edge')) {
+    try {
+      const er = await _tryEdge([src.slice(0, 500)]);
+      if (!er) _trFuseTrip('Edge', '不可达/认证失败');
+      else if (er[0] && _translationOk(src, er[0])) return er[0].trim();
+    } catch (e) { _trFuseTrip('Edge', e.message); }
+  }
   /* 8) Google 翻译网页接口兜底（2026-08-28 翻译三问题整治实测：
    * TranSmart 返回空/Baidu 54004 当日熔断/MyMemory 当日免费额度耗尽/Edge auth 404
    * 全链失败时 NYSC 类条目未翻译入库的根因。translate.googleapis.com 免费无 Key，
    * netx 代理可达，实测质量好："据报道，15名NYSC成员在从营地返回时在科吉被绑架"） */
-  try {
-    const gr = await _tryGoogleWebTranslate(src.slice(0, 450));
-    if (gr && _translationOk(src, gr)) return gr.trim();
-  } catch (e) {}
+  if (!_trFuseOpen('Google web')) { /* 2026-09-01：接口不可达/网络错 → 熔断 2min */
+    try {
+      const gr = await _tryGoogleWebTranslate(src.slice(0, 450));
+      if (!gr) _trFuseTrip('Google web', '接口不可达');
+      else if (_translationOk(src, gr)) return gr.trim();
+    } catch (e) { _trFuseTrip('Google web', e.message); }
+  }
   return ''; /* 全部不合格 → 返回空，调用方保留原文并打 _untranslated 标记，绝不入库乱码 */
 }
 /* Google 翻译网页接口（translate_a/single，免费无 Key，走 netx 代理回退） */
