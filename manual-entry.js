@@ -1,9 +1,11 @@
 /* ============================================================
- * manual-entry.js — 手动录入独立工作区（前端主逻辑）v1
- * 2026-09-01
+ * manual-entry.js — 手动录入独立工作区（前端主逻辑）v2
+ * 2026-09-02
  *
  * · 12 类情报体系卡片式录入（对齐 server INTEL_TYPES + 经济金融类）
  * · 智能辅助：涉华预检 / severity 建议 / 自动归类建议 / 重复检测
+ * · v2：内容详述「⚡ 自动识别」——本地解析中英文文本，提取国别/时间/伤亡/
+ *   事件类型/严重程度，只填空字段不覆盖已填值（MEAutoExtract 纯函数可复用）
  * · 并发安全：服务端 UUID + request_id 幂等 + version 乐观锁(409) + 草稿自动保存
  * · 复合化 HUD 布局：左主表单 / 右实时面板 / 底部最近录入 / 模板库 / CSV 批量
  * · 铁律：提交成功 → 同步写入 ALERTS（预警中心），手动条目带 is_manual 标记
@@ -162,6 +164,207 @@
     return out;
   }
 
+  /* ============================================================
+   * 内容详述自动识别（纯前端本地解析，中英文混排）
+   * MEAutoExtract(text) → { country, datetime, deaths, injured, casualties, cat, severity }
+   * · 国别词表与 server.js _CTRY_PATTERNS 同源（剔除"中国"防 Chinese workers 误判）
+   * · 日期：绝对（2026-08-31 / 2026年8月31日 / 8月31日 / August 30 / 09-01）
+   *         + 相对（今天/昨天/前天/X小时前/X天前/today/yesterday），本地时区换算
+   * · 伤亡：死亡X人/X人死亡/X killed/X dead / 受伤X人/X injured / 伤亡X人（阿拉伯+中文数字）
+   * · 事件类型：关键词命中数映射 12 类情报体系（中英文）
+   * · severity：死亡≥5→red；有伤亡→orange；其余 yellow
+   * ============================================================ */
+  var ME_CTRY_ALIASES = [
+    ['巴基斯坦', ['巴基斯坦', '伊斯兰堡', 'pakistan', 'pakistani', 'islamabad', '俾路支', '开伯尔']],
+    ['阿富汗', ['阿富汗', '喀布尔', 'afghanistan', 'afghan', 'kabul']],
+    ['尼日利亚', ['尼日利亚', 'nigeria', 'nigerian', '拉各斯', 'lagos', '阿布贾', 'abuja']],
+    ['印度', ['印度', '新德里', 'india', 'indian', 'delhi']],
+    ['印度尼西亚', ['印度尼西亚', '印尼', '雅加达', 'indonesia', 'indonesian', 'jakarta']],
+    ['美国', ['美国', '美军', '白宫', '五角大楼', '华盛顿', 'united states', 'usa', 'u.s.', 'america', 'american', 'washington']],
+    ['俄罗斯', ['俄罗斯', '俄军', '莫斯科', 'russia', 'russian', 'moscow']],
+    ['伊朗', ['伊朗', '德黑兰', 'iran', 'iranian', 'tehran']],
+    ['乌克兰', ['乌克兰', '基辅', 'ukraine', 'ukrainian', 'kyiv']],
+    ['以色列', ['以色列', '特拉维夫', 'israel', 'israeli']],
+    ['菲律宾', ['菲律宾', '马尼拉', 'philippines', 'philippine', 'manila']],
+    ['越南', ['越南', '河内', 'vietnam', 'vietnamese', 'hanoi']],
+    ['缅甸', ['缅甸', '仰光', 'myanmar', 'burma', 'yangon']],
+    ['泰国', ['泰国', '曼谷', 'thailand', 'bangkok']],
+    ['马来西亚', ['马来西亚', 'malaysia', 'malaysian', '吉隆坡', 'kuala lumpur']],
+    ['哈萨克斯坦', ['哈萨克斯坦', '哈萨克', 'kazakhstan', 'kazakh', '阿斯塔纳', 'astana']],
+    ['乌兹别克斯坦', ['乌兹别克斯坦', '乌兹别克', 'uzbekistan', 'uzbek', '塔什干', 'tashkent']],
+    ['沙特阿拉伯', ['沙特阿拉伯', '沙特', 'saudi arabia', 'saudi', '利雅得', 'riyadh']],
+    ['阿联酋', ['阿联酋', 'united arab emirates', 'uae', '迪拜', 'dubai', '阿布扎比', 'abu dhabi']],
+    ['卡塔尔', ['卡塔尔', 'qatar', '多哈', 'doha']],
+    ['土耳其', ['土耳其', 'turkey', 'turkish', 'turkiye', '安卡拉', 'ankara']],
+    ['埃及', ['埃及', 'egypt', 'egyptian', '开罗', 'cairo']],
+    ['南苏丹', ['南苏丹', 'south sudan', '朱巴', 'juba']],
+    ['苏丹', ['苏丹', 'sudan', '喀土穆', 'khartoum']],
+    ['埃塞俄比亚', ['埃塞俄比亚', 'ethiopia', 'ethiopian', 'addis ababa', '亚的斯亚贝巴']],
+    ['肯尼亚', ['肯尼亚', 'kenya', 'kenyan', '内罗毕', 'nairobi']],
+    ['尼日尔', ['尼日尔', 'niger', 'niamey', '尼亚美']],
+    ['马里', ['马里', 'mali', 'bamako', '巴马科']],
+    ['布基纳法索', ['布基纳法索', 'burkina faso', 'ouagadougou']],
+    ['乍得', ['乍得', 'chad', "n'djamena", '恩贾梅纳']],
+    ['刚果(金)', ['刚果(金)', '刚果（金）', 'congo', 'kinshasa', '金沙萨', '基伍']],
+    ['莫桑比克', ['莫桑比克', 'mozambique', 'maputo', '德尔加杜角']],
+    ['南非', ['南非', 'south africa', 'south african', 'johannesburg', '约翰内斯堡', '开普敦', 'pretoria']],
+    ['索马里', ['索马里', 'somalia', 'somali', 'mogadishu', '摩加迪沙']],
+    ['利比亚', ['利比亚', 'libya', 'tripoli', '的黎波里']],
+    ['阿尔及利亚', ['阿尔及利亚', 'algeria', 'algiers', '阿尔及尔']],
+    ['墨西哥', ['墨西哥', 'mexico', 'mexican']],
+    ['哥伦比亚', ['哥伦比亚', 'colombia', 'colombian', 'bogota', '波哥大']],
+    ['委内瑞拉', ['委内瑞拉', 'venezuela', 'venezuelan', 'caracas', '加拉加斯']],
+    ['巴西', ['巴西', 'brazil', 'brazilian', '巴西利亚', 'brasilia']],
+    ['阿根廷', ['阿根廷', 'argentina', 'buenos aires', '布宜诺斯艾利斯']],
+    ['秘鲁', ['秘鲁', 'peru', 'peruvian', 'lima', '利马']],
+    ['智利', ['智利', 'chile', 'chilean', 'santiago']],
+    ['叙利亚', ['叙利亚', 'syria', 'syrian', 'damascus', '大马士革']],
+    ['伊拉克', ['伊拉克', 'iraq', 'iraqi', 'baghdad', '巴格达']],
+    ['也门', ['也门', 'yemen', 'yemeni', 'sanaa', '萨那']],
+    ['黎巴嫩', ['黎巴嫩', 'lebanon', 'beirut', '贝鲁特']],
+    ['约旦', ['约旦', 'jordan', 'amman', '安曼']],
+    ['日本', ['日本', 'japan', 'japanese', '东京', 'tokyo']],
+    ['韩国', ['韩国', 'south korea', 'seoul', '首尔']],
+    ['吉尔吉斯斯坦', ['吉尔吉斯斯坦', '吉尔吉斯', 'kyrgyzstan', 'kyrgyz', '比什凯克', 'bishkek']],
+    ['塔吉克斯坦', ['塔吉克斯坦', '塔吉克', 'tajikistan', 'tajik', 'dushanbe', '杜尚别']],
+    ['尼泊尔', ['尼泊尔', 'nepal', 'kathmandu', '加德满都']],
+    ['斯里兰卡', ['斯里兰卡', 'sri lanka', 'colombo', '科伦坡']],
+    ['孟加拉国', ['孟加拉国', '孟加拉', 'bangladesh', 'dhaka', '达卡']],
+    ['英国', ['英国', 'united kingdom', 'british', 'london', '伦敦']],
+    ['法国', ['法国', 'france', 'french', 'paris', '巴黎']],
+    ['德国', ['德国', 'germany', 'german', 'berlin', '柏林']],
+    ['意大利', ['意大利', 'italy', 'italian', 'rome', '罗马']],
+    ['西班牙', ['西班牙', 'spain', 'spanish', 'madrid', '马德里']],
+    ['澳大利亚', ['澳大利亚', 'australia', 'australian', 'sydney', '悉尼']],
+    ['加拿大', ['加拿大', 'canada', 'canadian', 'ottawa', '渥太华']]
+  ];
+  var ME_CAT_KWS = {
+    terror_events: '恐袭|恐怖袭击|自杀式|爆炸|炸弹|ied|枪击|绑架|劫持|武装袭击|terror|terrorist|explosion|blast|bomb|suicide|militant|gunmen|shooting|kidnap|abduct',
+    military_conflicts: '武装冲突|交火|空袭|内战|炮击|停火|战线|叛乱|clash|airstrike|shelling|conflict|ceasefire|offensive',
+    social_unrest: '罢工|骚乱|示威|游行|暴乱|抗议|抢劫|抢劫案|偷盗|堵路|停产|strike|riot|protest|demonstration|loot|robbery|robbed',
+    political_events: '政变|选举|议会|紧急状态|军方接管|临时政府|coup|election|parliament|martial law',
+    sanctions_data: '制裁|实体清单|出口管制|禁运|反倾销|关税|sanction|ofac|embargo|export control|tariff',
+    natural_disasters: '地震|台风|洪水|海啸|火山|山火|泥石流|干旱|earthquake|typhoon|flood|tsunami|volcano|wildfire',
+    public_health: '疫情|传染病|霍乱|埃博拉|疟疾|感染|食品安全|epidemic|pandemic|cholera|ebola|malaria|outbreak',
+    infrastructure: '港口|铁路|公路|电站|断电|机场|大桥|交通事故|坠毁|追尾|脱轨|blackout|power outage|derail|collision|traffic accident|road accident',
+    security_events: '中资|中企|华人|华侨|中方人员|中国公民|中国工人|chinese nationals|chinese workers|chinese citizens|chinese engineers',
+    economic_risk: '汇率|通胀|违约|外汇|破产|货币贬值|挤兑|inflation|default|devaluation|bank run',
+    geopolitical_intel: '外交|双边|峰会|地缘|军演|部署|summit|diplomat|bilateral',
+    osint_intel: '开源情报|社媒情报|泄露文件|舆情|telegram|osint'
+  };
+  var ME_EN_MON = { january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4, may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8, september: 9, sept: 9, sep: 9, october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12 };
+  var _ME_CN_NUM = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  var ME_NUM = '([0-9]+|[零一二两三四五六七八九十百]+)';
+
+  function _meNum(s) {
+    s = String(s || '').trim();
+    if (/^[0-9]+$/.test(s)) return parseInt(s, 10);
+    if (!/^[零一二两三四五六七八九十百]+$/.test(s)) return null;
+    var sec = 0, num = null;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      if (_ME_CN_NUM[ch] != null) num = _ME_CN_NUM[ch];
+      else if (ch === '十') { sec += (num == null ? 1 : num) * 10; num = null; }
+      else if (ch === '百') { sec += (num == null ? 1 : num) * 100; num = null; }
+    }
+    var v = sec + (num || 0);
+    return v > 0 ? v : null;
+  }
+  function _mePad(n) { return (n < 10 ? '0' : '') + n; }
+  function _meDT(y, mo, d, hh, mi) {
+    return y + '-' + _mePad(mo) + '-' + _mePad(d) + 'T' + _mePad(hh == null ? 0 : hh) + ':' + _mePad(mi == null ? 0 : mi);
+  }
+  function _meMatchNum(t, res) {
+    for (var i = 0; i < res.length; i++) {
+      var m = res[i].exec(t);
+      if (m) { var v = _meNum(m[1]); if (v != null) return v; }
+    }
+    return null;
+  }
+
+  function MEAutoExtract(text) {
+    var t = String(text || '');
+    var out = { country: null, datetime: null, deaths: null, injured: null, casualties: null, cat: null, severity: null };
+    if (!t.trim()) return out;
+    var low = t.toLowerCase();
+    /* --- 国别：收集全部别名命中 → 去掉被长别名覆盖的短命中（南苏丹/苏丹、印尼/印度）→ 取最后出现的国家（"A对B制裁"取受影响国） --- */
+    var hits = [];
+    ME_CTRY_ALIASES.forEach(function (row) {
+      (row[1] || []).forEach(function (a) {
+        var pos = -1;
+        if (/[a-z]/.test(a)) {
+          var suffix = /[a-z0-9]$/.test(a) ? '\\b' : '';
+          try { var m = new RegExp('\\b' + a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + suffix).exec(low); pos = m ? m.index : -1; } catch (e) { pos = -1; }
+        } else pos = t.indexOf(a);
+        if (pos >= 0) hits.push({ pos: pos, len: a.length, name: row[0] });
+      });
+    });
+    hits.sort(function (a, b) { return a.pos - b.pos || b.len - a.len; });
+    var kept = [];
+    hits.forEach(function (h) {
+      var overlap = kept.some(function (k) { return h.pos < k.pos + k.len && k.pos < h.pos + h.len; });
+      if (!overlap) kept.push(h);
+    });
+    if (kept.length) out.country = kept[kept.length - 1].name;
+    /* --- 伤亡 --- */
+    var ZH_FILLER = '[余名个位多]*';
+    out.deaths = _meMatchNum(t, [
+      new RegExp(ME_NUM + '\\s*' + ZH_FILLER + '\\s*人?\\s*(?:死亡|遇难|丧生|罹难|身亡)'),
+      new RegExp('(?:死亡|致死|遇难)[了]?(?:至少|逾|超|约|共|多达)?\\s*' + ME_NUM + '\\s*' + ZH_FILLER + '\\s*人'),
+      new RegExp(ME_NUM + '\\s*(?:[a-z]+\\s+){0,3}?(?:were\\s+)?(?:killed|dead)\\b', 'i'),
+      /\bkilled\s+([0-9]+)\b/i
+    ]);
+    out.injured = _meMatchNum(t, [
+      new RegExp(ME_NUM + '\\s*' + ZH_FILLER + '\\s*人?\\s*受伤'),
+      new RegExp('受伤[了]?(?:至少|逾|超|约|共|多达)?\\s*' + ME_NUM + '\\s*' + ZH_FILLER + '\\s*人'),
+      new RegExp(ME_NUM + '\\s*(?:[a-z]+\\s+){0,3}?(?:were\\s+)?(?:injured|wounded|hurt)\\b', 'i')
+    ]);
+    var mc = _meMatchNum(t, [new RegExp('伤亡\\s*' + ME_NUM + '\\s*[余名个位]*\\s*人?'), new RegExp(ME_NUM + '\\s*[余名个位]*\\s*人?\\s*伤亡')]);
+    if (mc != null) out.casualties = mc;
+    /* --- 日期时间（本地时区换算，禁 toISOString） --- */
+    var y = null, mo = null, d = null, hh = null, mi = null, rel = false;
+    var m;
+    if ((m = /([0-9]{4})\s*[-\/年.]\s*([0-9]{1,2})\s*[-\/月.]\s*([0-9]{1,2})\s*[日号]?/.exec(t))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+    else if ((m = /([0-9]{1,2})\s*月\s*([0-9]{1,2})\s*[日号]/.exec(t))) { y = new Date().getFullYear(); mo = +m[1]; d = +m[2]; }
+    else if ((m = new RegExp('\\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\\.?\\s+([0-9]{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*([0-9]{4}))?', 'i').exec(low))) {
+      mo = ME_EN_MON[m[1].toLowerCase()]; d = +m[2]; y = m[3] ? +m[3] : new Date().getFullYear();
+    }
+    else if ((m = new RegExp('\\b([0-9]{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\\.?(?:\\s*,?\\s*([0-9]{4}))?', 'i').exec(low))) {
+      d = +m[1]; mo = ME_EN_MON[m[2].toLowerCase()]; y = m[3] ? +m[3] : new Date().getFullYear();
+    }
+    else if ((m = /([0-9]{1,2})[-\/]([0-9]{1,2})(?![0-9人名个位])/.exec(t)) && +m[1] >= 1 && +m[1] <= 12 && +m[2] >= 1 && +m[2] <= 31) { y = new Date().getFullYear(); mo = +m[1]; d = +m[2]; }
+    else {
+      /* 相对时间 */
+      var dt = new Date();
+      if ((m = /([0-9]+)\s*个?\s*小时前/.exec(t)) || (m = /([0-9]+)\s*hours?\s*ago/i.exec(t))) { dt.setHours(dt.getHours() - (+m[1])); rel = true; }
+      else if ((m = /([0-9]+)\s*分钟前/.exec(t)) || (m = /([0-9]+)\s*minutes?\s*ago/i.exec(t))) { dt.setMinutes(dt.getMinutes() - (+m[1])); rel = true; }
+      else if ((m = /([0-9]+)\s*天前/.exec(t)) || (m = /([0-9]+)\s*days?\s*ago/i.exec(t))) { dt.setDate(dt.getDate() - (+m[1])); rel = true; }
+      else if (/前天/.test(t)) { dt.setDate(dt.getDate() - 2); rel = true; }
+      else if (/昨天|昨日/.test(t) || /\byesterday\b/i.test(t)) { dt.setDate(dt.getDate() - 1); rel = true; }
+      else if (/今天|今日|当日|当天/.test(t) || /\btoday\b/i.test(t)) { rel = true; }
+      if (rel) { y = dt.getFullYear(); mo = dt.getMonth() + 1; d = dt.getDate(); hh = dt.getHours(); mi = dt.getMinutes(); }
+    }
+    if (y != null) {
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && y >= 2000 && y <= 2100) {
+        if (!rel) { var ck = /([01]?[0-9]|2[0-3])[时:：]([0-5][0-9])分?/.exec(t); if (ck) { hh = +ck[1]; mi = +ck[2]; } }
+        out.datetime = _meDT(y, mo, d, hh, mi);
+      }
+    }
+    /* --- 事件类型：关键词命中数最高者（平局取 CATS 靠前者） --- */
+    var bk = null, bn = 0;
+    CATS.forEach(function (c) {
+      var kws = (ME_CAT_KWS[c.key] || '').split('|'), n = 0;
+      kws.forEach(function (k) { if (k && t.toLowerCase().indexOf(k) >= 0) n++; });
+      if (n > bn) { bn = n; bk = c; }
+    });
+    if (bk) out.cat = { key: bk.key, label: bk.label };
+    /* --- severity：死亡≥5→red；有伤亡→orange；其余 yellow --- */
+    if ((out.deaths || 0) >= 5) out.severity = 'red';
+    else if ((out.deaths || 0) > 0 || (out.injured || 0) > 0 || (out.casualties || 0) > 0) out.severity = 'orange';
+    else out.severity = 'yellow';
+    return out;
+  }
+
   /* ===== CSS（HUD 深空风格：与系统情报指挥中心一致，禁止浅色） ===== */
   var CSS_ID = 'manual-entry-css';
   var CSS_TEXT = [
@@ -196,6 +399,10 @@
     '.me-f.full{grid-column:1/3}',
     '.me-lb{display:block;font-size:10.5px;color:var(--text2);margin-bottom:3px;letter-spacing:.5px}',
     '.me-lb .req{color:var(--red)}',
+    '.me-lb-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+    '.me-lb-row .me-ext-note{font-size:9px;color:var(--text3);font-weight:400;letter-spacing:0}',
+    '.me-extract-btn{margin-left:auto;padding:2px 11px;border:1px solid rgba(0,212,255,.45);border-radius:10px;background:rgba(0,212,255,.08);color:var(--cyan);font-size:10px;cursor:pointer;transition:.15s;white-space:nowrap;letter-spacing:.5px;user-select:none}',
+    '.me-extract-btn:hover{background:rgba(0,212,255,.2);border-color:var(--cyan);box-shadow:0 0 10px rgba(0,212,255,.3)}',
     '.me-in,.me-sel,textarea.me-ta{width:100%;padding:7px 9px;background:rgba(7,11,20,.7);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;font-family:inherit;transition:.15s;outline:none}',
     '.me-in:focus,.me-sel:focus,textarea.me-ta:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(0,212,255,.12)}',
     '.me-sel option{background:#0c1120}',
@@ -446,7 +653,7 @@
       '<div class="me-f"><label class="me-lb">事发时间</label><input class="me-in" type="datetime-local" id="mf-event-time" value="' + esc(d.event_time) + '"></div>' +
       '<div class="me-f"><label class="me-lb">信息获取时间 <span class="req">*</span></label><input class="me-in" type="datetime-local" id="mf-obtained-time" value="' + esc(d.obtained_time || _nowLocal()) + '"></div>' +
       /* 内容 */
-      '<div class="me-f full"><label class="me-lb">内容详述 <span class="req">*</span></label><textarea class="me-ta" id="mf-content" rows="5" placeholder="事件经过 / 情报要点 / 影响评估…">' + esc(d.content) + '</textarea></div>' +
+      '<div class="me-f full"><label class="me-lb me-lb-row">内容详述 <span class="req">*</span><span class="me-ext-note">粘贴事件描述可一键提取国别 / 时间 / 伤亡 / 类别 / 严重程度</span><span class="me-extract-btn" onclick="MANUALENTRY.autoExtract(\'mf-\')">⚡ 自动识别</span></label><textarea class="me-ta" id="mf-content" rows="5" placeholder="事件经过 / 情报要点 / 影响评估…">' + esc(d.content) + '</textarea></div>' +
       /* 涉华 */
       '<div class="me-f"><label class="me-lb">涉华关联（预检结果可覆盖）</label><div style="display:flex;gap:10px;align-items:center"><span class="me-switch' + (d.china_related ? ' on' : '') + '" id="mf-china-sw" onclick="MANUALENTRY.toggleChina()"><span class="me-sw"></span><span class="t">涉华</span></span><input class="me-in" id="mf-china-note" placeholder="关联说明（如涉哪些项目/人员）" value="' + esc(d.china_note) + '"></div></div>' +
       /* 我方利益关联 */
@@ -824,6 +1031,43 @@
       renderFormMain();
       toast('已载入「' + catOf(S.cat).label + '」模板，按占位符填写');
     },
+    /* ===== 内容详述自动识别：只填空字段，不覆盖用户已填值 ===== */
+    autoExtract: function (p) {
+      p = (p === 'ed-') ? 'ed-' : 'mf-';
+      var ta = $(p + 'content'); if (!ta) return;
+      var txt = ta.value || '';
+      if (!txt.trim()) { toast('⚠️ 请先在「内容详述」中粘贴或输入事件描述'); return; }
+      var r = MEAutoExtract(txt);
+      var filled = [], known = [];
+      function put(id, v, label, show) {
+        var el = $(id); if (!el) return;
+        if (String(el.value || '').trim() !== '') return; /* 已有值不覆盖 */
+        el.value = v; filled.push(label + '=' + show);
+      }
+      if (r.country) {
+        var opts = p === 'mf-' ? countryOptions() : [];
+        if (p === 'ed-' || !opts.length || opts.indexOf(r.country) >= 0) put(p + 'country', r.country, '国别', r.country);
+        else known.push('国别=' + r.country + '（不在国别选项，未填）');
+      }
+      if (r.datetime) { known.push('时间=' + r.datetime.replace('T', ' ')); put(p + 'event-time', r.datetime, '时间', r.datetime.replace('T', ' ')); }
+      if (r.deaths != null) { known.push('死亡=' + r.deaths); put(p + 'deaths', r.deaths, '死亡', r.deaths); }
+      if (r.injured != null) { known.push('受伤=' + r.injured); put(p + 'injured', r.injured, '受伤', r.injured); }
+      if (r.casualties != null && r.deaths == null && r.injured == null) known.push('伤亡合计=' + r.casualties + '（未拆分死亡/受伤，未填）');
+      var catTip = '';
+      if (r.cat) {
+        if (p === 'mf-') {
+          if (!S.cat) { ME.pickCat(r.cat.key); filled.push('类别=' + r.cat.label); }
+          else if (S.cat !== r.cat.key) catTip = '类别建议=' + r.cat.label + '（当前已选' + (catOf(S.cat) || { label: '?' }).label + '，未改动）';
+        }
+      }
+      if (p === 'mf-' && r.severity && !S._sevTouched && (S._sev || 'yellow') !== r.severity) {
+        ME.pickSev(r.severity); filled.push('严重程度=' + LEVEL_META[r.severity].label);
+      }
+      if (p === 'mf-') { renderAiBar(); saveDraft(); }
+      if (filled.length) toast('⚡ 识别填充：' + filled.join(' · ') + (catTip ? ' · ' + catTip : ''));
+      else if (known.length) toast('识别到：' + known.join(' · ') + '（对应字段已有值，未覆盖）');
+      else toast('未识别到可填充要素（支持中英文国别 / 日期 / 伤亡 / 事件类型）');
+    },
     toggleChina: function () {
       var sw = $('mf-china-sw'); if (!sw) return;
       sw.classList.toggle('on');
@@ -836,7 +1080,7 @@
     pickRel: function (k) { S._rel = k; var el = $('mf-rel'); if (el) Array.prototype.forEach.call(el.children, function (c) { c.classList.toggle('on', c.querySelector('.k').textContent === k); }); saveDraft(); },
     pickCls: function (k) { S._cls = k; var el = $('mf-cls'); if (el) Array.prototype.forEach.call(el.children, function (c) { c.classList.toggle('on', c.textContent.trim().indexOf(k) >= 0); }); saveDraft(); },
     pickSev: function (k) {
-      S._sev = k;
+      S._sev = k; S._sevTouched = true;
       var el = $('mf-sev'); if (el) Array.prototype.forEach.call(el.children, function (c, i) { c.classList.toggle('on', Object.keys(LEVEL_META)[i] === k); });
       renderAiBar(); saveDraft();
     },
@@ -1030,6 +1274,7 @@
     gotoAlerts: function () { navigateTo('alerts'); }
   };
   window.MANUALENTRY = ME;
+  window.MEAutoExtract = MEAutoExtract; /* 暴露纯函数，便于测试与复用 */
 
   /* ===== 编辑弹层渲染 ===== */
   function renderEditModal() {
@@ -1056,7 +1301,7 @@
       '<div class="me-f full"><label class="me-lb">情报标题 <span class="req">*</span></label><input class="me-in" id="ed-title" value="' + esc(d.title) + '"></div>' +
       '<div class="me-f"><label class="me-lb">国别/地区 <span class="req">*</span></label><input class="me-in" id="ed-country" value="' + esc(d.country) + '"></div>' +
       '<div class="me-f"><label class="me-lb">城市</label><input class="me-in" id="ed-city" value="' + esc(d.city) + '"></div>' +
-      '<div class="me-f full"><label class="me-lb">内容详述 <span class="req">*</span></label><textarea class="me-ta" id="ed-content" rows="5">' + esc(d.content) + '</textarea></div>' +
+      '<div class="me-f full"><label class="me-lb me-lb-row">内容详述 <span class="req">*</span><span class="me-extract-btn" onclick="MANUALENTRY.autoExtract(\'ed-\')">⚡ 自动识别</span></label><textarea class="me-ta" id="ed-content" rows="5">' + esc(d.content) + '</textarea></div>' +
       '<div class="me-f"><label class="me-lb">事发时间</label><input class="me-in" type="datetime-local" id="ed-event-time" value="' + esc(d.event_time) + '"></div>' +
       '<div class="me-f"><label class="me-lb">来源 URL</label><input class="me-in" id="ed-source-url" value="' + esc(d.source_url) + '"></div>' +
       '<div class="me-f"><label class="me-lb">死亡 / 受伤</label><div class="me-2col"><input class="me-in" id="ed-deaths" type="number" value="' + esc(d.deaths) + '"><input class="me-in" id="ed-injured" type="number" value="' + esc(d.injured) + '"></div></div>' +
