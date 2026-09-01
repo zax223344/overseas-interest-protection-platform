@@ -45,7 +45,7 @@ h1{font-size:24px;font-weight:700;color:#eef3fc;letter-spacing:2px}
   <div class="status-row"><span class="dot" id="dot"></span><span id="statusText">正在检测服务器接入地址…</span></div>
   <div class="url-box" id="urlBox">—</div>
   <a class="btn" id="enterBtn" href="javascript:void(0)" style="opacity:.45;pointer-events:none">进 入 系 统</a>
-  <div class="note" id="cdNote" style="display:none">将在 <span id="cd">5</span> 秒后自动进入系统 …</div>
+  <div class="note" id="cdNote" style="display:none">将在 <span id="cd">3</span> 秒后自动进入系统 …</div>
 </div>
 
 <div class="card">
@@ -94,8 +94,23 @@ function copyUrl(){
   alert('已复制：' + liveUrl);
 }
 
-fetch('orps-server.json?t=' + Date.now(), {cache:'no-store'})
-  .then(function(r){ return r.json(); })
+// 多源容灾：github.io 主源 → jsDelivr CDN 镜像 → ghproxy 代理
+var JSON_SOURCES = [
+  'orps-server.json?t=' + Date.now(),
+  'https://cdn.jsdelivr.net/gh/zax223344/overseas-interest-protection-platform@gh-pages/orps-server.json?t=' + Date.now(),
+  'https://ghproxy.com/https://raw.githubusercontent.com/zax223344/overseas-interest-protection-platform/gh-pages/orps-server.json?t=' + Date.now()
+];
+
+function fetchJsonFromSources(idx){
+  if(idx >= JSON_SOURCES.length){
+    return Promise.reject(new Error('all sources failed'));
+  }
+  return fetch(JSON_SOURCES[idx], {cache:'no-store', mode: idx===0 ? 'same-origin' : 'cors', signal: AbortSignal.timeout(8000)})
+    .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+    .catch(function(){ return fetchJsonFromSources(idx+1); });
+}
+
+fetchJsonFromSources(0)
   .then(function(j){
     if(!j || !j.url) throw 0;
     liveUrl = j.url.replace(/\/+$/,'');
@@ -106,9 +121,10 @@ fetch('orps-server.json?t=' + Date.now(), {cache:'no-store'})
     btn.href = liveUrl;
     btn.style.opacity = 1; btn.style.pointerEvents = 'auto';
     makeQr(document.getElementById('qrWeb'), liveUrl);
-    // 倒计时自动进入
+    // 倒计时自动进入（3 秒，提速）
     document.getElementById('cdNote').style.display = 'block';
-    var n = 5, el = document.getElementById('cd');
+    document.getElementById('cd').textContent = '3';
+    var n = 3, el = document.getElementById('cd');
     var timer = setInterval(function(){
       n--; el.textContent = n;
       if(n <= 0){ clearInterval(timer); location.href = liveUrl; }
