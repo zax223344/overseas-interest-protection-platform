@@ -7662,6 +7662,23 @@ async function _runGapScheduler() {
     const roundCap = shortOfFloor > 0 ? 14 : 8;
     let pickCountries = countryGaps.slice(0, nCountry);
     let pickCats = catGaps.slice(0, nCat);
+    /* 2026-09-01 白天验证修复：纯缺口率排序下 TIER2 断粮国（rate=1.0）永远压过 TIER1 半满国
+     * （哈萨克 6/12、沙特 5/12、印尼 10/12 连续数日 0 补采）——TIER1 是利益极重+风险极高梯队，
+     * 须配额保障：每轮补采国至少 2 个最高缺口 TIER1（TIER1 全满时无影响）。 */
+    {
+      const t1Gaps = countryGaps.filter(g => g.tier === 'TIER1');
+      if (t1Gaps.length) {
+        const need = Math.min(2, t1Gaps.length, nCountry);
+        let have = pickCountries.filter(g => g.tier === 'TIER1').length;
+        for (const g of t1Gaps) {
+          if (have >= need) break;
+          if (pickCountries.includes(g)) continue;
+          const rIdx = [...pickCountries].map((p, i) => ({ p, i })).reverse().find(x => x.p.tier === 'TIER2');
+          if (rIdx === undefined) break;
+          pickCountries[rIdx.i] = g; have++;
+        }
+      }
+    }
     if (!pickCountries.length && !pickCats.length) {
       if (dayTotal >= 500) { console.log('[GAP-SCHED] 目标矩阵全达标且已达下限500，本轮空闲'); return; }
       /* 地板补采模式 */
