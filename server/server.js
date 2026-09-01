@@ -7701,10 +7701,26 @@ async function _runGapScheduler() {
           if (iso !== it.seendate) { it.publish_time = iso; it.publishedAt = iso; it.date = iso; }
         }
       });
-      if (arts.length) { try { await _translateListToZhParallel(arts, 4); } catch (e) {} arts.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
+      /* 2026-09-01 旧闻前置拦截：AP/RSS 兜底无时间窗，抓回的旧闻先进翻译管线、再被
+       * _isFreshEnough 时效闸丢弃——纯耗翻译配额（Baidu 54004 实测已耗尽）与轮次耗时。
+       * gap_scheduler 以发布时间为准绳（trustPubDate），发布>24h 或未来>12h 的条目
+       * 翻译后必拒，翻译前直接丢弃；无日期/不可解析日期条目不拦（交给后续闸门）。 */
+      let oldDropped = 0;
+      const fresh = arts.filter(it => {
+        const v = it.publish_time || it.publishedAt || it.date || it.event_date || '';
+        if (!v) return true;
+        const d = new Date(v);
+        const t = isNaN(d.getTime()) ? new Date(String(v).replace('T', ' ')) : d;
+        if (isNaN(t.getTime())) return true;
+        const age = Date.now() - t.getTime();
+        if (age > 24 * 3600 * 1000 || age < -12 * 3600 * 1000) { oldDropped++; return false; }
+        return true;
+      });
+      if (oldDropped) console.log('[GAP-SCHED] 旧闻前置拦截 ' + oldDropped + ' 条（翻译前丢弃，省配额）');
+      if (fresh.length) { try { await _translateListToZhParallel(fresh, 4); } catch (e) {} fresh.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
     };
     /* 通道前置过滤（轻量；全量闸门在 _ingestLinkedItems 内）——拒因分解入库率可观测 */
-    const rejBy = { noise: 0, noUrl: 0, dupTitle: 0, stale: 0, noEvent: 0, nonLatin: 0 };
+    const rejBy = { noise: 0, noUrl: 0, dupTitle: 0, stale: 0, dupCache: 0, noEvent: 0, nonLatin: 0 };
     const _filterBatch = (arts, assign) => {
       const batch = [];
       let cap = 0;
@@ -7717,7 +7733,20 @@ async function _runGapScheduler() {
         if (_BAL_NOISE.test(ctext)) { rejected++; rejBy.noise++; continue; }
         const u = it.url || it.title; if (!u) { rejected++; rejBy.noUrl++; continue; }
         if (_isDupTitle(titleKeysPre, it)) { rejected++; rejBy.dupTitle++; continue; }
-        if (!_isFreshEnough(it)) { rejected++; rejBy.stale++; if (rejBy.stale <= 2) console.log('[GAP-SCHED] 超时拒: ' + String(it.title || '').slice(0, 80) + ' | ' + String(it.publish_time || it.seendate || '')); continue; }
+        if (!_isFreshEnough(it)) {
+          /* 2026-09-01 拒因拆分：_isFreshEnough 的「当天铁律」段里，事件签名/标题指纹已见于库
+           * 的也 return false（多源跟进不新增条目）——此前一律计入 stale，把 13h 大的库内旧闻
+           * 误标「超时拒」严重混淆诊断（实测 gap-sched TIER1 0 入库排查被带偏）。
+           * 先查缓存命中：命中=「库内已有」；未命中才是真超时/无日期。 */
+          const _sig = _eventSignature(it);
+          const _tk = _normTitleKey(it.title_zh || it.title);
+          if (_recentEventSigsCache.has(_sig) || (_tk.length >= 10 && _recentTitleKeysCache.has(_tk))) {
+            rejected++; rejBy.dupCache++;
+            if (rejBy.dupCache <= 2) console.log('[GAP-SCHED] 库内已有拒: ' + String(it.title || '').slice(0, 80));
+            continue;
+          }
+          rejected++; rejBy.stale++; if (rejBy.stale <= 2) console.log('[GAP-SCHED] 超时拒: ' + String(it.title || '').slice(0, 80) + ' | ' + String(it.publish_time || it.seendate || '')); continue;
+        }
         if (!_CAT_EVENT_RE.test(ctext)) { rejected++; rejBy.noEvent++; if (rejBy.noEvent <= 3) console.log('[GAP-SCHED] 无事件词拒: ' + String(it.title || '').slice(0, 80) + (it.title_zh ? ' | 译:' + String(it.title_zh).slice(0, 40) : ' | 未译')); continue; }
         if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; rejBy.nonLatin++; continue; }
         assign(it);
@@ -7783,7 +7812,7 @@ async function _runGapScheduler() {
       });
       if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + (pack ? pack.name : g.ct) + '）'); inserted += (res && res.inserted) || 0; }
     }
-    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限500，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
+    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限500，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
   } catch (e) { console.warn('[GAP-SCHED] 采集失败:', e.message); }
   finally { _gapSchedBusyUntil = 0; }
 }
