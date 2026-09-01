@@ -10296,7 +10296,7 @@ app.post('/api/intel/sidepool/promote', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.delete('/api/intel/sidepool/:id', async (req, res) => {
+app.delete('/api/intel/sidepool/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     await query(`DELETE FROM intel_sidepool WHERE id=$1`, [parseInt(req.params.id, 10)]);
     res.json({ ok: true });
@@ -10433,7 +10433,7 @@ app.put('/api/intel/:id/audit', authMiddleware, adminOnly, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/intel/:id', authMiddleware, async (req, res) => {
+app.delete('/api/intel/:id', authMiddleware, adminOnly, async (req, res) => {  /* 2026-09-01 试用账号权限收敛：删除情报=管理员权限 */
   try {
     const id = parseInt(req.params.id, 10);
     /* 删除即墓碑（2026-08-22 铁律）：先立碑再删行，采集器再抓到同标题/同链接一律拒收 */
@@ -10792,7 +10792,7 @@ app.put('/api/reports/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/reports/:id', authMiddleware, async (req, res) => {
+app.delete('/api/reports/:id', authMiddleware, adminOnly, async (req, res) => {  /* 2026-09-01 试用账号权限收敛：删除 AI 报告=管理员权限（创建/编辑 PUT/POST 保持 user 可用） */
   try { const raw = String(req.params.id || ''); const num = parseInt(raw, 10); await query('DELETE FROM ai_reports WHERE report_id = $1 OR ($2::int IS NOT NULL AND id = $2::int)', [raw, Number.isFinite(num) ? num : null]); res.json({ success: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
