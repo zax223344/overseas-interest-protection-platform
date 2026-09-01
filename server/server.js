@@ -6271,6 +6271,183 @@ function _dedupByUrl(arr) {
     return true;
   });
 }
+/* ===== 国别回填（2026-09-01 任务：no-country 拒 ~200 条/日 —— 漏斗实测条目标题/URL 有明确
+ * 国别证据但 country 字段为空，被 _preInsertGate 拒收。样本："桥梁倒塌后，车辆坠入塔拉克河"
+ * （菲律宾·塔拉克）/"MP PWD Chief Engineer inspects collapsed bridge"（印度·中央邦公共工程部）。
+ * 四层保守策略：①中文国名（长名优先）②英文国名（词边界）③高置信城市/地标白名单 ④信源国家顶级域。
+ * 铁律：仅 country 为空时回填，绝不覆盖已有国别；零虚构——证据必须真实出现在标题/URL 中，
+ * 不确定就不填（宁可不救）；不放宽任何闸门，只救国别字段缺失。
+ * 回填条目打 _countryBackfilled=true（随 data_json 入库，可观测审计）。 */
+const _BF_CN_ALIAS = { '刚果金': '刚果（金）', '印尼': '印度尼西亚', '南韩': '韩国', '南朝鲜': '韩国' };
+const _BF_EN_EXTRA = {
+  'Philippines': '菲律宾', 'Kenya': '肯尼亚', 'Nigeria': '尼日利亚', 'Somalia': '索马里', 'Ethiopia': '埃塞俄比亚',
+  'Ghana': '加纳', 'Mali': '马里', 'Chad': '乍得', 'Cameroon': '喀麦隆', 'Niger': '尼日尔', 'South Africa': '南非',
+  'Mexico': '墨西哥', 'Brazil': '巴西', 'Argentina': '阿根廷', 'Chile': '智利', 'Peru': '秘鲁', 'Colombia': '哥伦比亚',
+  'Venezuela': '委内瑞拉', 'Ecuador': '厄瓜多尔', 'Bolivia': '玻利维亚', 'Haiti': '海地', 'Panama': '巴拿马',
+  'Nepal': '尼泊尔', 'Afghanistan': '阿富汗', 'Syria': '叙利亚', 'Yemen': '也门', 'Israel': '以色列',
+  'Ukraine': '乌克兰', 'Russia': '俄罗斯', 'Myanmar': '缅甸', 'Thailand': '泰国', 'Vietnam': '越南',
+  'Laos': '老挝', 'Cambodia': '柬埔寨', 'Malaysia': '马来西亚', 'Indonesia': '印度尼西亚', 'Bangladesh': '孟加拉国',
+  'Sri Lanka': '斯里兰卡', 'India': '印度', 'Kazakhstan': '哈萨克斯坦', 'Uzbekistan': '乌兹别克斯坦',
+  'Saudi Arabia': '沙特', 'Iran': '伊朗', 'Iraq': '伊拉克', 'Egypt': '埃及', 'Libya': '利比亚', 'Algeria': '阿尔及利亚',
+  'Tunisia': '突尼斯', 'Morocco': '摩洛哥', 'Sudan': '苏丹', 'South Sudan': '南苏丹', 'Tanzania': '坦桑尼亚',
+  'Uganda': '乌干达', 'Rwanda': '卢旺达', 'DR Congo': '刚果（金）', 'Congo': '刚果', 'Zambia': '赞比亚',
+  'Zimbabwe': '津巴布韦', 'Angola': '安哥拉', 'Mozambique': '莫桑比克', 'Guinea': '几内亚', 'Mongolia': '蒙古',
+  'South Korea': '韩国', 'Japan': '日本', 'North Korea': '朝鲜', 'United States': '美国', 'United Kingdom': '英国',
+  'Germany': '德国', 'France': '法国', 'Italy': '意大利', 'Spain': '西班牙', 'Portugal': '葡萄牙', 'Netherlands': '荷兰',
+  'Belgium': '比利时', 'Switzerland': '瑞士', 'Sweden': '瑞典', 'Norway': '挪威', 'Finland': '芬兰', 'Denmark': '丹麦',
+  'Austria': '奥地利', 'Greece': '希腊', 'Poland': '波兰', 'Serbia': '塞尔维亚', 'Hungary': '匈牙利',
+  'Romania': '罗马尼亚', 'Czechia': '捷克', 'Bulgaria': '保加利亚', 'Australia': '澳大利亚', 'New Zealand': '新西兰'
+};
+/* 城市邦省/地标→国别（保守白名单，宁缺毋滥：只收高置信专名，英文按整词匹配防误伤。
+ * 与 _REGION_COUNTRY 有意少量重叠——回填先于闸门执行，重叠只影响标记不影响结果。 */
+const _BF_CITY_COUNTRY = [
+  [['塔拉克', 'Tarlac', '马尼拉', 'Manila', '达沃', 'Davao', '宿务', 'Cebu', '棉兰老', 'Mindanao'], '菲律宾'],
+  [['孟买', 'Mumbai', '新德里', 'New Delhi', 'Delhi', '班加罗尔', 'Bangalore', 'Bengaluru', '加尔各答', 'Kolkata',
+    '金奈', 'Chennai', '中央邦', 'Madhya Pradesh', '北方邦', 'Uttar Pradesh', '比哈尔邦', 'Bihar', 'MP PWD'], '印度'],
+  [['内罗毕', 'Nairobi', '蒙巴萨', 'Mombasa'], '肯尼亚'],
+  [['拉各斯', 'Lagos', '阿布贾', 'Abuja', '卡诺', 'Kano'], '尼日利亚'],
+  [['摩加迪沙', 'Mogadishu', '索马里兰', 'Somaliland'], '索马里'],
+  [['卡拉奇', 'Karachi', '伊斯兰堡', 'Islamabad', '拉合尔', 'Lahore', '白沙瓦', 'Peshawar', '奎达', 'Quetta', '俾路支', 'Balochistan'], '巴基斯坦'],
+  [['科伦坡', 'Colombo', '汉班托塔', 'Hambantota'], '斯里兰卡'],
+  [['曼谷', 'Bangkok', '清迈', 'Chiang Mai', '普吉', 'Phuket'], '泰国'],
+  [['河内', 'Hanoi', '胡志明市', 'Ho Chi Minh', '岘港', 'Da Nang'], '越南'],
+  [['雅加达', 'Jakarta', '泗水', 'Surabaya', '巴厘', 'Bali'], '印度尼西亚'],
+  [['金沙萨', 'Kinshasa', '卢本巴希', 'Lubumbashi', '上加丹加', 'Katanga'], '刚果（金）'],
+  [['金边', 'Phnom Penh'], '柬埔寨'],
+  [['万象', 'Vientiane'], '老挝'],
+  [['仰光', 'Yangon', '曼德勒', 'Mandalay', '若开', 'Rakhine'], '缅甸'],
+  [['达卡', 'Dhaka', '吉大港', 'Chittagong'], '孟加拉国'],
+  [['加德满都', 'Kathmandu'], '尼泊尔'],
+  [['喀布尔', 'Kabul', '坎大哈', 'Kandahar', '赫拉特', 'Herat'], '阿富汗'],
+  [['亚的斯亚贝巴', 'Addis Ababa'], '埃塞俄比亚'],
+  [['开罗', 'Cairo', '西奈', 'Sinai'], '埃及'],
+  [['喀土穆', 'Khartoum', '达尔富尔', 'Darfur'], '苏丹'],
+  [['巴马科', 'Bamako', '廷巴克图', 'Timbuktu', '加奥', 'Gao'], '马里'],
+  [['约翰内斯堡', 'Johannesburg', '开普敦', 'Cape Town', '德班', 'Durban'], '南非'],
+  [['墨西哥城', 'Mexico City', '锡那罗亚', 'Sinaloa', '华雷斯', 'Juarez'], '墨西哥'],
+  [['里约热内卢', 'Rio de Janeiro', '巴西利亚', 'Brasilia'], '巴西'],
+  [['加拉加斯', 'Caracas'], '委内瑞拉'],
+  [['太子港', 'Port-au-Prince'], '海地'],
+  [['波哥大', 'Bogota', '麦德林', 'Medellin'], '哥伦比亚'],
+  [['阿拉木图', 'Almaty', '阿斯塔纳', 'Astana'], '哈萨克斯坦'],
+  [['塔什干', 'Tashkent', '撒马尔罕', 'Samarkand'], '乌兹别克斯坦'],
+  [['东京', 'Tokyo', '大阪', 'Osaka'], '日本'],
+  [['首尔', 'Seoul'], '韩国'],
+  [['平壤', 'Pyongyang'], '朝鲜'],
+  [['莫斯科', 'Moscow', '车臣', 'Chechnya'], '俄罗斯'],
+  [['基辅', 'Kyiv', 'Kiev', '敖德萨', 'Odesa', '哈尔科夫', 'Kharkiv'], '乌克兰'],
+  [['利雅得', 'Riyadh', '吉达', 'Jeddah'], '沙特'],
+  [['迪拜', 'Dubai', '阿布扎比', 'Abu Dhabi'], '阿联酋'],
+  [['德黑兰', 'Tehran', '伊斯法罕', 'Isfahan'], '伊朗'],
+  [['萨那', 'Sanaa', '荷台达', 'Hodeidah', '胡塞', 'Houthi', 'Houthis'], '也门'],
+  [['特拉维夫', 'Tel Aviv', '耶路撒冷', 'Jerusalem', '加沙', 'Gaza'], '以色列'],
+  [['拉巴斯', 'La Paz'], '玻利维亚'],
+  [['基多', 'Quito'], '厄瓜多尔'],
+  /* 第二批（2026-09-01 依据 intel_sidepool 真实 no-country 拒收样本补：悉尼渡轮罢工/基苏穆机场
+   * 罢工/巴格达发电机业主罢工/阿萨姆邦抗议/济州航空坠机/凤凰城轻轨事故/柏林数据被盗…） */
+  [['达古潘', 'Dagupan', '潘加西南', 'Pangasinan'], '菲律宾'],
+  [['阿萨姆邦', 'Assam', '曼尼普尔', 'Manipur', '德干', 'Deccan', '海得拉巴', 'Hyderabad',
+    '艾哈迈达巴德', 'Ahmedabad', '浦那', 'Pune'], '印度'],
+  [['济州', 'Jeju', '釜山', 'Busan', '仁川', 'Incheon'], '韩国'],
+  [['基苏穆', 'Kisumu'], '肯尼亚'],
+  [['悉尼', 'Sydney', '墨尔本', 'Melbourne', '堪培拉', 'Canberra', '珀斯', 'Perth', '布里斯班', 'Brisbane',
+    '卡尔古利', 'Kalgoorlie', '西澳', 'Western Australia'], '澳大利亚'],
+  [['巴格达', 'Baghdad', '摩苏尔', 'Mosul', '巴士拉', 'Basra'], '伊拉克'],
+  [['拉瓦尔品第', 'Rawalpindi', '木尔坦', 'Multan', '费萨拉巴德', 'Faisalabad'], '巴基斯坦'],
+  [['纽瓦克', 'Newark', '凤凰城', '犹他州', 'Utah', '亚利桑那', 'Arizona', '西雅图', 'Seattle',
+    '波士顿', 'Boston', '底特律', 'Detroit', '费城', 'Philadelphia'], '美国'],
+  [['柏林', 'Berlin', '慕尼黑', 'Munich', '汉堡', 'Hamburg'], '德国'],
+  [['巴黎', 'Paris'], '法国'],
+  [['罗马', 'Rome', '米兰', 'Milan'], '意大利'],
+  [['马德里', 'Madrid', '巴塞罗那', 'Barcelona'], '西班牙'],
+  [['里斯本', 'Lisbon'], '葡萄牙'],
+  [['维也纳', 'Vienna'], '奥地利'],
+  [['斯德哥尔摩', 'Stockholm'], '瑞典'],
+  [['奥斯陆', 'Oslo'], '挪威'],
+  [['赫尔辛基', 'Helsinki'], '芬兰'],
+  [['哥本哈根', 'Copenhagen'], '丹麦'],
+  [['布鲁塞尔', 'Brussels'], '比利时'],
+  [['华沙', 'Warsaw'], '波兰'],
+  [['布达佩斯', 'Budapest'], '匈牙利'],
+  [['布加勒斯特', 'Bucharest'], '罗马尼亚'],
+  [['布拉格', 'Prague'], '捷克'],
+  [['索菲亚'], '保加利亚'],
+  [['贝尔格莱德', 'Belgrade'], '塞尔维亚'],
+  [['雅典', 'Athens'], '希腊'],
+  [['奥克兰', 'Auckland', '惠灵顿', 'Wellington'], '新西兰'],
+  [['渥太华', 'Ottawa', '多伦多', 'Toronto', '温哥华', 'Vancouver', '蒙特利尔', 'Montreal'], '加拿大'],
+  [['京都', 'Kyoto', '名古屋', 'Nagoya', '福冈', 'Fukuoka', '横滨', 'Yokohama'], '日本'],
+  [['北爱尔兰', 'Northern Ireland', '利物浦', 'Liverpool'], '英国'],
+  [['蒂华纳', 'Tijuana'], '墨西哥']
+];
+/* 唯一性机构/货币/人物锚→国别（宁缺毋滥：仅收一国专属专名——CJNG 墨西哥贩毒集团/卡扎菲/
+ * 韩元/奈拉/兰特/泰铢/澳航/Adnoc 阿联酋国家石油公司；同名歧义的一律不收） */
+const _BF_LANDMARK_COUNTRY = [
+  [['CJNG'], '墨西哥'],
+  [['卡扎菲', '卡达菲', 'Gaddafi', 'Qaddafi'], '利比亚'],
+  [['韩元'], '韩国'],
+  [['奈拉', 'naira'], '尼日利亚'],
+  [['兰特'], '南非'],
+  [['泰铢'], '泰国'],
+  [['澳航', 'Qantas'], '澳大利亚'],
+  [['Adnoc', 'ADNOC'], '阿联酋']
+];
+/* 国家顶级域→国别（第④层兜底，仅标题三层全失败时按 URL 域后缀判；只收无歧义 ccTLD，
+ * 刻意排除 .com/.co/.io/.tv/.me/.ai/.sh 等被泛用的后缀——宁可不救不误标） */
+const _BF_CCTLD = {
+  ph: '菲律宾', in: '印度', ke: '肯尼亚', ng: '尼日利亚', pk: '巴基斯坦', th: '泰国', vn: '越南', id: '印度尼西亚',
+  lk: '斯里兰卡', bd: '孟加拉国', my: '马来西亚', kh: '柬埔寨', la: '老挝', mm: '缅甸', np: '尼泊尔',
+  kz: '哈萨克斯坦', uz: '乌兹别克斯坦', tj: '塔吉克斯坦', kg: '吉尔吉斯斯坦', mn: '蒙古',
+  et: '埃塞俄比亚', tz: '坦桑尼亚', ug: '乌干达', gh: '加纳', zm: '赞比亚', zw: '津巴布韦', mz: '莫桑比克',
+  ao: '安哥拉', mx: '墨西哥', br: '巴西', pe: '秘鲁', ve: '委内瑞拉', ec: '厄瓜多尔', bo: '玻利维亚',
+  pa: '巴拿马', ht: '海地', eg: '埃及', ma: '摩洛哥', dz: '阿尔及利亚', tn: '突尼斯', ly: '利比亚',
+  sd: '苏丹', so: '索马里', dj: '吉布提', cm: '喀麦隆', td: '乍得', ml: '马里', bf: '布基纳法索', ne: '尼日尔'
+};
+/* 回填索引（懒构建：中文国名按长度降序——"刚果（金）"先于"刚果"、"沙特阿拉伯"先于"沙特"；
+ * 英文国名编译整词正则；GAP_COUNTRY_EN 在文件后部定义，运行期引用无 TDZ 问题） */
+let _bfIdx = null;
+function _bfIndex() {
+  if (_bfIdx) return _bfIdx;
+  const cn = Array.from(new Set(
+    _SIG_COUNTRIES.filter(x => /[\u4e00-\u9fa5]/.test(x))
+      .concat(Object.keys(GAP_COUNTRY_EN))
+      .concat(Object.keys(_BF_CN_ALIAS))
+  )).sort((a, b) => b.length - a.length);
+  const en = Object.assign({}, _BF_EN_EXTRA);
+  Object.keys(GAP_COUNTRY_EN).forEach(k => { if (!en[GAP_COUNTRY_EN[k]]) en[GAP_COUNTRY_EN[k]] = k; });
+  const enRe = Object.keys(en).sort((a, b) => b.length - a.length)
+    .map(k => ({ re: new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i'), cn: en[k] }));
+  const city = _BF_CITY_COUNTRY.concat(_BF_LANDMARK_COUNTRY).map(pair => ({
+    ms: pair[0].map(k => /[\u4e00-\u9fa5]/.test(k)
+      ? { s: k }
+      : { re: new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i') }),
+    cn: pair[1]
+  }));
+  _bfIdx = { cn: cn, en: enRe, city: city };
+  return _bfIdx;
+}
+function _backfillCountry(it) {
+  if (!it || String(it.country || '').trim()) return false;   /* 绝不覆盖已有国别 */
+  const t = String(it.title || '') + ' ' + String(it.title_zh || '');
+  const hit = (c) => { it.country = c; it._countryBackfilled = true; return true; };
+  if (t.trim()) {
+    const idx = _bfIndex();
+    /* ① 中文国名（长名优先） */
+    for (const c of idx.cn) { if (t.indexOf(c) >= 0) return hit(_BF_CN_ALIAS[c] || c); }
+    /* ② 英文国名（整词匹配，大小写不敏感；"India"不误中"Indian Ocean"） */
+    for (const e of idx.en) { if (e.re.test(t)) return hit(e.cn); }
+    /* ③ 高置信城市/地标（保守白名单） */
+    for (const c of idx.city) { if (c.ms.some(m => (m.re ? m.re.test(t) : t.indexOf(m.s) >= 0))) return hit(c.cn); }
+  }
+  /* ④ 信源国家顶级域（仅当标题提取全失败；URL 域后缀可信场景） */
+  const _h = String(it.url || '').toLowerCase().match(/^https?:\/\/([^\/?#]+)/);
+  if (_h) {
+    const host = _h[1].replace(/^www\./, '');
+    const _tld = host.match(/\.([a-z]{2})$/);
+    if (_tld && _BF_CCTLD[_tld[1]]) return hit(_BF_CCTLD[_tld[1]]);
+  }
+  return false;   /* 无国别证据：不填，交给闸门如实拒收 */
+}
 /* 通用 linked 入库通道（2026-08-25 抽取）：GLOBALMEDIA 主循环与涉华安全哨兵共用
  * 同一套 URL去重/标题去重/事件签名/时效/配额/入库/统计链路，任何通道进来的数据过同样的闸。 */
 async function _ingestLinkedItems(items, tag, note) {
@@ -6307,11 +6484,17 @@ async function _ingestLinkedItems(items, tag, note) {
     _rj.bySource[tag].linked += linked.length;
     _rj.bySource[tag].collected += items.length;
     const _bumpRej = (code) => { _rj.bySource[tag].rejected++; if (code === 'dup-url') _rj.dupUrl++; else if (code === 'dup-title' || code === 'dup-title-zh' || code === 'dup-entity') _rj.dupTitle++; else if (code === 'dup-event' || code === 'event-flood') _rj.dupEvent++; else if (code === 'domestic') _rj.domestic++; else if (code === 'bad-title') _rj.badTitle++; else if (code === 'historical') _rj.historical++; else if (code === 'stale') _rj.stale++; else if (code === 'ruua-quota' || code === 'dominant-quota') _rj.ruUa++; else if (code === 'cat-struct') _rj.catStruct++; else if (code === 'no-url') _rj.noUrl++; else if (code === 'insert-err') _rj.insertErr++; };
-    let inserted = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0, skippedCatStruct = 0;
+    let inserted = 0, backfilled = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0, skippedCatStruct = 0;
     let chinaInserted = 0, chinaNegativeInserted = 0;
     const titleKeys = await _getRecentTitleKeys();
     const eventSigs = await _getRecentEventSigs();
     for (const it of linked) {
+      /* 国别回填（2026-09-01）：no-country 拒 ~200 条/日的根因是 country 字段空但标题/URL 有
+       * 国别证据。闸门判定前先回填（仅填空值绝不覆盖），闸门拿到的 country 非空即通过。 */
+      if (_backfillCountry(it)) {
+        backfilled++;
+        if (backfilled <= 5 || backfilled % 50 === 0) console.log('[BACKFILL] 国别回填→' + it.country + ': ' + String(it.title || '').slice(0, 70));
+      }
       const gate = await _preInsertGate(it, existing, titleKeys, eventSigs);
       if (!gate.ok) {
         gate.code.forEach(c => {
@@ -6369,7 +6552,7 @@ async function _ingestLinkedItems(items, tag, note) {
     _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted);
     _logDailyStats();
     _saveRejectsSession();
-    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，类别结构帽 ' + skippedCatStruct + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
+    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + ' / 国别回填 ' + backfilled + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，类别结构帽 ' + skippedCatStruct + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
     return { inserted };
   } catch (e) {
     console.warn('[' + tag + '] PostgreSQL 入库异常（可能未启动），降级写入 osint_intel 文件缓存:', e.message);
