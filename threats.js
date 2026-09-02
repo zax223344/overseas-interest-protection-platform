@@ -269,6 +269,7 @@ const THREATS={
     '</div>'+
     '<div style="display:flex;gap:6px;margin-bottom:14px">'+
       (typeof AIREPORT!=='undefined'?'<button class="btn btn-sm" style="font-size:11px;padding:4px 12px" onclick="AIREPORT.addThreatMaterial(\''+o.id+'\')">📄 加入情报分析</button>':'')+
+      '<button class="btn btn-sm" style="font-size:11px;padding:4px 12px;background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(124,77,255,0.18));border:1px solid rgba(0,212,255,0.4);color:var(--cyan)" onclick="THREATS.aiJudge(\''+o.id+'\')">🤖 AI 研判</button>'+
       '<button class="btn btn-sm" style="font-size:11px;padding:4px 12px" onclick="THREATS.showAssessForm(\''+o.id+'\')">📝 '+(THREAT_ASSESS.has(o.id)?'修改评估':'添加评估')+'</button>'+
       (o.custom?'<button class="btn btn-sm" style="font-size:11px;padding:4px 12px" onclick="THREATS.showOrgForm(\''+o.id+'\')">✏️ 编辑组织</button>':'')+
     '</div>'+
@@ -281,6 +282,7 @@ const THREATS={
       '<div class="dc-tab '+(this.detailTab==='assess'?'active':'')+'" onclick="THREATS.switchTab(\'assess\')">📊 威胁评估</div>'+
       '<div class="dc-tab '+(this.detailTab==='conclusion'?'active':'')+'" onclick="THREATS.switchTab(\'conclusion\')">📝 结论研判</div>'+
       '<div class="dc-tab '+(this.detailTab==='linked'?'active':'')+'" onclick="THREATS.switchTab(\'linked\')">🔗 系统关联</div>'+
+      '<div class="dc-tab '+(this.detailTab==='ai'?'active':'')+'" onclick="THREATS.aiJudge(\''+o.id+'\')">🤖 AI 研判</div>'+
     '</div>'+
     '<div id="threat-detail-content">'+this.renderTab(o)+'</div>';
   },
@@ -291,7 +293,7 @@ const THREATS={
     const el=document.getElementById('threat-detail-content');
     if(el)el.innerHTML=this.renderTab(o);
     document.querySelectorAll('#modal .dc-tab').forEach((t,i)=>{
-      const tabs=['basic','structure','ttp','events','statements','assess','conclusion','linked'];
+      const tabs=['basic','structure','ttp','events','statements','assess','conclusion','linked','ai'];
       t.classList.toggle('active',tabs[i]===tab);
     });
   },
@@ -306,6 +308,7 @@ const THREATS={
       case'assess':return this.tabAssess(o);
       case'conclusion':return this.tabConclusion(o);
       case'linked':return this.tabLinked(o);
+      case'ai':return this.tabAi(o);
       default:return'';
     }
   },
@@ -583,6 +586,60 @@ const THREATS={
         '</div>'
       :'<div style="font-size:11px;color:var(--text3)">暂无关联事件</div>')+
     '</div>';
+  },
+
+  /* ===== AI 研判（2026-09-02：Kimi 大模型四节研判——威胁态势总评/近期行动特征/对华利益关联评估/防范建议）===== */
+  _ai:{},
+  aiJudge(id){
+    this.switchTab('ai');
+    if(!this._ai[id])this.runAiJudge(id);
+  },
+  runAiJudge(id){
+    const self=this;
+    this._ai[id]={loading:true};
+    this._refreshAiTab(id);
+    fetch('/api/models/agent/org-analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orgId:id})})
+      .then(function(r){return r.json();})
+      .then(function(d){self._ai[id]={loading:false,data:d};self._refreshAiTab(id);})
+      .catch(function(e){self._ai[id]={loading:false,error:String(e&&e.message||e)};self._refreshAiTab(id);});
+  },
+  _refreshAiTab(id){
+    if(this.selectedId!==id||this.detailTab!=='ai')return;
+    const el=document.getElementById('threat-detail-content');
+    const o=this.findOrg(id);
+    if(el&&o)el.innerHTML=this.tabAi(o);
+  },
+  tabAi(o){
+    const st=this._ai[o.id];
+    const head='<div style="background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(124,77,255,0.08));border:1px solid rgba(0,212,255,0.25);border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<div style="flex:1;min-width:240px;font-size:11px;color:var(--text2);line-height:1.7">基于组织档案 + 系统归因统计（近 30 天事件 / 威胁指数 / Hawkes 强度 / 涉华比例），由大模型生成四节研判：<span style="color:var(--cyan)">威胁态势总评 / 近期行动特征 / 对华利益关联评估 / 防范建议</span>，数据零模拟。</div>'+
+      '<button class="btn btn-sm" style="font-size:11px;padding:4px 14px;flex-shrink:0" onclick="THREATS.runAiJudge(\''+o.id+'\')">🔄 重新研判</button>'+
+    '</div>';
+    if(!st){
+      return head+'<div class="empty" style="padding:40px"><div class="ic" style="font-size:40px">🤖</div><div style="font-size:13px;color:var(--text2);margin:12px 0">启动大模型对该组织进行综合研判</div><button class="btn" style="font-size:12px;padding:6px 20px" onclick="THREATS.runAiJudge(\''+o.id+'\')">🤖 立即研判</button></div>';
+    }
+    if(st.loading){
+      return head+'<div style="text-align:center;padding:50px 0"><div style="font-size:32px;display:inline-block;animation:spin 1.2s linear infinite">🤖</div><div style="font-size:12px;color:var(--cyan);margin-top:12px">大模型研判生成中（约 30-90 秒）……</div></div>';
+    }
+    if(st.error||!st.data||!st.data.ok){
+      return head+'<div class="empty" style="padding:30px"><div class="ic" style="font-size:36px">⚠️</div><div style="font-size:12px;color:var(--red);margin:10px 0">研判失败：'+((st.data&&st.data.error)||st.error||'未知错误')+'</div><button class="btn" style="font-size:12px" onclick="THREATS.runAiJudge(\''+o.id+'\')">重试</button></div>';
+    }
+    const ag=st.data.agent||{};
+    if(ag.error){
+      return head+'<div class="empty"><div class="ic">⚠️</div><div>'+ag.error+'</div></div>';
+    }
+    const icons={'威胁态势总评':'🎯','近期行动特征':'⚔️','对华利益关联评估':'🛰️','防范建议':'🛡️'};
+    const secs=(ag.sections||[]).map(function(s){
+      return '<div style="background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--cyan);border-radius:8px;padding:12px 14px;margin-bottom:10px">'+
+        '<div style="font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:6px">'+(icons[s.title]||'📌')+' '+s.title+'</div>'+
+        '<div style="font-size:12px;color:var(--text);line-height:1.8;white-space:pre-wrap">'+s.body+'</div>'+
+      '</div>';
+    }).join('');
+    const srcBadge=ag.source==='llm'
+      ?'<span class="badge b-green">AI 生成 · '+ag.model+' · '+ag.elapsed+'</span>'
+      :'<span class="badge b-yellow">规则化降级 · '+ag.model+' · '+ag.elapsed+'</span>';
+    return head+secs+
+      '<div style="font-size:10px;color:var(--text3);margin-top:4px">'+srcBadge+' 证据链 '+(st.data.evidenceIds||[]).length+' 条 · '+(ag.dataNote||'')+'</div>';
   },
 
   /* ===== 评估结论表单 ===== */
