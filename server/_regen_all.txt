@@ -1,0 +1,30 @@
+=== 重生成前抽样（旧版特征）===
+2026-08-13: {"len":914,"abstract":true,"trend":false,"donut":true,"treemap":false,"gbt":true,"tier":false,"fixed28":true}
+2026-08-22: {"len":969,"abstract":true,"trend":true,"donut":true,"treemap":true,"gbt":true,"tier":false,"fixed28":true}
+2026-09-01: {"len":3037,"abstract":true,"trend":true,"donut":true,"treemap":true,"gbt":true,"tier":false,"fixed28":true}
+=== 逐日重生成（升序，force）===
+2026-08-13 ✓ total=0 字数=914 CHECK (13ms)
+2026-08-14 ✓ total=0 字数=942 CHECK (9ms)
+2026-08-15 ✓ total=0 字数=942 CHECK (7ms)
+2026-08-16 ✓ total=0 字数=942 CHECK (8ms)
+2026-08-17 ✓ total=0 字数=942 CHECK (7ms)
+2026-08-18 ✓ total=0 字数=942 CHECK (6ms)
+2026-08-19 ✓ total=0 字数=942 CHECK (7ms)
+2026-08-20 ✓ total=0 字数=942 CHECK (7ms)
+2026-08-21 ✓ total=0 字数=942 CHECK (6ms)
+2026-08-22 ✓ total=0 字数=942 CHECK (6ms)
+2026-08-23 ✓ total=0 字数=942 CHECK (5ms)
+2026-08-24 ✓ total=0 字数=942 CHECK (6ms)
+2026-08-25 ✓ total=0 字数=942 CHECK (6ms)
+2026-08-26 ✓ total=262 字数=3147 PASS (49ms)
+2026-08-27 ✓ total=319 字数=2901 PASS (39ms)
+2026-08-28 ✓ total=400 字数=3070 PASS (48ms)
+2026-08-29 ✓ total=367 字数=2802 PASS (76ms)
+2026-08-30 ✓ total=317 字数=2443 CHECK (40ms)
+2026-08-31 ✓ total=883 字数=3260 PASS (97ms)
+2026-09-01 ✓ total=1137 字数=3038 PASS (134ms)
+=== 抽检对比（最早/中间/最新）===
+2026-08-13 旧版: 字数=914 提要=true 三图=false GB9704=true → 新版: 字数=914 提要=true 三图=false GB9704=true 无分层标签=true
+2026-08-22 旧版: 字数=969 提要=true 三图=true GB9704=true → 新版: 字数=942 提要=true 三图=true GB9704=true 无分层标签=true
+2026-09-01 旧版: 字数=3037 提要=true 三图=true GB9704=true → 新版: 字数=3038 提要=true 三图=true GB9704=true 无分层标签=true
+=== 全量结论: 20 个日期重生成，全部应用新格式 ===
