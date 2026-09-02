@@ -765,6 +765,58 @@ var THREATROOM = {
     return parts.join('；') + '。';
   },
 
+  /* ═══ AI 归纳（2026-09-02：检索结果 top15 → /api/models/agent/search-analyst 大模型结构化归纳）═══ */
+  _aiSummarize: function () {
+    var self = this;
+    var box = document.getElementById('tr-ai-summary');
+    if (!box || !this._entity) return;
+    if (!this._items || !this._items.length) { box.innerHTML = this._aiErrHtml('当前无检索结果，请先执行检索'); return; }
+    /* top15 按时间倒序（含本轮全网命中） */
+    var tops = this._items.slice().sort(function (a, b) { return self._tsOf(b) - self._tsOf(a); }).slice(0, 15);
+    var payload = {
+      query: this._entity.cn,
+      items: tops.map(function (it) {
+        var t = self._tsOf(it);
+        return { t: self._title(it), c: it.country || '', d: (t ? new Date(t).toISOString().slice(0, 10) : ''), s: it.source || '', l: it.level || '', w: it.chinaRelated === true };
+      })
+    };
+    var cacheKey = this._entity.cn + '#' + this._days + '#' + payload.items.length + '#' + (tops[0] && (tops[0].url || tops[0].title) || '');
+    this._aiCacheKey = cacheKey;
+    if (this._aiCache && this._aiCache[cacheKey]) { this._aiRender(this._aiCache[cacheKey]); return; }
+    box.innerHTML = '<div class="card" style="padding:16px;text-align:center;font-size:12.5px;color:var(--cyan,#00d4ff)"><span class="tr-spin"></span> 大模型正在归纳 ' + payload.items.length + ' 条检索结果（约 30-90 秒）……</div>';
+    var base = this._apiBase();
+    fetch(base + '/api/models/agent/search-analyst', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(200000) })
+      .then(function (r) { return r.ok ? r.json() : { ok: false, error: 'HTTP ' + r.status }; })
+      .then(function (d) { self._aiCache = self._aiCache || {}; self._aiCache[self._aiCacheKey] = d; self._aiRender(d); })
+      .catch(function (e) { box.innerHTML = self._aiErrHtml('归纳失败：' + self._esc(e.message || String(e))); });
+  },
+  _aiErrHtml: function (msg) {
+    return '<div class="card" style="padding:12px;font-size:12px;color:var(--orange,#f59e0b)">⚠️ ' + this._esc(msg) + '</div>';
+  },
+  _aiRender: function (d) {
+    var box = document.getElementById('tr-ai-summary');
+    if (!box) return;
+    if (!d || !d.ok || !d.agent) { box.innerHTML = this._aiErrHtml((d && d.error) || '服务异常'); return; }
+    var ag = d.agent;
+    if (ag.error) { box.innerHTML = this._aiErrHtml(ag.error); return; }
+    var icons = [['信息全景归纳', '🧭'], ['风险主题提炼', '🎯'], ['关注建议', '📌']];
+    var secs = (ag.sections || []).map(function (s) {
+      var ic = '📌';
+      for (var i = 0; i < icons.length; i++) { if (String(s.title).indexOf(icons[i][0]) >= 0) { ic = icons[i][1]; break; } }
+      return '<div style="background:var(--panel2,#0d1424);border:1px solid var(--border,#1e2a40);border-left:3px solid var(--cyan,#00d4ff);border-radius:8px;padding:12px 14px;margin-bottom:10px">' +
+        '<div style="font-size:12.5px;font-weight:700;color:var(--cyan,#00d4ff);margin-bottom:6px">' + ic + ' ' + THREATROOM._esc(s.title) + '</div>' +
+        '<div style="font-size:12px;color:var(--text,#e8eefc);line-height:1.85;white-space:pre-wrap">' + THREATROOM._esc(s.body) + '</div></div>';
+    }).join('');
+    var badge = ag.source === 'llm'
+      ? '<span class="tr-badge" style="color:var(--green,#22c55e);border-color:var(--green,#22c55e)55">AI 生成 · ' + this._esc(ag.model) + ' · ' + this._esc(ag.elapsed) + '</span>'
+      : '<span class="tr-badge" style="color:var(--yellow,#eab308);border-color:var(--yellow,#eab308)55">规则化降级 · ' + this._esc(ag.model) + '</span>';
+    box.innerHTML = '<div class="card" style="padding:14px;margin-bottom:12px">' +
+      '<div class="card-tt"><span class="ic">🤖</span>AI 归纳 · 检索结果大模型研判' +
+      '<span style="margin-left:auto;font-weight:400;font-size:11px">' + badge + '</span></div>' +
+      '<div style="margin-top:10px">' + secs + '</div>' +
+      '<div style="font-size:10px;color:var(--text3,#7a8aa3)">' + this._esc(ag.dataNote || '') + '</div></div>';
+  },
+
   _renderReport: function () {
     var rep = document.getElementById('tr-rep');
     if (!rep || !this._entity) return;
@@ -822,8 +874,11 @@ var THREATROOM = {
     /* 操作条 */
     html += '<div style="display:flex;gap:8px;margin:-4px 0 12px 2px">' +
       '<button class="tr-go" style="padding:6px 16px;font-size:12px" onclick="THREATROOM._copyReport()">📋 复制报告全文</button>' +
-      '<button class="tr-go" style="padding:6px 16px;font-size:12px" onclick="THREATROOM.run(document.getElementById(\'tr-q\').value)">🔄 重新采集</button></div>';
+      '<button class="tr-go" style="padding:6px 16px;font-size:12px" onclick="THREATROOM.run(document.getElementById(\'tr-q\').value)">🔄 重新采集</button>' +
+      '<button class="tr-go" id="tr-ai-btn" style="padding:6px 16px;font-size:12px;border-color:var(--cyan,#00d4ff);color:var(--cyan,#00d4ff)" onclick="THREATROOM._aiSummarize()">🤖 AI 归纳</button></div>';
     html += '</div>';
+    /* AI 归纳结果容器（2026-09-02：检索结果 top15 喂大模型出结构化归纳） */
+    html += '<div id="tr-ai-summary"></div>';
 
     /* ── 预警图 + 7 天趋势 双栏 ── */
     html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">';
