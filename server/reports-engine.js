@@ -126,11 +126,13 @@ async function fetchItems(q, start, end) {
     };
   });
 }
-/* 三过滤：体育噪声 / 标题无汉字（落库即中文铁律） */
+/* 三过滤：体育噪声 / 标题无汉字（落库即中文铁律）；同时归一标题中中文邻接的半角标点
+ * （2026-09-03 实测：源标题"实施制裁.华盛顿"类残留——报告正文条目也须公文标点规范） */
 function cleanItems(items) {
   return items.filter(i => {
     if (_NOISE_RE.test(String(i.title || ''))) return false;
     if (!_HAN.test(String(i.title || ''))) return false;
+    if (i.title) i.title = i.title.replace(/([\u4e00-\u9fa5])[,;]([\u4e00-\u9fa5])/g, '$1，$2').replace(/([\u4e00-\u9fa5])\.([\u4e00-\u9fa5])/g, '$1。$2').replace(/([\u4e00-\u9fa5])[;:?!]([\u4e00-\u9fa5])/g, function (m, a, b) { return a + { ';': '；', ':': '：', '?': '？', '!': '！' }[m[1]] + b; });
     return true;
   });
 }
@@ -377,8 +379,13 @@ function pvKimi() {
     base: (process.env.LLM_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/+$/, ''),
     key: process.env.LLM_API_KEY || '',
     model: process.env.LLM_MODEL || 'kimi-k2.7-code',
-    maxTokens: 8000,
-    timeout: 180000
+    /* 2026-09-03 真根因破案：kimi-k2.7-code 是推理模型，8000 max_tokens 会被思考阶段
+     * 消耗殆尽（实测 finish_reason=length + content 空），复杂主题（制裁/冲突类）必然翻车。
+     * 放宽到 16000 同时保留 300s 超时 */
+    maxTokens: 16000,
+    /* 2026-09-03：kimi-k2.7 长公文生成（制裁/冲突类分节多、输出 6000+ 字）实测 180s 不够
+     * （chokepoint 148s 成功、sanction/conflict 连续 180s 超时），放宽到 300s */
+    timeout: 300000
   };
 }
 /* 兜底 callMsg（与 server.js _callOpenAiCompatMsg 同协议；server.js 注入优先） */
@@ -409,6 +416,63 @@ function _callMsgDefault(pv, system, user) {
     } catch (e) { resolve({ text: '', error: e.message }); }
   });
 }
+/* 2026-09-03 流式调用根治超时：kimi-k2.7 对"逐项研判"类 prompt 推理链深，
+ * 非流式需整段生成完才返回（制裁/冲突类实测 >300s 必超时；咽喉要道 148s 险过）。
+ * 改 stream:true 增量接收——① thinking/reasoning_content 增量也在流里，无长时间静默；
+ * ② pv.timeout 语义变为"无数据停滞"超时（每收到 chunk 即重置）；
+ * ③ 另设 _STREAM_TOTAL_MS 总时长硬帽。 */
+function _callMsgStream(pv, system, user) {
+  return new Promise((resolve) => {
+    try {
+      const msgs = [];
+      if (system) msgs.push({ role: 'system', content: system });
+      msgs.push({ role: 'user', content: user });
+      const body = JSON.stringify({ model: pv.model, messages: msgs, max_tokens: pv.maxTokens, stream: true });
+      const u = new URL(pv.base + '/chat/completions');
+      const t0 = Date.now();
+      const done = (r) => { if (finished) return; finished = true; clearTimeout(totalTimer); try { rq.destroy(); } catch (e) {} resolve(r); };
+      let finished = false;
+      let buf = '', text = '', firstChunkAt = 0, errText = '';
+      const rq = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', timeout: pv.timeout, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pv.key, 'Content-Length': Buffer.byteLength(body) } }, (rs) => {
+        if (rs.statusCode !== 200) {
+          rs.on('data', c => { errText += c.toString('utf8'); });
+          rs.on('end', () => {
+            let m = errText.slice(0, 200);
+            try { const j = JSON.parse(errText); m = ((j.error || {}).message) || j.message || m; } catch (e) {}
+            done({ text: '', error: 'HTTP ' + rs.statusCode + ' ' + m });
+          });
+          return;
+        }
+        rs.on('data', c => {
+          if (!firstChunkAt) firstChunkAt = Date.now() - t0;
+          buf += c.toString('utf8');
+          let idx;
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') return done(text ? { text, error: '' } : { text: '', error: '空内容' });
+            try {
+              const j = JSON.parse(payload);
+              if (j.error) return done({ text: '', error: ((j.error || {}).message) || '流式返回错误' });
+              const d = ((j.choices || [])[0] || {}).delta || {};
+              if (d.content) text += d.content; /* reasoning_content 增量忽略（仅思考过程） */
+            } catch (e) { /* 半行/心跳行，跳过 */ }
+          }
+        });
+        rs.on('end', () => done(text ? { text, error: '' } : { text: '', error: '流提前断开' + (firstChunkAt ? '' : '（首字节未到）') }));
+        rs.on('error', e => done({ text: '', error: e.message }));
+      });
+      rq.on('error', e => done({ text: '', error: e.message }));
+      /* 停滞超时：流式下每 chunk 自动重置；只静默超过 pv.timeout 才断 */
+      rq.on('timeout', () => done({ text: '', error: '流停滞' + Math.round(pv.timeout / 1000) + '秒（首字节' + (firstChunkAt ? firstChunkAt + 'ms' : '未到') + '，已累计' + text.length + '字）' }));
+      const totalTimer = setTimeout(() => done({ text: '', error: '总时长超' + Math.round(_STREAM_TOTAL_MS / 1000) + '秒（已累计' + text.length + '字）' }), _STREAM_TOTAL_MS);
+      rq.end(body);
+    } catch (e) { resolve({ text: '', error: e.message }); }
+  });
+}
+const _STREAM_TOTAL_MS = 600000;
 /* 9 类共用 system prompt 基座（公文要求） */
 const SYSTEM_PROMPT = '你是中国海外利益保护情报预警平台的高级情报分析员，为外交部、商务部、公安部、国家安全部、中央企业领导撰写专业分析报告。写作要求：一、严格党政机关公文语体，庄重、准确、简明，不用口语和网络用语；二、结构层次序号：一级"一、"，二级"（一）"，三级"1."，四级"（1）"；三、标点符号严格按 GB/T 15834：中文语境一律全角标点，并列词语用顿号、分句用逗号、句末用句号，书名号《》用于文件与报告名，引号用""\'\'，严禁出现半角逗号句号残留；四、数字用法按 GB/T 15835：统计数据用阿拉伯数字，约数用"约""余"；五、判断要有分寸，区分"已证实""研判认为""需持续关注"三级确定性表述；六、只基于给定数据研判，数据未涉及的领域不得杜撰；七、输出为纯文本公文，严禁使用任何 Markdown 语法（星号加粗、井号标题、反引号、竖线表格等）。';
 /* 客观数据 → user prompt */
@@ -439,13 +503,14 @@ function buildUserPrompt(def, periodKey, win, data) {
 function _cnNum(n) { return ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五'][n - 1] || String(n); }
 /* LLM 调用：失败重试 1 次，仍失败返回 ok:false（报告照常出，研判节降级文案） */
 async function runLlm(def, periodKey, win, data) {
-  const call = (_ctx && _ctx.llm && _ctx.llm.callMsg) ? _ctx.llm.callMsg : _callMsgDefault;
   const pv = pvKimi();
   if (!pv.key) return { ok: false, text: '', model: '', error: '未配置 LLM_API_KEY' };
   const user = buildUserPrompt(def, periodKey, win, data);
   let lastErr = '';
   for (let i = 0; i < 2; i++) {
-    const r = await call(pv, SYSTEM_PROMPT, user);
+    /* 优先流式（根治长推理超时）；流式失败第 2 次回落注入的非流式通道双保险 */
+    const r = (i === 0) ? await _callMsgStream(pv, SYSTEM_PROMPT, user)
+      : await ((_ctx && _ctx.llm && _ctx.llm.callMsg) ? _ctx.llm.callMsg(pv, SYSTEM_PROMPT, user) : _callMsgDefault(pv, SYSTEM_PROMPT, user));
     if (r && r.text) return { ok: true, text: stripMarkdown(r.text), model: pv.model };
     lastErr = (r && r.error) || '未知错误';
     console.warn('[REPORTS] ' + def.id + ' LLM 第' + (i + 1) + '次调用失败：' + lastErr);
