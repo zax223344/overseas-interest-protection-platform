@@ -10092,6 +10092,20 @@ async function _tryYoudao(text) {
  * 任一通道不可用/限频/余额耗尽即自动切换下一通道，保证实战系统翻译不中断。 */
 /* 翻译质量校验（2026-08-17 用户指令：译文必须是合格中文，不是原文复读/乱码）：
  * ① 非空且≠原文 ② 含足量中文（CJK 占比≥15%）③ 长度比合理（0.2x~4x）④ 无大面积未译外文 */
+/* 2026-09-02 幻觉护栏（存量修复实测 TranSmart 葡语源把巴西银行家系统性幻觉成"马化腾"）：
+ * 译文含中国商界名人而原文无对应英文/拼音/企业标识 → 判定幻觉，拒绝该译文，
+ * 翻译链自动降级下一引擎。双测设计：涉华新闻合法提及时原文必有 Tencent/Alibaba 等标识词，不会误伤。 */
+const _HALLUC_NAMES = [
+  ['马化腾', /tencent|ma\s?huateng|pony\s?ma/i],
+  ['马云', /jack\s?ma|alibaba/i],
+  ['刘强东', /liu\s?qiangdong|liu\s?qiandong|jd\.com|richard\s?liu/i],
+  ['王健林', /wang\s?jianlin|wanda/i],
+  ['李彦宏', /robin\s?li|baidu/i],
+  ['雷军', /lei\s?jun|xiaomi/i],
+  ['董明珠', /dong\s?mingzhu|gree/i],
+  ['任正非', /ren\s?zhengfei|huawei/i],
+  ['王思聪', /wang\s?sicong/i],
+];
 function _translationOk(src, dst) {
   const a = String(src || '').trim(), b = String(dst || '').trim();
   if (!a || !b) return false;
@@ -10115,6 +10129,10 @@ function _translationOk(src, dst) {
   /* 常见未翻译英文短语黑名单 */
   const untranslatedPhrases = /US designates|UK-based|Action as foreign|terrorist group|as foreign|designates.*as|said in a statement|according to.*said/i;
   if (untranslatedPhrases.test(b) && cjk / b.length < 0.6) return false;
+  /* ⑤ 2026-09-02 幻觉护栏：译文冒出中国商界名人而原文无对应标识 → TranSmart 小语种幻觉，拒绝降级 */
+  for (let i = 0; i < _HALLUC_NAMES.length; i++) {
+    if (b.indexOf(_HALLUC_NAMES[i][0]) >= 0 && !_HALLUC_NAMES[i][1].test(a)) return false;
+  }
   return true;
 }
 
