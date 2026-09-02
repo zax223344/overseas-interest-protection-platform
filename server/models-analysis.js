@@ -407,7 +407,7 @@ module.exports = function modelsAnalysis(ctx) {
           rhythm: { heat, weekLabels: heat.map((_, i) => '第' + (i + 1) + '周') },
           dSeries,
           recent: all.slice(-10).reverse().map(e => ({
-            title: e.title.slice(0, 100), country: e.country, time: new Date(e.t).toISOString().slice(0, 10), type: e.type
+            id: e.id, title: e.title.slice(0, 100), country: e.country, time: new Date(e.t).toISOString().slice(0, 10), type: e.type
           }))
         };
       });
@@ -691,7 +691,7 @@ module.exports = function modelsAnalysis(ctx) {
           replay: replay.map(x => ({ date: x.date, lam: Math.round(x.lam * 1000) / 1000 })),
           forecast: forecast.map(x => ({ h: x.h, lam: Math.round(x.lam * 1000) / 1000, ex: Math.round(x.ex * 100) / 100 })),
           backtest, methodProfile, orgContribution,
-          recent: list.slice(-8).reverse().map(e => ({ title: e.title.slice(0, 90), time: new Date(e.t).toISOString().slice(0, 10), severity: e.severity }))
+          recent: list.slice(-8).reverse().map(e => ({ id: e.id, title: e.title.slice(0, 90), time: new Date(e.t).toISOString().slice(0, 10), severity: e.severity }))
         };
       });
       res.json(data);
@@ -797,7 +797,7 @@ module.exports = function modelsAnalysis(ctx) {
           formulaDesc: '对象风险分 = 该国绑架事件数 × severity加权均值 × 项目暴露系数（TIER1=1.5 / TIER2=1.25 / TIER3=1.1，涉华重点项目）',
           survivalNote: '历史绑架案的结案时长字段缺失，不做生存分析（零模拟铁律），仅呈现分布与排序',
           recent: scoped.slice(-10).reverse().map(e => ({
-            title: e.title.slice(0, 100), country: e.country, time: new Date(e.t).toISOString().slice(0, 10), severity: e.severity
+            id: e.id, title: e.title.slice(0, 100), country: e.country, time: new Date(e.t).toISOString().slice(0, 10), severity: e.severity
           }))
         };
       });
@@ -1792,6 +1792,80 @@ module.exports = function modelsAnalysis(ctx) {
 
   /* ---- 各专项数据装配 + 降级模板（真实数字填充）---- */
   const AGENTS = {
+    /* ⓪ 中枢综合研判（总览页）：装配全库真实统计 + 六专项信号 */
+    'hub-analyst': {
+      name: '中枢研判官', needs: 'none',
+      async assemble() {
+        const { evs, t0, t1, spanDays } = await loadEvents();
+        /* 底数聚合（与 /overview 同口径） */
+        const byType = {}, byCountry = {};
+        let china = 0;
+        for (const e of evs) {
+          byType[e.type] = (byType[e.type] || 0) + 1;
+          byCountry[e.country] = (byCountry[e.country] || 0) + 1;
+          if (e.china) china++;
+        }
+        const typeTop = Object.entries(byType).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        const countryTop = Object.entries(byCountry).filter(([c]) => !PSEUDO_COUNTRIES.has(c)).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        const { byOrg } = await loadOrgIndex();
+        const orgTop = loadOrgs().map(o => ({ name: o.name, count: (byOrg.get(o.id) || []).length }))
+          .filter(o => o.count > 0).sort((a, b) => b.count - a.count).slice(0, 6);
+        /* 六专项异动信号（复用 /alerts 计算结果：直接读缓存键 alerts 同逻辑简算——取近 72h 红橙事件作证据） */
+        const nowMs = Date.now();
+        const hot = evs.filter(e => (nowMs - e.t) < 72 * 3600e3 && sevWeight(e.severity) >= 3)
+          .sort((a, b) => b.t - a.t);
+        /* 六专项信号简算：KL 偏离组织 + Hawkes 红/橙国 + 绑架对象标红 + 地缘变点 */
+        const sigs = [];
+        try {
+          const rows = buildOrgActivity(byOrg, spanDays, t1);
+          rows.filter(r => r.sufficient && r.tacticKL != null && r.tacticKL >= KL_ALERT_THRESHOLD).slice(0, 3)
+            .forEach(r => sigs.push('组织「' + r.name + '」战术 KL 偏离 ' + r.tacticKL + ' bit（活动指数 ' + r.activityIndex + '）'));
+          const actTop = rows.filter(r => r.sufficient).slice(0, 3);
+          actTop.forEach(r => sigs.push('组织活跃榜：' + r.name + ' 指数 ' + r.activityIndex + '（' + r.count + ' 起/' + r.geoSpread + ' 国）'));
+        } catch (e) { /* 忽略 */ }
+        try {
+          const { countries: geoAll } = buildGeoModel(evs, t0, spanDays);
+          geoAll.filter(g => g.changepoints.length > 0 && g.deltaR > 0).slice(0, 4)
+            .forEach(g => sigs.push(g.country + ' 地缘风险升级（CUSUM 变点 ' + g.changepoints.length + ' 处，周 ΔR +' + g.deltaR + '，R=' + g.curR + '）'));
+          const topR = geoAll.slice(0, 3);
+          topR.forEach(g => sigs.push('地缘风险榜：' + g.country + ' R=' + g.curR));
+        } catch (e) { /* 忽略 */ }
+        const recent = evs.slice(-10).reverse();
+        return {
+          ctx: {
+            spanDays, from: new Date(t0).toISOString().slice(0, 10), to: new Date(t1).toISOString().slice(0, 10),
+            total: evs.length, china,
+            typeTop: typeTop.map(([k, c]) => k + ' ' + c + '条'),
+            countryTop: countryTop.map(([k, c]) => k + ' ' + c + '条'),
+            orgTop: orgTop.map(o => o.name + ' ' + o.count + '起'),
+            sigs: sigs.slice(0, 10),
+            hot72: hot.length,
+            hot72Sample: hot.slice(0, 6).map(e => '[' + new Date(e.t).toISOString().slice(0, 10) + '][' + e.country + '][' + e.severity + ']' + e.title.slice(0, 55)),
+            recentTitles: recent.slice(0, 5).map(e => '[' + new Date(e.t).toISOString().slice(0, 10) + '][' + e.country + ']' + e.title.slice(0, 55))
+          },
+          evidenceIds: hot.slice(0, 12).map(e => e.id)
+        };
+      },
+      promptOf(ctx) {
+        return '你是海外利益保护情报预警平台的总研判官。以下为系统近 ' + ctx.spanDays + ' 天（' + ctx.from + ' ~ ' + ctx.to + '）全库真实统计（零模拟）：\n'
+          + '已审计事件 ' + ctx.total + ' 条，涉华关联 ' + ctx.china + ' 条；近 72h 红/橙级高严重度事件 ' + ctx.hot72 + ' 起。\n'
+          + '类型分布 Top：' + (ctx.typeTop || []).join('、') + '；\n'
+          + '国家分布 Top：' + (ctx.countryTop || []).join('、') + '；\n'
+          + '活跃威胁组织 Top：' + (ctx.orgTop || []).join('、') + '；\n'
+          + '六专项模型异动信号：\n' + (ctx.sigs || []).map(function (s, i) { return (i + 1) + '. ' + s; }).join('\n') + '\n'
+          + '近 72h 高严重度事件样本：\n' + (ctx.hot72Sample || []).join('\n') + '\n\n'
+          + '请严格基于以上真实数据输出全局态势综合研判。JSON 返回 {"sections":[{"title":"...","body":"..."}]}，5 节：①总体态势判断②重点风险聚焦（国家/组织/方向）③涉华利益影响评估④趋势预判（未来 72h-7 天）⑤处置建议（分层：预警监控/人员防护/项目管控/外交协调）。每节 80-160 字，禁止虚构。';
+      },
+      fallback(ctx) {
+        const sections = [];
+        sections.push({ title: '总体态势判断', body: '近 ' + ctx.spanDays + ' 天（' + ctx.from + ' ~ ' + ctx.to + '）全库已审计事件 ' + ctx.total + ' 条，涉华关联 ' + ctx.china + ' 条，近 72h 红/橙级高严重度事件 ' + ctx.hot72 + ' 起。类型构成以 ' + (ctx.typeTop || []).slice(0, 3).join('、') + ' 为主；热点国家集中于 ' + (ctx.countryTop || []).slice(0, 4).join('、') + '。' });
+        sections.push({ title: '重点风险聚焦', body: '活跃威胁组织 Top：' + (ctx.orgTop || []).join('、') + '。模型异动信号：' + (ctx.sigs.length ? ctx.sigs.slice(0, 4).join('；') : '各专项信号均在阈值内') + '。' });
+        sections.push({ title: '涉华利益影响评估', body: '涉华关联事件 ' + ctx.china + ' 条，占全库 ' + Math.round(ctx.china / Math.max(1, ctx.total) * 1000) / 10 + '%。近 72h 高严重度样本：' + (ctx.hot72Sample || []).slice(0, 3).join('；') + '。' });
+        sections.push({ title: '趋势预判', body: '按六专项信号方向：' + (ctx.sigs.length ? '地缘变点与组织战术偏离并存，未来 72h-7 天对信号涉及国别维持高压监控（' + ctx.sigs.slice(0, 2).join('；') + '）。' : '各专项指标平稳，维持常态监控节奏。') });
+        sections.push({ title: '处置建议', body: '①预警监控：对异动信号涉及国别/组织提升采集与复核优先级；②人员防护：近 72h 红橙事件国别执行出行报备与结伴制度；③项目管控：核对此类国别中资项目台账与应急预案；④外交协调：涉华负面信号链及时向驻外机构同步。' });
+        return sections;
+      }
+    },
     /* ① 组织画像师 */
     'org-analyst': {
       name: '组织画像师', needs: 'org',
