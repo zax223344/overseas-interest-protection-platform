@@ -343,7 +343,9 @@
               '<div class="ma-hud-card"><div class="ma-tt">📊 事件类型分布<small>data_type</small></div><div style="padding:6px 12px 12px">' +
                 svgBars(byType.map(function (t) { return { label: t[0], value: t[1], color: '#00d4ff' }; }), { w: 440, labelW: 150 }) + '</div></div>' +
               '<div class="ma-hud-card"><div class="ma-tt">🌍 事件国家 Top<small>全类型</small></div><div style="padding:6px 12px 12px">' +
-                svgBars(topC.map(function (t) { return { label: t[0], value: t[1], color: '#ff8800' }; }), { w: 440, labelW: 100 }) + '</div></div>' +
+                /* 2026-09-02 修复 undefined 标签：byType 是 [名,数] 数组对，
+                 * countries 是 {country,count} 对象（/api/models/overview 两种形态），分类映射 */
+                svgBars(topC.map(function (t) { return { label: t.country || t[0], value: t.count != null ? t.count : t[1], color: '#ff8800' }; }), { w: 440, labelW: 100 }) + '</div></div>' +
             '</div>'
           );
           document.querySelectorAll('[data-jump]').forEach(function (el) {
