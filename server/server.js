@@ -41,6 +41,7 @@ const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维�
 const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专项哨兵（2026-08-28：涉华受害/政变/外资审查等弱类补强，10分钟一轮） */
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
+const reportsEngine = require('./reports-engine'); /* 智库报告产品线引擎（2026-09-03：9类专业分析报告统一后端，自注册路由+定时器） */
 const wmFeed = require('./wm-feed'); /* WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO领事警示/断网/疫情/新闻摘要，30分钟一轮） */
 const manualEntryApi = require('./manual-entry'); /* 手动录入工作区 API（2026-09-01：结构化录入+并发安全+铁律入预警中心，挂载见 DataHub API 段） */
 const modelsAnalysis = require('./models-analysis'); /* 专题分析模型 API（2026-09-02：四模型只读分析计算层，挂载见 manual-entries 挂载点之后） */
@@ -11630,6 +11631,15 @@ app.use('/api/manual-entries', manualEntryApi({
 
 /* ===== 专题分析模型 API（2026-09-02：/api/models/* 四模型端点，只读分析计算层）===== */
 app.use('/api/models', modelsAnalysis({ query }));
+
+/* ===== 智库报告产品线引擎（2026-09-03：9类专业报告 数据装配+Kimi研判+公文渲染+定时生成，铁律见 reports-engine.js 头注）===== */
+reportsEngine.init({
+  query,
+  llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) },
+  isChinaRelated: scrapers.isChinaRelatedStrict,
+  auth: authMiddleware,
+  app
+});
 
 /* ===== AI 报告 API ===== */
 /* 报告行 → 前端对象：合并 content_json 中保存的扩展字段（deep 深度结构/summary/elements/

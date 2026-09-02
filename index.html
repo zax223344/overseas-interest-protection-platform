@@ -844,6 +844,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国家档案总表</span></div>
 <div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">情报报告中心</span></div>
 <div class="sb-item" data-view="models" onclick="navigateTo('models')"><span class="ic">🧮</span><span class="lb">专题分析模型</span></div>
+<div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic">📚</span><span class="lb">智库报告中心</span></div>
 <div class="sb-group">数据管理</div>
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
 <div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
@@ -1177,6 +1178,9 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: MODELS (model-analysis.js 整视图渲染：专题分析模型四模型) -->
 <div class="view" id="view-models"><div id="models-root"></div></div>
 
+<!-- VIEW: REPORTS CENTER (reports-center.js 整视图渲染：智库报告中心 9 类专业分析报告) -->
+<div class="view" id="view-reportsc"><div id="reportsc-root"></div></div>
+
 </div><!-- content -->
 </div><!-- main -->
 </div><!-- app -->
@@ -1242,6 +1246,7 @@ function closeMobileMenu(){
 <script src="model-analysis.js?v=4"></script>
 <script src="dailyreport.js?v=7"></script>
 <script src="wechat.js?v=4"></script>
+<script src="reports-center.js?v=1"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
 <script src="linkgraph.js?v=5"></script>
 

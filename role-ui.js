@@ -29,7 +29,7 @@
   const VIEW_LABELS = {
     situation:'态势总览', workbench:'联合作业台', threatroom:'专项情报作战室', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
     intel:'情报影像中心', alerts:'预警中心', country:'国别档案', countryfile:'国家档案总表', reports:'情报报告中心',
-    models:'专题分析模型',
+    models:'专题分析模型', reportsc:'智库报告中心',
     datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
     'manual-entry':'手动录入工作区',
     /* 合并前的旧键（兼容跳转用） */
@@ -44,7 +44,7 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','country','countryfile','reports','datapool','datagov','manual-entry','settings']
+    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','country','countryfile','reports','reportsc','datapool','datagov','manual-entry','settings']
   };
 
   const PERMISSION_MATRIX = [
