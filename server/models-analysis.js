@@ -13,6 +13,12 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const scrapers = require('./scrapers'); /* 2026-09-02：国别提取（伪国别预警重提国别用，与入库同源） */
+
+/* 伪国别预警的国别重提（与入库 scrapers.extractCountry 同源，双保险本地封装） */
+function guessCountryLocal(text) {
+  try { return scrapers.extractCountry(String(text || '')) || ''; } catch (e) { return ''; }
+}
 
 /* ===== 常量口径（全部透明可解释）===== */
 const CACHE_TTL = 10 * 60 * 1000;          /* 10 分钟 */
@@ -2024,10 +2030,21 @@ module.exports = function modelsAnalysis(ctx) {
         const list = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
         const a = list.find(x => x && (String(x.id) === key || String(x.alert_no || '') === key));
         if (!a) return { error: '预警不存在：' + key };
-        /* 同国近 7 天已审计事件 top15（以数据窗口末端为锚） */
+        /* 同国近 7 天已审计事件 top15（以数据窗口末端为锚）。
+         * 2026-09-02 伪国别根治：预警 country 为 国际/全球/未知 时不做"同国"匹配（会把全库大杂烩喂给 AI），
+         * 改从预警标题重提国别；提不出则跳过同国背景，由 fallback 如实说明。 */
         const { evs, t1 } = await loadEvents();
         const win7 = t1 - 7 * DAY;
-        const same = evs.filter(e => e.country === (a.country || '') && e.t >= win7).slice(-15).reverse();
+        const rawCountry = String(a.country || '');
+        let effCountry = rawCountry;
+        let countryDerived = false;
+        if (PSEUDO_COUNTRIES.has(rawCountry)) {
+          const t = String(a.title_zh || a.title || '') + ' ' + String(a.desc || '').slice(0, 200);
+          /* 海外平台铁律：事发国优先用海外国别提取（排除中国——"中国公民在X国遇害"类事件的事发国是 X） */
+          const guessed = scrapers.extractOverseasCountry(t) || guessCountryLocal(t);
+          if (guessed) { effCountry = guessed; countryDerived = true; }
+        }
+        const same = PSEUDO_COUNTRIES.has(effCountry) ? [] : evs.filter(e => e.country === effCountry && e.t >= win7).slice(-15).reverse();
         const sevCnt = {};
         same.forEach(e => { if (e.severity) sevCnt[e.severity] = (sevCnt[e.severity] || 0) + 1; });
         const chinaSame = same.filter(e => e.china).length;
@@ -2039,7 +2056,7 @@ module.exports = function modelsAnalysis(ctx) {
           const ents = typeof raw2 === 'string' ? JSON.parse(raw2) : (raw2 || []);
           for (const ent of ents) {
             (ent.projects || []).forEach(pr => {
-              if (pr && pr.c === a.country) entProjects.push((ent.short || ent.name) + '·' + pr.n + '（驻员' + (pr.p || '—') + '）');
+              if (pr && pr.c === effCountry) entProjects.push((ent.short || ent.name) + '·' + pr.n + '（驻员' + (pr.p || '—') + '）');
             });
           }
         } catch (e) { /* 企业台账缺失不阻断 */ }
@@ -2049,7 +2066,7 @@ module.exports = function modelsAnalysis(ctx) {
           ...entProjects
         ])].slice(0, 10);
         const ctx = {
-          level: a.level, type: a.type || '', country: a.country || '未知', time: a.time || '',
+          level: a.level, type: a.type || '', country: effCountry || '未知', countryDerived, time: a.time || '',
           title: a.title_zh || a.title || '', desc: String(a.desc || a.content || a.detail || '').slice(0, 500),
           severity: a.severity || '',
           riskScore: a.risk_score != null ? a.risk_score : a.riskScore,
@@ -2066,14 +2083,15 @@ module.exports = function modelsAnalysis(ctx) {
       promptOf(ctx) {
         return '你是海外利益保护情报预警平台的预警研判专家。以下是一条' + (ctx.level === 'red' ? '红色紧急' : '橙色警告') + '级预警的真实档案与同国态势数据（零模拟）：\n'
           + '【预警详情】[' + ctx.level + '] ' + ctx.title + '\n'
-          + '类型：' + ctx.type + '；国家/地区：' + ctx.country + '；预警时间：' + ctx.time + '；严重度：' + (ctx.severity || '—') + '；风险赋分：' + (ctx.riskScore != null ? ctx.riskScore + '/100（' + (ctx.riskZone || '未分区') + '）' : '未赋分') + '；\n'
+          + '类型：' + ctx.type + '；国家/地区：' + ctx.country + (ctx.countryDerived ? '（预警原标记为国际/未定位，该国别由系统从标题重提）' : '') + '；预警时间：' + ctx.time + '；严重度：' + (ctx.severity || '—') + '；风险赋分：' + (ctx.riskScore != null ? ctx.riskScore + '/100（' + (ctx.riskZone || '未分区') + '）' : '未赋分') + '；\n'
           + (ctx.riskRationale ? '赋分依据：' + ctx.riskRationale + '\n' : '')
           + (ctx.credibility ? '信源等级：' + ctx.credibility + '；' : '') + (ctx.corroboration > 1 ? '独立信源印证 ' + ctx.corroboration + ' 方；' : '') + '涉华关联：' + (ctx.chinaRelated ? '是' : '否') + '\n'
           + '预警内容：' + ctx.desc + '\n'
           + (ctx.assets.length ? '命中中资资产/项目：' + ctx.assets.join('、') + '\n' : '')
           + (ctx.relEnterprises.length ? '关联中资企业：' + ctx.relEnterprises.join('、') + '\n' : '')
-          + '【同国近 7 天态势】已审计事件 ' + ctx.sameCnt + ' 起（涉华 ' + ctx.chinaSame + ' 起）；严重度分布：' + ((ctx.sevDist || []).join('、') || '无') + '；\n'
-          + '事件样本：\n' + ((ctx.sameTitles || []).join('\n') || '（近 7 天无归档事件）') + '\n\n'
+          + (ctx.sameCnt > 0
+            ? '【同国近 7 天态势】已审计事件 ' + ctx.sameCnt + ' 起（涉华 ' + ctx.chinaSame + ' 起）；严重度分布：' + ((ctx.sevDist || []).join('、') || '无') + '；\n事件样本：\n' + ((ctx.sameTitles || []).join('\n') || '（无）')
+            : '【同国近 7 天态势】近 7 天该国别无已审计事件，跳过同国背景节——请在"同国态势背景"一节如实说明数据不足，禁止编造他国事件充数。') + '\n\n'
           + '请严格基于以上真实数据输出预警研判（禁止虚构）。用 JSON 返回 {"sections":[{"title":"...","body":"..."}]}，包含 4 节：①事件研判（事件性质、烈度与可信度判读）②同国态势背景（近 7 天同国事件态势与风险走向）③对中资项目影响（结合命中资产/项目与涉华关联给出影响面评估）④建议等级（给出维持/上调/下调建议与理由，以及响应时限要求）。每节 80-160 字。';
       },
       fallback(ctx) {
