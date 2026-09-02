@@ -6385,7 +6385,11 @@ async function _semanticEventDup(it) {
     let cand = _semCandCache.get(ckey);
     if (!cand || Date.now() - cand.t > 120 * 1000) {
       const { rows } = await query(
-        `SELECT title, COALESCE(NULLIF(data_json->>'title_zh',''), title) tzh, source, url FROM intel_data
+        /* 2026-09-02 卡顿根因修复：intel_data 表无 url 列（url 在 data_json 里），
+         * 裸列 url 使本查询每次必败 → throw 被 _semanticEventDup 外层 catch 吞掉 →
+         * 语义查重整体失效 + 候选缓存从未写入（每条都打必败查询，日志 20839 次）+ 连接池被占用。
+         * 改为 data_json->>'url' AS url，与 7004/7275 行查重写法对齐。 */
+        `SELECT title, COALESCE(NULLIF(data_json->>'title_zh',''), title) tzh, source, data_json->>'url' AS url FROM intel_data
          WHERE collect_time > NOW() - INTERVAL '3 days' AND (title LIKE $1 OR data_json->>'title_zh' LIKE $1) LIMIT 300`,
         ['%' + ckey + '%']);
       cand = { t: Date.now(), rows: rows || [] };
