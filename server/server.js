@@ -33,6 +33,7 @@ const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采�
 const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项采集（2026-08-26：组合词改排序+双信号过滤，专治涉华负面新文被埋） */
 const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索→抓取入库 四步管线（2026-08-26 用户指令：公众号只查询线索，不再从公众号抓数据入库） */
 const coreThreatWatch = require('./core-threat-watch'); /* 海外核心安全威胁一分钟哨兵（2026-08-27 用户铁指令：巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚 恐袭/袭击/绑架/刑案，1 分钟一轮） */
+const orgWatch = require('./org-watch'); /* 威胁组织专项采集哨兵（2026-09-02 用户铁指令：threats.js 组织库定向采集，豁免体积限度，30min 一轮） */
 const INTEREST_BASE = require('./interest-base'); /* 海外利益底数库（2026-08-28 官方框架：国家梯队+六大类项目+通道+经济底数+人员底数+东道国风险指标） */
 const channelWatch = require('./channel-watch'); /* 海上战略通道哨兵（维度⑤：八大咽喉点通航/海盗/航运事件，30分钟一轮） */
 const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（维度⑥：OFAC/实体清单/出口管制/外资审查，30分钟一轮） */
@@ -1941,6 +1942,9 @@ function _capAlertQueue(list) {
     if (a.is_manual === true) { out.push(a); continue; }
     const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
     if (t && now - t > 72 * 3600 * 1000) continue;
+    /* 2026-09-02 威胁组织专项哨兵：org_watch 预警豁免国别帽（用户指令"不受采集限度影响"）。
+     * 仅豁免国别均衡帽；上方 72h 陈条目清理属时效闸，与其他通道一致照常执行。 */
+    if (a._sourceType === 'org_watch') { out.push(a); continue; }
     /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
      * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。
      * 2026-08-29 两区渲染（用户指令：预警中心有重点和核心）：核心区条目（is_core：
@@ -2275,6 +2279,9 @@ async function _serverAlertGen() {
         asset_tags: it.asset_tags || [],
         interest_tier: it.interest_tier || '',
         is_core: _alertIsCore(it),
+        /* 2026-09-02 威胁组织专项哨兵：溯源标记随预警下发（_capAlertQueue 国别帽豁免凭据 + 前端按组织聚合） */
+        _sourceType: it._sourceType || '',
+        _orgId: it._orgId || '', _orgName: it._orgName || '',
         _riskVersion: 2
       };
       added.unshift(alert);
@@ -4383,6 +4390,43 @@ app.post('/api/gap-scheduler/run', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ===== 威胁组织专项采集哨兵手动触发端点（2026-09-02） ===== */
+app.post('/api/org-watch/run', async (req, res) => {
+  try {
+    /* 2026-09-02 根因修复：原同步 await 整轮采集（400s+）→ 前端 HTTP 000 挂起。
+     * 改为异步触发立即返回，结果查询走 GET /api/org-watch/status。 */
+    if (Date.now() < _orgWatchBusyUntil) return res.json({ ok: false, error: '上一轮威胁组织哨兵尚未结束，请稍候', stats: _orgWatchLastStats });
+    _orgWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+    res.json({ ok: true, started: true, note: '威胁组织专项哨兵已触发，采集轮约 5-8 分钟，结果请查 GET /api/org-watch/status' });
+    (async () => {
+      try {
+        const r = await orgWatch.runOrgWatch({ maxPerQuery: 15 });
+        const items = r.items || [];
+        let inserted = 0;
+        if (items.length) {
+          try { await _translateListToZhParallel(items, 4); } catch (e) {}
+          items.forEach(it => {
+            try { ENTITY.enrich(it); it.interestLinked = true; it._forceDataType = true; } catch (e) {}
+            if (!it.data_type) it.data_type = 'terror_events';
+            if (!it.category) it.category = '威胁组织动态';
+            if (!it._sourceType) it._sourceType = 'org_watch';
+          });
+          const res2 = await _ingestLinkedItems(items, 'ORG-WATCH-MANUAL', '（手动触发）');
+          inserted = (res2 && res2.inserted) || 0;
+        }
+        _orgWatchLastStats = Object.assign({}, r.stats, { inserted, manualAt: new Date().toISOString() });
+        console.log('[ORG-WATCH] 手动轮完成: 候选 ' + items.length + ' / 入库 ' + inserted);
+      } catch (e) { console.warn('[ORG-WATCH] 手动轮失败:', e.message); }
+      finally { _orgWatchBusyUntil = 0; }
+    })();
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/* 哨兵状态查询：配合异步触发，前端/运维轮询结果 */
+app.get('/api/org-watch/status', (req, res) => {
+  res.json({ ok: true, busy: Date.now() < _orgWatchBusyUntil, lastStats: _orgWatchLastStats });
+});
+
 /* ===== WorldMonitor 数据接入哨兵手动触发端点（2026-08-31 Task #506） ===== */
 app.post('/api/wm-feed/run', async (req, res) => {
   try {
@@ -6101,7 +6145,10 @@ async function _catStructRefresh() {
   } catch (e) { /* DB 异常时不拦数据 */ }
 }
 async function _catStructureOk(it) {
-  /* 2026-08-30 退役：永远放行。结构均衡由 GAP-SCHED 补弱实现，绝不砍强。 */
+  /* 2026-08-30 退役：永远放行。结构均衡由 GAP-SCHED 补弱实现，绝不砍强。
+   * 2026-09-02 威胁组织专项哨兵：org_watch 显式豁免锚点（用户指令"不受采集限度影响"）——
+   * 本闸已退役为恒真，此行为将来若恢复结构帽时保留 org_watch 豁免，现行行为不变。 */
+  if (it && it._sourceType === 'org_watch') return true;
   return true;
 }
 
@@ -6328,6 +6375,9 @@ function _eventClusterOk(it) {
   /* 2026-08-31 专项作战室豁免：研究通道要的就是多源密度（用户铁律"上合峰会才采 2 条，
    * 核心中的核心"）——同国同事件多版本入库供报告整合，不适用防刷屏簇帽 */
   if (it._sourceType === 'threatroom') return true;
+  /* 2026-09-02 威胁组织专项哨兵豁免：org_watch 定向采集不受簇帽限（用户指令"不受采集限度影响，
+   * 采集数据越多越好"）；去重/时效/标题质量等其他闸门照常 */
+  if (it._sourceType === 'org_watch') return true;
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   if (t.trim().length < 8) return true;
   const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
@@ -6996,7 +7046,7 @@ async function _ingestLinkedItems(items, tag, note) {
       'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
       'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler',
-      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom'
+      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom', 'ORG-WATCH': 'org_watch', 'ORG-WATCH-MANUAL': 'org_watch'
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
@@ -8763,6 +8813,39 @@ async function _runCoreThreatWatch() {
   finally { _coreThreatBusyUntil = 0; }
 }
 
+/* ===== 威胁组织专项采集哨兵调度（2026-09-02 用户铁指令）=====
+ * 每 30 分钟一轮（与五路哨兵同档）：org-watch 针对 threats.js 组织库定向采集
+ * （GDELT 别名布尔 + GNews 原子 + 高危本地 RSS 矩阵），高频组织每轮全查、低频分片轮询。
+ * 体积豁免：_sourceType='org_watch' 条目豁免事件簇帽/类别结构帽/预警国别帽；
+ * 去重/时效/标题质量等其他闸门与全站一致（"其他的一样"）。 */
+let _orgWatchBusyUntil = 0;
+let _orgWatchLastStats = null;
+async function _runOrgWatch() {
+  if (Date.now() < _orgWatchBusyUntil) return;
+  _orgWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await orgWatch.runOrgWatch({ maxPerQuery: 25 });
+    const items = r.items || [];
+    _orgWatchLastStats = r.stats || null;
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[ORG-WATCH] 翻译异常:', e.message); }
+    items.forEach(it => {
+      try {
+        ENTITY.enrich(it);
+        it.interestLinked = true;
+        it._forceDataType = true;
+        if (!it.data_type) it.data_type = 'terror_events';
+        if (!it.category) it.category = '威胁组织动态';
+        if (!it._sourceType) { it._sourceType = 'org_watch'; }
+      } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'ORG-WATCH', '');
+    if (res && res.inserted) console.log('[ORG-WATCH] ✅ 新入库威胁组织情报 ' + res.inserted + ' 条');
+    if (_orgWatchLastStats) _orgWatchLastStats.inserted = (res && res.inserted) || 0;
+  } catch (e) { console.warn('[ORG-WATCH] 采集失败:', e.message); }
+  finally { _orgWatchBusyUntil = 0; }
+}
+
 /* ===== 海上战略通道哨兵调度（维度⑤，2026-08-28 官方框架六维补全）=====
  * 每 30 分钟：八大咽喉点（马六甲/霍尔木兹/红海/苏伊士/巴拿马/台海/几内亚湾/亚丁湾）
  * 通航·封锁·海盗·袭击油轮事件 + 海运专业源。 */
@@ -9062,6 +9145,9 @@ function startGlobalMediaCron() {
   // WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO警示/断网/疫情/新闻摘要），启动9分钟后首跑
   setTimeout(_runWmFeed, 9 * 60 * 1000);
   setInterval(_runWmFeed, 30 * 60 * 1000);
+  // 威胁组织专项采集哨兵（2026-09-02 用户铁指令：threats.js 组织库定向采集，豁免体积限度），启动10分钟后首跑
+  setTimeout(_runOrgWatch, 10 * 60 * 1000);
+  setInterval(_runOrgWatch, 30 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min */
