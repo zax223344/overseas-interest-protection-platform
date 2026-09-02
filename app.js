@@ -17542,6 +17542,17 @@ function showAlertDetail(id){
   }
   var html='';
   html+='<div class="flex gap-8 mb-12"><span class="badge '+lv.cls+'">'+lv.label+'</span><span class="badge b-blue">'+a.type+'</span><span class="badge b-purple">'+stLabel+'</span>'+(a._live?'<span class="badge" style="background:var(--cyan);color:#000">实时</span>':'')+'</div>';
+  /* ===== AI 研判（2026-09-02 Kimi：红/橙级预警大模型四节研判——事件研判/同国态势背景/对中资项目影响/建议等级）===== */
+  if(a.level==='red'||a.level==='orange'){
+    var _aiKey=String(a.alert_no||a.id||'').replace(/'/g,'');
+    html+='<div id="alert-ai-panel" style="margin-bottom:12px;padding:12px 14px;background:linear-gradient(135deg,rgba(0,212,255,0.07),rgba(124,77,255,0.07));border:1px solid rgba(0,212,255,0.25);border-radius:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">'+
+        '<strong style="font-size:12px;color:var(--cyan)">🤖 AI 研判 <span style="font-size:10px;font-weight:400;color:var(--text3)">大模型四节：事件研判 / 同国态势背景 / 对中资项目影响 / 建议等级</span></strong>'+
+        '<button class="btn sm" style="font-size:11px;padding:4px 14px;flex-shrink:0" onclick="runAlertAI(\''+_aiKey+'\')">🤖 立即研判</button>'+
+      '</div>'+
+      '<div id="alert-ai-result" style="font-size:11px;color:var(--text3);line-height:1.7">基于本预警档案 + 同国近 7 天事件 + 中资资产标签，由大模型生成综合研判（约 30-90 秒）。</div>'+
+    '</div>';
+  }
   /* ===== 赋分改革面板（2026-08-26）：0-100 分 + 绿/黄/红三区 + 赋分依据 + 处置要求 ===== */
   if(a.risk_score!=null){
     var _zc={red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)';
@@ -17680,6 +17691,40 @@ function showAlertDetail(id){
   document.getElementById('modal-bd').innerHTML=html;
   if(typeof INTELBUS!=='undefined') INTELBUS._enrichModal({country:a.country, enterprise:a.enterprise, text:(a.title_zh||a.title||'')+' '+(a.desc||'')+' '+(a.detail||''), self:{module:'alert', key:String(a.id||''), source:src}});
   document.getElementById('modal').classList.add('show');
+  /* AI 研判缓存命中时自动渲染 */
+  if(typeof _aiKey!=='undefined'&&_aiKey&&_ALERT_AI_CACHE[_aiKey]){renderAlertAI(_aiKey);}
+}
+/* ===== 预警 AI 研判（2026-09-02：红/橙级预警 → /api/models/agent/alert-analyst）===== */
+var _ALERT_AI_CACHE={};
+function runAlertAI(key){
+  var box=document.getElementById('alert-ai-result');
+  if(!box)return;
+  if(_ALERT_AI_CACHE[key]){renderAlertAI(key);return;}
+  box.innerHTML='<div style="text-align:center;padding:16px 0;font-size:12px;color:var(--cyan)"><span style="display:inline-block;animation:spin 1.2s linear infinite;font-size:22px">🤖</span><div style="margin-top:8px">大模型研判生成中（约 30-90 秒）……</div></div>';
+  fetch('/api/models/agent/alert-analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alertId:key})})
+    .then(function(r){return r.json();})
+    .then(function(d){_ALERT_AI_CACHE[key]=d;renderAlertAI(key);})
+    .catch(function(e){box.innerHTML='<div style="font-size:12px;color:var(--red);padding:8px 0">研判失败：'+esc(String(e&&e.message||e))+' <button class="btn sm" style="font-size:10px;padding:2px 10px" onclick="runAlertAI(\''+key+'\')">重试</button></div>';});
+}
+function renderAlertAI(key){
+  var box=document.getElementById('alert-ai-result');if(!box)return;
+  var d=_ALERT_AI_CACHE[key];if(!d)return;
+  if(!d.ok||!d.agent){box.innerHTML='<div style="font-size:12px;color:var(--red)">研判失败：'+esc((d&&d.error)||'服务异常')+'</div>';return;}
+  var ag=d.agent;
+  if(ag.error){box.innerHTML='<div style="font-size:12px;color:var(--orange)">⚠️ '+esc(ag.error)+'</div>';return;}
+  var _aicons=[['事件研判','🎯'],['同国态势背景','🌐'],['对中资项目影响','🏢'],['建议等级','🚦']];
+  var secs=(ag.sections||[]).map(function(s){
+    var ic='📌';
+    for(var i=0;i<_aicons.length;i++){if(String(s.title).indexOf(_aicons[i][0])>=0){ic=_aicons[i][1];break;}}
+    return '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--cyan);border-radius:6px;padding:10px 12px;margin-bottom:8px">'+
+      '<div style="font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:5px">'+ic+' '+esc(s.title)+'</div>'+
+      '<div style="font-size:12px;color:var(--text);line-height:1.8;white-space:pre-wrap">'+esc(s.body)+'</div>'+
+    '</div>';
+  }).join('');
+  var badge=ag.source==='llm'
+    ?'<span class="badge b-green">AI 生成 · '+esc(ag.model)+' · '+esc(ag.elapsed)+'</span>'
+    :'<span class="badge b-yellow">规则化降级 · '+esc(ag.model)+'</span>';
+  box.innerHTML=secs+'<div style="font-size:10px;color:var(--text3)">'+badge+' 证据链 '+(d.evidenceIds||[]).length+' 条 · '+esc(ag.dataNote||'')+'</div>';
 }
 /* 预警统一定位（2026-08-15 修复"预警不存在"）：实时流会持续重建/去重 ALERTS，
  * 旧 id 可能失效；alert_no 由 标题+url+类型+日期 确定性生成，重建后仍稳定。
