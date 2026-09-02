@@ -115,8 +115,34 @@ function stripTags(s){var v=String(s==null?'':s);
 v=v.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&');
 return v.replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi,'').replace(/<(?:font|span|div|b|i|em|strong|u)\b[^>]*>[\s\S]*?<\/(?:font|span|div|b|i|em|strong|u)>/gi,'').replace(/<br\s*\/?>/gi,' ').replace(/<[^>]*>/g,'').replace(/<[^>]*$/g,'').replace(/href\s*=\s*["'][^"']*["']/gi,'').replace(/https?:\/\/\S+/g,'').replace(/CBMi[a-zA-Z0-9]+/g,'').replace(/target\s*=\s*["'][^"']*["']/gi,'').replace(/\s{2,}/g,' ').trim();}
 /* 2026-08-28：desc 中文净化——清洗实体/标签后若为外文主体（Google News RSS 英文原文）则返回空串，
- * 避免中文标题下挂英文原文造成半中半英观感。 */
-function _descCn(d){var s=stripTags(d||'');if(!s)return '';s=s.replace(/&[a-zA-Z]+;?/g,' ').replace(/\s{2,}/g,' ').trim();if(!s)return '';var zh=(s.match(/[一-龥]/g)||[]).length;var en=(s.match(/[A-Za-z]/g)||[]).length;if(en>12&&zh*3<en)return '';return s;}
+ * 避免中文标题下挂英文原文造成半中半英观感。
+ * 2026-09-03 阈值收紧（C1 配套）：原 en>12 && zh*3<en 放过 1/3 中文+2/3 英文的混杂正文；
+ * 现收紧为 zh*2<en，或 英文占比超中文 且存在 ≥3 词英文连续片段 —— 二者其一即视为未译，
+ * 返回空串由调用点显示「描述待译」灰色占位。 */
+function _descCn(d){var s=stripTags(d||'');if(!s)return '';s=s.replace(/&[a-zA-Z]+;?/g,' ').replace(/\s{2,}/g,' ').trim();if(!s)return '';var zh=(s.match(/[一-龥]/g)||[]).length;var en=(s.match(/[A-Za-z]/g)||[]).length;if(en<=12)return s;if(zh*2<en)return '';if(zh>0&&en>zh&&/[A-Za-z]+(?:\s+[A-Za-z]+){2}/.test(s))return '';return s;}
+/* 描述单元格文案：中文净化结果或「描述待译」占位（灰字，克制样式） */
+function _descCnCell(d){var v=_descCn(d);if(v)return v.substring(0,60);return String(d||'').trim()?'描述待译':'';}
+/* ===== 2026-09-03 翻译质量收口（C1 铁律）辅助 =====
+ * 字段约定：*_zh       = 在线/服务端译文（唯一可持久化展示的正式译文）
+ *          *_zh_offline = 离线词典兜底译文（独立字段，渲染须带「离线词典」琥珀色标识，优先级低于正式译文）
+ *          旧污染数据：*_zh_offline===true（布尔标记）表示同对象上现存 *_zh 实为离线词典输出，
+ *          渲染按离线兜底对待；新译文到达时原地迁移（真值搬入 *_zh_offline 字符串字段并删除 *_zh）。 */
+function _zhBest(o,f){var zh=o?o[f+'_zh']:'';var off=o?o[f+'_zh_offline']:null;if(zh&&off!==true)return String(zh);return '';}
+function _zhOffTxt(o,f){if(!o)return '';var off=o[f+'_zh_offline'];if(typeof off==='string'&&off.trim())return off;var zh=o[f+'_zh'];if(zh&&off===true)return String(zh);return '';}
+function _zhT(a){return _zhBest(a,'title');}
+function _hasOnlineZh(r){return !!(r&&r.title_zh&&r.title_zh_offline!==true&&!String(r.title_zh_offline||'').trim());}
+/* 译文可用性判定（2026-09-03，与 server 端 _isGarbage 口径对齐）：
+ * 空串 / 无任何 CJK（原文英文回显或垃圾）/ 与原文一致 → 一律不可用，写入端跳过，
+ * 防止空槽把已有译文清掉、英文回显覆盖中文。 */
+function _zhUsable(zh,orig){
+  var s=String(zh==null?'':zh).trim();
+  if(!s)return false;
+  if(!/[一-龥]/.test(s))return false;
+  if(orig&&s===String(orig).trim())return false;
+  return true;
+}
+/* 离线词典标识徽章（琥珀色，明显但克制） */
+var _OFFZ='<span style="font-size:9px;padding:0 4px;border-radius:4px;border:1px solid #f59e0b66;color:#f59e0b;white-space:nowrap;margin-right:4px;font-weight:700">离线词典</span>';
 /* 去重标题拼接 + 中英双语合并清洗：源名/中文译文与英文原文被同时塞入 title 时裁剪 */
 function _dedupeTitleConcat(t){var s=String(t||'');var half=Math.floor(s.length/2);for(var cut=half;cut>10;cut--){if(s.slice(0,cut)===s.slice(cut))return s.slice(0,cut);}var m=s.match(/^(.+?--[\u4e00-\u9fa5A-Za-z·\s]{2,18})(?:\1|.+)$/);if(m&&m[1])return m[1];return s;}
 /* 2026-08-28 立场徽章（94源工程包 stance 证据链可视化）：
@@ -391,6 +417,18 @@ const DBCenter={
       }
     }
   },
+  /* POST 载荷净化（2026-09-03 职责收缩）：新条目入库只发原文，翻译归服务端 POST 链路；
+   * 本地 *_zh / *_zh_offline 机翻/词典结果绝不随 POST 上行污染服务端。 */
+  _postable(o){
+    try{
+      var p={};
+      for(var k in o){
+        if(k==='title_zh'||k==='content_zh'||k==='desc_zh'||k==='title_zh_offline'||k==='content_zh_offline'||k==='desc_zh_offline')continue;
+        p[k]=o[k];
+      }
+      return p;
+    }catch(e){ return o; }
+  },
   /* 体裁闸门（数据中心唯一咽喉）：商业榜单/经济统计、评论/学术论述不是海外利益安全数据。
    * 设在 add/addBatch 而非各调用点：这两个方法是 DBCenter 的全部写入口，
    * 榜单类文章因罗列中资巨头会在 enrich 中 hardLink=true 绕过风险分，必须在此终止。 */
@@ -424,10 +462,10 @@ const DBCenter={
     if(o.audit_status==='approved'&&!o.audit_time)o.audit_time=new Date().toISOString();
     else if(!o.audit_time)o.audit_time='';
     var a=this._r(s);a.push(o);this._w(s,a);
-    // API 同步（仅已登录时同步，避免未登录用户触发 401）
+    // API 同步（仅已登录时同步，避免未登录用户触发 401）；POST 只发原文，翻译归服务端
     if(typeof APIClient!=='undefined'&&APIClient.isOnline()&&APIClient.getToken()){
       var type=s;
-      APIClient.addIntel(type,o).catch(function(err){console.warn('[DBCenter] API添加失败:',type,err.message);});
+      APIClient.addIntel(type,this._postable(o)).catch(function(err){console.warn('[DBCenter] API添加失败:',type,err.message);});
     }
     if(this._INTEL_COLS[s]) this.scheduleAutoTranslate(s);  /* 清洗后→自动翻译 */
     /* 实时分发： approved 数据立即进入预警中心/态势感知/事件流（链路打通关键） */
@@ -459,10 +497,10 @@ const DBCenter={
     if(!list.length)return 0;
     list.forEach(function(o){o.collect_time=o.collect_time||new Date().toISOString();o.id=me._newId();o.audit_status=o.audit_status||'approved';o.audit_time=new Date().toISOString();a.push(o);});
     this._w(s,a);
-    // API 批量同步（仅已登录时同步，避免未登录用户触发 401）
+    // API 批量同步（仅已登录时同步，避免未登录用户触发 401）；POST 只发原文，翻译归服务端
     if(typeof APIClient!=='undefined'&&APIClient.isOnline()&&APIClient.getToken()){
       var type=s;
-      APIClient.addIntelBatch(type,list).catch(function(err){console.warn('[DBCenter] API批量添加失败:',type,err.message);});
+      APIClient.addIntelBatch(type,list.map(function(x){return me._postable(x);})).catch(function(err){console.warn('[DBCenter] API批量添加失败:',type,err.message);});
     }
     if(this._INTEL_COLS[s]) this.scheduleAutoTranslate(s);  /* 清洗后→自动翻译 */
     /* 实时分发： approved 批量数据逐条进入预警中心/态势感知/事件流 */
@@ -516,13 +554,13 @@ const DBCenter={
     var cols=Object.keys(this._autoTrPend); this._autoTrPend={};
     if(!cols.length)return;
     this._autoTrBusy=true;
-    var me=this, ci=0, ok=0, total=0, quota=false;
+    var me=this, ci=0, ok=0, off=0, total=0, quota=false;
     function next(){
       if(ci>=cols.length||quota){ finish(); return; }
       var col=cols[ci++];
       if(typeof DATACENTER!=='undefined' && DATACENTER.translateOneCol){
-        DATACENTER.translateOneCol(col, null, function(o,t,qh){
-          ok+=o; total+=t; if(qh)quota=true;
+        DATACENTER.translateOneCol(col, null, function(o,t,qh,offN){
+          ok+=o; total+=t; off+=(offN||0); if(qh)quota=true;
           if(qh){ finish(); return; }
           setTimeout(next, 50);
         });
@@ -530,7 +568,7 @@ const DBCenter={
     }
     function finish(){
       me._autoTrBusy=false;
-      if(ok>0) showToast('🌐 已自动翻译 '+ok+' 条外文情报（清洗后自动）'+(quota?'，免费配额耗尽，其余待配百度密钥':''));
+      if(ok>0||off>0) showToast('🌐 已自动翻译 '+(ok+off)+' 条外文情报（清洗后自动）'+(off>0?'，其中 '+off+' 条仅离线词典兜底':'')+(quota?'，免费配额耗尽，其余待配百度密钥':''));
       else if(quota) console.log('[AUTO-TRANS] 免费配额耗尽，停止自动翻译');
     }
     next();
@@ -678,7 +716,10 @@ var TRANSLATOR={
     var out=String(t);
     var keys=Object.keys(this._DICT).sort(function(a,b){return b.length-a.length;});
     keys.forEach(function(k){
-      out=out.replace(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),TRANSLATOR._DICT[k]);
+      /* B5 词边界铁律（2026-09-03）：无边界时 'mine' 命中 determine、'war' 命中 warning/award、
+       * 'china' 命中 Chinatown，碎词替换进一步污染标题。所有英文键两侧加 \b。 */
+      var pat='\\b'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b';
+      out=out.replace(new RegExp(pat,'gi'),TRANSLATOR._DICT[k]);
     });
     return out;
   },
@@ -704,6 +745,12 @@ var TRANSLATOR={
     function finish(results,engine,online,meta){
       if(done)return; done=true;
       if(to)clearTimeout(to);
+      /* 2026-09-03 写入防御（与服务端 _isGarbage 口径对齐）：空/无中文/原文回显的译文槽
+       * 置空后再进缓存与回调，所有写入端（translateOneCol/translateDetail/
+       * _flushAutoAlerts/translateAlert）统一跳过，杜绝英文回显覆盖已有中文译文。 */
+      if(Array.isArray(results)&&texts&&results.length===texts.length){
+        results=results.map(function(v,i){ return _zhUsable(v,texts[i])?v:''; });
+      }
       me._cache[key]={r:results,e:engine,online:online,meta:meta||{}};
       cb(results,engine,online,meta||{});
     }
@@ -810,7 +857,8 @@ var DATACENTER={
   },
   _formatTitleCell:function(row){
     var title=String(row.title||'').trim();
-    var titleZh=String(row.title_zh||'').trim();
+    var titleZh=_zhBest(row,'title');          /* 在线/服务端正式译文 */
+    var titleOff=_zhOffTxt(row,'title');       /* 离线词典兜底（含旧污染降级视图） */
     var lang=this._detectLang(title);
     var langTags={zh:'中',en:'EN',ru:'RU',ar:'AR',ja:'JP',mix:'混',other:'?'};
     var tag=langTags[lang]||'?';
@@ -823,6 +871,10 @@ var DATACENTER={
     if(titleZh && titleZh!==title){
       var shortZh=titleZh.length>55?titleZh.substring(0,55)+'…':titleZh;
       html+='<div style="font-size:10px;color:var(--cyan);margin-top:3px;line-height:1.4;word-break:break-word" title="'+esc(titleZh)+'">'+esc(shortZh)+'</div>';
+    }else if(titleOff && titleOff!==title){
+      /* 离线词典兜底译文：琥珀色 + 明显标识，优先级低于正式译文 */
+      var shortOff=titleOff.length>55?titleOff.substring(0,55)+'…':titleOff;
+      html+='<div style="font-size:10px;margin-top:3px;line-height:1.4;word-break:break-word" title="'+esc(titleOff)+'">'+_OFFZ+'<span style="color:#f59e0b">'+esc(shortOff)+'</span></div>';
     }
     html+='</div></div>';
     return html;
@@ -2534,13 +2586,14 @@ var DATACENTER={
         var sev=item.severity||'medium';
         var sevColor=sevColors[sev]||'var(--text3)';
         var title=String(item.title||item.desc||'').trim();
-        var titleZh=String(item.title_zh||'').trim();
+        var titleZh=_zhBest(item,'title');
+        var titleOff=_zhOffTxt(item,'title');
         var lang=me._detectLang(title);
         var langTags={zh:'中',en:'EN',ru:'RU',ar:'AR',ja:'JP',mix:'混',other:'?'};
         var tag=langTags[lang]||'?';
         var tagColor=lang==='zh'?'var(--green)':lang==='en'?'var(--cyan)':lang==='mix'?'var(--purple)':lang==='ja'?'var(--pink)':'var(--orange)';
         var shortTitle=title.length>40?title.substring(0,40)+'…':title;
-        var hasMore=title.length>40||(item.desc||item.content||'').length>0||(titleZh && titleZh!==title);
+        var hasMore=title.length>40||(item.desc||item.content||'').length>0||((titleZh||titleOff)&&(titleZh!==title||titleOff!==title));
         var isExpanded=expanded.has(item.id);
         var time=me._formatTime(item.date||item.collected_at||'');
         var relTime=me._formatRelTime(item.date||item.collected_at||'');
@@ -2548,7 +2601,7 @@ var DATACENTER={
           '<span style="flex-shrink:0;font-size:9px;padding:1px 5px;border-radius:4px;background:'+tagColor+'20;color:'+tagColor+';border:1px solid '+tagColor+'40;margin-top:2px;font-weight:700">'+tag+'</span>'+
           '<div style="flex:1;min-width:0">'+
           '<div style="font-weight:600;line-height:1.5;word-break:break-word">'+esc(title)+'</div>'+
-          (titleZh&&titleZh!==title?'<div style="margin-top:4px;color:var(--cyan);line-height:1.5;word-break:break-word">译：'+esc(titleZh)+'</div>':'')+
+          (titleZh&&titleZh!==title?'<div style="margin-top:4px;color:var(--cyan);line-height:1.5;word-break:break-word">译：'+esc(titleZh)+'</div>':(titleOff&&titleOff!==title?'<div style="margin-top:4px;line-height:1.5;word-break:break-word">'+_OFFZ+'<span style="color:#f59e0b">'+esc(titleOff)+'</span></div>':''))+
           ((item.desc||item.content)?'<div style="margin-top:6px;font-size:11px;color:var(--text2);line-height:1.5">'+esc(item.desc||item.content||'')+'</div>':'')+
           '</div></div>';
         var safeId=String(item.id).replace(/'/g,"\\'");
@@ -3128,7 +3181,12 @@ var DATACENTER={
         (isForeign?'<span style="font-size:10px;padding:1px 8px;border-radius:8px;background:rgba(192,132,252,0.12);color:#c084fc">🌍 外文情报</span>':'')+
       '</div>'+
       '<div style="font-size:14px;font-weight:700;color:var(--text);line-height:1.5" id="dc-dt-title">'+esc(row.title||row.desc||'(无标题)')+'</div>'+
-      (row.title_zh?'<div style="font-size:13px;color:var(--cyan);margin-top:6px;line-height:1.5" id="dc-dt-title-zh">译文：'+esc(row.title_zh)+'</div>':'<div id="dc-dt-title-zh"></div>')+
+      (function(){
+        var _tz=_zhBest(row,'title'), _to=_zhOffTxt(row,'title');
+        if(_tz) return '<div style="font-size:13px;color:var(--cyan);margin-top:6px;line-height:1.5" id="dc-dt-title-zh">译文：'+esc(_tz)+'</div>';
+        if(_to) return '<div style="font-size:13px;margin-top:6px;line-height:1.5" id="dc-dt-title-zh">'+_OFFZ+'<span style="color:#f59e0b">'+esc(_to)+'</span></div>';
+        return '<div id="dc-dt-title-zh"></div>';
+      })()+
       (isForeign?'<div style="margin-top:10px"><button class="btn" style="font-size:11px;padding:4px 14px;background:linear-gradient(90deg,#7c3aed,#2563eb);color:#fff;font-weight:700" id="dc-dt-trans-btn" onclick="DATACENTER.translateDetail()">🌐 翻译为中文</button><span id="dc-dt-trans-status" style="font-size:10px;color:var(--text3);margin-left:8px"></span></div>':'')+
       '</div>';
     /* ---- 事件全要素（结构化） ---- */
@@ -3161,7 +3219,12 @@ var DATACENTER={
     if(content){
       html+='<div style="font-size:11px;color:var(--text3);font-weight:700;margin:12px 0 6px">📝 情报内容</div>';
       html+='<div style="padding:10px;background:var(--bg2);border-radius:8px;font-size:12px;color:var(--text);line-height:1.6;word-break:break-all" id="dc-dt-content">'+esc(content)+'</div>';
-      html+='<div id="dc-dt-content-zh">'+(row.content_zh?'<div style="padding:10px;background:rgba(0,212,255,0.05);border-radius:8px;font-size:12px;color:var(--cyan);line-height:1.6;margin-top:6px;border-left:2px solid var(--cyan)">译文：'+esc(row.content_zh)+'</div>':'')+'</div>';
+      html+='<div id="dc-dt-content-zh">'+(function(){
+        var _cz=_zhBest(row,'content'), _co=_zhOffTxt(row,'content');
+        if(_cz) return '<div style="padding:10px;background:rgba(0,212,255,0.05);border-radius:8px;font-size:12px;color:var(--cyan);line-height:1.6;margin-top:6px;border-left:2px solid var(--cyan)">译文：'+esc(_cz)+'</div>';
+        if(_co) return '<div style="padding:10px;background:rgba(245,158,11,0.05);border-radius:8px;font-size:12px;line-height:1.6;margin-top:6px;border-left:2px solid #f59e0b">'+_OFFZ+'<span style="color:#f59e0b">'+esc(_co)+'</span></div>';
+        return '';
+      })()+'</div>';
     }
     /* ---- 原文链接（可点击溯源） ---- */
     if(row.url){
@@ -3210,14 +3273,66 @@ var DATACENTER={
       if(st)st.innerHTML=(online===false)
         ? '<span style="color:#f59e0b">⚠️ 在线通道失败('+esc(TRANSLATOR.lastError||'未知')+')，已用内置词典</span>'
         : '引擎: '+esc(engine);
-      /* 回写数据库持久化（下次打开直接显示译文） */
+      /* 回写数据库持久化（下次打开直接显示译文）；C1 铁律：离线词典只进独立兜底字段；
+       * 在线译文同时回写服务器（服务端为持久化真源）。 */
       try{
         var data=DBCenter.getAll(me.currentTab);
         for(var i=0;i<data.length;i++){
-          if(data[i].id===row.id){ data[i].title_zh=tz; data[i].content_zh=cz; if(online===false)data[i].title_zh_offline=true; DBCenter._w(me.currentTab,data); break; }
+          if(data[i].id===row.id){
+            var rec=data[i];
+            if(rec.title_zh&&rec.title_zh_offline===true){ rec.title_zh_offline=String(rec.title_zh); delete rec.title_zh; }
+            if(rec.content_zh&&rec.content_zh_offline===true){ rec.content_zh_offline=String(rec.content_zh); delete rec.content_zh; }
+            if(online===false){
+              if(tz)rec.title_zh_offline=String(tz);
+              if(cz)rec.content_zh_offline=String(cz);
+            }else{
+              if(tz){rec.title_zh=tz;delete rec.title_zh_offline;}
+              if(cz){rec.content_zh=cz;delete rec.content_zh_offline;}
+            }
+            DBCenter._w(me.currentTab,data);
+            if(online!==false) me._writeBackZh(me.currentTab,[rec]);
+            break;
+          }
         }
       }catch(e){}
       showToast((online===false?'⚠️ 在线翻译失败，已用离线词典':'🌐 翻译完成 ('+engine+')'));
+    });
+  },
+  /* ===== 在线译文回写服务器（2026-09-03 职责收缩：服务端为持久化真源）=====
+   * DBCenter 本地记录无服务端行号（POST 响应的历史 id 未回存），通过
+   * GET /api/intel/:type 建立 归一化标题→行号 索引定位旧条目（10 分钟缓存），
+   * 再走 APIClient.updateIntel → PUT /api/intel/:id（服务端整体替换 data_json，
+   * 故 payload 携带完整记录字段，仅剥离 _ 前缀内部标记）。 */
+  _srvIdMap:{},_srvIdAt:{},
+  _getSrvIds:function(col,cb){
+    try{
+      if(typeof APIClient==='undefined'||!APIClient.isOnline()||!APIClient.getIntel){cb(null);return;}
+      var now=Date.now();
+      if(this._srvIdMap[col]&&now-(this._srvIdAt[col]||0)<600000){cb(this._srvIdMap[col]);return;}
+      var me=this;
+      APIClient.getIntel(col).then(function(rows){
+        if(!Array.isArray(rows)){cb(null);return;}
+        var m={};
+        rows.forEach(function(rw){ if(rw&&rw.id!=null){ var k=_normTitle(String(rw.title||'')); if(k)m[k]=rw.id; } });
+        me._srvIdMap[col]=m; me._srvIdAt[col]=now; cb(m);
+      }).catch(function(){cb(null);});
+    }catch(e){cb(null);}
+  },
+  _writeBackZh:function(col,recs){
+    var me=this;
+    this._getSrvIds(col,function(m){
+      try{
+        if(!m)return;
+        if(typeof APIClient==='undefined'||!APIClient.isOnline()||!APIClient.getToken())return;
+        recs.forEach(function(rec){
+          if(!rec||!rec.title_zh)return;
+          var dbid=rec._dbId||rec.dbId||m[_normTitle(String(rec.title||''))]||0;
+          if(!dbid)return;
+          var payload={};
+          for(var k in rec){ if(k.charAt(0)==='_')continue; payload[k]=rec[k]; }
+          APIClient.updateIntel(dbid,payload).catch(function(e){ console.warn('[TRANSLATE] 译文回写服务器失败:',e&&e.message); });
+        });
+      }catch(e){}
     });
   },
   /* 统计当前分类下待翻译的外文条目（用于按钮文案） */
@@ -3226,29 +3341,31 @@ var DATACENTER={
       var d=DBCenter.getAll(this.currentTab)||[];
       var n=0;
       for(var i=0;i<d.length;i++){
-        if(!d[i].title_zh && TRANSLATOR.isForeign((d[i].title||'')+' '+(d[i].content||d[i].desc||d[i].detail||d[i].summary||''))) n++;
+        if(!_hasOnlineZh(d[i]) && TRANSLATOR.isForeign((d[i].title||'')+' '+(d[i].content||d[i].desc||d[i].detail||d[i].summary||''))) n++;
       }
       return n;
     }catch(e){ return 0; }
   },
-  /* 翻译单个分类下全部未翻译外文条目；onProgress(text)、onDone(ok,total,quotaHit) */
+  /* 翻译单个分类下全部未翻译外文条目；onProgress(text)、onDone(ok,total,quotaHit,offlineN) */
   translateOneCol:function(col,onProgress,onDone){
     var me=this;
     var allData=DBCenter.getAll(col)||[];
     var seen={},targets=[];
     allData.forEach(function(r){
       if(!r||!r.id||seen[r.id])return;
-      if(r.title_zh)return;
+      /* C1（2026-09-03）：仅"在线译文"算已译；离线词典兜底/旧污染(flag)条目保留重试，
+       * 在线通道恢复后自动升级为正式译文。 */
+      if(_hasOnlineZh(r))return;
       if(!TRANSLATOR.isForeign((r.title||'')+' '+(r.content||r.desc||r.detail||r.summary||'')))return;
       seen[r.id]=1;targets.push(r);
     });
-    if(!targets.length){onDone(0,0,false);return;}
+    if(!targets.length){onDone(0,0,false,0);return;}
     var MAXN=200,truncated=targets.length>MAXN; if(truncated)targets=targets.slice(0,MAXN);
-    var done=0,ok=0,offlineBatches=0,firstErr='',quotaHit=false;
+    var done=0,ok=0,offN=0,offlineBatches=0,firstErr='',quotaHit=false;
     function runBatch(i){
       if(i>=targets.length){
         if(onProgress)onProgress(targets.length+'/'+targets.length);
-        onDone(ok,done,quotaHit);return;
+        onDone(ok,done,quotaHit,offN);return;
       }
       var batch=targets.slice(i,i+10);
       /* 每条发 [标题, 正文] 成对 —— 正文也必须翻译（用户强调详细内容要翻译，不能只翻标题） */
@@ -3261,20 +3378,32 @@ var DATACENTER={
         try{
           var data=DBCenter.getAll(col),idx={};
           for(var x=0;x<data.length;x++){ if(data[x]&&data[x].id!=null) idx[data[x].id]=x; }
-          var changed=false;
+          var changed=false,wb=[];
           batch.forEach(function(r,k){
             var tz=results&&results[k*2];
             var cz=results&&results[k*2+1];
             var pos=idx[r.id];
             if(pos===undefined)return;
-            if(tz){ data[pos].title_zh=tz; if(online===false) data[pos].title_zh_offline=true; else delete data[pos].title_zh_offline; ok++; changed=true; }
-            if(cz){ data[pos].content_zh=cz; if(online===false) data[pos].content_zh_offline=true; else delete data[pos].content_zh_offline; }
+            var rec=data[pos];
+            /* 旧污染格式原地迁移：flag=true 说明现存 title_zh/content_zh 实为离线词典输出 */
+            if(rec.title_zh&&rec.title_zh_offline===true){ rec.title_zh_offline=String(rec.title_zh); delete rec.title_zh; changed=true; }
+            if(rec.content_zh&&rec.content_zh_offline===true){ rec.content_zh_offline=String(rec.content_zh); delete rec.content_zh; changed=true; }
+            if(online===false){
+              /* C1 铁律：离线词典结果一律只写独立兜底字段，绝不写入 title_zh/content_zh */
+              if(tz){ rec.title_zh_offline=String(tz); offN++; changed=true; }
+              if(cz){ rec.content_zh_offline=String(cz); changed=true; }
+            }else{
+              if(tz){ rec.title_zh=tz; delete rec.title_zh_offline; ok++; changed=true; wb.push(rec); }
+              if(cz){ rec.content_zh=cz; delete rec.content_zh_offline; changed=true; }
+            }
           });
           if(changed) DBCenter._w(col,data);
+          /* 已入库旧条目：在线译文回写服务器（服务端为持久化真源，本地仅缓存） */
+          if(wb.length) me._writeBackZh(col,wb);
         }catch(e){ console.warn('[TRANSLATE] 回写失败:',e); }
         done+=batch.length;
         if(onProgress)onProgress(Math.min(done,targets.length)+'/'+targets.length);
-        if(quotaHit){ onDone(ok,done,quotaHit); return; }
+        if(quotaHit){ onDone(ok,done,quotaHit,offN); return; }
         setTimeout(function(){ runBatch(i+10); },120);  /* 轻微间隔，防限频 */
       });
     }
@@ -3287,7 +3416,7 @@ var DATACENTER={
       var n=0;
       cols.forEach(function(c){
         var d=DBCenter.getAll(c)||[];
-        d.forEach(function(r){ if(!r.title_zh && TRANSLATOR.isForeign((r.title||'')+' '+(r.content||r.desc||r.detail||r.summary||'')))n++; });
+        d.forEach(function(r){ if(!_hasOnlineZh(r) && TRANSLATOR.isForeign((r.title||'')+' '+(r.content||r.desc||r.detail||r.summary||'')))n++; });
       });
       return n;
     }catch(e){ return 0; }
@@ -3296,14 +3425,14 @@ var DATACENTER={
   translatePage(){
     var me=this, btn=document.getElementById('dc-trans-page-btn'), col=this.currentTab;
     var allData=DBCenter.getAll(col)||[];
-    var n=0; for(var i=0;i<allData.length;i++){ if(!allData[i].title_zh && TRANSLATOR.isForeign((allData[i].title||'')+' '+(allData[i].content||allData[i].desc||allData[i].detail||allData[i].summary||'')))n++; }
+    var n=0; for(var i=0;i<allData.length;i++){ if(!_hasOnlineZh(allData[i]) && TRANSLATOR.isForeign((allData[i].title||'')+' '+(allData[i].content||allData[i].desc||allData[i].detail||allData[i].summary||'')))n++; }
     if(!n){ showToast('本分类没有需要翻译的外文条目（中文条目无需翻译）'); if(btn){btn.textContent='✅ 无外文待译';setTimeout(function(){btn.textContent='🌐 翻译外文';},2500);} return; }
     if(btn){btn.disabled=true;btn.textContent='⏳ 翻译中 0/'+n;}
-    me.translateOneCol(col,function(p){if(btn)btn.textContent='⏳ 翻译中 '+p;},function(ok,total,quotaHit){
+    me.translateOneCol(col,function(p){if(btn)btn.textContent='⏳ 翻译中 '+p;},function(ok,total,quotaHit,offN){
       if(btn){btn.disabled=false;btn.textContent='🌐 翻译外文'+(me._pendingTransCount()>0?(' ('+me._pendingTransCount()+')'):'');}
-      if(ok>0){
+      if(ok>0||offN>0){
         var tip=(me._baiduCfg===false)?'（未配置百度翻译密钥：详细长文受 MyMemory 每日 5000 字符配额限制；可在 server/.env 配置 BAIDU_TRANSLATE_APPID / BAIDU_TRANSLATE_KEY 获得完整长文翻译）':'';
-        showToast('🌐 翻译完成: '+ok+'/'+total+' 条（标题+正文已译）'+(quotaHit?'，免费配额已耗尽，部分未译':'')+(tip?' '+tip:''));
+        showToast('🌐 翻译完成: '+((ok+offN)>0?(ok+offN):0)+'/'+total+' 条（标题+正文已译）'+(offN>0?'，其中 '+offN+' 条仅离线词典兜底（在线通道恢复后自动重译）':'')+(quotaHit?'，免费配额已耗尽，部分未译':'')+(tip?' '+tip:''));
       }else{ showToast('⚠️ 翻译失败：'+(TRANSLATOR.lastError||'未知原因')+'，请检查后端服务'); }
       me.renderTable();
     });
@@ -3313,8 +3442,8 @@ var DATACENTER={
     var me=this;
     var cols=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
     var btn=document.getElementById('dc-trans-all-btn');
-    var totals={target:0,done:0,ok:0};
-    cols.forEach(function(c){ var d=DBCenter.getAll(c)||[]; d.forEach(function(r){ if(!r.title_zh && TRANSLATOR.isForeign((r.title||'')+' '+(r.content||r.desc||r.detail||r.summary||'')))totals.target++; }); });
+    var totals={target:0,done:0,ok:0,off:0};
+    cols.forEach(function(c){ var d=DBCenter.getAll(c)||[]; d.forEach(function(r){ if(!_hasOnlineZh(r) && TRANSLATOR.isForeign((r.title||'')+' '+(r.content||r.desc||r.detail||r.summary||'')))totals.target++; }); });
     if(!totals.target){ showToast('全系统暂无外文条目需要翻译'); if(btn){btn.textContent='✅ 已全部翻译';setTimeout(function(){btn.textContent='📚 全部翻译';},2500);} return; }
     if(btn){btn.disabled=true;btn.textContent='⏳ 全量翻译 0/'+totals.target;}
     var ci=0;
@@ -3322,11 +3451,11 @@ var DATACENTER={
       if(ci>=cols.length){ finish(); return; }
       var col=cols[ci];
       var colName=(me.tabs.filter(function(t){return t.key===col;})[0]||{}).label||col;
-      me.translateOneCol(col,function(p){ if(btn)btn.textContent='⏳ '+colName+' '+p+' (总 '+totals.done+'/'+totals.target+')'; },function(ok,total,quotaHit){
-        totals.done+=total; totals.ok+=ok; ci++;
+      me.translateOneCol(col,function(p){ if(btn)btn.textContent='⏳ '+colName+' '+p+' (总 '+totals.done+'/'+totals.target+')'; },function(ok,total,quotaHit,offN){
+        totals.done+=total; totals.ok+=ok; totals.off+=(offN||0); ci++;
         if(quotaHit){
           if(btn){btn.disabled=false;btn.textContent='📚 全部翻译'+(me._pendingTransAll()>0?(' ('+me._pendingTransAll()+')'):'');}
-          showToast('⚠️ 免费翻译配额已用尽（MyMemory 每日 5000 字符）。已翻译 '+totals.ok+'/'+totals.target+' 条。可在 server/.env 配置 BAIDU_TRANSLATE_APPID / BAIDU_TRANSLATE_KEY（百度免费 200 万字符/月）解除限制，或明日重试。');
+          showToast('⚠️ 免费翻译配额已用尽（MyMemory 每日 5000 字符）。已翻译 '+(totals.ok+totals.off)+'/'+totals.target+' 条。可在 server/.env 配置 BAIDU_TRANSLATE_APPID / BAIDU_TRANSLATE_KEY（百度免费 200 万字符/月）解除限制，或明日重试。');
           me.renderTable(); return;
         }
         setTimeout(nextCol,60);
@@ -3334,7 +3463,7 @@ var DATACENTER={
     }
     function finish(){
       if(btn){btn.disabled=false;btn.textContent='📚 全部翻译'+(me._pendingTransAll()>0?(' ('+me._pendingTransAll()+')'):'');}
-      showToast('📚 全量翻译完成：'+totals.ok+'/'+totals.target+' 条外文情报已译为中文'+(totals.target>totals.ok?'（部分因配额未译，可重试）':''));
+      showToast('📚 全量翻译完成：'+(totals.ok+totals.off)+'/'+totals.target+' 条外文情报已译为中文'+(totals.off>0?'（其中 '+totals.off+' 条仅离线词典兜底，在线通道恢复后自动重译）':'')+(totals.target>(totals.ok+totals.off)?'（部分因配额未译，可重试）':''));
       me.renderTable();
     }
     nextCol();
@@ -6558,7 +6687,7 @@ const COUNTRY_DRAWER={
       var l=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
       return '<div style="padding:7px 8px;background:var(--panel2);border-radius:6px;margin-bottom:4px;cursor:pointer;border-left:3px solid '+(a.level==='red'?'var(--red)':a.level==='orange'?'var(--orange)':'var(--yellow)')+'" onclick="navigateTo(\'alerts\');setTimeout(function(){if(typeof AVIEW!==\'undefined\')AVIEW.selectAlert(\''+String(a.id).replace(/[^a-zA-Z0-9_-]/g,'')+'\');},350)">'+
         '<div style="display:flex;gap:5px;align-items:center"><span class="badge '+l.cls+'" style="font-size:8px;padding:0 4px">'+l.label+'</span>'+
-        '<span style="flex:1;font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,30)+'</span></div>'+
+        '<span style="flex:1;font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(_dedupeTitleConcat(_zhT(a)||a.title||'')).slice(0,30)+'</span></div>'+
         '<div style="font-size:9px;color:var(--text3);margin-top:2px">🕐 '+String(a.time||'').slice(5,16)+' · '+(a.type||'安全风险')+'</div></div>';
     }).join(''):'<div style="padding:10px;font-size:11px;color:var(--text3);text-align:center">最近 24 小时无该国预警</div>';
     /* --- HTML --- */
@@ -7646,7 +7775,7 @@ var INTELCENTER={
     var evPool=winPool.concat(extraPool);
     var events=evPool.slice().sort(function(x,y){return valFn(y).score-valFn(x).score;}).slice(0,8).map(function(a){
       var v=valFn(a);
-      return {id:a.id,title:String(a.title_zh||a.title||'').replace(/[\r\n]+/g,' ').slice(0,80),time:a.time||'',level:a.level||'',type:a.type||'',source:a.source||'',country:a.country||'',score:v.score,why:v.why||'',extra:winPool.indexOf(a)<0};
+      return {id:a.id,title:String(_zhT(a)||a.title||'').replace(/[\r\n]+/g,' ').slice(0,80),time:a.time||'',level:a.level||'',type:a.type||'',source:a.source||'',country:a.country||'',score:v.score,why:v.why||'',extra:winPool.indexOf(a)<0};
     });
     /* ⑤ 轻量关联簇（借鉴预警中心关联分析四类簇，窗口内重建） */
     var clusters=[];
@@ -9338,9 +9467,9 @@ const SITUATION={
         '<div style="flex:1;min-width:0">'+
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'+
             '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 5px">'+lv.label+'</span>'+
-            '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1"> '+stripTags(_dedupeTitleConcat(a.title_zh||a.title))+'</span>'+
+            '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1"> '+stripTags(_dedupeTitleConcat(_zhT(a)||a.title))+'</span>'+
           '</div>'+
-          '<div style="font-size:10px;color:var(--text2);line-height:1.4;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+_descCn(a.desc||'').substring(0,60)+'</div>'+
+          '<div style="font-size:10px;color:var(--text2);line-height:1.4;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(_descCnCell(a.desc||''))+'</div>'+
           '<div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text3)">'+
             '<span class="badge b-blue" style="font-size:8px;padding:0 4px">'+a.type+'</span>'+
             '<span>🌍 '+a.country+'</span>'+
@@ -9482,7 +9611,7 @@ const SITUATION={
   /* 标题翻译质量闸（2026-08-31 从 _isHighValuePanel 拆出）：半中半英/纯外文主体/机翻半成品
    * 一票否决上高可见面板。哨兵与池子过滤共用——内容可以放宽轮播，翻译质量绝不放宽。 */
   _isPanelTitleClean(a){
-    var disp=String(a.title_zh||a.title||'');
+    var disp=String(_zhT(a)||a.title||'');
     var latinRuns=disp.match(/[A-Za-z][A-Za-z'’-]*(?:\s+[A-Za-z][A-Za-z'’-]*){3,}/g)||[];
     if(latinRuns.length&&/[一-龥]/.test(disp)) return false;   /* 混排：含中文又有 4+ 连续英文词 */
     if(disp.length&&(/[一-龥]/.test(disp)?false:true)&&/[A-Za-z]{6,}/.test(disp)) return false; /* 纯外文主体 */
@@ -9639,7 +9768,7 @@ const SITUATION={
           '<div style="flex:1;min-width:0">'+
             '<div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">'+
               '<span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 5px">'+lv.label+'</span>'+
-              '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title))+'</span>'+
+              '<span style="font-size:11px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">'+stripTags(_dedupeTitleConcat(_zhT(a)||a.title))+'</span>'+
               '<span style="color:'+(val.score>=70?'var(--red)':val.score>=45?'var(--orange)':'var(--text3)')+';font-weight:800;font-size:9px" title="预警价值分（为什么值得预警）">◆'+val.score+'</span>'+liveTag+
             '</div>'+
             tagHtml+factHtml+
@@ -9830,7 +9959,7 @@ const SITUATION={
         h+='<div style="padding:4px 2px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,"")+'\');},300)">'+
           '<div style="display:flex;gap:4px;align-items:center;font-size:10px">'+
           '<span class="badge '+lv.cls+'" style="font-size:8px;padding:0 3px">'+lv.label+'</span>'+
-          '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,22)+'</span>'+
+          '<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600">'+stripTags(_dedupeTitleConcat(_zhT(a)||a.title||'')).slice(0,22)+'</span>'+
           '<span style="color:'+(sc>=70?'var(--red)':sc>=45?'var(--orange)':'var(--text3)')+';font-weight:800;font-size:9px">◆'+sc+'</span></div>'+
           '<div style="font-size:9px;color:var(--text3);margin-top:1px">📍'+(a.country||'-')+' · 🕐'+String(a.time||'').slice(5,16)+'</div></div>';
       });
@@ -9869,7 +9998,7 @@ const SITUATION={
           var cty=String(a.country||'—');
           h+='<div onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/[^a-zA-Z0-9_-]/g,'')+'\');},300)" style="display:grid;grid-template-columns:64px 1fr 44px;gap:4px;padding:3px 8px;border-top:1px solid rgba(255,255,255,0.04);cursor:pointer;font-size:10px" onmouseover="this.style.background=\'rgba(0,212,255,0.06)\'" onmouseout="this.style.background=\'\'">'+
             '<span style="color:'+(a.level==='red'?'var(--red)':a.level==='orange'?'var(--orange)':'var(--text2)')+';font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+cty+'</span>'+
-            '<span style="color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,26)+'</span>'+
+            '<span style="color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(_dedupeTitleConcat(_zhT(a)||a.title||'')).slice(0,26)+'</span>'+
             '<span style="color:var(--text3);text-align:right">'+String(a.time||'').slice(11,16)+'</span></div>';
         });
         h+='</div>';
@@ -9881,7 +10010,7 @@ const SITUATION={
         var lv=ALERT_LV[a.level]||{label:a.level,cls:'b-blue'};
         h+='<div class="live-item" onclick="navigateTo(\'alerts\');setTimeout(function(){AVIEW.selectAlert(\''+String(a.id).replace(/'/g,'')+'\');},300)">'+
           '<span class="live-lv '+lv.cls+'">'+lv.label+'</span>'+
-          '<span class="live-title">'+stripTags(_dedupeTitleConcat(a.title_zh||a.title||'')).slice(0,24)+'</span>'+
+          '<span class="live-title">'+stripTags(_dedupeTitleConcat(_zhT(a)||a.title||'')).slice(0,24)+'</span>'+
           '<span class="live-time">'+(a.time||'').slice(5,16)+'</span></div>';
       });
     }else{
@@ -9925,7 +10054,7 @@ const SITUATION={
     tickerAlerts.slice(0,10).forEach(function(a,idx){
       const cls=a.level==="red"?"":a.level==="orange"?" orange":a.level==="yellow"?" yellow":" green";
       const isLive=idx<3 && (a._live || (typeof LIVE_ALERTS!=='undefined' && LIVE_ALERTS.some(function(x){ return String(x.id)===String(a.id); })));
-      items.push('<span class="ti'+cls+'">['+(ALERT_LV[a.level]?ALERT_LV[a.level].label:'预警')+']</span>'+(isLive?'<b style="color:var(--cyan)">[实时]</b> ':'')+stripTags(a.title_zh||a.title).replace('[实时] ','')+' - '+a.country+' ('+(a.time?a.time.substring(5):'')+')');
+      items.push('<span class="ti'+cls+'">['+(ALERT_LV[a.level]?ALERT_LV[a.level].label:'预警')+']</span>'+(isLive?'<b style="color:var(--cyan)">[实时]</b> ':'')+stripTags(_zhT(a)||a.title).replace('[实时] ','')+' - '+a.country+' ('+(a.time?a.time.substring(5):'')+')');
     });
     EVENTS.filter(e=>e.level!=='blue').slice(0,6).forEach(e=>{
       items.push('<span class="ti orange">[事件]</span>'+e.title+' - '+e.country+' ('+e.date+')');
@@ -10188,7 +10317,7 @@ const SITUATION={
       var sc=a.status==='active'?'#ff3355':a.status==='responding'?'#ff8800':a.status==='acknowledged'?'#ffcc00':a.status==='resolved'?'#00ff9f':'#888';
       var stLabel={active:'活跃',responding:'处置中',acknowledged:'已确认',resolved:'已解除'}[a.status]||a.status;
       html+='<div class="alert-item lv-'+a.level+'" onclick="showAlertDetail(\''+String(a.id||'').replace(/'/g,"\\'")+'\')" style="margin-bottom:0">'+
-        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+lv.cls+'">'+lv.label+'</span> '+stripTags(a.title_zh||a.title)+'</div></div>'+
+        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+lv.cls+'">'+lv.label+'</span> '+stripTags(_zhT(a)||a.title)+'</div></div>'+
         '<div class="alert-item-meta"><span>🌍 '+a.country+'</span><span>🏢 '+a.enterprise+'</span><span>🕐 '+a.time+'</span><span style="color:'+sc+'">● '+stLabel+'</span></div></div>';
     });
     html+='</div>';
@@ -10337,7 +10466,7 @@ const SITUATION={
       var sc=a.status==='active'?'#ff3355':a.status==='responding'?'#ff8800':a.status==='acknowledged'?'#ffcc00':a.status==='resolved'?'#00ff9f':'#888';
       var stLabel={active:'待处理',responding:'处置中',acknowledged:'已确认',resolved:'已解除'}[a.status]||a.status;
       html+='<div class="alert-item lv-'+a.level+'" onclick="showAlertDetail(\''+String(a.id||'').replace(/'/g,"\\'")+'\')" style="margin-bottom:0">'+
-        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+stripTags(a.title_zh||a.title)+'</div></div>'+
+        '<div class="alert-item-top"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+stripTags(_zhT(a)||a.title)+'</div></div>'+
         '<div class="alert-item-meta"><span>🌍 '+a.country+'</span><span>🏢 '+(a.enterprise||'—')+'</span><span>🕐 '+a.time+'</span><span style="color:'+sc+'">● '+stLabel+'</span></div></div>';
     });
     html+='</div>';
@@ -11054,7 +11183,7 @@ const MONITOR={
         var ac=(a.risk_score||0)>=61?'var(--red)':(a.risk_score||0)>=31?'var(--yellow)':'var(--green)';
         return '<div style="padding:6px 8px;background:var(--bg2);border-left:3px solid '+ac+';border-radius:5px;margin-bottom:4px;cursor:pointer" onclick="document.getElementById(\'modal\').classList.remove(\'show\');showAlertDetail(\''+String(a.id||'').replace(/'/g,"\\'")+'\')">'
           +'<span style="font-size:9px;font-weight:800;color:'+ac+'">'+(a.risk_score!=null?a.risk_score+'分':'—')+'</span> '
-          +'<span style="font-size:11px;color:var(--text1)">'+esc(a.title_zh||a.title||'')+'</span>'
+          +'<span style="font-size:11px;color:var(--text1)">'+esc(_zhT(a)||a.title||'')+'</span>'
           +'<span style="font-size:9px;color:var(--text3);float:right">'+(a.time||'').substring(5,16)+'</span></div>';
       }).join('')+'</div>';
     }else{
@@ -12835,7 +12964,7 @@ const AVIEW={
   /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
   _liteFacts(a){
     /* 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会让"⚡➡️"facts 显示半中半英。 */
-    var text=String(a.title_zh||a.title||'')+' '+String(a.content_zh||'');
+    var text=String(_zhT(a)||a.title||'')+' '+String(a.content_zh||'');
     var f=[];
     var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
     if(tm)f.push({k:'🕐',v:tm[1]});
@@ -12879,7 +13008,7 @@ const AVIEW={
   /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
   _liteFacts(a){
     /* 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会让"⚡➡️"facts 显示半中半英。 */
-    var text=String(a.title_zh||a.title||'')+' '+String(a.content_zh||'');
+    var text=String(_zhT(a)||a.title||'')+' '+String(a.content_zh||'');
     var f=[];
     var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
     if(tm)f.push({k:'🕐',v:tm[1]});
@@ -12896,7 +13025,7 @@ const AVIEW={
   },
   /* 事件键：国家 + 去数字/进展词/媒体腔的标题主干（同事件多次进展 = 同键） */
   _eventKey(a){
-    var t=String(a.title_zh||a.title||'').toLowerCase();
+    var t=String(_zhT(a)||a.title||'').toLowerCase();
     return (a.country||'')+'|'+t.replace(/^\[[^\]]{0,8}\]\s*/,'').replace(/\d+/g,'')
       .replace(/上升至|至少|约|超过|造成|死亡|受伤|住院|人|名|最新|进一步|官员说|报道称|消息称|据报道|证实|表示|目击者|消息人士|另有|还有|并有|以及|发生|了|和|与|数|的/g,'')
       .replace(/[^a-z一-龥]/g,'').slice(0,18);
@@ -12908,7 +13037,7 @@ const AVIEW={
        * 跨源同事件签名一致（根治"尼泊尔洪水三源三签"式重复），同国不同事件
        * 因锚点不同不会误合并（根治"巴基斯坦同日16条共用一签"式误合并）。 */
       if(a&&a._eventSig&&String(a._eventSig).indexOf('|')>0) return String(a._eventSig);
-      var title=String(a.title_zh||a.title||'');
+      var title=String(_zhT(a)||a.title||'');
       var country=String(a.country||'');
       /* 如果 country 字段明显错误（如把受害者国籍/来源国当初事发国），尝试从标题提取主事发国 */
       function _mainEventCountry(t){
@@ -13168,7 +13297,7 @@ const AVIEW={
         (a.is_manual?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(0,255,159,.12);border:1px solid #00ff9f;color:#00ff9f;font-weight:800" title="手动录入条目（手动录入工作区提交 · 不受时效窗/上限约束 · 仅可人工删除）">✍手动</span>':'')+
         (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
-        stripTags(a.title_zh||a.title)+'</div>'+
+        stripTags(_zhT(a)||a.title)+'</div>'+
         (function(){
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
@@ -13329,7 +13458,7 @@ const AVIEW={
         (a.is_manual?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(0,255,159,.12);border:1px solid #00ff9f;color:#00ff9f;font-weight:800" title="手动录入条目（手动录入工作区提交 · 不受时效窗/上限约束 · 仅可人工删除）">✍手动</span>':'')+
         (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
         (a.risk_score!=null?'<span style="font-size:9px;font-weight:800;color:'+({red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)')+'" title="'+String(a.risk_rationale||'').replace(/"/g,'').slice(0,200)+'">'+a.risk_score+'分</span> ':'')+
-        stripTags(a.title_zh||a.title)+'</div>'+
+        stripTags(_zhT(a)||a.title)+'</div>'+
         (function(){
           var val=me._alertValue(a);
           var facts=me._liteFacts(a);
@@ -13597,7 +13726,7 @@ const AVIEW={
       '<div class="alert-detail-hd">'+
         '<div style="flex:1">'+
         '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap"><span class="badge '+lv.cls+'">'+lv.label+'</span><span style="color:'+(sc[a.status]||'#999')+';font-size:11px;font-weight:600">● '+(sl[a.status]||a.status)+'</span>'+_stanceBadgeHtml(a)+'</div>'+
-        '<div style="font-size:14px;font-weight:700;line-height:1.4">'+stripTags(a.title_zh||a.title)+'</div>'+
+        '<div style="font-size:14px;font-weight:700;line-height:1.4">'+stripTags(_zhT(a)||a.title)+'</div>'+
         (a.title_zh?'<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4">原文：'+esc(stripTags(a.title))+'</div>':'')+
         '<div class="alert-detail-id">⏱ '+(a.time||'')+'</div>'+
         '</div>'+
@@ -13617,8 +13746,8 @@ const AVIEW={
           '</div>';
         return h;
       })()+
-      '<div class="alert-detail-desc">'+stripTags(a.desc_zh||a.desc)+'</div>'+
-      (a.desc_zh?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:10px;color:var(--text3);line-height:1.6">原文：'+esc(stripTags(a.desc))+'</div>':'')+
+      '<div class="alert-detail-desc">'+stripTags(_zhBest(a,'desc')||_zhOffTxt(a,'desc')||a.desc)+'</div>'+
+      (_zhBest(a,'desc')?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:10px;color:var(--text3);line-height:1.6">原文：'+esc(stripTags(a.desc))+'</div>':(_zhOffTxt(a,'desc')?'<div style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.05);border-left:2px solid #f59e0b;border-radius:6px;font-size:10px;line-height:1.6">'+_OFFZ+'<span style="color:#f59e0b">'+esc(stripTags(_zhOffTxt(a,'desc'))).substring(0,80)+'</span></div>':''))+
       infoHtml+
       factHtml+
       bodyHtml+
@@ -13644,7 +13773,7 @@ const AVIEW={
     try{ tok=(typeof APIClient!=='undefined'&&APIClient.getToken)?APIClient.getToken():(localStorage.getItem('orps_token')||''); }catch(e){}
     var pbs=(typeof PLAYBOOKS!=='undefined'?PLAYBOOKS:[]).map(function(b){return {id:b.id,title:b.title,type:b.type,level:b.level};});
     fetch('/api/llm/run',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:JSON.stringify({kind:'playbook-recommend',alert:{title:a.title_zh||a.title,desc:String(a.desc||a.detail||'').slice(0,300),country:a.country||'',level:a.level||'',type:a.type||''},playbooks:pbs})})
+      body:JSON.stringify({kind:'playbook-recommend',alert:{title:_zhT(a)||a.title,desc:String(a.desc||a.detail||'').slice(0,300),country:a.country||'',level:a.level||'',type:a.type||''},playbooks:pbs})})
     .then(function(r){return r.json().then(function(j){return {status:r.status,j:j};});})
     .then(function(res){
       var cur=document.getElementById('pb-ai-slot'); if(!cur)return;
@@ -13907,7 +14036,7 @@ const AVIEW={
         '<span class="badge b-blue" style="font-size:8px;padding:0 4px">'+a.type+'</span>'+
         '<span style="font-size:9px;color:var(--text3)">'+(a.time||'').substring(5,16)+'</span></div>'+
         '<div style="font-size:11px;font-weight:600;line-height:1.3;margin-bottom:2px">'+stripTags(a.title)+'</div>'+
-        '<div style="font-size:9px;color:var(--text2);line-height:1.35;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+_descCn(a.desc||'').substring(0,50)+'</div>'+
+        '<div style="font-size:9px;color:var(--text2);line-height:1.35;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+esc(_descCnCell(a.desc||''))+'</div>'+
         '<div style="font-size:10px;color:var(--text3)">📍'+a.country+(a.enterprise?' | 🏢'+a.enterprise:'')+'</div>'+
         '</div>';
     });
@@ -14206,7 +14335,7 @@ const AVIEW={
         var id=escId(a.id);
         html+='<div onclick="showAlertDetail(\''+id+'\')" style="display:flex;align-items:flex-start;gap:7px;padding:5px 6px;border-radius:5px;margin-bottom:3px;cursor:pointer;background:var(--panel)" onmouseover="this.style.background=\'rgba(0,212,255,0.07)\'" onmouseout="this.style.background=\'var(--panel)\'">';
         html+='<span style="width:7px;height:7px;border-radius:50%;background:'+lvC(a.level)+';margin-top:5px;flex:none"></span>';
-        html+='<div style="flex:1;min-width:0"><div style="font-size:11.5px;line-height:1.45;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(stripTags(String(a.title_zh||a.title||'')).substring(0,64))+'</div>';
+        html+='<div style="flex:1;min-width:0"><div style="font-size:11.5px;line-height:1.45;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(stripTags(String(_zhT(a)||a.title||'')).substring(0,64))+'</div>';
         html+='<div style="font-size:9.5px;color:var(--text3);margin-top:1px">📍'+esc(a.country||'未知')+' · '+esc(String(a.time||'').substring(0,16))+(a.source?' · '+esc(String(a.source).substring(0,22)):'')+'</div></div></div>';
       });
       if(c.members.length>8)html+='<div style="font-size:10px;color:var(--text3);text-align:center;padding:2px">仅列前 8 条，共 '+c.members.length+' 条（点成员查看详情）</div>';
@@ -14271,7 +14400,7 @@ const AVIEW={
         if(pt){
           var c0=clusters[+pt.getAttribute('data-ci')],a=c0&&c0._show[+pt.getAttribute('data-si')];
           if(!a){tip.style.opacity='0';return;}
-          tx='<b>'+esc(stripTags(String(a.title_zh||a.title||'')).substring(0,42))+'</b><span>📍'+esc(a.country||'未知')+' · '+esc(String(a.time||'').substring(0,16))+'</span><span style="color:var(--cyan)">点击查看预警详情</span>';
+          tx='<b>'+esc(stripTags(String(_zhT(a)||a.title||'')).substring(0,42))+'</b><span>📍'+esc(a.country||'未知')+' · '+esc(String(a.time||'').substring(0,16))+'</span><span style="color:var(--cyan)">点击查看预警详情</span>';
         }else{
           var c=clusters[+core.parentNode.getAttribute('data-ci')];
           if(!c){tip.style.opacity='0';return;}
@@ -14428,7 +14557,7 @@ const AVIEW={
       html+='<div style="border:1px solid var(--border);border-left:3px solid var(--orange);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--panel2)">'+
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
           '<span class="badge '+lv.cls+'" style="font-size:9px">'+lv.label+'</span>'+
-          '<strong style="font-size:12px;flex:1;min-width:200px">'+esc(a.title_zh||a.title||'')+'</strong>'+
+          '<strong style="font-size:12px;flex:1;min-width:200px">'+esc(_zhT(a)||a.title||'')+'</strong>'+
           '<span style="font-size:10px;color:var(--text3)">📍'+esc(a.country||'')+'</span>'+
           (inc?'<span style="font-size:10px;color:var(--cyan);cursor:pointer" data-goto-cmd="1" title="去指挥调度中心查看">🎯 '+inc.id+' · '+stTxt+'</span>':'<span style="font-size:10px;color:var(--text3)">未关联指挥事件</span>')+
         '</div>'+
@@ -15152,7 +15281,7 @@ const AVIEW={
     html+='<span class="badge '+(isNeg?'b-red':'b-blue')+'" style="font-size:11px;padding:3px 8px">'+(isNeg?'涉华负面':'涉华专项')+'</span>';
     html+='<span style="font-size:11px;color:var(--text3)">风险评分: <strong style="color:'+lvColor+'">'+risk.score+'</strong>/100</span>';
     html+='</div>';
-    html+='<div style="font-size:16px;font-weight:700;color:var(--text1);line-height:1.4">'+(item.title_zh||item.title||'无标题')+'</div>';
+    html+='<div style="font-size:16px;font-weight:700;color:var(--text1);line-height:1.4">'+(_zhT(item)||item.title||'无标题')+'</div>';
     html+='</div>';
     html+='<button class="btn sm" onclick="AVIEW._closeChinaDetail()" style="font-size:10px">✕ 关闭</button>';
     html+='</div>';
@@ -15319,8 +15448,8 @@ const AVIEW={
       id:'CN-'+Date.now()+'-'+Math.floor(Math.random()*1000),
       time:_fmtNow(), level:lv, type:this._isChinaNegativeStance(text)?'安全风险':'政治风险',
       country:item.country_cn||item.country||'',
-      title:item.title_zh||item.title||'涉华情报',
-      desc:item.content_zh||item.content||item.title||'',
+      title:_zhT(item)||item.title||'涉华情报',
+      desc:_zhBest(item,'content')||item.content||item.title||'',
       source:item.source||'涉华情报预警中心',
       url:item.url||'', /* 来源网址透传（2026-08-24：情报来源必须带网址） */
       status:'active', _live:true, _approved:true,
@@ -17203,7 +17332,7 @@ function showCtyDetail(n){
   document.getElementById('modal-bd').innerHTML='<div class="grid mb-12" style="grid-template-columns:1fr 1fr;gap:10px"><div style="padding:12px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">综合风险</div><div style="font-size:24px;font-weight:800;color:'+lv.color+'">'+ov.toFixed(1)+'</div><span class="badge '+lv.cls+'">'+lv.label+'</span></div><div style="padding:12px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">首都/区域</div><div style="font-size:16px;font-weight:700;margin-top:4px">'+c.capital+' / '+c.region+'</div></div></div>'+
     '<div class="card-tt">📊 八维风险评分</div><div class="mb-12">'+DIMS.map(d=>{const v=c.scores[d.key]||0;const dl=getLevel(v);return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="width:80px;font-size:11px">'+d.ic+' '+d.name+'</span><div class="risk-bar" style="flex:1"><div class="risk-bar-fill" style="width:'+v*10+'%;background:'+dl.color+'"></div></div><span style="width:30px;text-align:right;font-size:11px;font-weight:700;color:'+dl.color+'">'+v.toFixed(1)+'</span></div>';}).join('')+'</div>'+
     '<div class="card-tt">🏢 中资企业 ('+ents.length+')</div><div class="mb-12">'+(ents.length?ents.map(e=>'<span class="badge b-blue" style="margin:2px;cursor:pointer" onclick="showEntDetail('+e.id+')">'+e.short+'</span>').join(''):'<span class="text-muted">无</span>')+'</div>'+
-    '<div class="card-tt">🚨 预警 ('+al.length+')</div><div class="mb-12">'+(al.length?al.map(a=>'<div class="alert-item lv-'+a.level+'"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+stripTags(a.title_zh||a.title)+'</div><div class="text-xs text-muted">'+a.time+'</div></div>').join(''):'<span class="text-muted">无</span>')+'</div>'+
+    '<div class="card-tt">🚨 预警 ('+al.length+')</div><div class="mb-12">'+(al.length?al.map(a=>'<div class="alert-item lv-'+a.level+'"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+stripTags(_zhT(a)||a.title)+'</div><div class="text-xs text-muted">'+a.time+'</div></div>').join(''):'<span class="text-muted">无</span>')+'</div>'+
     '<div style="padding:12px;background:var(--bg2);border-radius:8px"><strong>📝 分析备注</strong><p style="margin:6px 0 0;font-size:12px;line-height:1.7;color:var(--text2)">'+c.notes+'</p></div>'+
     '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'+(PERM.isAdmin()?'<button class="btn primary sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');MONITOR.showCountryForm(\''+c.name+'\')">✏️ 编辑国家</button><button class="btn danger sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');MONITOR.deleteCountry(\''+c.name+'\')">🗑️ 删除国家</button>':'')+'</div>';
   if(typeof INTELBUS!=='undefined') INTELBUS._enrichModal({country:c.name, text:(c.name||'')+' '+(c.notes||''), self:{module:'country', key:c.name}});
@@ -17219,7 +17348,7 @@ function showEntDetail(id){
     '<div class="grid mb-12" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:8px"><div style="padding:8px;background:var(--bg2);border-radius:6px;text-align:center"><div class="text-xs text-muted">投资</div><div style="font-weight:800;color:var(--cyan)">'+e.investment+'亿$</div></div><div style="padding:8px;background:var(--bg2);border-radius:6px;text-align:center"><div class="text-xs text-muted">人员</div><div style="font-weight:800">'+e.personnel.toLocaleString()+'</div></div><div style="padding:8px;background:var(--bg2);border-radius:6px;text-align:center"><div class="text-xs text-muted">资产</div><div style="font-weight:800">'+e.assets+'亿$</div></div><div style="padding:8px;background:var(--bg2);border-radius:6px;text-align:center"><div class="text-xs text-muted">预警</div><div style="font-weight:800;color:'+(ea.filter(a=>a.status!=="resolved").length?'var(--red)':'var(--green)')+'">'+ea.filter(a=>a.status!=='resolved').length+'</div></div></div>'+
     '<div class="card-tt">🌐 所在国风险分布</div><div class="mb-12">'+e.countries.map(c=>{const ct=COUNTRIES.find(x=>x.name===c);if(!ct)return null;const sc=calcOverall(ct.scores),cl=getLevel(sc);return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;cursor:pointer" onclick="showCtyDetail(\''+c+'\')"><span style="width:80px;font-size:11px">'+ct.flag+' '+c+'</span><div class="risk-bar" style="flex:1"><div class="risk-bar-fill" style="width:'+sc*10+'%;background:'+cl.color+'"></div></div><span style="width:30px;text-align:right;font-size:11px;font-weight:700;color:'+cl.color+'">'+sc.toFixed(1)+'</span></div>';}).filter(Boolean).join('')+'</div>'+
     (e.projects.length?'<div class="card-tt">📦 主要项目</div><div class="mb-12">'+e.projects.map(p=>'<div style="padding:8px;background:var(--bg2);border-radius:6px;margin-bottom:4px"><strong>'+p.n+'</strong> <span class="text-xs text-muted">('+p.c+' | '+p.inv+'亿$ | '+p.p+'人)</span></div>').join('')+'</div>':'')+
-    (ea.length?'<div class="card-tt">🚨 关联预警 ('+ea.length+')</div>'+ea.map(a=>'<div class="alert-item lv-'+a.level+'"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+(a.title_zh||a.title)+'</div><div class="text-xs text-muted">'+a.time+' | '+a.status+'</div></div>').join(''):'')+
+    (ea.length?'<div class="card-tt">🚨 关联预警 ('+ea.length+')</div>'+ea.map(a=>'<div class="alert-item lv-'+a.level+'"><div class="alert-item-tt"><span class="badge '+ALERT_LV[a.level].cls+'">'+ALERT_LV[a.level].label+'</span> '+(_zhT(a)||a.title)+'</div><div class="text-xs text-muted">'+a.time+' | '+a.status+'</div></div>').join(''):'')+
     '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'+(PERM.isAdmin()?'<button class="btn primary sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');ASSETS.showEntForm('+e.id+')">✏️ 编辑企业</button><button class="btn danger sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');ASSETS.deleteEnt('+e.id+')">🗑️ 删除企业</button>':'')+'</div>';
   if(typeof INTELBUS!=='undefined') INTELBUS._enrichModal({countries:e.countries||[], enterprise:e.short, enterprises:[e.short,e.name].filter(Boolean), self:{module:'enterprise', key:String(e.id)}});
   document.getElementById('modal').classList.add('show');
@@ -17280,7 +17409,13 @@ function translateAlert(id){
   var flat=fs.map(function(f){ return (a[f]||'').toString().slice(0,6000); });
   TRANSLATOR.translate(flat, function(results,engine,online,meta){
     try{
-      fs.forEach(function(f,k){ var zh=(results&&results[k])||''; if(zh) a[f+'_zh']=zh; });
+      /* C1 铁律：离线词典结果只进 *_zh_offline 兜底字段，绝不写 *_zh 正式字段 */
+      fs.forEach(function(f,k){
+        var zh=(results&&results[k])||'';
+        if(!zh)return;
+        if(online===false){ a[f+'_zh_offline']=String(zh); }
+        else { a[f+'_zh']=zh; delete a[f+'_zh_offline']; }
+      });
       if(typeof DataHub!=='undefined'&&DataHub.save) DataHub.save('alerts');
     }catch(e){ console.warn('[translateAlert] 回写失败',e); }
     if(document.getElementById('modal').classList.contains('show')){ showAlertDetail(id); }
@@ -17455,7 +17590,7 @@ function showAlertDetail(id){
   /* ===== 个体化研判生成（2026-08-13 用户指令：每个预警是不同个体，要素不能套模板）=====
    * 影响评估/建议响应/影响人员资产，全部由本条情报的 类型×国家×资产×企业×信源×印证 实时推导 */
   function _genAlertIntel(a){
-    var title=String(a.title_zh||a.title||'');
+    var title=String(_zhT(a)||a.title||'');
     var body=String(a.desc||a.content||a.detail||'');
     var text=title+' '+body;
     var dt=a.data_type||'';
@@ -17542,6 +17677,17 @@ function showAlertDetail(id){
   }
   var html='';
   html+='<div class="flex gap-8 mb-12"><span class="badge '+lv.cls+'">'+lv.label+'</span><span class="badge b-blue">'+a.type+'</span><span class="badge b-purple">'+stLabel+'</span>'+(a._live?'<span class="badge" style="background:var(--cyan);color:#000">实时</span>':'')+'</div>';
+  /* ===== AI 研判（2026-09-02 Kimi：红/橙级预警大模型四节研判——事件研判/同国态势背景/对中资项目影响/建议等级）===== */
+  if(a.level==='red'||a.level==='orange'){
+    var _aiKey=String(a.alert_no||a.id||'').replace(/'/g,'');
+    html+='<div id="alert-ai-panel" style="margin-bottom:12px;padding:12px 14px;background:linear-gradient(135deg,rgba(0,212,255,0.07),rgba(124,77,255,0.07));border:1px solid rgba(0,212,255,0.25);border-radius:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">'+
+        '<strong style="font-size:12px;color:var(--cyan)">🤖 AI 研判 <span style="font-size:10px;font-weight:400;color:var(--text3)">大模型四节：事件研判 / 同国态势背景 / 对中资项目影响 / 建议等级</span></strong>'+
+        '<button class="btn sm" style="font-size:11px;padding:4px 14px;flex-shrink:0" onclick="runAlertAI(\''+_aiKey+'\')">🤖 立即研判</button>'+
+      '</div>'+
+      '<div id="alert-ai-result" style="font-size:11px;color:var(--text3);line-height:1.7">基于本预警档案 + 同国近 7 天事件 + 中资资产标签，由大模型生成综合研判（约 30-90 秒）。</div>'+
+    '</div>';
+  }
   /* ===== 赋分改革面板（2026-08-26）：0-100 分 + 绿/黄/红三区 + 赋分依据 + 处置要求 ===== */
   if(a.risk_score!=null){
     var _zc={red:'var(--red)',yellow:'var(--yellow)',green:'var(--green)'}[a.risk_zone]||'var(--text3)';
@@ -17554,7 +17700,12 @@ function showAlertDetail(id){
       +(a.zone_action?'<div style="font-size:11px;margin-top:6px;line-height:1.7;color:'+_zc+'">处置要求：'+esc(a.zone_action)+'</div>':'')
       +'</div>';
   }
-  if(a.title_zh) html+='<div style="font-size:13px;color:var(--cyan);margin-bottom:8px;line-height:1.5">译文：'+esc(a.title_zh)+'</div>';
+  html+=(function(){ /* 译文行：正式译文青色；离线词典兜底琥珀色+标识（C1 渲染铁律） */
+    var _t=_zhBest(a,'title'), _to=_zhOffTxt(a,'title');
+    if(_t) return '<div style="font-size:13px;color:var(--cyan);margin-bottom:8px;line-height:1.5">译文：'+esc(_t)+'</div>';
+    if(_to) return '<div style="font-size:13px;margin-bottom:8px;line-height:1.5">'+_OFFZ+'<span style="color:#f59e0b">'+esc(_to)+'</span></div>';
+    return '';
+  })();
   var isForeignAlert=TRANSLATOR.isForeign((a.title||'')+' '+(a.desc||a.detail||'')+(a.impact||'')+(a.response||''));
   if(isForeignAlert) html+='<div style="margin-bottom:10px"><button class="btn" id="alert-trans-btn" style="font-size:11px;padding:4px 14px;background:linear-gradient(90deg,#7c3aed,#2563eb);color:#fff;font-weight:700" onclick="translateAlert(\''+a.id+'\')">🌐 翻译为中文</button></div>';
   html+='<div class="grid mb-12" style="grid-template-columns:1fr 1fr;gap:8px">'+
@@ -17565,14 +17716,14 @@ function showAlertDetail(id){
   '</div>';
   /* 预警描述：desc 为空时回退到正文/译文/标题，绝不留空；
    * 垃圾描述过滤（2026-08-13）：早期前端采集引擎造的占位描述（"数据源「XX」采集"/"XX | 安全风险"）视为无效 */
-  var _descText=a.desc||a.content||a.detail||a.title_zh||a.title||'';
+  var _descText=a.desc||a.content||a.detail||_zhT(a)||a.title||'';
   if(/数据源「|^\S{2,24} \| \S{2,8}风险$|^\S{2,24} \| \S{2,8}$/.test(String(_descText).trim())){
-    _descText=a.title_zh||a.title||'';
+    _descText=_zhT(a)||a.title||'';
   }
-  html+='<div style="padding:14px;background:var(--red-bg);border-left:4px solid var(--red);border-radius:8px;margin-bottom:12px"><strong style="color:var(--red)">预警描述</strong><p style="margin:8px 0 0;line-height:1.8;font-size:13px">'+esc(_descText)+'</p>'+(a.desc_zh?'<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:12px;color:var(--cyan);line-height:1.6">译文：'+esc(a.desc_zh)+'</div>':'')+'</div>';
+  html+='<div style="padding:14px;background:var(--red-bg);border-left:4px solid var(--red);border-radius:8px;margin-bottom:12px"><strong style="color:var(--red)">预警描述</strong><p style="margin:8px 0 0;line-height:1.8;font-size:13px">'+esc(_descText)+'</p>'+(function(){var _d=_zhBest(a,'desc'),_do=_zhOffTxt(a,'desc');if(_d)return '<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:12px;color:var(--cyan);line-height:1.6">译文：'+esc(_d)+'</div>';if(_do)return '<div style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.05);border-left:2px solid #f59e0b;border-radius:6px;font-size:12px;line-height:1.6">'+_OFFZ+'<span style="color:#f59e0b">'+esc(_do)+'</span></div>';return '';})()+'</div>';
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'+
-    '<div style="padding:10px;background:var(--orange-bg);border-radius:6px"><strong style="color:var(--orange);font-size:12px">影响评估</strong><div style="margin-top:4px;font-size:12px;line-height:1.6">'+impactHtml+'</div>'+(a.impact_zh?'<div style="margin-top:6px;font-size:11px;color:var(--cyan);line-height:1.5">译文：'+esc(a.impact_zh)+'</div>':'')+'</div>'+
-    '<div style="padding:10px;background:var(--blue-bg);border-radius:6px"><strong style="color:var(--cyan);font-size:12px">建议响应</strong><div style="margin-top:4px;font-size:12px;line-height:1.6">'+respHtml+'</div>'+(a.response_zh?'<div style="margin-top:6px;font-size:11px;color:var(--cyan);line-height:1.5">译文：'+esc(a.response_zh)+'</div>':'')+'</div>'+
+    '<div style="padding:10px;background:var(--orange-bg);border-radius:6px"><strong style="color:var(--orange);font-size:12px">影响评估</strong><div style="margin-top:4px;font-size:12px;line-height:1.6">'+impactHtml+'</div>'+(_zhBest(a,'impact')?'<div style="margin-top:6px;font-size:11px;color:var(--cyan);line-height:1.5">译文：'+esc(_zhBest(a,'impact'))+'</div>':'')+'</div>'+
+    '<div style="padding:10px;background:var(--blue-bg);border-radius:6px"><strong style="color:var(--cyan);font-size:12px">建议响应</strong><div style="margin-top:4px;font-size:12px;line-height:1.6">'+respHtml+'</div>'+(_zhBest(a,'response')?'<div style="margin-top:6px;font-size:11px;color:var(--cyan);line-height:1.5">译文：'+esc(_zhBest(a,'response'))+'</div>':'')+'</div>'+
   '</div>';
   /* 关联国家风险 */
   if(cty){
@@ -17676,10 +17827,44 @@ function showAlertDetail(id){
     '</div>';
   /* 管理操作按钮 */
   html+=(PERM.isAdmin()?'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');AVIEW.showAlertForm(\''+_akey+'\')">✏️ 编辑预警</button><button class="btn danger sm" onclick="document.getElementById(\'modal\').classList.remove(\'show\');AVIEW.deleteAlert(\''+_akey+'\')">🗑️ 删除预警</button></div>':'');
-  document.getElementById('modal-tt').textContent=a.title_zh||a.title;
+  document.getElementById('modal-tt').textContent=_zhT(a)||a.title;
   document.getElementById('modal-bd').innerHTML=html;
-  if(typeof INTELBUS!=='undefined') INTELBUS._enrichModal({country:a.country, enterprise:a.enterprise, text:(a.title_zh||a.title||'')+' '+(a.desc||'')+' '+(a.detail||''), self:{module:'alert', key:String(a.id||''), source:src}});
+  if(typeof INTELBUS!=='undefined') INTELBUS._enrichModal({country:a.country, enterprise:a.enterprise, text:(_zhT(a)||a.title||'')+' '+(a.desc||'')+' '+(a.detail||''), self:{module:'alert', key:String(a.id||''), source:src}});
   document.getElementById('modal').classList.add('show');
+  /* AI 研判缓存命中时自动渲染 */
+  if(typeof _aiKey!=='undefined'&&_aiKey&&_ALERT_AI_CACHE[_aiKey]){renderAlertAI(_aiKey);}
+}
+/* ===== 预警 AI 研判（2026-09-02：红/橙级预警 → /api/models/agent/alert-analyst）===== */
+var _ALERT_AI_CACHE={};
+function runAlertAI(key){
+  var box=document.getElementById('alert-ai-result');
+  if(!box)return;
+  if(_ALERT_AI_CACHE[key]){renderAlertAI(key);return;}
+  box.innerHTML='<div style="text-align:center;padding:16px 0;font-size:12px;color:var(--cyan)"><span style="display:inline-block;animation:spin 1.2s linear infinite;font-size:22px">🤖</span><div style="margin-top:8px">大模型研判生成中（约 30-90 秒）……</div></div>';
+  fetch('/api/models/agent/alert-analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alertId:key})})
+    .then(function(r){return r.json();})
+    .then(function(d){_ALERT_AI_CACHE[key]=d;renderAlertAI(key);})
+    .catch(function(e){box.innerHTML='<div style="font-size:12px;color:var(--red);padding:8px 0">研判失败：'+esc(String(e&&e.message||e))+' <button class="btn sm" style="font-size:10px;padding:2px 10px" onclick="runAlertAI(\''+key+'\')">重试</button></div>';});
+}
+function renderAlertAI(key){
+  var box=document.getElementById('alert-ai-result');if(!box)return;
+  var d=_ALERT_AI_CACHE[key];if(!d)return;
+  if(!d.ok||!d.agent){box.innerHTML='<div style="font-size:12px;color:var(--red)">研判失败：'+esc((d&&d.error)||'服务异常')+'</div>';return;}
+  var ag=d.agent;
+  if(ag.error){box.innerHTML='<div style="font-size:12px;color:var(--orange)">⚠️ '+esc(ag.error)+'</div>';return;}
+  var _aicons=[['事件研判','🎯'],['同国态势背景','🌐'],['对中资项目影响','🏢'],['建议等级','🚦']];
+  var secs=(ag.sections||[]).map(function(s){
+    var ic='📌';
+    for(var i=0;i<_aicons.length;i++){if(String(s.title).indexOf(_aicons[i][0])>=0){ic=_aicons[i][1];break;}}
+    return '<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--cyan);border-radius:6px;padding:10px 12px;margin-bottom:8px">'+
+      '<div style="font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:5px">'+ic+' '+esc(s.title)+'</div>'+
+      '<div style="font-size:12px;color:var(--text);line-height:1.8;white-space:pre-wrap">'+esc(s.body)+'</div>'+
+    '</div>';
+  }).join('');
+  var badge=ag.source==='llm'
+    ?'<span class="badge b-green">AI 生成 · '+esc(ag.model)+' · '+esc(ag.elapsed)+'</span>'
+    :'<span class="badge b-yellow">规则化降级 · '+esc(ag.model)+'</span>';
+  box.innerHTML=secs+'<div style="font-size:10px;color:var(--text3)">'+badge+' 证据链 '+(d.evidenceIds||[]).length+' 条 · '+esc(ag.dataNote||'')+'</div>';
 }
 /* 预警统一定位（2026-08-15 修复"预警不存在"）：实时流会持续重建/去重 ALERTS，
  * 旧 id 可能失效；alert_no 由 标题+url+类型+日期 确定性生成，重建后仍稳定。
@@ -18691,8 +18876,17 @@ function _flushAutoAlerts(){
     try{
       batch.forEach(function(a,k){
         var tz=results&&results[k*2], cz=results&&results[k*2+1];
-        if(tz){ a.title_zh=tz; if(online===false)a.title_zh_offline=true; else delete a.title_zh_offline; }
-        if(cz){ a.desc_zh=cz; if(online===false)a.desc_zh_offline=true; else delete a.desc_zh_offline; }
+        /* C1 铁律（2026-09-03）：离线词典结果只进独立兜底字段，绝不写 title_zh/desc_zh；
+         * 旧污染(flag=true)原地迁移为字符串兜底字段并清除正式字段。 */
+        if(a.title_zh&&a.title_zh_offline===true){ a.title_zh_offline=String(a.title_zh); delete a.title_zh; }
+        if(a.desc_zh&&a.desc_zh_offline===true){ a.desc_zh_offline=String(a.desc_zh); delete a.desc_zh; }
+        if(online===false){
+          if(tz)a.title_zh_offline=String(tz);
+          if(cz)a.desc_zh_offline=String(cz);
+        }else{
+          if(tz){a.title_zh=tz;delete a.title_zh_offline;}
+          if(cz){a.desc_zh=cz;delete a.desc_zh_offline;}
+        }
         a._autoTranslated=true;
       });
       /* LIVE_ALERTS/ALERTS 持有同一对象引用，已就地更新；触发相关面板重绘 */
@@ -19374,8 +19568,9 @@ function _ingestPublicIntel(list){
          * 避免历史 localStorage 英文项挡住后端中文回填（无需用户清缓存即可生效） */
         try{
           var _all=DBCenter.getAll(cat); var _ex=_all.find(function(d){return _normTitle(d.title||'')===k;});
-          if(_ex && !_ex.title_zh && it.title_zh){
-            _ex.title_zh=it.title_zh; if(it.content_zh)_ex.content_zh=it.content_zh; DBCenter._w(cat,_all);
+          /* C1 优先级：本地 title_zh 为离线词典污染(flag)时，服务端译文直接覆盖 */
+          if(_ex && (!_ex.title_zh || _ex.title_zh_offline===true) && it.title_zh){
+            _ex.title_zh=it.title_zh; delete _ex.title_zh_offline; if(it.content_zh)_ex.content_zh=it.content_zh; DBCenter._w(cat,_all);
           }
         }catch(e){}
         return;

@@ -14,11 +14,12 @@ module.exports = {
       interpreter: 'C:/Users/28737/.workbuddy/binaries/node/versions/22.22.2-2/node.exe',
       instances: 1,
       exec_mode: 'fork',
-      // 内存上限 400M：系统总内存仅 16GB，WorkBuddy 等进程已占 3.5GB+，
-      // ORPS 超过 400MB 即自动重启，防止内存泄漏拖垮整机。原 2G 阈值过高无法防 OOM。
-      max_memory_restart: '400M',
+      // 内存上限 1G（2026-09-02 卡顿根因修正：原 400M 帽 + 384M 老年代，服务常态负载
+      // 已达 238MB/62%，采集轮次+模型缓存+50人并发时 V8 贴帽疯狂 GC → 间歇性卡顿；
+      // 超 400M PM2 杀进程重启 → 周期性断线。16GB 整机给 ORPS 1G 合理，仍保留防漏兜底）。
+      max_memory_restart: '1G',
       // 限制 Node 老年代空间，配合 max_memory_restart 提前触发重启
-      node_args: '--max-old-space-size=384',
+      node_args: '--max-old-space-size=1024',
       // 崩溃/退出后 3 秒重启
       restart_delay: 3000,
       // 30 秒内最多 5 次异常重启则锁定

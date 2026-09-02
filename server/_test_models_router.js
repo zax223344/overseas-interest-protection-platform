@@ -6,8 +6,8 @@ const path = require('path');
 const { query } = require('./db');
 const modelsAnalysis = require('./models-analysis');
 const app = express();
-app.use(express.json({ limit: '2mb' }));
-app.use('/api/models', modelsAnalysis({ query }));
+/* json 解析只挂 models 路径：全局挂会消费 POST body，导致下方代理 req.pipe 转发空 body → 3000 挂起 408 */
+app.use('/api/models', express.json({ limit: '2mb' }), modelsAnalysis({ query }));
 /* 其余 /api/* 原样代理到 3000（登录、预警、态势等真实后端） */
 app.use('/api', (req, res) => {
   const opt = {

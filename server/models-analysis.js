@@ -13,6 +13,12 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const scrapers = require('./scrapers'); /* 2026-09-02：国别提取（伪国别预警重提国别用，与入库同源） */
+
+/* 伪国别预警的国别重提（与入库 scrapers.extractCountry 同源，双保险本地封装） */
+function guessCountryLocal(text) {
+  try { return scrapers.extractCountry(String(text || '')) || ''; } catch (e) { return ''; }
+}
 
 /* ===== 常量口径（全部透明可解释）===== */
 const CACHE_TTL = 10 * 60 * 1000;          /* 10 分钟 */
@@ -129,7 +135,23 @@ function loadOrgs() {
     const obj = (new Function('return ' + rest.slice(0, end + 1)))();
     _ORG_LIST = (obj.organizations || []).map(o => ({
       id: o.id, name: o.name, aliases: o.aliases || [],
-      type: o.type || '', threatLevel: o.threatLevel || 0, status: o.status || ''
+      type: o.type || '', threatLevel: o.threatLevel || 0, status: o.status || '',
+      /* 2026-09-02 组织详情 AI 研判（org-analyst v2）：携带完整档案字段 */
+      category: o.category || '', subcategory: o.subcategory || '',
+      founded: o.founded || '', leader: o.leader || '', members: o.members || '',
+      operatingRegions: o.operatingRegions || [], ideology: o.ideology || '',
+      funding: o.funding || '', weaponLevel: o.weaponLevel || '',
+      cyberCapability: o.cyberCapability || '', threatTrend: o.threatTrend || '',
+      designation: o.designation || [], description: String(o.description || '').slice(0, 300),
+      /* 2026-09-02 v3：TTP 战术实战摘要（供 org-analyst 深度研判） */
+      ttp: o.ttp ? {
+        atGlance: o.ttp.atGlance || '',
+        declaredGoal: o.ttp.behavior && o.ttp.behavior.declaredGoal || '',
+        priorityTargets: o.ttp.behavior && o.ttp.behavior.priorityTargets || '',
+        signature: (o.ttp.tactics && o.ttp.tactics.signature || []).slice(0, 5),
+        playbook: o.ttp.tactics && o.ttp.tactics.playbook || '',
+        weaknesses: (o.ttp.weaknesses || []).slice(0, 4)
+      } : null
     }));
   } catch (e) {
     console.warn('[MODELS] threats.js 组织库解析失败:', e.message);
@@ -140,7 +162,16 @@ function loadOrgs() {
 /* 组织正则：name+aliases 全部参与，ASCII 缩写加词边界 */
 function buildOrgMatchers() {
   return loadOrgs().map(o => {
-    const terms = [o.name, ...o.aliases].map(s => String(s).trim()).filter(s => s.length >= 2);
+    const base = [o.name, ...o.aliases].map(s => String(s).trim()).filter(s => s.length >= 2);
+    /* 2026-09-02 别名变体全配对（与 org-watch 同源修复）：连字符↔空格互换变体并入匹配，
+     * 根治 "al Qaeda"（空格）类标题归因漏判 */
+    const vset = new Set();
+    base.forEach(t => {
+      vset.add(t);
+      if (t.indexOf('-') >= 0) vset.add(t.replace(/-/g, ' '));
+      if (t.indexOf(' ') >= 0) vset.add(t.replace(/ /g, '-'));
+    });
+    const terms = Array.from(vset);
     const parts = terms
       .sort((a, b) => b.length - a.length)
       .map(t => /^[\x21-\x7e]+$/.test(t) ? t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/^(.+)$/, '(?:^|[^a-z])$1(?:[^a-z]|$)') : t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
@@ -230,19 +261,22 @@ module.exports = function modelsAnalysis(ctx) {
     });
   }
 
-  /* ===== 组织归因映射（缓存；题名+正文前 500 字符关键词匹配，不区分大小写）===== */
+  /* ===== 组织归因映射（缓存；题名+正文前 500 字符关键词匹配，不区分大小写。
+   * 2026-09-02 v3 归因分层：标题命中=强归因（原对象直存）；仅正文命中=弱归因（克隆并标 weak=true）。
+   * 根治 BLA 类污染——伊朗97条/尼日利亚20条仅正文提及"俾路支"被算成 BLA 事件，导致 AI 研判虚构地理扩散。 */
   async function loadOrgIndex() {
     return cache.wrap('base:orgIndex', async () => {
       const { evs } = await loadEvents();
       const matchers = buildOrgMatchers();
-      const byOrg = new Map();   /* orgId → events[] */
+      const byOrg = new Map();   /* orgId → events[]（强+弱，弱带 weak:true） */
       const evOrgs = new Map();  /* evId → orgId[] */
       for (const ev of evs) {
-        const text = ev.title + ' ' + ev.content;
         for (const m of matchers) {
-          if (m.re.test(text)) {
+          const tHit = m.re.test(ev.title);
+          if (tHit || m.re.test(ev.content)) {
+            const rec = tHit ? ev : Object.assign({}, ev, { weak: true });
             if (!byOrg.has(m.org.id)) byOrg.set(m.org.id, []);
-            byOrg.get(m.org.id).push(ev);
+            byOrg.get(m.org.id).push(rec);
             if (!evOrgs.has(ev.id)) evOrgs.set(ev.id, []);
             evOrgs.get(ev.id).push(m.org.id);
           }
@@ -299,7 +333,7 @@ module.exports = function modelsAnalysis(ctx) {
         }
         const { byOrg } = await loadOrgIndex();
         const orgs = loadOrgs().map(o => ({
-          id: o.id, name: o.name, count: (byOrg.get(o.id) || []).length
+          id: o.id, name: o.name, count: (byOrg.get(o.id) || []).filter(e => !e.weak).length
         })).filter(o => o.count > 0).sort((a, b) => b.count - a.count);
         return {
           ok: true,
@@ -330,7 +364,8 @@ module.exports = function modelsAnalysis(ctx) {
           ok: true, minEvents: MIN_ORG_EVENTS,
           orgs: loadOrgs().map(o => {
             const evs = byOrg.get(o.id) || [];
-            return { id: o.id, name: o.name, type: o.type, threatLevel: o.threatLevel, status: o.status, count: evs.length, sufficient: evs.length >= MIN_ORG_EVENTS };
+            const strong = evs.filter(e => !e.weak).length;
+            return { id: o.id, name: o.name, type: o.type, threatLevel: o.threatLevel, status: o.status, count: strong, sufficient: strong >= MIN_ORG_EVENTS };
           }).sort((a, b) => b.count - a.count)
         };
       });
@@ -347,7 +382,8 @@ module.exports = function modelsAnalysis(ctx) {
         const org = loadOrgs().find(o => o.id === id);
         if (!org) return { ok: false, error: '组织不存在' };
         const { byOrg } = await loadOrgIndex();
-        const all = (byOrg.get(id) || []).slice();
+        /* v3：仅强归因（标题命中）参与画像 */
+        const all = (byOrg.get(id) || []).filter(e => !e.weak).slice();
         if (all.length < MIN_ORG_EVENTS) {
           return { ok: true, insufficient: true, org, count: all.length, minEvents: MIN_ORG_EVENTS };
         }
@@ -424,7 +460,7 @@ module.exports = function modelsAnalysis(ctx) {
         const out = [];
         for (const id of ids) {
           const org = loadOrgs().find(o => o.id === id);
-          const evs = byOrg.get(id) || [];
+          const evs = (byOrg.get(id) || []).filter(e => !e.weak);
           if (!org || evs.length < MIN_ORG_EVENTS) { out.push({ id, name: org ? org.name : id, insufficient: true, count: evs.length }); continue; }
           const methodDist = namedDist(evs, classifyMethod, METHOD_BUCKETS);
           const targetDist = namedDist(evs, classifyTarget, TARGET_BUCKETS);
@@ -1088,9 +1124,12 @@ module.exports = function modelsAnalysis(ctx) {
     const rows = [];
     const obsDays = Math.min(ORG_OBS_DAYS, spanDays);
     const obsStart = t1 - obsDays * DAY, baseStart = t1 - (obsDays * 2) * DAY;
-    for (const [orgId, list] of byOrg.entries()) {
+    for (const [orgId, rawList] of byOrg.entries()) {
       const org = loadOrgs().find(o => o.id === orgId);
       if (!org) continue;
+      /* 2026-09-02 v3：弱归因（仅正文命中）不参与统计画像——根治跨组织地理污染 */
+      const list = rawList.filter(e => !e.weak);
+      if (!list.length) continue;
       const times = list.map(e => e.d).sort((a, b) => a - b);
       const Tdays = Math.max(1, (times[times.length - 1] - times[0]) + 1);
       /* Hawkes 当前强度（复用专项二拟合器；样本少时 μ 用均值） */
@@ -1156,10 +1195,11 @@ module.exports = function modelsAnalysis(ctx) {
       const data = await cache.wrap('v2:org-network', async () => {
         const { byOrg, evOrgs } = await loadOrgIndex();
         const nodes = [...byOrg.entries()]
-          .filter(([, l]) => l.length >= 3)
-          .map(([id, l]) => {
+          .map(([id, l]) => [id, l.filter(e => !e.weak).length, l])
+          .filter(([, s]) => s >= 3)
+          .map(([id, s]) => {
             const org = loadOrgs().find(o => o.id === id) || {};
-            return { id, name: org.name || id, count: l.length, sufficient: l.length >= MIN_ORG_EVENTS };
+            return { id, name: org.name || id, count: s, sufficient: s >= MIN_ORG_EVENTS };
           });
         const valid = new Set(nodes.map(n => n.id));
         const edge = new Map();
@@ -1204,7 +1244,7 @@ module.exports = function modelsAnalysis(ctx) {
       const maxKL = Math.max(...rows.map(r => r.tacticKL || 0), 1e-9);
       const maxChina = Math.max(...rows.map(r => r.chinaShare), 1e-9);
       const { byOrg } = await loadOrgIndex();
-      const list = byOrg.get(me.id) || [];
+      const list = (byOrg.get(me.id) || []).filter(e => !e.weak);
       const mdist = namedDist(list, classifyMethod, METHOD_BUCKETS);
       const mEntropy = entropy(mdist.map(x => x.c));
       const axes = [
@@ -1740,7 +1780,10 @@ module.exports = function modelsAnalysis(ctx) {
     return new Promise(resolve => {
       try {
         const https = require('https');
-        const body = JSON.stringify({ model: pv.model, messages: [{ role: 'user', content: prompt }], max_tokens: pv.maxTokens });
+        /* 2026-09-02 根因修复：Kimi 内容风控对裸事件标题 prompt 判"high risk"HTTP 400。
+         * 补 system 专业定性（公开源统计聚合+合法安全风险评估），六智能体共用此调用点全覆盖。 */
+        const SYS = '你是中国海外利益安全情报预警平台的专业情报分析引擎，服务对象为外交、商务、公安、国安及央企的海外安全风险管理团队。平台数据全部来自公开新闻源的统计聚合，仅用于合法合规的海外人员与资产安全风险评估研究，属于各国政府与企业的常规安全工作。请基于用户提供的统计数据做专业、客观的风险研判分析。';
+        const body = JSON.stringify({ model: pv.model, messages: [{ role: 'system', content: SYS }, { role: 'user', content: prompt }], max_tokens: pv.maxTokens });
         const u = new URL(pv.base.replace(/\/+$/, '') + '/chat/completions');
         const rq = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', timeout: pv.timeout, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + pv.key, 'Content-Length': Buffer.byteLength(body) } }, r2 => {
           const chunks = [];
@@ -1763,7 +1806,7 @@ module.exports = function modelsAnalysis(ctx) {
   }
   async function llmChain(prompt) {
     const providers = [
-      { name: 'Kimi', base: process.env.LLM_BASE_URL || 'https://api.moonshot.cn/v1', key: process.env.LLM_API_KEY || '', model: process.env.LLM_MODEL || 'kimi-k2.6', maxTokens: 4000, timeout: 90000 },
+      { name: 'Kimi', base: process.env.LLM_BASE_URL || 'https://api.moonshot.cn/v1', key: process.env.LLM_API_KEY || '', model: process.env.LLM_MODEL || 'kimi-k2.7-code', maxTokens: 8000, timeout: 150000 },
       { name: 'Spark', base: process.env.LLM2_BASE_URL || 'https://spark-api-open.xf-yun.com/v1', key: process.env.LLM2_API_KEY || '', model: process.env.LLM2_MODEL || '4.0Ultra', maxTokens: 3000, timeout: 60000 }
     ].filter(x => x.key);
     let lastErr = '未配置 LLM_API_KEY';
@@ -1808,7 +1851,7 @@ module.exports = function modelsAnalysis(ctx) {
         const typeTop = Object.entries(byType).sort((a, b) => b[1] - a[1]).slice(0, 6);
         const countryTop = Object.entries(byCountry).filter(([c]) => !PSEUDO_COUNTRIES.has(c)).sort((a, b) => b[1] - a[1]).slice(0, 8);
         const { byOrg } = await loadOrgIndex();
-        const orgTop = loadOrgs().map(o => ({ name: o.name, count: (byOrg.get(o.id) || []).length }))
+        const orgTop = loadOrgs().map(o => ({ name: o.name, count: (byOrg.get(o.id) || []).filter(e => !e.weak).length }))
           .filter(o => o.count > 0).sort((a, b) => b.count - a.count).slice(0, 6);
         /* 六专项异动信号（复用 /alerts 计算结果：直接读缓存键 alerts 同逻辑简算——取近 72h 红橙事件作证据） */
         const nowMs = Date.now();
@@ -1866,49 +1909,244 @@ module.exports = function modelsAnalysis(ctx) {
         return sections;
       }
     },
-    /* ① 组织画像师 */
+    /* ① 组织画像师（2026-09-02 v3：强归因统计根治地理污染 + 横向同类对比 + 同国关联组织 + 中资资产暴露 + TTP 融入） */
     'org-analyst': {
       name: '组织画像师', needs: 'org',
       async assemble(p) {
-        const { evs, t1, spanDays } = await loadEvents();
+        const orgId = String(p.orgId || p.org || '');
+        const prof = loadOrgs().find(o => o.id === orgId);
+        if (!prof) return { error: '组织不存在：' + (orgId || '（未指定 orgId）') };
+        const { t1, spanDays } = await loadEvents();
         const { byOrg } = await loadOrgIndex();
-        const rows = buildOrgActivity(byOrg, spanDays, t1);
-        const orgId = p.org || (rows.find(r => r.sufficient) || rows[0] || {}).id;
-        const me = rows.find(r => r.id === orgId);
-        if (!me) return { error: '组织无归因事件' };
-        const list = byOrg.get(orgId) || [];
-        const recent = list.slice(-10).reverse();
-        const mdist = namedDist(list, classifyMethod, METHOD_BUCKETS);
-        const tdist = namedDist(list, classifyTarget, TARGET_BUCKETS);
+        /* ── v3 核心：强归因（标题命中）单独成库，全库重算活动指数（归一化基座一致）── */
+        const strongByOrg = new Map();
+        for (const [id, list] of byOrg.entries()) {
+          const s = list.filter(e => !e.weak);
+          if (s.length) strongByOrg.set(id, s);
+        }
+        const rows = buildOrgActivity(strongByOrg, spanDays, t1);
+        const me = rows.find(r => r.id === orgId) || null;
+        const all = strongByOrg.get(orgId) || [];
+        const weakN = (byOrg.get(orgId) || []).length - all.length;
+        /* 近 30 天强归因事件（top12 最新在前） */
+        const win30 = t1 - 30 * DAY;
+        const recent = all.filter(e => e.t >= win30).slice(-12).reverse();
+        const d30 = all.filter(e => e.t >= win30).length;
+        const chinaCount = all.filter(e => e.china || /中国|中方|中资|中企|华人|Chinese|China|CPEC/i.test(e.title + ' ' + e.content)).length;
+        const mdist = namedDist(all, classifyMethod, METHOD_BUCKETS);
+        const tdist = namedDist(all, classifyTarget, TARGET_BUCKETS);
+        const countryC = {};
+        all.forEach(e => { countryC[e.country] = (countryC[e.country] || 0) + 1; });
+        const topCountries = Object.entries(countryC).filter(([c]) => !PSEUDO_COUNTRIES.has(c)).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        const sevC = {};
+        all.forEach(e => { if (e.severity) sevC[e.severity] = (sevC[e.severity] || 0) + 1; });
+        /* ── 横向同类组织对比（个体差异的数据底座）── */
+        const peers = rows.filter(r => r.id !== orgId && r.id && loadOrgs().find(o => o.id === r.id && o.category === prof.category))
+          .sort((a, b) => b.activityIndex - a.activityIndex).slice(0, 4)
+          .map(r => r.name + '（指数' + r.activityIndex + '、强归因' + r.count + '起、涉华' + Math.round((r.chinaShare || 0) * 100) + '%）');
+        /* ── 同国关联组织（强归因事件落在该组织 top 国别的其他组织）── */
+        const topCs = new Set(topCountries.map(x => x[0]));
+        const coActive = [];
+        for (const [id, list] of strongByOrg.entries()) {
+          if (id === orgId) continue;
+          const n = list.filter(e => topCs.has(e.country)).length;
+          if (n >= 3) coActive.push({ id, n });
+        }
+        const coOrgs = coActive.sort((a, b) => b.n - a.n).slice(0, 5)
+          .map(x => { const o = loadOrgs().find(o => o.id === x.id); return o ? o.name + '（同区强归因' + x.n + '起）' : ''; }).filter(Boolean);
+        /* ── 活动区域中资项目暴露（datahub enterprises 台账）── */
+        let cnAssets = [];
+        try {
+          const r2 = await query("SELECT data_json FROM datahub_store WHERE collection='enterprises'");
+          const raw2 = r2.rows[0] && r2.rows[0].data_json;
+          const ents = typeof raw2 === 'string' ? JSON.parse(raw2) : (raw2 || []);
+          for (const ent of ents) {
+            (ent.projects || []).forEach(pr => {
+              if (pr && topCs.has(pr.c || pr.country)) cnAssets.push((ent.short || ent.name) + '·' + (pr.n || pr.name));
+            });
+          }
+        } catch (e) { /* 台账缺失不阻断 */ }
+        cnAssets = [...new Set(cnAssets)].slice(0, 8);
         const ctx = {
-          org: me.name, count: me.count, activityIndex: me.activityIndex, lam: me.lam,
-          geoSpread: me.geoSpread, countries: me.countries, targetEntropy: me.targetEntropy,
-          tacticKL: me.tacticKL, chinaShare: me.chinaShare, sufficient: me.sufficient,
-          minEvents: MIN_ORG_EVENTS, spanDays,
-          methodTop: mdist.slice(0, 4).map(x => x.n + ' ' + Math.round(x.c / list.length * 100) + '%'),
-          targetTop: tdist.slice(0, 4).map(x => x.n + ' ' + Math.round(x.c / list.length * 100) + '%'),
-          recentTitles: recent.slice(0, 6).map(e => '[' + new Date(e.t).toISOString().slice(0, 10) + '][' + e.country + ']' + e.title.slice(0, 60))
+          name: prof.name, aliases: prof.aliases, type: prof.type, category: prof.category, subcategory: prof.subcategory,
+          status: prof.status, threatLevel: prof.threatLevel, threatTrend: prof.threatTrend,
+          founded: prof.founded, leader: prof.leader, members: prof.members,
+          regions: prof.operatingRegions, ideology: prof.ideology, funding: prof.funding,
+          weaponLevel: prof.weaponLevel, cyber: prof.cyberCapability, designation: prof.designation,
+          description: prof.description, ttp: prof.ttp, spanDays,
+          count: all.length, d30, weakN,
+          activityIndex: me ? me.activityIndex : 0, lam: me ? me.lam : 0,
+          geoSpread: topCountries.length, countries: topCountries.map(x => x[0]),
+          targetEntropy: me ? me.targetEntropy : null, tacticKL: me ? me.tacticKL : null,
+          chinaCount, chinaShare: all.length ? Math.round(chinaCount / all.length * 1000) / 1000 : 0,
+          sufficient: all.length >= MIN_ORG_EVENTS, minEvents: MIN_ORG_EVENTS,
+          peers, coOrgs, cnAssets,
+          methodTop: mdist.slice(0, 4).map(x => x.n + ' ' + Math.round(x.c / Math.max(1, all.length) * 100) + '%'),
+          targetTop: tdist.slice(0, 4).map(x => x.n + ' ' + Math.round(x.c / Math.max(1, all.length) * 100) + '%'),
+          topCountries: topCountries.map(([c, n]) => c + ' ' + n + '起'),
+          sevDist: Object.entries(sevC).sort((a, b) => b[1] - a[1]).map(([s, n]) => s + ' ' + n + '起'),
+          recentTitles: recent.map(e => '[' + new Date(e.t).toISOString().slice(0, 10) + '][' + e.country + '][' + e.severity + ']' + e.title.slice(0, 60))
         };
         return { ctx, evidenceIds: recent.map(e => e.id) };
       },
       promptOf(ctx) {
-        return '你是海外安全情报机构的资深组织画像分析师。以下是恐怖组织「' + ctx.org + '」在近 ' + ctx.spanDays + ' 天数据窗口内的真实统计（零模拟）：\n'
-          + '归因事件 ' + ctx.count + ' 起；活动指数 ' + ctx.activityIndex + '/100；Hawkes 当前强度 λ=' + ctx.lam + ' 起/日；地理扩散 ' + ctx.geoSpread + ' 国（' + (ctx.countries || []).join('、') + '）；\n'
-          + '目标多样性熵 ' + ctx.targetEntropy + ' bit；战术演进 KL 偏离 ' + (ctx.tacticKL == null ? '样本不足' : ctx.tacticKL + ' bit') + '；涉华威胁比例 ' + Math.round(ctx.chinaShare * 100) + '%；\n'
-          + '手法分布 Top：' + (ctx.methodTop || []).join('、') + '；目标分布 Top：' + (ctx.targetTop || []).join('、') + '；\n'
-          + '近期代表性事件：\n' + (ctx.recentTitles || []).join('\n') + '\n\n'
-          + '请严格基于以上真实数据输出该组织动态画像研判（禁止虚构）。用 JSON 返回 {"sections":[{"title":"...","body":"..."}]}，包含 4 节：①组织活动态势（活动周期与强度判读）②战术演进特征③下一步目标预测（基于手法/目标分布与近期事件）④对我海外利益威胁评估（结合涉华比例与地理分布）。每节 80-150 字。';
+        const ttp = ctx.ttp ? ('\n【TTP 战术实战档案】概览：' + ctx.ttp.atGlance + '；宣示目标：' + ctx.ttp.declaredGoal + '；优先目标：' + ctx.ttp.priorityTargets + '；标志性战术：' + ctx.ttp.signature.join('、') + '；行动手册：' + ctx.ttp.playbook + '；已知弱点：' + ctx.ttp.weaknesses.join('、')) : '\n【TTP 战术实战档案】（未收录）';
+        return '你是海外利益保护情报预警平台的威胁组织研判专家。以下是威胁组织「' + ctx.name + '」的系统档案与真实归因数据（零模拟，全部来自公开新闻源统计聚合）：\n'
+          + '【组织档案】类型：' + ctx.type + '（' + ctx.category + '·' + ctx.subcategory + '）；状态：' + ctx.status + '；威胁评级 ' + ctx.threatLevel + '/10（趋势：' + ctx.threatTrend + '）；成立：' + ctx.founded + '；领导人：' + ctx.leader + '；成员规模：' + ctx.members + '；\n'
+          + '档案活动区域：' + (ctx.regions || []).join('、') + '；意识形态：' + ctx.ideology + '；资金来源：' + ctx.funding + '；武器水平：' + ctx.weaponLevel + '；网络能力：' + ctx.cyber + '；国际认定：' + (ctx.designation || []).join('、') + '；\n'
+          + '档案概述：' + ctx.description + ttp + '\n'
+          + '【系统强归因统计（' + ctx.spanDays + ' 天窗口，仅标题命中本组织的严格归因）】归因事件 ' + ctx.count + ' 起（近 30 天 ' + ctx.d30 + ' 起；另有 ' + ctx.weakN + ' 条仅正文提及的弱关联未计入统计）；活动指数 ' + ctx.activityIndex + '/100；Hawkes 当前强度 λ=' + ctx.lam + ' 起/日；实际活动国别：' + ((ctx.topCountries || []).join('、') || '无强归因') + '；目标多样性熵 ' + ctx.targetEntropy + ' bit；战术演进 KL ' + (ctx.tacticKL == null ? '样本不足' : ctx.tacticKL + ' bit') + '；\n'
+          + '涉华关联事件 ' + ctx.chinaCount + ' 起（占 ' + Math.round(ctx.chinaShare * 100) + '%）；手法分布：' + ((ctx.methodTop || []).join('、') || '未分类样本不足') + '；目标分布：' + ((ctx.targetTop || []).join('、') || '未分类样本不足') + '；严重度分布：' + ((ctx.sevDist || []).join('、') || '无') + '；\n'
+          + '【横向同类组织（' + ctx.category + '类，强归因口径）】' + ((ctx.peers || []).join('；') || '无同类可比组织') + '\n'
+          + '【同区域关联组织（在其活动国别亦有强归因行动）】' + ((ctx.coOrgs || []).join('；') || '无') + '\n'
+          + '【活动区域中资项目台账（资产暴露面）】' + ((ctx.cnAssets || []).join('、') || '台账无匹配项目') + '\n'
+          + '近 30 天强归因代表性事件：\n' + ((ctx.recentTitles || []).join('\n') || '（近 30 天无强归因事件）') + '\n\n'
+          + '请严格基于以上档案与真实统计输出研判，遵守以下铁律：\n'
+          + '1. 该组织的活动区域只能引用【档案活动区域】和【实际活动国别】，禁止推断、外推或把其他组织的活动区域安到本组织头上；\n'
+          + '2. 每个结论必须引用具体数字或具体事件佐证，禁止无数据支撑的通用套话；\n'
+          + '3. 必须体现个体差异：与【横向同类组织】对比，指出本组织在活跃度、涉华指向、战术偏好上区别于同类组织的独特之处；\n'
+          + '4. 关联性研判：结合【同区域关联组织】分析联动或竞争关系及其对我海外利益环境的叠加影响；结合【中资项目台账】评估资产暴露。\n'
+          + '用 JSON 返回 {"sections":[{"title":"...","body":"..."}]}，包含 5 节：①威胁态势总评（档案评级×系统指数交叉定性，并与同类组织定位比较）②近期行动特征与战术判读（近 30 天事件方向/手法/烈度，与 TTP 档案对照看是否符合标志性战术；无近期事件时判读静默期风险）③对华利益关联与资产暴露（涉华数据+区域重叠+台账项目点名）④关联组织与区域联动（同区组织关系及叠加风险）⑤防范建议（分层具体到该组织特征，禁止模板化）。每节 100-200 字。';
       },
       fallback(ctx) {
         const sections = [];
-        sections.push({ title: '组织活动态势', body: ctx.org + ' 在近 ' + ctx.spanDays + ' 天窗口内归因事件 ' + ctx.count + ' 起，活动指数 ' + ctx.activityIndex + '/100，Hawkes 当前强度 λ=' + ctx.lam + ' 起/日。地理扩散 ' + ctx.geoSpread + ' 国（' + (ctx.countries || []).slice(0, 5).join('、') + '）。' + (ctx.sufficient ? '样本量满足画像门槛（≥' + ctx.minEvents + ' 起），统计结论可靠。' : '样本不足（' + ctx.count + '/' + ctx.minEvents + ' 起），以下研判仅供参考。') });
-        sections.push({ title: '战术演进特征', body: '手法分布 Top：' + (ctx.methodTop || []).join('、') + '。目标偏好 Top：' + (ctx.targetTop || []).join('、') + '。战术演进 KL 偏离 ' + (ctx.tacticKL == null ? '因基线样本不足无法计算' : ctx.tacticKL + ' bit（' + (ctx.tacticKL > KL_ALERT_THRESHOLD ? '显著偏离基线，战术正在转型' : '与基线基本一致，战术延续') + '）') + '。目标多样性熵 ' + ctx.targetEntropy + ' bit（熵越高目标越分散）。' });
-        sections.push({ title: '下一步目标预测', body: '基于目标分布：' + (ctx.targetTop || []).slice(0, 2).join('与') + ' 为最可能延续的攻击方向。近期事件样本：' + (ctx.recentTitles || []).slice(0, 2).join('；') + '。' });
-        sections.push({ title: '对我海外利益威胁评估', body: '涉华威胁比例 ' + Math.round(ctx.chinaShare * 100) + '%（' + ctx.count + ' 起中命中涉华关联）。' + (ctx.chinaShare > 0.1 ? '该组织对我海外人员与项目构成现实威胁，建议纳入重点监控清单。' : '涉华直接命中较低，但活动国与我利益重叠区需保持关注。') });
+        sections.push({ title: '威胁态势总评', body: ctx.name + '（' + ctx.type + '，威胁评级 ' + ctx.threatLevel + '/10，趋势' + ctx.threatTrend + '，状态' + ctx.status + '）。系统 ' + ctx.spanDays + ' 天强归因事件 ' + ctx.count + ' 起（弱关联 ' + ctx.weakN + ' 条未计入），活动指数 ' + ctx.activityIndex + '/100，Hawkes 强度 λ=' + ctx.lam + ' 起/日，实际活动国别：' + ((ctx.topCountries || []).join('、') || '无') + '。同类对比：' + ((ctx.peers || []).join('；') || '无可比组织') + '。' + (ctx.sufficient ? '样本量满足画像门槛（≥' + ctx.minEvents + ' 起）。' : '强归因样本不足（' + ctx.count + '/' + ctx.minEvents + ' 起），以档案定性为主。') });
+        sections.push({ title: '近期行动特征与战术判读', body: ctx.d30 > 0
+          ? '近 30 天强归因事件 ' + ctx.d30 + ' 起，集中于 ' + (ctx.topCountries || []).slice(0, 3).join('、') + '。手法以 ' + ((ctx.methodTop || []).slice(0, 2).join('、') || '未分类') + '为主，目标偏好 ' + ((ctx.targetTop || []).slice(0, 2).join('、') || '未分类') + '。样本：' + (ctx.recentTitles || []).slice(0, 2).join('；') + '。' + (ctx.ttp ? '对照 TTP 档案标志性战术：' + ctx.ttp.signature.join('、') + '。' : '')
+          : '近 30 天无强归因事件，处于行动静默期（历史窗口 ' + ctx.count + ' 起，分布于 ' + (ctx.countries || []).slice(0, 5).join('、') + '）。静默不等于威胁解除，需警惕行动准备期。' });
+        sections.push({ title: '对华利益关联与资产暴露', body: '涉华关联事件 ' + ctx.chinaCount + ' 起，占强归因总量 ' + Math.round(ctx.chinaShare * 100) + '%；档案活动区域：' + (ctx.regions || []).slice(0, 6).join('、') + '。' + (ctx.cnAssets && ctx.cnAssets.length ? '活动区域中资项目台账命中：' + ctx.cnAssets.join('、') + '，属现实暴露面。' : '台账暂无匹配项目。') + (ctx.chinaShare >= 0.1 ? '对我海外利益构成现实直接威胁，应列入重点监控清单。' : '直接涉华命中较低，但区域重叠需保持关注。') });
+        sections.push({ title: '关联组织与区域联动', body: ctx.coOrgs && ctx.coOrgs.length ? '同区域强归因活跃组织：' + ctx.coOrgs.join('；') + '。需评估其与本组织的竞争/协同关系及安全环境叠加恶化效应。' : '暂无同区域活跃组织强归因记录。' });
+        sections.push({ title: '防范建议', body: '①人员防护：在 ' + ((ctx.countries || [])[0] || '其活动国别') + ' 及周边的中方人员执行出行报备与结伴制度；②项目管控：核对其活动区域内中资项目台账与应急预案，重点关照交通线与营地安防' + (ctx.cnAssets && ctx.cnAssets.length ? '（重点：' + ctx.cnAssets.slice(0, 3).join('、') + '）' : '') + '；③监控：纳入组织专项监控清单，关注战术 KL 异动（当前 ' + (ctx.tacticKL == null ? '样本不足' : ctx.tacticKL + ' bit') + '）。' });
         return sections;
       }
     },
-    /* ② 反恐分析师 */
+    /* ② 预警研判官（2026-09-02：预警中心红/橙级「AI 研判」——预警档案+同国近7天事件+中资资产标签） */
+    'alert-analyst': {
+      name: '预警研判官', needs: 'alert',
+      async assemble(p) {
+        const key = String(p.alertId || p.id || '');
+        const r = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
+        const raw = r.rows[0] && r.rows[0].data_json;
+        const list = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+        const a = list.find(x => x && (String(x.id) === key || String(x.alert_no || '') === key));
+        if (!a) return { error: '预警不存在：' + key };
+        /* 同国近 7 天已审计事件 top15（以数据窗口末端为锚）。
+         * 2026-09-02 伪国别根治：预警 country 为 国际/全球/未知 时不做"同国"匹配（会把全库大杂烩喂给 AI），
+         * 改从预警标题重提国别；提不出则跳过同国背景，由 fallback 如实说明。 */
+        const { evs, t1 } = await loadEvents();
+        const win7 = t1 - 7 * DAY;
+        const rawCountry = String(a.country || '');
+        let effCountry = rawCountry;
+        let countryDerived = false;
+        if (PSEUDO_COUNTRIES.has(rawCountry)) {
+          const t = String(a.title_zh || a.title || '') + ' ' + String(a.desc || '').slice(0, 200);
+          /* 海外平台铁律：事发国优先用海外国别提取（排除中国——"中国公民在X国遇害"类事件的事发国是 X） */
+          const guessed = scrapers.extractOverseasCountry(t) || guessCountryLocal(t);
+          if (guessed) { effCountry = guessed; countryDerived = true; }
+        }
+        const same = PSEUDO_COUNTRIES.has(effCountry) ? [] : evs.filter(e => e.country === effCountry && e.t >= win7).slice(-15).reverse();
+        const sevCnt = {};
+        same.forEach(e => { if (e.severity) sevCnt[e.severity] = (sevCnt[e.severity] || 0) + 1; });
+        const chinaSame = same.filter(e => e.china).length;
+        /* 涉中资项目资产标签：预警自带标签 + 同国中资企业项目台账 */
+        let entProjects = [];
+        try {
+          const r2 = await query("SELECT data_json FROM datahub_store WHERE collection='enterprises'");
+          const raw2 = r2.rows[0] && r2.rows[0].data_json;
+          const ents = typeof raw2 === 'string' ? JSON.parse(raw2) : (raw2 || []);
+          for (const ent of ents) {
+            (ent.projects || []).forEach(pr => {
+              if (pr && pr.c === effCountry) entProjects.push((ent.short || ent.name) + '·' + pr.n + '（驻员' + (pr.p || '—') + '）');
+            });
+          }
+        } catch (e) { /* 企业台账缺失不阻断 */ }
+        const assets = [...new Set([
+          ...(Array.isArray(a.asset_tags) ? a.asset_tags : []),
+          ...(Array.isArray(a.rel_assets) ? a.rel_assets : (typeof a.rel_assets === 'string' && a.rel_assets ? [a.rel_assets] : [])),
+          ...entProjects
+        ])].slice(0, 10);
+        const ctx = {
+          level: a.level, type: a.type || '', country: effCountry || '未知', countryDerived, time: a.time || '',
+          title: a.title_zh || a.title || '', desc: String(a.desc || a.content || a.detail || '').slice(0, 500),
+          severity: a.severity || '',
+          riskScore: a.risk_score != null ? a.risk_score : a.riskScore,
+          riskZone: a.risk_zone || '', riskRationale: String(a.risk_rationale || a.riskRationale || '').slice(0, 200),
+          credibility: a.credibility || '', corroboration: a.corroboration || 0,
+          source: a.source || '', chinaRelated: a.chinaRelated === true || a.chinaRelated === 'true',
+          assets, relEnterprises: [...new Set([...(Array.isArray(a.rel_enterprises) ? a.rel_enterprises : []), ...(a.enterprise ? [a.enterprise] : [])])].slice(0, 6),
+          sameCnt: same.length, chinaSame,
+          sevDist: Object.entries(sevCnt).sort((x, y) => y[1] - x[1]).map(([s, n]) => s + ' ' + n + '起'),
+          sameTitles: same.map(e => '[' + new Date(e.t).toISOString().slice(0, 10) + '][' + e.severity + ']' + (e.china ? '[涉华]' : '') + e.title.slice(0, 60))
+        };
+        return { ctx, evidenceIds: same.map(e => e.id) };
+      },
+      promptOf(ctx) {
+        return '你是海外利益保护情报预警平台的预警研判专家。以下是一条' + (ctx.level === 'red' ? '红色紧急' : '橙色警告') + '级预警的真实档案与同国态势数据（零模拟）：\n'
+          + '【预警详情】[' + ctx.level + '] ' + ctx.title + '\n'
+          + '类型：' + ctx.type + '；国家/地区：' + ctx.country + (ctx.countryDerived ? '（预警原标记为国际/未定位，该国别由系统从标题重提）' : '') + '；预警时间：' + ctx.time + '；严重度：' + (ctx.severity || '—') + '；风险赋分：' + (ctx.riskScore != null ? ctx.riskScore + '/100（' + (ctx.riskZone || '未分区') + '）' : '未赋分') + '；\n'
+          + (ctx.riskRationale ? '赋分依据：' + ctx.riskRationale + '\n' : '')
+          + (ctx.credibility ? '信源等级：' + ctx.credibility + '；' : '') + (ctx.corroboration > 1 ? '独立信源印证 ' + ctx.corroboration + ' 方；' : '') + '涉华关联：' + (ctx.chinaRelated ? '是' : '否') + '\n'
+          + '预警内容：' + ctx.desc + '\n'
+          + (ctx.assets.length ? '命中中资资产/项目：' + ctx.assets.join('、') + '\n' : '')
+          + (ctx.relEnterprises.length ? '关联中资企业：' + ctx.relEnterprises.join('、') + '\n' : '')
+          + (ctx.sameCnt > 0
+            ? '【同国近 7 天态势】已审计事件 ' + ctx.sameCnt + ' 起（涉华 ' + ctx.chinaSame + ' 起）；严重度分布：' + ((ctx.sevDist || []).join('、') || '无') + '；\n事件样本：\n' + ((ctx.sameTitles || []).join('\n') || '（无）')
+            : '【同国近 7 天态势】近 7 天该国别无已审计事件，跳过同国背景节——请在"同国态势背景"一节如实说明数据不足，禁止编造他国事件充数。') + '\n\n'
+          + '请严格基于以上真实数据输出预警研判（禁止虚构）。用 JSON 返回 {"sections":[{"title":"...","body":"..."}]}，包含 4 节：①事件研判（事件性质、烈度与可信度判读）②同国态势背景（近 7 天同国事件态势与风险走向）③对中资项目影响（结合命中资产/项目与涉华关联给出影响面评估）④建议等级（给出维持/上调/下调建议与理由，以及响应时限要求）。每节 80-160 字。';
+      },
+      fallback(ctx) {
+        const sections = [];
+        sections.push({ title: '事件研判', body: '[' + ctx.level + '] ' + ctx.title + '（' + ctx.type + '，' + ctx.country + '，' + ctx.time + '）。' + (ctx.riskScore != null ? '风险赋分 ' + ctx.riskScore + '/100（' + ctx.riskZone + '）。' : '') + (ctx.corroboration > 1 ? '已获 ' + ctx.corroboration + ' 方独立信源印证，事件真实性较高。' : (ctx.credibility === 'D' ? '单一社媒信源，需进一步核实。' : '基于公开信源研判。')) });
+        sections.push({ title: '同国态势背景', body: ctx.country + ' 近 7 天已审计事件 ' + ctx.sameCnt + ' 起（涉华 ' + ctx.chinaSame + ' 起）' + (ctx.sevDist.length ? '，严重度分布：' + ctx.sevDist.join('、') : '') + '。' + (ctx.sameCnt >= 8 ? '同国事件密度高，安全环境处于高压态势。' : ctx.sameCnt >= 3 ? '同国存在持续风险活动迹象。' : '同国近期事件密度较低，本事件或为孤立点位风险。') + (ctx.sameTitles.length ? '样本：' + ctx.sameTitles.slice(0, 2).join('；') : '') });
+        sections.push({ title: '对中资项目影响', body: (ctx.assets.length ? '命中中资资产/项目：' + ctx.assets.slice(0, 5).join('、') + '。' : '暂无直接命中的中资资产标签。') + (ctx.chinaRelated ? '本预警涉华关联明确，' : '') + (ctx.relEnterprises.length ? '关联企业：' + ctx.relEnterprises.join('、') + '。' : '') + '建议按就近原则排查同区域中方人员与项目。' });
+        sections.push({ title: '建议等级', body: '综合事件烈度与同国态势（近 7 天 ' + ctx.sameCnt + ' 起、涉华 ' + ctx.chinaSame + ' 起），建议' + (ctx.level === 'red' ? '维持红色紧急级，2 小时内启动应急响应并核实人员安全' : ctx.sameCnt >= 8 || ctx.chinaSame > 0 ? '维持橙色警告级并视事态升级，12 小时内完成影响面核查' : '维持橙色警告级，24 小时内完成核查') + '；持续跟踪同国后续事件流。' });
+        return sections;
+      }
+    },
+    /* ③ 检索归纳官（2026-09-02：threatroom 检索结果 AI 归纳——前端直供 top15 真实检索结果） */
+    'search-analyst': {
+      name: '检索归纳官', needs: 'search',
+      async assemble(p) {
+        const query = String(p.query || p.cn || '').slice(0, 60);
+        const rawItems = Array.isArray(p.items) ? p.items.slice(0, 15) : [];
+        if (!query) return { error: '缺少检索词（query）' };
+        if (!rawItems.length) return { error: '无检索结果可归纳' };
+        const items = rawItems.map(x => ({
+          t: String(x.t || x.title || '').slice(0, 90),
+          c: String(x.c || x.country || ''),
+          d: String(x.d || x.date || '').slice(0, 10),
+          s: String(x.s || x.source || '').slice(0, 30),
+          l: String(x.l || x.level || ''),
+          w: x.w === true || x.w === 'true'
+        })).filter(x => x.t);
+        if (!items.length) return { error: '检索结果无有效标题' };
+        const byCountry = {};
+        let china = 0;
+        items.forEach(x => { if (x.c) byCountry[x.c] = (byCountry[x.c] || 0) + 1; if (x.w) china++; });
+        const countryTop = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const ctx = {
+          query, n: items.length,
+          countryTop: countryTop.map(([c, n]) => c + ' ' + n + '条'),
+          china,
+          items: items.map(x => '[' + (x.d || '日期未知') + ']' + (x.c ? '[' + x.c + ']' : '') + (x.l ? '[' + x.l + ']' : '') + (x.w ? '[涉华]' : '') + (x.s ? '（' + x.s + '）' : '') + x.t)
+        };
+        return { ctx, evidenceIds: [] };
+      },
+      promptOf(ctx) {
+        return '你是海外利益保护情报预警平台的检索分析专家。以下是作战室对实体「' + ctx.query + '」全网检索得到的真实结果（零模拟，共 ' + ctx.n + ' 条，已按时间倒序）：\n'
+          + '国别分布：' + ((ctx.countryTop || []).join('、') || '未标注') + '；涉华关联 ' + ctx.china + ' 条；\n'
+          + '检索结果列表：\n' + ctx.items.map((t, i) => (i + 1) + '. ' + t).join('\n') + '\n\n'
+          + '请严格基于以上真实检索结果输出结构化归纳（禁止虚构未出现的细节）。用 JSON 返回 {"sections":[{"title":"...","body":"..."}]}，包含 3 节：①信息全景归纳（这些结果共同反映了「' + ctx.query + '」当前怎样的整体态势）②风险主题提炼（提炼 2-4 个核心风险主题并各配证据指向）③关注建议（下一步应重点跟踪的方向与要素）。每节 80-160 字。';
+      },
+      fallback(ctx) {
+        const sections = [];
+        sections.push({ title: '信息全景归纳', body: '围绕「' + ctx.query + '」的 ' + ctx.n + ' 条检索结果' + (ctx.countryTop.length ? '集中于 ' + ctx.countryTop.slice(0, 3).join('、') : '') + '，其中涉华关联 ' + ctx.china + ' 条。结果整体反映该实体在检索窗口内的公开舆情与事件脉络。' });
+        sections.push({ title: '风险主题提炼', body: '主要主题线索：' + ctx.items.slice(0, 3).map(t => String(t).replace(/^\[[^\]]*\]*/, '').slice(0, 40)).join('；') + '。可结合国别分布判断风险集聚方向。' });
+        sections.push({ title: '关注建议', body: '①持续跟踪「' + ctx.query + '」相关新检索结果，关注涉华关联条目变化（当前 ' + ctx.china + '/' + ctx.n + '）；②对结果集中出现的国别执行国别风险复核；③高风险主题条目推送预警中心人工复核。' });
+        return sections;
+      }
+    },
+    /* ④ 反恐分析师 */
     'counter-terror': {
       name: '反恐分析师', needs: 'country',
       async assemble(p) {

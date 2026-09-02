@@ -33,6 +33,7 @@ const wechatMirrors = require('./wechat-mirrors'); /* 公众号镜像站直采�
 const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项采集（2026-08-26：组合词改排序+双信号过滤，专治涉华负面新文被埋） */
 const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索→抓取入库 四步管线（2026-08-26 用户指令：公众号只查询线索，不再从公众号抓数据入库） */
 const coreThreatWatch = require('./core-threat-watch'); /* 海外核心安全威胁一分钟哨兵（2026-08-27 用户铁指令：巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚 恐袭/袭击/绑架/刑案，1 分钟一轮） */
+const orgWatch = require('./org-watch'); /* 威胁组织专项采集哨兵（2026-09-02 用户铁指令：threats.js 组织库定向采集，豁免体积限度，30min 一轮） */
 const INTEREST_BASE = require('./interest-base'); /* 海外利益底数库（2026-08-28 官方框架：国家梯队+六大类项目+通道+经济底数+人员底数+东道国风险指标） */
 const channelWatch = require('./channel-watch'); /* 海上战略通道哨兵（维度⑤：八大咽喉点通航/海盗/航运事件，30分钟一轮） */
 const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（维度⑥：OFAC/实体清单/出口管制/外资审查，30分钟一轮） */
@@ -1941,6 +1942,9 @@ function _capAlertQueue(list) {
     if (a.is_manual === true) { out.push(a); continue; }
     const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
     if (t && now - t > 72 * 3600 * 1000) continue;
+    /* 2026-09-02 威胁组织专项哨兵：org_watch 预警豁免国别帽（用户指令"不受采集限度影响"）。
+     * 仅豁免国别均衡帽；上方 72h 陈条目清理属时效闸，与其他通道一致照常执行。 */
+    if (a._sourceType === 'org_watch') { out.push(a); continue; }
     /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
      * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。
      * 2026-08-29 两区渲染（用户指令：预警中心有重点和核心）：核心区条目（is_core：
@@ -2275,6 +2279,9 @@ async function _serverAlertGen() {
         asset_tags: it.asset_tags || [],
         interest_tier: it.interest_tier || '',
         is_core: _alertIsCore(it),
+        /* 2026-09-02 威胁组织专项哨兵：溯源标记随预警下发（_capAlertQueue 国别帽豁免凭据 + 前端按组织聚合） */
+        _sourceType: it._sourceType || '',
+        _orgId: it._orgId || '', _orgName: it._orgName || '',
         _riskVersion: 2
       };
       added.unshift(alert);
@@ -4383,6 +4390,43 @@ app.post('/api/gap-scheduler/run', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ===== 威胁组织专项采集哨兵手动触发端点（2026-09-02） ===== */
+app.post('/api/org-watch/run', async (req, res) => {
+  try {
+    /* 2026-09-02 根因修复：原同步 await 整轮采集（400s+）→ 前端 HTTP 000 挂起。
+     * 改为异步触发立即返回，结果查询走 GET /api/org-watch/status。 */
+    if (Date.now() < _orgWatchBusyUntil) return res.json({ ok: false, error: '上一轮威胁组织哨兵尚未结束，请稍候', stats: _orgWatchLastStats });
+    _orgWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+    res.json({ ok: true, started: true, note: '威胁组织专项哨兵已触发，采集轮约 5-8 分钟，结果请查 GET /api/org-watch/status' });
+    (async () => {
+      try {
+        const r = await orgWatch.runOrgWatch({ maxPerQuery: 15 });
+        const items = r.items || [];
+        let inserted = 0;
+        if (items.length) {
+          try { await _translateListToZhParallel(items, 4); } catch (e) {}
+          items.forEach(it => {
+            try { ENTITY.enrich(it); it.interestLinked = true; it._forceDataType = true; } catch (e) {}
+            if (!it.data_type) it.data_type = 'terror_events';
+            if (!it.category) it.category = '威胁组织动态';
+            if (!it._sourceType) it._sourceType = 'org_watch';
+          });
+          const res2 = await _ingestLinkedItems(items, 'ORG-WATCH-MANUAL', '（手动触发）');
+          inserted = (res2 && res2.inserted) || 0;
+        }
+        _orgWatchLastStats = Object.assign({}, r.stats, { inserted, manualAt: new Date().toISOString() });
+        console.log('[ORG-WATCH] 手动轮完成: 候选 ' + items.length + ' / 入库 ' + inserted);
+      } catch (e) { console.warn('[ORG-WATCH] 手动轮失败:', e.message); }
+      finally { _orgWatchBusyUntil = 0; }
+    })();
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/* 哨兵状态查询：配合异步触发，前端/运维轮询结果 */
+app.get('/api/org-watch/status', (req, res) => {
+  res.json({ ok: true, busy: Date.now() < _orgWatchBusyUntil, lastStats: _orgWatchLastStats });
+});
+
 /* ===== WorldMonitor 数据接入哨兵手动触发端点（2026-08-31 Task #506） ===== */
 app.post('/api/wm-feed/run', async (req, res) => {
   try {
@@ -6101,7 +6145,10 @@ async function _catStructRefresh() {
   } catch (e) { /* DB 异常时不拦数据 */ }
 }
 async function _catStructureOk(it) {
-  /* 2026-08-30 退役：永远放行。结构均衡由 GAP-SCHED 补弱实现，绝不砍强。 */
+  /* 2026-08-30 退役：永远放行。结构均衡由 GAP-SCHED 补弱实现，绝不砍强。
+   * 2026-09-02 威胁组织专项哨兵：org_watch 显式豁免锚点（用户指令"不受采集限度影响"）——
+   * 本闸已退役为恒真，此行为将来若恢复结构帽时保留 org_watch 豁免，现行行为不变。 */
+  if (it && it._sourceType === 'org_watch') return true;
   return true;
 }
 
@@ -6328,6 +6375,9 @@ function _eventClusterOk(it) {
   /* 2026-08-31 专项作战室豁免：研究通道要的就是多源密度（用户铁律"上合峰会才采 2 条，
    * 核心中的核心"）——同国同事件多版本入库供报告整合，不适用防刷屏簇帽 */
   if (it._sourceType === 'threatroom') return true;
+  /* 2026-09-02 威胁组织专项哨兵豁免：org_watch 定向采集不受簇帽限（用户指令"不受采集限度影响，
+   * 采集数据越多越好"）；去重/时效/标题质量等其他闸门照常 */
+  if (it._sourceType === 'org_watch') return true;
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   if (t.trim().length < 8) return true;
   const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
@@ -6996,7 +7046,7 @@ async function _ingestLinkedItems(items, tag, note) {
       'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
       'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler',
-      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom'
+      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom', 'ORG-WATCH': 'org_watch', 'ORG-WATCH-MANUAL': 'org_watch'
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
@@ -8763,6 +8813,39 @@ async function _runCoreThreatWatch() {
   finally { _coreThreatBusyUntil = 0; }
 }
 
+/* ===== 威胁组织专项采集哨兵调度（2026-09-02 用户铁指令）=====
+ * 每 30 分钟一轮（与五路哨兵同档）：org-watch 针对 threats.js 组织库定向采集
+ * （GDELT 别名布尔 + GNews 原子 + 高危本地 RSS 矩阵），高频组织每轮全查、低频分片轮询。
+ * 体积豁免：_sourceType='org_watch' 条目豁免事件簇帽/类别结构帽/预警国别帽；
+ * 去重/时效/标题质量等其他闸门与全站一致（"其他的一样"）。 */
+let _orgWatchBusyUntil = 0;
+let _orgWatchLastStats = null;
+async function _runOrgWatch() {
+  if (Date.now() < _orgWatchBusyUntil) return;
+  _orgWatchBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await orgWatch.runOrgWatch({ maxPerQuery: 25 });
+    const items = r.items || [];
+    _orgWatchLastStats = r.stats || null;
+    if (!items.length) return;
+    try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[ORG-WATCH] 翻译异常:', e.message); }
+    items.forEach(it => {
+      try {
+        ENTITY.enrich(it);
+        it.interestLinked = true;
+        it._forceDataType = true;
+        if (!it.data_type) it.data_type = 'terror_events';
+        if (!it.category) it.category = '威胁组织动态';
+        if (!it._sourceType) { it._sourceType = 'org_watch'; }
+      } catch (e) {}
+    });
+    const res = await _ingestLinkedItems(items, 'ORG-WATCH', '');
+    if (res && res.inserted) console.log('[ORG-WATCH] ✅ 新入库威胁组织情报 ' + res.inserted + ' 条');
+    if (_orgWatchLastStats) _orgWatchLastStats.inserted = (res && res.inserted) || 0;
+  } catch (e) { console.warn('[ORG-WATCH] 采集失败:', e.message); }
+  finally { _orgWatchBusyUntil = 0; }
+}
+
 /* ===== 海上战略通道哨兵调度（维度⑤，2026-08-28 官方框架六维补全）=====
  * 每 30 分钟：八大咽喉点（马六甲/霍尔木兹/红海/苏伊士/巴拿马/台海/几内亚湾/亚丁湾）
  * 通航·封锁·海盗·袭击油轮事件 + 海运专业源。 */
@@ -9062,6 +9145,9 @@ function startGlobalMediaCron() {
   // WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO警示/断网/疫情/新闻摘要），启动9分钟后首跑
   setTimeout(_runWmFeed, 9 * 60 * 1000);
   setInterval(_runWmFeed, 30 * 60 * 1000);
+  // 威胁组织专项采集哨兵（2026-09-02 用户铁指令：threats.js 组织库定向采集，豁免体积限度），启动10分钟后首跑
+  setTimeout(_runOrgWatch, 10 * 60 * 1000);
+  setInterval(_runOrgWatch, 30 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min */
@@ -9444,7 +9530,9 @@ function _transCacheSave() {
   try { fs.writeFileSync(_TRANS_CACHE_FILE, JSON.stringify(_transCache)); _transCacheDirty = false; } catch (e) {}
 }
 setInterval(_transCacheSave, 15000);
-function _tkey(text) { return String(text || '').slice(0, 600); }
+/* 2026-09-03：键截断 600→2000。旧版 600 字符键在模板化长文（同站 boilerplate 前缀相同）
+ * 之间碰撞 → A 条的译文被 B 条命中（跨条目串写，id 36589 疑案路径之一）。 */
+function _tkey(text) { return String(text || '').slice(0, 2000); }
 function _isGarbage(v) {
   if (!v) return true;
   if (/不清楚/.test(v)) return true;
@@ -9456,6 +9544,10 @@ function _isGarbage(v) {
   /* 乱码特征：不含中文，却含阿拉伯/叙利亚/科普特/希伯来组合符等本不应出现在中译文的区段（多为 UTF-8→latin1 双重误编码） */
   const hasCJK = /[一-鿿]/.test(v);
   if (!hasCJK && /[؀-ۿ֐-׿͢-ͯⴢ-⴯Ⲁ-⳿]/.test(v)) return true;
+  /* 2026-09-03 缓存毒化清扫（审计 A3）：中译缓存里的合法值必然含中文字符；
+   * 无任何 CJK 的值 = 英文原文回显/乱码被当译文缓存（_translateViaBaidu 曾无条件缓存），
+   * 启动清扫与读自愈一并剔除。 */
+  if (!hasCJK) return true;
   return false;
 }
 function _cacheGet(text) {
@@ -9464,6 +9556,9 @@ function _cacheGet(text) {
   if (!v) return undefined;
   /* 自愈：缓存中可能残留占位符/编码损坏，检出即剔除并视为未命中（重新翻译且不回写垃圾） */
   if (_isGarbage(v)) { delete _transCache[k]; _transCacheDirty = true; return undefined; }
+  /* 自愈（2026-09-03 审计 A3）：值与原文相同 = 原文回显被缓存（未翻译却挡住重译路径，
+   * 该文本每次重试都命中缓存拿回原文，_untranslated 永不消除）。剔除并视为未命中。 */
+  if (v === k || v === String(text || '')) { delete _transCache[k]; _transCacheDirty = true; return undefined; }
   /* 自愈（2026-09-02 政要人名根治）：缓存命中不经过 polish 层直接返回，历史污染的
    * "Xi近平/国家主席Xi/Trump 残留"须在读时修复（zh-polish.fixNames 同一规则）并回写，
    * 否则缓存命中路径永远绕过人名词表。幂等，修一次后不再变化。 */
@@ -9605,7 +9700,8 @@ async function _translateViaMyMemory(texts) {
     }));
     need.forEach((i, k) => {
       const r = res[k];
-      if (r.ok && r.text) { out[i] = r.text; _cacheSet(texts[i], r.text); }
+      /* 2026-09-03（审计 B2）：逐条质检后才采纳/缓存——不合格译文置空交 Edge 兜底 */
+      if (r.ok && r.text && _translationOk(texts[i], r.text)) { out[i] = r.text; _cacheSet(texts[i], r.text); }
       else { out[i] = ''; } // 失败（空），交给 Edge
     });
   }
@@ -9674,11 +9770,15 @@ async function _translateViaBaidu(texts, appid, key) {
       } else if (j && j.error_code) {
         throw new Error('baidu err ' + j.error_code);
       } else {
-        parts.push(ch); // 单块失败回退原文
+        /* 2026-09-03 缓存毒化根治（审计 A3/B2）：单块无结果且无错误码（异常响应）→
+         * 整条视为失败抛错走下一级通道。旧版把原文块拼进译文——多块长文产出中英混排，
+         * 且被下方无条件 _cacheSet 缓存，后续 _translateAnyCached 直接采纳混排结果入库。 */
+        throw new Error('baidu empty trans_result');
       }
     }
     const tr = parts.join('\n');
-    _cacheSet(t, tr);
+    /* 2026-09-03：仅当结果通过 _translationOk 质检才可入缓存——原文回显/混排/乱码一律不缓存 */
+    if (_translationOk(t, tr)) _cacheSet(t, tr);
     results.push(tr);
   }
   return results;
@@ -9687,7 +9787,7 @@ app.post('/api/translate', async (req, res) => {
   let texts = req.body && req.body.texts;
   if (!texts && req.body && req.body.text) texts = [req.body.text];
   if (!Array.isArray(texts) || !texts.length) return res.json({ ok: false, error: 'no text' });
-  // 截断单条长度 + 去重（保留原始顺序映射，去重进一步省配额；长文由通道内部分块翻译）
+  // 截断单条长度 + 去重（uniq 仅用于省配额；最终 results 严格按调用方原始 texts 下标返回，见文末）
   const norm = texts.map(t => String(t || '').slice(0, 6000).trim()).filter(t => t);
   if (!norm.length) return res.json({ ok: false, error: 'empty' });
   const uniq = [...new Set(norm)];
@@ -9717,8 +9817,14 @@ app.post('/api/translate', async (req, res) => {
 
   // 1) 可选百度密钥（仅在首选通道整体失败时启用；2026-09-01：54004 熔断期间直接跳过）
   if (!resUniq && baiduId && baiduKey && !_trFuseOpen('Baidu')) {
-    try { resUniq = await _translateViaBaidu(uniq, baiduId, baiduKey); engine = 'baidu'; }
-    catch (e) { _trErrFused('Baidu', e); console.warn('[TRANSLATE] Baidu通道失败，降级MyMemory:', e.message); resUniq = null; }
+    try {
+      const bt = await _translateViaBaidu(uniq, baiduId, baiduKey);
+      /* 2026-09-03（审计 A2/B2）：逐条质检后才采用——旧版整批直出，混排/原文回显直接
+       * 回给前端写进 title_zh；不合格条目置空，交由下方 Libre/Edge 补翻。 */
+      const gated = uniq.map((t, i) => (bt[i] && bt[i].trim() && bt[i].trim() !== t.trim() && _translationOk(t, bt[i])) ? bt[i].trim() : '');
+      if (gated.some(x => x)) { resUniq = gated; engine = 'baidu'; }
+    }
+    catch (e) { _trErrFused('Baidu', e); console.warn('[TRANSLATE] Baidu通道失败，降级MyMemory:', e.message); }
   }
   // 2) MyMemory（带缓存）
   let quotaExhausted = false;
@@ -9727,10 +9833,15 @@ app.post('/api/translate', async (req, res) => {
     resUniq = mm.out;
     engine = 'mymemory';
     quotaExhausted = mm.quota;
-    // 3) LibreTranslate 公共实例兜底（对 MyMemory 未译/非中文条目逐条补翻）
+  }
+  /* 3) LibreTranslate 公共实例兜底（对仍未译/非中文条目逐条补翻）
+   * 2026-09-03（审计 A2）：移出 !resUniq 块——旧版只要首选通道有一条成功（resUniq 非空），
+   * 整个补翻段被跳过，失败条目直接返回空串（与 9801 行日志"交由后续通道补翻"的意图相反），
+   * 前端拿到空 → 条目永远英文。现部分成功批次中的空结果同样继续补翻。 */
+  {
     const needLibre = [];
     uniq.forEach((t, i) => {
-      const r = resUniq[i] || '';
+      const r = (resUniq && resUniq[i]) || '';
       if (!r.trim() || r.trim() === t.trim() || !/[\u4e00-\u9fff]/.test(r)) needLibre.push(i);
     });
     if (needLibre.length) {
@@ -9739,6 +9850,7 @@ app.post('/api/translate', async (req, res) => {
         needLibre.forEach((origIdx, k) => {
           const lr = libreRes[k] || '';
           if (lr.trim() && lr.trim() !== uniq[origIdx].trim()) {
+            if (!resUniq) resUniq = new Array(uniq.length).fill('');
             resUniq[origIdx] = lr;
             _cacheSet(uniq[origIdx], lr);
             if (engine === 'mymemory') engine = 'libretranslate';
@@ -9746,10 +9858,12 @@ app.post('/api/translate', async (req, res) => {
         });
       }
     }
-    // 4) Edge 兜底（免费、无密钥）：对前面所有通道仍未译/原样返回/非中文的条目逐条补翻
+  }
+  /* 4) Edge 兜底（免费、无密钥）：对前面所有通道仍未译/原样返回/非中文的条目逐条补翻（同上移出） */
+  {
     const needEdge = [];
     uniq.forEach((t, i) => {
-      const r = resUniq[i] || '';
+      const r = (resUniq && resUniq[i]) || '';
       if (!r.trim() || r.trim() === t.trim() || !/[\u4e00-\u9fff]/.test(r)) needEdge.push(i);
     });
     if (needEdge.length) {
@@ -9758,6 +9872,7 @@ app.post('/api/translate', async (req, res) => {
         needEdge.forEach((origIdx, k) => {
           const er = edgeRes[k] || '';
           if (er.trim() && er.trim() !== uniq[origIdx].trim()) {
+            if (!resUniq) resUniq = new Array(uniq.length).fill('');
             resUniq[origIdx] = er;
             _cacheSet(uniq[origIdx], er);
             if (engine === 'mymemory' || engine === 'libretranslate') engine = 'microsoft-edge';
@@ -9766,11 +9881,20 @@ app.post('/api/translate', async (req, res) => {
       }
     }
   }
+  if (!resUniq) resUniq = new Array(uniq.length).fill('');
   _transCacheSave();
-  // 映射回原始顺序
+  /* 映射回原始顺序（2026-09-03 译文错位根治——id 36589 疑案根因）：
+   * 旧版 results 按 norm（过滤空串 + Set 去重后）顺序返回，而前端调用方
+   * （translateOneCol 成对 push [标题, 正文]）按原始下标 results[k*2] 取值——
+   * 批次中只要有一条空串或两条重复文本，uniq/norm 与原始 texts 下标错位，
+   * 之后所有条目整体平移：A 条拿到 B 条的译文（中文标题配巴西财长正文即此类串写）。
+   * 现严格按调用方原始 texts 下标逐槽映射（空槽返回空串），彻底消除错位。 */
   const map = {};
   uniq.forEach((t, i) => { map[t] = resUniq[i] || ''; });
-  const results = norm.map(t => map[t] || '');
+  const results = texts.map(function (t) {
+    const n = String(t || '').slice(0, 6000).trim();
+    return n ? (map[n] || '') : '';
+  });
   const okCount = results.filter(x => x).length;
   const baiduConfigured = !!(baiduId && baiduKey);
   if (okCount) return res.json({ ok: true, results, engine, cacheEnabled: true, quotaExhausted: quotaExhausted && okCount < results.length, baiduConfigured });
@@ -9802,8 +9926,11 @@ function _looksForeign(s) {
   const zh = (body.match(/[一-龥]/g) || []).length;
   const foreign = (body.match(/[a-zA-Z]/g) || []).length
                 + (body.match(/\p{Script=Cyrillic}|\p{Script=Greek}|\p{Script=Arabic}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Bengali}|\p{Script=Myanmar}|\p{Script=Khmer}|\p{Script=Lao}|\p{Script=Sinhala}|\p{Script=Tamil}|\p{Script=Telugu}|\p{Script=Hebrew}|\p{Script=Armenian}|\p{Script=Georgian}/gu) || []).length;
-  /* 中文字符不足外文主体字符的 1/4 —— 主体仍是外文，需要翻译 */
-  return zh === 0 || zh * 4 < foreign;
+  /* 2026-09-03 混排盲区收紧（审计 B1）：旧版「中文字符 ≥ 外文字母的 1/4」即判"已中文"——
+   * 「尼日利亚军方击毙30名恐怖分子 in fresh offensive in Borno」（13 汉字 vs 23 英文字母）
+   * 这类混排标题逃过翻译原样入库（21% 混排存量的主要残留通道）。现收紧为外文字母数
+   * 超过汉字数（外文为主体）即送翻译；中文占优的轻混排（1-2 个专名尾缀）仍走本地化路径。 */
+  return zh === 0 || zh < foreign;
 }
 /* 稳定去重键：翻译后中文标题会因通道不同而措辞不一（"对等制裁"/"相互制裁"），
  * 若以译文为键会导致同一条情报重复入库、污染态势热度研判。
@@ -9903,43 +10030,62 @@ async function _baiduTranslateRetry(text, id, key, attempt) {
  * 实测 ~300ms/条，作为实战系统首选翻译通道。 */
 const _TRANS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 async function _tryTranSmart(text, from, to) {
-  const src = String(text || '').slice(0, 2000);
+  const src = String(text || '');
   if (!src.trim()) return '';
   from = from || 'auto'; to = to || 'zh';
-  /* 2026-09-01 直连栈切换：服务进程内 undici fetch 系统性 UND_ERR_CONNECT_TIMEOUT
-   * （独立进程 238ms 正常），翻译通道统一改走 netx（原生 https.request 直连+代理回落，
-   * 与采集侧同栈——采集侧全程存活是实证）。 */
-  const res = await netx.smartPost('https://transmart.qq.com/api/imt', {
-    timeout: 15000,
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': _TRANS_UA,
-      'Referer': 'https://transmart.qq.com/zh-CN/index'
-    },
-    body: JSON.stringify({
-      header: { fn: 'auto_translation', client_key: 'browser-chrome-120.0.0-Windows 10-' + Date.now() },
-      type: 'plain',
-      model_category: 'normal',
-      source: { lang: from, text_list: ['', src, ''] },
-      target: { lang: to }
-    })
-  });
-  if (!res.ok) throw new Error('TranSmart HTTP ' + res.status);
-  const j = await res.json();
-  return (j.auto_translation || []).filter(Boolean).join('').trim();
+  /* 2026-09-03 长文截断根治（审计 C6）：旧版 slice(0,2000) 静默丢弃 2000 字符之后的内容，
+   * 2000-9999 字英文正文只译前 2000 字符且能通过质检（长度比 0.2-4）落库——半篇译文。
+   * 现 _chunkText 分块（块 ≤1900，与单块请求语义一致），逐块翻译后拼接。
+   * 任一块译空 → 整条返回 '' 交调用方降级，绝不返回截断半篇。 */
+  const chunks = _chunkText(src, 1900);
+  const parts = [];
+  for (const ch of chunks) {
+    /* 2026-09-01 直连栈切换：服务进程内 undici fetch 系统性 UND_ERR_CONNECT_TIMEOUT
+     * （独立进程 238ms 正常），翻译通道统一改走 netx（原生 https.request 直连+代理回落，
+     * 与采集侧同栈——采集侧全程存活是实证）。 */
+    const res = await netx.smartPost('https://transmart.qq.com/api/imt', {
+      timeout: 15000,
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': _TRANS_UA,
+        'Referer': 'https://transmart.qq.com/zh-CN/index'
+      },
+      body: JSON.stringify({
+        header: { fn: 'auto_translation', client_key: 'browser-chrome-120.0.0-Windows 10-' + Date.now() },
+        type: 'plain',
+        model_category: 'normal',
+        source: { lang: from, text_list: ['', ch, ''] },
+        target: { lang: to }
+      })
+    });
+    if (!res.ok) throw new Error('TranSmart HTTP ' + res.status);
+    const j = await res.json();
+    const one = (j.auto_translation || []).filter(Boolean).join('').trim();
+    if (!one) return '';
+    parts.push(one);
+  }
+  return parts.join('\n');
 }
-/* 有道公开演示接口：国内直连、免密钥，作为 TranSmart 的同级备份通道。 */
+/* 有道公开演示接口：国内直连、免密钥，作为 TranSmart 的同级备份通道。
+ * 2026-09-03（审计 C6）：slice(0,2000) 截断改 _chunkText 分块拼接，与 TranSmart 同策略。 */
 async function _tryYoudao(text) {
-  const src = String(text || '').slice(0, 2000);
+  const src = String(text || '');
   if (!src.trim()) return '';
-  const res = await netx.smartPost('https://aidemo.youdao.com/trans', {
-    timeout: 15000,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': _TRANS_UA },
-    body: 'q=' + encodeURIComponent(src) + '&from=Auto&to=Auto'
-  });
-  if (!res.ok) throw new Error('Youdao HTTP ' + res.status);
-  const j = await res.json();
-  return (j.translation || []).join('').trim();
+  const chunks = _chunkText(src, 1900);
+  const parts = [];
+  for (const ch of chunks) {
+    const res = await netx.smartPost('https://aidemo.youdao.com/trans', {
+      timeout: 15000,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': _TRANS_UA },
+      body: 'q=' + encodeURIComponent(ch) + '&from=Auto&to=Auto'
+    });
+    if (!res.ok) throw new Error('Youdao HTTP ' + res.status);
+    const j = await res.json();
+    const one = (j.translation || []).join('').trim();
+    if (!one) return '';
+    parts.push(one);
+  }
+  return parts.join('\n');
 }
 /* 统一翻译通道（多通道兜底，按国内可用性与质量排序）：
  * TranSmart(免密钥/无配额) → 有道(免密钥) → Baidu(配置时) → MyMemory → LibreTranslate → Edge。
@@ -9977,7 +10123,7 @@ function _translationOk(src, dst) {
  * 专名原样返回。_translationOk 只拦重度混排（≥3 英文词），轻度混排（1-2 个专名）放行。
  * 修复：译文出口对英文片段单独二次翻译（片段级词典命中率高：Pezeshkian→佩泽什基安），
  * 译不出则保留原样（专名保英文好于整句不译）。片段内存缓存，重复专名零外部调用。 */
-const _mixedFragCache = new Map(); /* 片段→译文，上限 5000 */
+const _mixedFragCache = new Map(); /* 片段→{t:译文,at:时间戳}，上限 5000；失败负缓存 30min */
 function _isMixedZh(s) {
   return /[\u4e00-\u9fa5]/.test(s) && /[A-Za-z]{3,}/.test(s);
 }
@@ -9990,17 +10136,28 @@ async function _fixMixedZh(zh) {
       const key = f.trim();
       if (key.length < 3) continue; /* 缩写/短词不动（CPEC/UN 等专名缩写保留英文更专业） */
       if (/^[A-Z0-9@.'-]{2,}$/.test(key.replace(/\s/g, ''))) continue; /* 全大写缩写不翻（COP17/ICE→"警察17/冰"误译） */
-      let t = _mixedFragCache.get(key);
-      if (t === undefined) {
-        t = '';
+      let t = '';
+      const hit = _mixedFragCache.get(key);
+      if (hit && hit.t) t = hit.t;
+      else if (hit && Date.now() - hit.at < 30 * 60 * 1000) {
+        t = ''; /* 2026-09-03（审计 B3）：失败负缓存 30min——旧版把 '' 永久缓存，TranSmart 瞬时抖动
+                   即导致该片段进程生命周期内永不重试，混排永久残留。 */
+      } else {
         try {
           const r = await _tryTranSmart(key);
           if (r && /[\u4e00-\u9fa5]/.test(r) && !_isMixedZh(r)) t = r.trim();
         } catch (e) {}
         if (_mixedFragCache.size > 5000) _mixedFragCache.clear();
-        _mixedFragCache.set(key, t);
+        _mixedFragCache.set(key, { t: t, at: Date.now() });
       }
-      if (t) { out = out.split(f).join(t); fixed++; }
+      if (t) {
+        /* 2026-09-03（审计 B3）：词边界替换——旧版 split/join 无边界，"general" 会替换进
+         * "generally"、专名子串误伤，产出意外混排。 */
+        const re = new RegExp('(?<![A-Za-z@.\'-])' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z@.\'-])', 'g');
+        const before = out;
+        out = out.replace(re, t);
+        if (out !== before) fixed++;
+      }
     }
     if (fixed) console.log('[TRANSLATE] 混排修复 ' + fixed + ' 片段: ' + String(zh).slice(0, 40) + ' → ' + String(out).slice(0, 40));
     return out;
@@ -10047,20 +10204,48 @@ function _trErrFused(ch, e) {
   if (conf && conf.re && conf.re.test(msg)) { _trFuseTrip(ch, msg); return true; }
   return false;
 }
-/* 翻译前预检：输入已是中文（或以中文为主）→ 无需翻译。
- * 规则：CJK 字符 ≥ 6 个，或 CJK / 总字符 ≥ 60%。命中则各通道全部跳过，节省配额。 */
+/* 翻译前预检：输入已是中文（或以中文为主）→ 无需翻译。命中则各通道全部跳过，节省配额。
+ * 2026-09-02 修：旧版「CJK≥6 个字」无条件判中文——被国名词典替换过 2+ 国名的英文正文
+ * （如「尼日利亚…美国…Anti-Corruption Agency…」）恰好凑够 6 个汉字，逃过预检被当"已是中文"
+ * 直接返回原文，回填端点永远译不动。
+ * 2026-09-03 加严（审计 B1）：占比门槛 0.25→0.5 + 3 连续英文实词残留检测，杜绝混排逃逸。 */
 function _trZhDominated(s) {
   const t = String(s || '');
   if (!t.trim()) return false;
   const cjk = (t.match(/[一-龥]/g) || []).length;
-  return cjk >= 6 || cjk / t.length >= 0.6;
+  if (!cjk) return false;
+  const ratio = cjk / t.length;
+  /* 2026-09-03 加严（审计 B1）：旧版「CJK≥6 且占比≥25%」放过混排标题（13 汉字+36 英文字母
+   * 的标题占比 0.19 虽被拦，但 0.25-0.5 区间的半翻译文本全部逃过预检被当"已是中文"直接回显）。
+   * 现：占比 ≥0.5，且不残留 3 个及以上连续英文实词（≥3 字母词）——有连续英文实词
+   * 说明仍是半翻译状态，必须送翻译通道。纯中文/仅含缩写专名（CPEC/AK-47）不受影响。 */
+  if (ratio < 0.5) return false;
+  if (/(?:[A-Za-z]{3,}\s+){2,}[A-Za-z]{3,}/.test(t)) return false;
+  return ratio >= 0.6 || cjk >= 6;
 }
 /* ===== [TR-FUSE-END] ===== */
 async function _translateAny(text) {
-  const zh = await _translateAnyRaw(text);
+  const src = String(text || '');
+  let zh = await _translateAnyRaw(src);
   /* 2026-08-30 排雷：_fixMixedZh 是 async 函数，漏 await 会把 Promise 传给 polish →
    * String(Promise) = "[object Promise]" 被当译文入库+污染缓存（624 条）。必须 await。 */
-  return zhPolish.polish(await _fixMixedZh(zh));
+  zh = await _fixMixedZh(zh);
+  /* 2026-09-03 低分兜底：译文可读性 zhq<40（重度混排/译腔）时走一次 pivot(en) 重译——
+   * 先 auto→en 规整语序，再 en→zh 走主链，常能跳出低质直译；重译仍 <40 分或质检不过
+   * 则保留首轮结果（宁可不改不可改错）。 */
+  try {
+    if (zh && zh.trim() && src.trim() && typeof zhRewrite !== 'undefined' && zhRewrite.quality && zhRewrite.quality(zh) < 40) {
+      const en = await _tryTranSmart(src, 'auto', 'en').catch(() => '');
+      if (en && en.trim() && en.trim() !== src.trim() && /[a-zA-Z]{4}/.test(en)) {
+        const zh2 = await _fixMixedZh(await _translateAnyRaw(en));
+        if (zh2 && zh2.trim() && _translationOk(en, zh2) && zhRewrite.quality(zh2) >= 40) {
+          console.log('[TRANSLATE] zhq 低分 pivot 重译: ' + String(zh).slice(0, 30) + ' → ' + String(zh2).slice(0, 30));
+          zh = zh2;
+        }
+      }
+    }
+  } catch (e) { /* 兜底失败保留首轮译文 */ }
+  return zhPolish.polish(zh);
 }
 async function _translateAnyRaw(text) {
   const baiduId = process.env.BAIDU_TRANSLATE_APPID;
@@ -10204,13 +10389,40 @@ async function _runTranslateRetry() {
       const dj = r.data_json || {};
       const raw = String(dj.title_en || '');
       const zh = await _translateAnyCached(raw.slice(0, 450));
-      if (zh && _translationOk(raw, zh) && !/\\d+\\s+[A-Za-z]{4,}/.test(zh)) {
+      /* 2026-09-03（审计 B4）：旧版正则字面量误写双反斜杠 /\\d+\\s+[A-Za-z]{4,}/（匹配字面
+       * 反斜杠+d，永远匹配不到"数字+英文词"混排）→ 复查恒真，半翻译重译后仍混杂也照写回。 */
+      if (zh && _translationOk(raw, zh) && !/\d+\s+[A-Za-z]{4,}/.test(zh)) {
         dj.title = zh.trim(); dj.title_zh = zh.trim();
         await query('UPDATE intel_data SET title=$1, data_json=$2 WHERE id=$3', [zh.trim(), JSON.stringify(dj), r.id]);
         refixed++;
       }
     }
-    if (fixed || refixed) console.log('[TRANSLATE-RETRY] 补译完成：未翻译 ' + fixed + ' 条 + 半翻译修复 ' + refixed + ' 条');
+    /* ③ 正文未译补译（2026-09-03 正文闭环，审计第 9 项）：正文外文主体且无 content_zh
+     * （或 content_zh==content 伪翻译）→ 补译；译不成打 _untranslated_body 等下一轮。
+     * 库里实测 587 条英文正文此前既无标记也无回填（旧队列只管 title_zh）。 */
+    const body = await query(
+      `SELECT id, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '3 days'
+       AND coalesce(data_json->>'content','') <> ''
+       AND (coalesce(data_json->>'content_zh','') = '' OR data_json->>'content_zh' = data_json->>'content')
+       ORDER BY collect_time DESC LIMIT 20`);
+    let bfixed = 0, bfail = 0;
+    for (const r of body.rows) {
+      const dj = r.data_json || {};
+      const src = String(dj.content_en || dj.content || '').slice(0, 6000);
+      if (!src.trim() || !_looksForeign(src)) continue;
+      const zh = await _translateAnyCached(src);
+      if (zh && _translationOk(src, zh)) {
+        dj.content_en = src; dj.content = zh.trim(); dj.content_zh = zh.trim();
+        dj.translated = true; delete dj._untranslated_body;
+        await query('UPDATE intel_data SET data_json=$1 WHERE id=$2', [JSON.stringify(dj), r.id]);
+        bfixed++;
+      } else {
+        dj._untranslated_body = true;
+        await query('UPDATE intel_data SET data_json=$1 WHERE id=$2', [JSON.stringify(dj), r.id]).catch(() => {});
+        bfail++;
+      }
+    }
+    if (fixed || refixed || bfixed) console.log('[TRANSLATE-RETRY] 补译完成：未翻译 ' + fixed + ' 条 + 半翻译修复 ' + refixed + ' 条 + 正文补译 ' + bfixed + ' 条' + (bfail ? '（正文仍失败 ' + bfail + ' 条已打标）' : ''));
   } catch (e) { console.warn('[TRANSLATE-RETRY] 失败:', e.message); }
   finally { _retryTranslateBusyUntil = 0; }
 }
@@ -10238,7 +10450,7 @@ async function _translateListToZh(list) {
         it.title_en = it.title; it.title = tZh; it.title_zh = tZh; it.translated = true;
         done++;
       } else if (titleForeign) { failed++; }
-      if (contentForeign && cZh && cZh !== String(it.content || '').trim()) {
+      if (contentForeign && cZh && cZh.trim() !== String(it.content || '').trim()) {
         it.content_en = it.content; it.content = cZh; it.content_zh = cZh; it.translated = true;
       }
     } catch (e) {
@@ -10617,17 +10829,27 @@ function _localizeTitleTail(it) {
     _ZHQ_LOG_N++;
     console.log('[ZHQ] 低分样本(' + it.zhq + '): ' + String(it.title).slice(0, 60));
   }
-  /* 正文同样本地化英文国家名，减少"中外文融合" */
+  /* 正文国名本地化（2026-09-02 根治伪翻译）：
+   * 旧逻辑对外文主体的正文也做国名替换并把结果写进 content_zh——产出
+   * 「尼日利亚 Anti-Corruption Agency Sacks 40 Staff Members」这类只有国名是中文的
+   * 伪翻译（48h 实测 677 行，占正文 25%），且 content_zh==content 使回填端点误判已译。
+   * 铁律：正文外文主体 → content/content_zh 一律保持原文、打 _untranslated_body 标记等回填重译，
+   * 绝不做部分本地化（与标题 _untranslated 同策略）；已中文主体正文才做国名本地化。 */
   if (it.content && /[A-Za-z]{4,}/.test(it.content)) {
-    const c1 = _localizeCountryNames(it.content);
-    if (c1 !== it.content) { if (!it.content_en) it.content_en = it.content; it.content = c1; it.content_zh = c1; }
+    if (_looksForeign(it.content)) {
+      it._untranslated_body = true;
+    } else {
+      const c1 = _localizeCountryNames(it.content);
+      if (c1 !== it.content) { if (!it.content_en) it.content_en = it.content; it.content = c1; it.content_zh = c1; }
+    }
   }
   _extractElements(it);
   return r;
 }
-async function _translateListToZhParallel(list, concurrency) {
+async function _translateListToZhParallel(list, concurrency, opts) {
   concurrency = concurrency || 3;
   if (concurrency > 3) concurrency = 3; // 限制翻译并发，缓解系统内存压力
+  opts = opts || {};
   const tasks = [];
   list.forEach(function (it) {
     if (!it || typeof it !== 'object') return;
@@ -10669,8 +10891,18 @@ async function _translateListToZhParallel(list, concurrency) {
             t.it.content = zh.trim(); t.it.content_zh = zh.trim();
           }
           t.it.translated = true; done++;
+        } else {
+          /* 2026-09-03（审计 A4）：翻译失败打标前移——旧版依赖收尾 _localizeTitleTail 打
+           * _untranslated，若收尾抛异常（_extractElements 等）标记静默丢失 → 英文无标记入库，
+           * 观测/回填双失明。此处逐条即时打标（收尾处幂等，双保险）。 */
+          if (t.field === 'title') t.it._untranslated = true;
+          else t.it._untranslated_body = true;
         }
-      } catch (e) { /* 单条失败保留原文，不中断整批 */ }
+      } catch (e) {
+        /* 单条失败保留原文，不中断整批；同样即时打标（旧版异常路径无任何标记） */
+        if (t.field === 'title') t.it._untranslated = true;
+        else t.it._untranslated_body = true;
+      }
     }
   }
   if (tasks.length) await Promise.all(Array.from({ length: concurrency }, worker));
@@ -10687,7 +10919,9 @@ async function _translateListToZhParallel(list, concurrency) {
   if (list.length <= 40) bodyCap = needBody.length;        // 小批量（专项/区域均衡）→ 全抓
   else if (list.length <= 90) bodyCap = 25;
   const bodyQueue = needBody.slice(0, bodyCap);
-  if (bodyQueue.length) {
+  /* 2026-09-03：opts.skipBodyFetch 供 POST 入库端点复用时跳过正文补抓——
+   * 对用户提交的 url 逐条回源抓取（12s/条）会让批量 POST 分钟级阻塞。 */
+  if (bodyQueue.length && !(opts && opts.skipBodyFetch)) {
     let bDone = 0, bIdx = 0;
     async function bworker() {
       while (bIdx < bodyQueue.length) {
@@ -10765,6 +10999,83 @@ app.post('/api/intel/translate-backfill', async (req, res) => {
   const allDone = remaining === 0;
   return res.json({ ok: allDone, configured: true, engine: 'transmart+youdao+baidu', stats, remaining, note: errMsg || (allDone ? 'done' : '部分条目仍受限，可再次调用本端点续翻') });
 });
+/* ===== 2026-09-02 正文伪翻译根治：DB 存量补译端点 =====
+ * 背景：_localizeTitleTail 旧版对外文主体正文做国名替换并把结果写进 content_zh，
+ * 产出「尼日利亚 Anti-Corruption Agency Sacks 40 Staff Members」这类只有国名是中文的
+ * 伪翻译正文（48h 实测 677 行，占有正文条目 25%），且 content_zh==content 让后续回填
+ * 误判"已翻译"永不重译；另有 501 行正文从未翻译。
+ * 本端点分批处理（每批 60 条防超时），可反复调用直到 translated+failed 中 failed 归零：
+ * ① 伪翻译行（content_zh==content 且正文外文主体）：先恢复 content=content_en 原文、清 content_zh；
+ * ② 未译行（无 content_zh 且正文外文主体）：直接补译。
+ * 译成 → content/content_zh 置译文；译不成 → 清 content_zh + 打 _untranslated_body（下次续翻），
+ * 无论成败都绝不保留"国名补丁冒充译文"。 */
+app.post('/api/intel/translate-body-backfill', async (req, res) => {
+  const BATCH = 60;
+  const days = Math.min(14, parseInt((req.body && req.body.days) || '7', 10) || 7);
+  const st = { scanned: 0, translated: 0, failed: 0, pseudoCleared: 0, remaining: 0 };
+  try {
+    const cand = await query(
+      `SELECT id, data_json FROM intel_data
+       WHERE created_at > NOW() - ($1 || ' days')::interval
+         AND coalesce(data_json->>'content','') <> ''
+         AND (coalesce(data_json->>'content_zh','') = '' OR data_json->>'content_zh' = data_json->>'content')
+       ORDER BY created_at DESC LIMIT 500`, [String(days)]);
+    const targets = [];
+    for (const r of cand.rows) {
+      const dj = r.data_json || {};
+      if (!_looksForeign(dj.content)) continue;            /* 已中文主体（翻译成功/中文源）跳过 */
+      targets.push({ id: r.id, dj });
+      if (targets.length >= BATCH) break;
+    }
+    st.remaining = cand.rows.length - targets.length > 0 ? (cand.rows.length - BATCH) : Math.max(0, cand.rows.length - targets.length);
+    for (const t of targets) {
+      const dj = t.dj;
+      /* 垃圾正文识别（Google News RSS 派生通道）：转义链接重定向 / 纯 URL /
+       * 极短且带媒体域名尾巴的"标题复读"——本就不是新闻正文，翻译无意义。
+       * 清空 content（保留 content_en 溯源），交由 _fetchBodyForItem 正文补抓机制取真正文。 */
+      const cStr = String(dj.content || '').trim();
+      const junkBody = /^&lt;a\s+href/i.test(cStr) || /^https?:\/\/\S+$/i.test(cStr)
+        || (cStr.length < 120 && (/&nbsp;/.test(cStr) || /\b[a-z0-9-]+\.(com|net|org|co\.[a-z]{2}|news|sun|times|press)\s*$/i.test(cStr)));
+      if (junkBody) {
+        dj.content = ''; dj.content_zh = ''; delete dj._untranslated_body;
+        await query('UPDATE intel_data SET data_json = $1 WHERE id = $2', [JSON.stringify(dj), t.id]);
+        st.junkCleared = (st.junkCleared || 0) + 1; st.scanned++;
+        continue;
+      }
+      const pseudo = String(dj.content_zh || '').trim() === String(dj.content || '').trim();
+      /* 伪翻译行：恢复纯原文（content_en 溯源优先），剥掉国名补丁 */
+      if (pseudo && dj.content_en && String(dj.content_en).trim()) {
+        dj.content = String(dj.content_en).trim(); st.pseudoCleared++;
+      }
+      dj.content_zh = '';                                   /* 先清伪翻译，失败也不留污染 */
+      dj._untranslated_body = true;
+      try {
+        const src = String(dj.content_en || dj.content || '').slice(0, 6000);
+        const zh = await _translateAnyCached(src);
+        if (zh && _translationOk(src, zh)) {
+          dj.content_en = src; dj.content = zh.trim(); dj.content_zh = zh.trim();
+          dj.translated = true; delete dj._untranslated_body;
+          await query('UPDATE intel_data SET data_json = $1 WHERE id = $2', [JSON.stringify(dj), t.id]);
+          st.translated++;
+        } else {
+          await query('UPDATE intel_data SET data_json = $1 WHERE id = $2', [JSON.stringify(dj), t.id]);
+          st.failed++;
+        }
+      } catch (e) {
+        await query('UPDATE intel_data SET data_json = $1 WHERE id = $2', [JSON.stringify(dj), t.id]).catch(() => {});
+        st.failed++;
+      }
+      await new Promise(r2 => setTimeout(r2, 250));        /* TranSmart 轻节流 */
+      st.scanned++;
+    }
+    console.log('[BODY-BACKFILL]', JSON.stringify(st));
+    return res.json({ ok: st.failed === 0 && st.remaining === 0, stats: st,
+      note: st.failed || st.remaining ? '存在残留，可再次调用本端点续翻' : 'done' });
+  } catch (e) {
+    console.warn('[BODY-BACKFILL] 失败:', e.message);
+    return res.json({ ok: false, error: e.message, stats: st });
+  }
+});
 /* 免费注册 MyMemory key 生成（镜像 Dart 客户端 MyMemoryTranslator.generateKey）。
  * 注册用户凭用户名/密码可获取专属 key，翻译配额从匿名 5000 字符/日升至 50000 字符/日，
  * 仍完全免费、非百度。获取后写入 server/.env 的 MYMEMORY_KEY 并重启即生效。 */
@@ -10841,6 +11152,9 @@ app.post('/api/intel/sidepool/promote', async (req, res) => {
     it.url = sp.url || it.url; it.country = sp.country || it.country;
     it._promoted = true; it._promotedFrom = sp.reason;
     if (!it._sourceType) it._sourceType = 'sidepool_promote'; /* 2026-08-29 溯源铁律 */
+    /* 2026-09-03（审计 A1）：提升前补翻译——被拦条目可能从未译成（无 _untranslated 标记，
+     * 拦截时序早于打标），人工提升后不得把英文直入正式库。失败保留原文+打标。 */
+    try { await _translateListToZhParallel([it], 1, { skipBodyFetch: true }); } catch (e) {}
     it._eventSig = _eventSignature(it); _tagAssets(it);
     const _lv = _normLevelForStore(it); it.level_norm = _lv;
     const _dt = (it._forceDataType && it.data_type) ? it.data_type : (_classifyIntelType(it) || 'osint_intel');
@@ -10938,6 +11252,11 @@ app.post('/api/intel/:type', authMiddleware, async (req, res) => {
     if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
     const blocked = await _postGate(item);
     if (blocked) return res.json({ skipped: blocked });
+    /* 2026-09-03（审计 A1）：POST 通道补翻译——旧版完全无翻译，前端 POST 的外文条目英文直落
+     * DB 且无 _untranslated 标记（前端自动翻译只回写浏览器本地缓存，从不回写服务器）。
+     * 复用采集即译管线：外文标题/正文 → 中文；失败保留原文 + 打标（走 _runTranslateRetry 回填）。
+     * skipBodyFetch：不回源抓用户提交的 url，防 POST 端点分钟级阻塞。 */
+    try { await _translateListToZhParallel([item], 1, { skipBodyFetch: true }); } catch (e) {}
     _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
     const _dt = type === 'osint_intel' ? _classifyIntelType(item) : type;
     item.data_type = _dt;
@@ -10955,6 +11274,8 @@ app.post('/api/intel/:type/batch', authMiddleware, async (req, res) => {
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
     const items = req.body;
     if (!Array.isArray(items)) return res.status(400).json({ error: '请提供数组' });
+    /* 2026-09-03（审计 A1）：批量 POST 同样补翻译（闸门前整批译，省得逐条过闸后再译） */
+    try { await _translateListToZhParallel(items, 3, { skipBodyFetch: true }); } catch (e) {}
     let count = 0, skipped = 0;
     for (const item of items) {
       if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
