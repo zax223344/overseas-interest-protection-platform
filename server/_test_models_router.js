@@ -6,6 +6,7 @@ const path = require('path');
 const { query } = require('./db');
 const modelsAnalysis = require('./models-analysis');
 const app = express();
+app.use(express.json({ limit: '2mb' }));
 app.use('/api/models', modelsAnalysis({ query }));
 /* 其余 /api/* 原样代理到 3000（登录、预警、态势等真实后端） */
 app.use('/api', (req, res) => {

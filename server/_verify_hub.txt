@@ -53,11 +53,19 @@ ORPS 大情报分析中枢 · 专题分析模型重设计验证记录（model-an
                      实体抽取：阿里巴巴 3 次命中
   minerals      200  1059 条：金矿 17/铜 12/稀土 11/铀 4；海关罢工信号 731
   agents        200  六智能体清单完整
-智能体端点：
-  POST agent/org-analyst {org:taliban}
-    200  source=llm model=kimi-k2.6 耗时 71.6s
-    返回 4 节结构化研判：组织活动态势/战术演进特征/下一步目标预测/对我海外利益威胁评估
-    （LLM 真实输出，基于装配的 166 起归因事件统计）
+智能体端点（六 agent 全部 LLM 实测通过）：
+  POST agent/org-analyst {org:taliban}          200  kimi-k2.6  4 节  evi=10（71.6s）
+  POST agent/counter-terror {country:巴基斯坦}  200  kimi-k2.6  4 节  evi=8
+    实测研判内容：415 起恐袭，军警目标 30%、政府 11%（与 API 计数一致，参数生效）
+  POST agent/kidnap-analyst {text:绑架 中国公民 尼日利亚}  200  kimi-k2.6  4 节  evi=5
+    实测研判内容：尼日利亚 295 起占 58%，Top 相似案例指向尼日利亚群体绑架（参数生效）
+  POST agent/geo-officer {country:伊朗}         200  kimi-k2.6  4 节  evi=8
+  POST agent/sanctions-officer {enterprise:华为} 200  kimi-k2.6  4 节  evi=8
+  POST agent/supply-sentinel {mineral:锂}        200  kimi-k2.6  4 节  evi=8
+  排障记录：测试实例初测 kidnap-analyst evi=0 —— 根因是测试脚本
+    server/_test_models_router.js 缺 express.json() 中间件导致 req.body 为空，
+    生产 server.js:138 已有 app.use(express.json({limit:'50mb'})) 不受影响。
+    已补 app.use(express.json({limit:'2mb'})) 并复测全部参数生效。
 
 ================================================================================
 四、Playwright 真浏览器验证（admin/admin123，3100 端口）
