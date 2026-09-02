@@ -141,7 +141,16 @@ function pickLowBatch(low) {
 
 /* ===== ⑤ 组织匹配正则（标题+摘要必须命中，防搜索漂移） ===== */
 function buildOrgRe(org) {
-  const terms = [org.name].concat(org.aliases || []).map(s => String(s || '').trim()).filter(s => s.length >= 2);
+  const base = [org.name].concat(org.aliases || []).map(s => String(s || '').trim()).filter(s => s.length >= 2);
+  /* 2026-09-02 别名变体全配对（用户指令）：连字符↔空格互换变体并入匹配——
+   * "al-Qaeda"/"al Qaeda" 双吃，根治拼写变体误杀（首轮审计 124 条拒因最大头） */
+  const vset = new Set();
+  base.forEach(t => {
+    vset.add(t);
+    if (t.indexOf('-') >= 0) vset.add(t.replace(/-/g, ' '));
+    if (t.indexOf(' ') >= 0) vset.add(t.replace(/ /g, '-'));
+  });
+  const terms = Array.from(vset);
   const parts = terms
     .sort((a, b) => b.length - a.length)
     .map(t => {
@@ -156,7 +165,10 @@ function buildOrgRe(org) {
 /* ---- 噪声过滤（体育/娱乐/财经等非安全主题） ---- */
 const NOISE_RE = /\bfootball\b|\bsoccer\b|\bFIFA\b|\bWorld Cup\b|\bNBA\b|\btennis\b|\bcricket\b|\bgolf\b|election campaign|stock market|shares rally|box office|concert|festival|award show|movie|film premiere|fashion show|娱乐|电影节|演唱会|体育赛事/i;
 /* 组织动态事件词（命中组织词的同时须有安全语境，杜绝 "Taliban 发言人谈经济" 类软闻） */
-const EVENT_RE = /terror|attack|attacked|ambush|shooting|shot|gunmen|gunfire|kidnap|kidnapped|kidnapping|abduct|abducted|hostage|ransom|blast|bomb|bombing|suicide|militant|insurgent|extremist|assault|raid|massacre|murder|murdered|killed|killing|dead|death|casualt|arrest|arrested|detained|capture|captured|clash|clashes|offensive|strike|airstrike|drone|explosion|execute|executed|behead|recruit|financing|sanction|designated|convict|sentenced|surrender|ceasefire|leader|commander|spokesman|claimed responsibility|warning|threat|袭击|恐袭|绑架|劫持|人质|赎金|爆炸|枪击|武装|伏击|突袭|屠杀|谋杀|遇害|身亡|遇难|死亡|伤亡|逮捕|抓获|击毙|头目|指挥官|发言人|宣称负责|认罪|判刑|投降|停火|招募|融资|制裁/i;
+/* 2026-09-02 扩为「组织行为语境」（用户指令）：原事件词 + 组织行为词（审判/嫌疑人/重建/
+ * 总部/招募/勾连/网络/据点/融资/武器/走私/警告/行动等）——组织已命中别名兜底，语境可放宽不串台。
+ * 短词防子串噪声：kills/ties/cell/operation/hq/arms 带词边界（避开 parties/cooperation/properties）。 */
+const EVENT_RE = /terror|attack|ambush|shooting|gunmen|gunfire|kidnap|abduct|hostage|ransom|blast|bomb|suicide|militant|insurgent|extremist|assault|raid|massacre|murder|killed|killing|kills\b|dead|death|casualt|arrest|detained|capture|clash|offensive|strike|airstrike|drone|explosion|execute|behead|recruit|luring|lured|financ|sanction|designat|convict|sentenced|trial|suspect|surrender|ceasefire|leader|commander|spokesman|claimed responsibility|warns|warning|threat|\boperations?\b|\boperatives?\b|headquarters|\bhq\b|funding|\bties\b|network|\bcell\b|hideout|stronghold|regroup|resurgence|propaganda|pledge|defect|weapons|\barms\b|convoy|indictment|charges|plea|probe|questioning|manhunt|crackdown|smuggl|traffick|safe haven|sanctuary|rebuild|袭击|恐袭|绑架|劫持|人质|赎金|爆炸|枪击|武装|伏击|突袭|屠杀|谋杀|遇害|身亡|遇难|死亡|伤亡|逮捕|抓获|击毙|头目|指挥官|发言人|宣称负责|认罪|判刑|审判|投降|停火|招募|融资|制裁|据点|老巢|重建|勾连|审讯/i;
 
 /* ---- 工具函数 ---- */
 function _decodeEnt(s) {
@@ -232,13 +244,53 @@ function _mkItem(o) {
   };
 }
 function _accept(title, desc, orgRe) {
+  return _acceptWhy(title, desc, orgRe) === '';
+}
+
+/* 2026-09-02 普通数据条目（用户指令：未提组织名的同地区新闻以普通数据采集入库）——
+ * 无 _orgId/_orgName 归因标记、不强制 terror_events（走管线通用分类），
+ * 仍带 _sourceType='org_watch'（同源体积豁免），chinaRelated 同唯一源严格判定。 */
+function _mkPlain(o) {
+  const iso = o.date ? new Date(o.date) : null;
+  const isoStr = iso && !isNaN(iso.getTime()) ? iso.toISOString() : '';
+  const txt = String(o.title || '') + ' ' + String(o.desc || '');
+  return {
+    title: String(o.title || '').trim(),
+    url: String(o.url || '').trim(),
+    source: o.source || _host(o.url) || '地区安全动态',
+    domain: _host(o.url),
+    date: isoStr, publish_time: isoStr, publishedAt: isoStr,
+    content: String(o.desc || '').replace(/<[^>]+>/g, '').slice(0, 600),
+    country: o.country || '', country_cn: o.country || '',
+    interestLinked: false, category: '地区安全动态',
+    _sourceType: 'org_watch',
+    _fromSource: 'ORG-WATCH-PLAIN:' + (o.channel || 'search'),
+    chinaRelated: scrapers.isChinaRelatedStrict(txt),
+    _real: true
+  };
+}
+/* 普通通道准入：仅「未命中别名」类拒因可转入，标题非噪声 + 须过泛政治安全底线
+ * （2026-09-02 用户审阅：普通数据指政治/安全/战略关联新闻，烹饪/音乐剧/体育等纯民生不入） */
+const PLAIN_RE = /securit|militar|army|police|government|president|minister|parliament|senate|election|vote|conflict|rebel|militia|court|trial|lawsuit|allegation|protest|strike|kill|died|attack|terror|ceasefire|sanction|diplomat|embassy|border|refugee|peace|war|coup|impeach|defense|defence|nuclear|missile|oil|gas|mineral|cobalt|lithium|copper|infrastructure|port|railway|dam|corridor|insurgent|extremist|jihad|安全|军事|军队|警察|政府|总统|部长|议会|选举|冲突|抗议|罢工|法院|审判|弹劾|诉讼|指控|争议|制裁|外交|使馆|边境|难民|和平|战争|政变|国防|核|导弹|石油|天然气|矿产|钴|锂|铜|基础设施|港口|铁路|大坝|走廊|武装|极端|圣战|污染/i;
+function _tryPlain(why, title) {
+  return why === '未命中本组织别名' && !NOISE_RE.test(String(title || '')) && PLAIN_RE.test(String(title || ''));
+}
+/* 2026-09-02 拦截可审计化：返回具体拒因（''=放行），供 droppedSamples 留证分析 */
+function _acceptWhy(title, desc, orgRe) {
   const t = String(title || '');
   const all = t + ' ' + String(desc || '');
-  if (t.length < 10) return false;
-  if (NOISE_RE.test(t)) return false;
-  if (!orgRe || !orgRe.test(all)) return false;    /* 必须命中本组织名/别名，杜绝串台 */
-  if (!EVENT_RE.test(all)) return false;            /* 必须带安全事件语境 */
-  return true;
+  if (t.length < 10) return '标题过短(<10字符)';
+  if (NOISE_RE.test(t)) return '噪声标题(NOISE_RE)';
+  if (!orgRe || !orgRe.test(all)) return '未命中本组织别名';
+  if (!EVENT_RE.test(all)) return '缺安全事件语境(EVENT_RE)';
+  return '';
+}
+/* 拦截样本留证（上限 300 条，随 stats 入 _orgWatchLastStats 供 status 端点查阅） */
+function _dropRec(stats, orgId, ch, title, reason, url) {
+  stats.dropped++;
+  if (stats.droppedSamples.length < 300) {
+    stats.droppedSamples.push({ org: orgId || '', ch: ch || '', reason, title: String(title || '').slice(0, 140), url: String(url || '').slice(0, 200) });
+  }
 }
 
 /* ===== 主流程 ===== */
@@ -246,16 +298,23 @@ async function runOrgWatch(opts) {
   opts = opts || {};
   const t0 = Date.now();
   const orgs = loadOrgs();
-  const stats = { orgsTotal: orgs.length, orgsQueried: 0, gdelt: 0, gnews: 0, rss: 0, dropped: 0, perOrg: {}, errors: [] };
+  const stats = { orgsTotal: orgs.length, orgsQueried: 0, gdelt: 0, gnews: 0, rss: 0, plain: 0, dropped: 0, droppedSamples: [], perOrg: {}, errors: [] };
   const out = [];
   const seenUrl = new Set();
   const seenTitle = new Set();
   const push = (it, ch, orgId) => {
     const tk = String(it.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 60);
-    if (!it.url || seenUrl.has(it.url) || (tk && seenTitle.has(tk))) { stats.dropped++; return; }
+    if (!it.url || seenUrl.has(it.url) || (tk && seenTitle.has(tk))) { _dropRec(stats, orgId, ch, it.title, '轮内URL/标题去重', it.url); return; }
     seenUrl.add(it.url); if (tk) seenTitle.add(tk);
     out.push(it); stats[ch]++;
     stats.perOrg[orgId] = (stats.perOrg[orgId] || 0) + 1;
+  };
+  /* 普通数据通道（未提组织名的同地区新闻）：计数入 plain，不占 perOrg */
+  const pushPlain = (it, ch) => {
+    const tk = String(it.title || '').replace(/\s+/g, '').toLowerCase().slice(0, 60);
+    if (!it.url || seenUrl.has(it.url) || (tk && seenTitle.has(tk))) { _dropRec(stats, '', ch, it.title, '轮内URL/标题去重', it.url); return; }
+    seenUrl.add(it.url); if (tk) seenTitle.add(tk);
+    out.push(it); stats.plain++;
   };
 
   if (!orgs.length) {
@@ -298,9 +357,17 @@ async function runOrgWatch(opts) {
         for (const qs of queries) {
           const arts = await _gdelt(qs.q, { timespan: '2d', maxrecords: opts.maxPerQuery || 25 });
           for (const a of (arts || [])) {
-            if (!_accept(a.title, '', p.orgRe)) { stats.dropped++; continue; }
+            const _why = _acceptWhy(a.title, '', p.orgRe);
+            if (_why) {
+              if (_tryPlain(_why, a.title)) {
+                const d = _gdeltDate(a.seendate);
+                if (d && !_freshOk(d, 2)) { _dropRec(stats, '', 'gdelt', a.title, '时效>2天', a.url); continue; }
+                pushPlain(_mkPlain({ title: a.title, url: a.url, date: d, source: a.domain, channel: 'gdelt', country: qs.cn }), 'gdelt');
+              } else _dropRec(stats, p.org.id, 'gdelt', a.title, _why, a.url);
+              continue;
+            }
             const d = _gdeltDate(a.seendate);
-            if (d && !_freshOk(d, 2)) { stats.dropped++; continue; }
+            if (d && !_freshOk(d, 2)) { _dropRec(stats, p.org.id, 'gdelt', a.title, '时效>2天', a.url); continue; }
             push(_mkItem({ title: a.title, url: a.url, desc: '', date: d, seendate: a.seendate, source: a.domain, channel: 'gdelt', country: qs.cn, countryIso: qs.iso, org: p.org, highFreq: p.highFreq }), 'gdelt', p.org.id);
           }
         }
@@ -321,8 +388,15 @@ async function runOrgWatch(opts) {
         else continue;   /* 短缩写无国别限定 → 放弃 GNews（歧义大） */
         const items = await _gnewsRss(q, opts.maxPerQuery || 15);
         for (const it of items) {
-          if (!_accept(it.title, it.desc, p.orgRe)) { stats.dropped++; continue; }
-          if (!_freshOk(it.pub, 2)) { stats.dropped++; continue; }
+          const _why = _acceptWhy(it.title, it.desc, p.orgRe);
+          if (_why) {
+            if (_tryPlain(_why, it.title)) {
+              if (!_freshOk(it.pub, 2)) { _dropRec(stats, '', 'gnews', it.title, '时效>2天', it.url); continue; }
+              pushPlain(_mkPlain({ title: it.title, url: it.url, desc: it.desc, date: it.pub, source: 'Google News·' + (_host(it.url) || best), channel: 'gnews', country: p.countries[0] || '' }), 'gnews');
+            } else _dropRec(stats, p.org.id, 'gnews', it.title, _why, it.url);
+            continue;
+          }
+          if (!_freshOk(it.pub, 2)) { _dropRec(stats, p.org.id, 'gnews', it.title, '时效>2天', it.url); continue; }
           push(_mkItem({ title: it.title, url: it.url, desc: it.desc, date: it.pub, source: 'Google News·' + (_host(it.url) || best), channel: 'gnews', country: p.countries[0] || '', countryIso: p.countries.length ? crawler.gdCode(p.countries[0]) : '', org: p.org, highFreq: p.highFreq }), 'gnews', p.org.id);
         }
       } catch (e) { stats.errors.push(p.org.id + ':gnews:' + e.message); }
@@ -344,11 +418,22 @@ async function runOrgWatch(opts) {
       for (const arr of results) for (const { it, f } of arr) {
         const title = _decodeEnt(it.title || '');
         const desc = _decodeEnt(String(it.description || '').replace(/<[^>]+>/g, '').slice(0, 400));
-        if (!_freshOk(it.pubDate, 2)) continue;
+        if (!_freshOk(it.pubDate, 2)) { _dropRec(stats, '', 'rss', _decodeEnt(it.title || ''), '时效>2天', it.link); continue; }
+        let matched = false;
         for (const p of plans) {
           if (!_accept(title, desc, p.orgRe)) continue;
           push(_mkItem({ title, url: it.link, desc, date: it.pubDate, source: f.name, channel: 'rss', country: f.country, countryIso: f.iso, org: p.org, highFreq: p.highFreq }), 'rss', p.org.id);
+          matched = true;
           break;   /* 一条 RSS 只归第一个命中的组织，避免多组织重复挂账 */
+        }
+        /* 2026-09-02 普通数据通道：未命中任何组织的高危国别 RSS 条目，
+         * 非噪声且过泛政治安全底线（PLAIN_RE）即以普通数据入库——烹饪/音乐剧等纯民生拒收 */
+        if (!matched) {
+          if (PLAIN_RE.test(title + ' ' + desc) && !NOISE_RE.test(title)) {
+            pushPlain(_mkPlain({ title, url: it.link, desc, date: it.pubDate, source: f.name, channel: 'rss', country: f.country }), 'rss');
+          } else if (!PLAIN_RE.test(title + ' ' + desc)) {
+            _dropRec(stats, '', 'rss', title, '普通通道-非政治安全语境', it.link);
+          }
         }
       }
     }
@@ -358,7 +443,7 @@ async function runOrgWatch(opts) {
   const top = Object.keys(stats.perOrg).sort((a, b) => stats.perOrg[b] - stats.perOrg[a]).slice(0, 5)
     .map(k => k + '(' + stats.perOrg[k] + ')').join('/');
   console.log('[ORG-WATCH] 威胁组织哨兵(' + sec + 's): 组织库 ' + stats.orgsTotal + '（高频 ' + stats.highFreq + '/低频 ' + stats.lowTotal + '，本轮查询 ' + stats.orgsQueried + '）'
-    + ' | 候选 ' + out.length + '（gdelt ' + stats.gdelt + '/gnews ' + stats.gnews + '/rss ' + stats.rss + '，过滤 ' + stats.dropped + '）'
+    + ' | 候选 ' + out.length + '（gdelt ' + stats.gdelt + '/gnews ' + stats.gnews + '/rss ' + stats.rss + '/普通 ' + stats.plain + '，过滤 ' + stats.dropped + '）'
     + (top ? ' | Top命中 ' + top : '')
     + (stats.errors.length ? ' | 错误 ' + stats.errors.length + '（' + stats.errors.slice(0, 3).join(';') + '）' : ''));
   if (!out.length && (stats.gdelt + stats.gnews + stats.rss) === 0) {
