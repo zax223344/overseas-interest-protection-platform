@@ -140,7 +140,16 @@ function loadOrgs() {
 /* 组织正则：name+aliases 全部参与，ASCII 缩写加词边界 */
 function buildOrgMatchers() {
   return loadOrgs().map(o => {
-    const terms = [o.name, ...o.aliases].map(s => String(s).trim()).filter(s => s.length >= 2);
+    const base = [o.name, ...o.aliases].map(s => String(s).trim()).filter(s => s.length >= 2);
+    /* 2026-09-02 别名变体全配对（与 org-watch 同源修复）：连字符↔空格互换变体并入匹配，
+     * 根治 "al Qaeda"（空格）类标题归因漏判 */
+    const vset = new Set();
+    base.forEach(t => {
+      vset.add(t);
+      if (t.indexOf('-') >= 0) vset.add(t.replace(/-/g, ' '));
+      if (t.indexOf(' ') >= 0) vset.add(t.replace(/ /g, '-'));
+    });
+    const terms = Array.from(vset);
     const parts = terms
       .sort((a, b) => b.length - a.length)
       .map(t => /^[\x21-\x7e]+$/.test(t) ? t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/^(.+)$/, '(?:^|[^a-z])$1(?:[^a-z]|$)') : t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
