@@ -15,6 +15,15 @@
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function fetchJSON(url, opt) { return fetch(url, opt).then(function (r) { return r.json(); }); }
   var LV = { red: { c: '#ff3355', n: '红' }, orange: { c: '#ff8800', n: '橙' }, yellow: { c: '#ffcc00', n: '黄' }, blue: { c: '#00d4ff', n: '蓝' } };
+  /* 2026-09-02 用户要求：事件类型分布等裸 data_type 码一律中文标签 */
+  var TYPE_CN = {
+    geopolitical_intel: '地缘动态', terror_events: '恐怖袭击', military_conflicts: '武装冲突',
+    sanctions_data: '制裁合规', social_unrest: '社会动荡', infrastructure: '基础设施',
+    natural_disasters: '自然灾害', political_events: '政治风险', public_health: '公共卫生',
+    economic_risk: '经济风险', osint_intel: '开源情报', security_events: '安全事件',
+    cyber_security: '网络安全', legal_compliance: '法律合规'
+  };
+  function typeCN(t) { return TYPE_CN[t] || t; }
 
   /* ============ HUD 样式注入（深空蓝黑 · 未来科技感）============ */
   var HUD_CSS = `
@@ -317,6 +326,13 @@
               '<div class="ma-kpi"><div class="v">' + ov.orgs.length + '</div><div class="l">归因威胁组织</div><div class="s">threats.js 库匹配</div></div>' +
               '<div class="ma-kpi"><div class="v" style="color:' + (redN ? '#ff3355' : '#00e5ff') + '">' + alerts.length + '</div><div class="l">模型异动信号</div><div class="s">红 ' + redN + ' / 橙 ' + alerts.filter(function (a) { return a.level === 'orange'; }).length + '</div></div>' +
             '</div></div>' +
+            /* 🧠 中枢 AI 综合研判卡片：真实统计+事件证据 → LLM 研判（与六专项智能体同链路） */
+            '<div class="ma-hud-card" style="margin-bottom:10px"><div class="ma-tt">🧠 中枢 AI 综合研判<small>系统实时装配全库真实统计与事件证据 → 大模型综合研判</small>' +
+              '<span class="ma-btn" id="ma-hub-run" style="margin-left:auto;padding:4px 16px;font-size:11px">▶ 开始研判</span></div>' +
+              '<div id="ma-hub-result">' +
+                (self._agent.overview ? self._agentHtml(self._agent.overview) :
+                  '<div class="ma-empty" style="padding:14px">中枢研判官待命 · 点击「开始研判」，基于 ' + ov.window.totalEvents + ' 条真实事件与 ' + alerts.length + ' 条模型信号生成全局态势综合研判</div>') +
+              '</div></div>' +
             '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">' +
               MODELS.filter(function (m) { return m.agent; }).map(function (m) {
                 return '<div class="ma-hud-card" style="cursor:pointer" data-jump="' + m.key + '">' +
@@ -327,21 +343,22 @@
                   '</div></div>';
               }).join('') +
             '</div>' +
-            '<div class="ma-hud-card" style="margin-top:10px"><div class="ma-tt">🚨 模型异动信号<small>第一阶段功能区内呈现，预警中心接入留二期</small></div>' +
+            '<div class="ma-hud-card" style="margin-top:10px"><div class="ma-tt">🚨 模型异动信号<small>点击卡片查看判定依据与支撑事件 · 预警中心接入留二期</small></div>' +
               '<div style="display:flex;gap:8px;overflow-x:auto;padding:4px 12px 12px" class="ma-scroll">' +
-              (alerts.length ? alerts.slice(0, 8).map(function (a) {
+              (alerts.length ? alerts.slice(0, 8).map(function (a, aidx) {
                 var lv = LV[a.level] || LV.blue;
-                return '<div style="min-width:230px;flex:1;border-left:3px solid ' + lv.c + ';background:rgba(255,255,255,0.02);border-radius:6px;padding:7px 10px">' +
+                return '<div data-aidx="' + aidx + '" title="点击查看判定依据与支撑事件" style="min-width:230px;flex:1;border-left:3px solid ' + lv.c + ';background:rgba(255,255,255,0.02);border-radius:6px;padding:7px 10px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,212,255,0.06)\'" onmouseout="this.style.background=\'rgba(255,255,255,0.02)\'">' +
                   '<div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">' +
                     '<span class="ma-chip" style="background:' + lv.c + '22;color:' + lv.c + '">' + lv.n + '级</span>' +
                     '<span style="font-size:10px;color:var(--text3)">' + esc(a.model) + '</span></div>' +
                   '<div style="font-size:12px;font-weight:600;line-height:1.4">' + esc(a.title) + '</div>' +
-                  '<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5">' + esc(a.desc) + '</div></div>';
+                  '<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5">' + esc(a.desc) + '</div>' +
+                  '<div style="font-size:10px;color:#00e5ff;margin-top:5px">▶ 点击展开详情</div></div>';
               }).join('') : '<div class="ma-empty">各模型信号均在阈值内</div>') +
               '</div></div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">' +
               '<div class="ma-hud-card"><div class="ma-tt">📊 事件类型分布<small>data_type</small></div><div style="padding:6px 12px 12px">' +
-                svgBars(byType.map(function (t) { return { label: t[0], value: t[1], color: '#00d4ff' }; }), { w: 440, labelW: 150 }) + '</div></div>' +
+                svgBars(byType.map(function (t) { return { label: typeCN(t[0]), value: t[1], color: '#00d4ff' }; }), { w: 440, labelW: 150 }) + '</div></div>' +
               '<div class="ma-hud-card"><div class="ma-tt">🌍 事件国家 Top<small>全类型</small></div><div style="padding:6px 12px 12px">' +
                 /* 2026-09-02 修复 undefined 标签：byType 是 [名,数] 数组对，
                  * countries 是 {country,count} 对象（/api/models/overview 两种形态），分类映射 */
@@ -350,6 +367,17 @@
           );
           document.querySelectorAll('[data-jump]').forEach(function (el) {
             el.addEventListener('click', function () { self._show(el.getAttribute('data-jump')); });
+          });
+          /* 中枢研判官触发 */
+          var hubBtn = document.getElementById('ma-hub-run');
+          if (hubBtn) hubBtn.addEventListener('click', function () { self._runHubAnalyst(); });
+          /* 2026-09-02：异动信号卡片可点开——判定依据+支撑事件详情弹窗 */
+          self._ovAlerts = alerts;
+          document.querySelectorAll('[data-aidx]').forEach(function (el) {
+            el.addEventListener('click', function () {
+              var a = self._ovAlerts[parseInt(el.getAttribute('data-aidx'), 10)];
+              if (a) self._showAlertDetail(a);
+            });
           });
         });
       }).catch(function (e) { self._canvas('<div class="ma-hud-card"><div class="ma-empty">总览加载失败：' + esc(e.message) + '</div></div>'); });
@@ -857,6 +885,42 @@
       });
     },
 
+    /* 中枢研判官：总览页 AI 综合研判（hub-analyst，无参数） */
+    _runHubAnalyst: function () {
+      var self = this;
+      if (this._busy) return;
+      this._busy = true;
+      var btn = document.getElementById('ma-hub-run');
+      if (btn) { btn.textContent = '⟳ 研判中…'; btn.style.opacity = '0.55'; }
+      var res = document.getElementById('ma-hub-result');
+      if (res) res.innerHTML = '<div class="ma-empty ma-pulse">⟳ 中枢研判官装配全库统计与证据并研判中（LLM 外呼约 10-30s）…</div>';
+      fetchJSON('/api/models/agent/hub-analyst', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      }).then(function (d) {
+        self._busy = false;
+        if (!d.ok) { self._agent.overview = { error: d.error || '研判失败' }; }
+        else if (d.agent && d.agent.error) { self._agent.overview = { error: d.agent.error }; }
+        else {
+          self._agent.overview = {
+            name: d.agent.name, sections: d.agent.sections || [], model: d.agent.model,
+            source: d.agent.source, lastErr: d.agent.lastErr || '', elapsed: d.agent.elapsed || '',
+            evidenceIds: d.evidenceIds || []
+          };
+        }
+        var r2 = document.getElementById('ma-hub-result');
+        if (r2) r2.innerHTML = self._agentHtml(self._agent.overview);
+        var b2 = document.getElementById('ma-hub-run');
+        if (b2) { b2.textContent = '↻ 重新研判'; b2.style.opacity = '1'; }
+      }).catch(function (e) {
+        self._busy = false;
+        self._agent.overview = { error: e.message };
+        var r3 = document.getElementById('ma-hub-result');
+        if (r3) r3.innerHTML = self._agentHtml(self._agent.overview);
+        var b3 = document.getElementById('ma-hub-run');
+        if (b3) { b3.textContent = '▶ 开始研判'; b3.style.opacity = '1'; }
+      });
+    },
+
     _agentHtml: function (r) {
       var self = this;
       if (r.error) return '<div class="ma-empty">🚫 ' + esc(r.error) + '</div>';
@@ -904,6 +968,103 @@
       return html;
     },
 
+    /* ================= 异动信号详情：判定依据+支撑数据（2026-09-02 用户要求可点开交互） ================= */
+    _showAlertDetail: function (a) {
+      var self = this;
+      var lv = LV[a.level] || LV.blue;
+      var mask = document.createElement('div');
+      mask.className = 'ma-modal-mask';
+      mask.innerHTML =
+        '<div class="ma-modal ma-scroll">' +
+          '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">' +
+            '<div style="flex:1;font-size:14px;font-weight:700;color:#9fe8ff;line-height:1.5">' + esc(a.title) + '</div>' +
+            '<span class="ma-btn ghost" id="ma-modal-x" style="padding:3px 10px;flex:none">✕</span></div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
+            '<span class="ma-chip" style="background:' + lv.c + '22;color:' + lv.c + '">' + lv.n + '级信号</span>' +
+            '<span class="ma-tag">模型：' + esc(a.model) + '</span></div>' +
+          '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">判定依据</div>' +
+          '<div style="font-size:12px;color:var(--text);line-height:1.7;background:rgba(0,212,255,0.03);border-radius:6px;padding:10px 12px;margin-bottom:10px">' + esc(a.desc) + '</div>' +
+          '<div id="ma-alert-formula"></div>' +
+          '<div id="ma-alert-evi-tt" style="font-size:11px;color:var(--text3);margin:8px 0 4px">支撑数据<small>（事件可点击查看原始情报全文）</small></div>' +
+          '<div id="ma-alert-evi" style="max-height:300px;overflow-y:auto" class="ma-scroll"><div class="ma-empty ma-pulse">⟳ 加载支撑数据…</div></div>' +
+          '<div style="display:flex;gap:10px;margin-top:12px" id="ma-alert-actions"></div>' +
+        '</div>';
+      document.body.appendChild(mask);
+      mask.querySelector('#ma-modal-x').addEventListener('click', function () { mask.remove(); });
+      mask.addEventListener('click', function (ev) { if (ev.target === mask) mask.remove(); });
+      var eviBox = mask.querySelector('#ma-alert-evi');
+      var formulaBox = mask.querySelector('#ma-alert-formula');
+      var actBox = mask.querySelector('#ma-alert-actions');
+      function renderEvents(list, note) {
+        if (!list || !list.length) { eviBox.innerHTML = '<div class="ma-empty">暂无可关联的支撑事件</div>'; return; }
+        eviBox.innerHTML = list.map(function (e) {
+          return '<div class="ma-evi2" data-evid="' + esc(e.id || '') + '" style="padding:7px 10px;border-bottom:1px solid rgba(0,212,255,0.08);cursor:pointer" onmouseover="this.style.background=\'rgba(0,212,255,0.05)\'" onmouseout="this.style.background=\'\'">' +
+            '<div style="font-size:12px;line-height:1.5;color:var(--text)">' + esc(e.title || '') + '</div>' +
+            '<div style="font-size:10px;color:var(--text3);margin-top:2px">' + esc(e.country || '') + (e.time ? ' · ' + esc(e.time) : '') + '</div></div>';
+        }).join('') + (note ? '<div style="font-size:10px;color:var(--text3);padding:6px 10px">' + esc(note) + '</div>' : '');
+        eviBox.querySelectorAll('.ma-evi2[data-evid]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            var id = el.getAttribute('data-evid');
+            if (id) self._showEvent(id, el);
+          });
+        });
+      }
+      function renderKV(rows) {
+        eviBox.innerHTML = '<div style="padding:6px 10px">' + rows.map(function (r) {
+          return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px dashed rgba(0,212,255,0.08)">' +
+            '<span style="color:var(--text2)">' + esc(r[0]) + '</span><b style="color:#9fe8ff">' + esc(r[1]) + '</b></div>';
+        }).join('') + '</div>';
+      }
+      function addJump(label, viewKey) {
+        var b = document.createElement('span');
+        b.className = 'ma-btn'; b.style.cssText = 'padding:5px 14px;font-size:11px;cursor:pointer';
+        b.textContent = label;
+        b.addEventListener('click', function () { mask.remove(); self._show(viewKey); });
+        actBox.appendChild(b);
+      }
+      if (a.model.indexOf('绑架') >= 0) {
+        var mc = a.title.match(/（(.+?)）/);
+        var ctry = mc ? mc[1] : '';
+        addJump('进入绑架模式专项 →', 'kidnap');
+        fetchJSON('/api/models/kidnap?country=' + encodeURIComponent(ctry)).then(function (d) {
+          if (d.formulaDesc) formulaBox.innerHTML = '<div style="font-size:10px;color:var(--text3);line-height:1.6;margin-bottom:6px">评分公式：' + esc(d.formulaDesc) + '</div>';
+          renderEvents((d.recent || []).slice(0, 10), d.survivalNote || '');
+        }).catch(function () { renderEvents([]); });
+      } else if (a.model.indexOf('组织') >= 0) {
+        addJump('进入组织动态专项 →', 'org');
+        fetchJSON('/api/models/overview').then(function (ov) {
+          var hit = (ov.orgs || []).find(function (o) { return a.title.indexOf(o.name) >= 0; });
+          if (!hit) { renderEvents([]); return; }
+          fetchJSON('/api/models/orgs/profile?id=' + encodeURIComponent(hit.id)).then(function (p) {
+            var ev = (p.recent || p.samples || []).slice(0, 10);
+            if (ev.length) { renderEvents(ev, p.insufficient ? '样本不足，仅供参考' : ''); return; }
+            /* 无事件列表时如实展示手法分布（判定依据的量化支撑） */
+            if (p.methodDist && p.methodDist.length) {
+              mask.querySelector('#ma-alert-evi-tt').textContent = '手法分布（判定量化支撑）';
+              renderKV(p.methodDist.map(function (m) { return [m.n || m.k, (m.c != null ? m.c : 0) + ' 起']; }));
+            } else renderEvents([]);
+          }).catch(function () { renderEvents([]); });
+        }).catch(function () { renderEvents([]); });
+      } else if (a.model.indexOf('地缘') >= 0 || a.model.indexOf('风险') >= 0) {
+        var gm = a.title.match(/^(.+?)\s/);
+        var gc = gm ? gm[1] : '';
+        addJump('进入地缘风险专项 →', 'geo');
+        fetchJSON('/api/models/geo?country=' + encodeURIComponent(gc)).then(function (d) {
+          var det = d.detail || {};
+          mask.querySelector('#ma-alert-evi-tt').textContent = '六维风险分解与归因（周度）';
+          var rows = [];
+          (det.dims || []).forEach(function (x) { rows.push([x.n || x.k, (x.score != null ? x.score : '—') + ' 分' + (x.delta != null ? '（周Δ ' + (x.delta > 0 ? '+' : '') + x.delta + '）' : '')]); });
+          rows.push(['当前风险值 R', det.curR != null ? det.curR : '—']);
+          rows.push(['周变化 ΔR', det.deltaR != null ? (det.deltaR > 0 ? '+' : '') + det.deltaR : '—']);
+          rows.push(['CUSUM 变点', (det.changepoints != null ? det.changepoints : (det.cusum && det.cusum.changepoints != null ? det.cusum.changepoints : '—')) + ' 处']);
+          if (det.attribution) rows.push(['主要驱动', typeof det.attribution === 'string' ? det.attribution : JSON.stringify(det.attribution)]);
+          renderKV(rows);
+        }).catch(function () { renderEvents([]); });
+      } else {
+        renderEvents([]);
+      }
+    },
+
     /* ================= 证据链：事件详情弹窗 ================= */
     _bindEvidence: function () {
       var self = this;
@@ -933,7 +1094,7 @@
               '<span class="ma-tag">' + esc(e.country) + (e.city ? ' · ' + esc(e.city) : '') + '</span>' +
               '<span class="ma-tag">' + esc(e.time) + '</span>' +
               '<span class="ma-tag">severity: ' + esc(e.severity || '—') + '</span>' +
-              '<span class="ma-tag">' + esc(e.type) + '</span>' +
+              '<span class="ma-tag">' + esc(typeCN(e.type)) + '</span>' +
               (e.china ? '<span class="ma-tag" style="background:rgba(255,51,85,0.12);border-color:rgba(255,51,85,0.4);color:#ff8899">涉华</span>' : '') +
               (e.orgTags || []).map(function (t) { return '<span class="ma-tag" style="background:rgba(255,136,0,0.1);color:#ffbb66">' + esc(t) + '</span>'; }).join('') +
             '</div>' +
