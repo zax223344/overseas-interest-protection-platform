@@ -8918,7 +8918,8 @@ async function _runGapScheduler() {
     const dayTotal = Object.keys(catN).reduce((s, k) => s + catN[k], 0);
     const secN = _SEC_STRUCT_TYPES.reduce((s, ct) => s + (catN[ct] || 0), 0);
     const secShare = dayTotal ? secN / dayTotal : 0;
-    const shortOfFloor = Math.max(0, 4500 - dayTotal);
+    const GAP_FLOOR = 4500;
+    const shortOfFloor = Math.max(0, GAP_FLOOR - dayTotal);
     const nCountry = shortOfFloor > 0 ? 16 : 6;
     const nCat = (shortOfFloor > 0 ? 16 : 6) + (secShare > SEC_STRUCT_SHARE_MAX ? 2 : 0);
     const roundCap = shortOfFloor > 0 ? 60 : 20;
@@ -9094,7 +9095,7 @@ async function _runGapScheduler() {
       });
       if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + (pack ? pack.name : g.ct) + '）'); inserted += (res && res.inserted) || 0; }
     }
-    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限2000，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
+    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限' + GAP_FLOOR + '，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
   } catch (e) { console.warn('[GAP-SCHED] 采集失败:', e.message); }
   finally { _gapSchedBusyUntil = 0; }
 }
