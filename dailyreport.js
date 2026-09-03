@@ -762,19 +762,25 @@ var DAILY_REPORT = {
   exportPDF: function () {
     if (!this._data || !this._data.gov_html) { showToast('⚠️ 无公文版内容可导出'); return; }
     var content = this._govDocHtml();
-    var doc = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>海外利益安全日报 ' + this._current + '</title>'
+    var doc = '<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>'
       + '<style>@page{size:A4;margin:3.7cm 2.6cm 3.5cm 2.8cm;}'
       + 'html,body{margin:0;padding:0;background:#fff;}'
       + '.drg-paper{width:auto !important;max-width:none !important;margin:0 !important;padding:0 !important;box-shadow:none !important;background:#fff !important;}'
       + '</style></head><body>' + content + '</body></html>';
+    /* 2026-09-03 公文质量返工：导出前清空 <title>（避免 Chrome 把「海外利益安全日报 2026-09-03」
+     * 注入页眉居中位置）；页脚 URL「127.0.0.1:3000/#situation 1/N」来自 Chrome 打印对话框的默认
+     * 「页眉和页脚」选项，DOM 无法通过 CSS 隐藏，必须由用户在打印对话框「更多设置」中取消勾选
+     * 「页眉和页脚」+「页码」才能彻底消除——已通过 toast 提示。 */
+    var oldTitle = document.title;
+    document.title = ' ';
     var f = document.createElement('iframe');
     f.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;visibility:hidden;';
     document.body.appendChild(f);
     f.contentDocument.open(); f.contentDocument.write(doc); f.contentDocument.close();
-    showToast('🖨️ 正在调起打印对话框，请在目标打印机中选择「另存为 PDF」');
+    showToast('🖨️ 已调起打印对话框：目标选「另存为 PDF」；⚠️ 请在「更多设置」中取消勾选「页眉和页脚」+「页码」以消除浏览器自动注入的 URL/日期');
     setTimeout(function () {
       try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { showToast('⚠️ 打印调起失败：' + e.message); }
-      setTimeout(function () { f.remove(); }, 6000);
+      setTimeout(function () { try { document.title = oldTitle; } catch (e) {} f.remove(); }, 6000);
     }, 400);
   },
 

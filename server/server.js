@@ -915,10 +915,17 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
    * 代表性事件/信源印证），再作研判（趋势/关联/影响），合并同类项，零虚构。 ===== */
   const prevS = (meta && meta.prevSummary) || null;
   const _lvW2 = { red: 4, orange: 3, yellow: 2, blue: 1 };
-  /* 标题清洗：公文语体清洗 + 尾部媒体名剥离（"- 韩联社"/"- Xinhua Press"/"- XX日报"等，循环两层兜底） */
+  /* 标题清洗：公文语体清洗 + 尾部媒体名剥离（"- 韩联社"/"- Xinhua Press"/"- XX日报"等，循环两层兜底）。
+   * 2026-09-03 用户反馈「- 雅」单字残留：「雅虎」被前一步切剩单字「雅」，原正则要求后缀为社/Press/Times/News 等
+   * 媒体词才剥离；新增宽松剥离：尾部「- 任意单字中文/字母」（裸单字残留）+ 尾部裸域名（xxx.com/xxx.cn/xxx.org 等）。 */
   const _govTitle = i => {
     let t = _govCleanZh(i.title, 40) || String(i.title || '');
-    for (let k = 0; k < 2; k++) t = t.replace(/\s*[-–—]\s*[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5\s]{0,24}?(社|Press|Times|News|Post|Herald|Tribune|日报|周报|电视台|通讯社)\s*$/i, '');
+    for (let k = 0; k < 2; k++) {
+      t = t.replace(/\s*[-–—]\s*[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5\s]{0,24}?(社|Press|Times|News|Post|Herald|Tribune|日报|周报|电视台|通讯社|网|报|台)\s*$/i, '')
+           .replace(/\s*[-–—]\s*[\u4e00-\u9fa5]\s*$/, '')
+           .replace(/\s*[-–—]\s*[a-zA-Z]\s*$/, '')
+           .replace(/(?:^|\s)(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?\s*$/i, '');
+    }
     return t.replace(/[。！？；;]\s*$/, '').trim();
   };
   /* ===== 2026-09-01 代表性事件选材质量闸（用户指令：治理东道国本地治安新闻入选代表事件；
@@ -949,13 +956,27 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
    * 本地治安词命中 且 非涉华主体（china/negative 标志与标题涉华词均无）；
    * 涉华治安案（如曼谷华人团伙案）保留。每主题最多2件，空泛词跳过，超长截断保留，宁缺毋滥。 */
   /* 标题截断（26字内取整句）：2026-09-03 用户铁律「研判必须点名具体事件，让领导看到威胁样态」——
-   * 原 ≤22 字整条丢弃导致译题普遍超长的方向代表事件全灭（缅甸/韩国方向研判段只剩数量统计） */
+   * 原 ≤22 字整条丢弃导致译题普遍超长的方向代表事件全灭（缅甸/韩国方向研判段只剩数量统计）。
+   * 2026-09-03 公文质量返工：硬切时易在词中间切开（"实施制"=制裁被切剩"实施制"）。
+   * 三段式截断：①软标点优先；②无标点时退到最近词边界（的/了/是/在/和/及/或/而/等/之/于/为/与/由/从/把/被/上/下/中/对/该/本/此）；
+   * ③仍无边界则保留整 26 字并加省略号明示截断——避免静默断词污染公文体例。 */
+  const _SOFT_DELIM = '，、；：。？！,;:.?! \u3000';
+  const _WORD_BOUND = '的了是在和及或而等之于为上下中与对由从把被该本此';
   const _cutTitle = t => {
     const s = String(t || '');
     if (s.length <= 26) return s;
     const cut = s.slice(0, 26);
-    const p = Math.max(cut.lastIndexOf('，'), cut.lastIndexOf('、'), cut.lastIndexOf('；'), cut.lastIndexOf('：'), cut.lastIndexOf(' '));
-    return (p >= 12 ? cut.slice(0, p) : cut).replace(/[，、；：\s]+$/, '');
+    /* ①软标点优先 */
+    const p = Math.max(..._SOFT_DELIM.split('').map(c => cut.lastIndexOf(c)));
+    if (p >= 12) return cut.slice(0, p).replace(/[，、；：。？！,;:.?! \u3000]+$/, '');
+    /* ②词边界兜底——找 cut[12..26] 中最后一个词边界字，从其前一个字截断 */
+    for (let i = 25; i >= 12; i--) {
+      if (_WORD_BOUND.indexOf(cut[i]) >= 0) {
+        return cut.slice(0, i).replace(/[，、；：。？！,;:.?! \u3000]+$/, '');
+      }
+    }
+    /* ③仍无边界：保留 24 字 + 省略号，明示截断 */
+    return cut.slice(0, 24).replace(/[，、；：。？！,;:.?! \u3000]+$/, '') + '…';
   };
   const _pickRepr = arr => arr
     .filter(i => !(_LOCAL_SEC.test(String(i.title || '')) && !(i.china || i.negative) && !_CN_SUBJ.test(String(i.title || ''))))
@@ -985,6 +1006,11 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   const _govDigestCase = b => {
     let d = _govCleanZh(b.digest, 300) || '';
     if (!d) return '';
+    /* 2026-09-03 公文质量返工：裸域名剔除（用户反馈「wionews.com」类 URL 残留在正文句子中间，
+     * 系采集源站名/版权声明/分享链接等翻译漏网——剥离任何「xxx.com/xxx.cn/xxx.org/xxx.io」等
+     * 裸域名及前面可能的"在/从/据/由"前缀，避免裸 URL 污染公文体例）。 */
+    d = d.replace(/(?:在|从|据|由|至|到|访问|来源|源自|出自|发表于)?\s*(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?(?:\s*[，,。]?)/gi, '');
+    d = d.replace(/(?:在|从|据|由|至|到|访问|来源|源自|出自|发表于)?\s*(?:www\.)?[a-z0-9-]+\.(?:com|cn|org|net|io|gov|edu|co|uk)(?:\/[^\s]*)?/gi, '');
     const picked = [];
     for (const s of d.split(/(?<=[。！？])/)) {
       if (picked.length >= 2) break;
@@ -1157,7 +1183,11 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     chinaTrend += '，总量较前日' + (dd >= 0 ? '增加' : '减少') + Math.abs(dd) + '件';
   }
   if (reds.length) chinaTrend += '；红色事件' + reds.length + '件，涉我人员安全威胁进入高位区间';
-  if (assetItems.length) chinaTrend += '；资产关联警报' + assetItems.length + '件，涉及' + assetItems.slice(0, 3).map(i => (i.assets || [])[0]).filter(Boolean).join('、') + '等';
+  /* 2026-09-03 公文质量返工：资产名去重——多条目可能命中同一资产（中巴经济走廊×2），拼接前 Set 去重。 */
+  if (assetItems.length) {
+    const uniqAssets = [...new Set(assetItems.slice(0, 6).map(i => (i.assets || [])[0]).filter(Boolean))].slice(0, 3);
+    chinaTrend += '；资产关联警报' + assetItems.length + '件，涉及' + uniqAssets.join('、') + '等';
+  }
   synth.push({ t: '涉华风险趋势', s: chinaTrend + '。' });
   /* （三）区域热点分布 */
   const hot3 = topCountries.slice(0, 3);
@@ -1254,8 +1284,24 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     const subj = grp.length > 1 ? parts.join('、') + '等' + grp.length + '起案件' : parts[0];
     suggAll.push({ tier: tpl.tier, txt: '针对' + subj + '：建议' + tpl.who + '于' + tpl.when + '完成：' + tpl.what });
   });
-  /* —— 短期/中期：资产关联（承保机构+现场指挥部，本周内） —— */
-  const assetRefs = assetItems.slice(0, 3).map(i => (i.eventCountry || i.country || '所在国') + (i.assets || []).slice(0, 2).join('、')).filter(x => x);
+  /* —— 短期/中期：资产关联（承保机构+现场指挥部，本周内） ——
+   * 2026-09-03 公文质量返工：①资产名 Set 去重；②国别资产错配剔除——当资产名已含地缘归属（"中巴""中老""中俄"
+   * 等双国/多国表述）则不再前置国别，避免「印度中巴经济走廊」类硬拼接；③国别仅在条目的 eventCountry 与
+   * 资产的语义国别不一致时省略（双向走廊/跨国项目天然不属单一国家）。 */
+  const _BILATERAL_ASSET = /^(中[\u4e00-\u9fa5]{1,2}|中欧|中非|中东|亚太|泛亚|跨.{1,3})/;
+  const assetRaw = assetItems.slice(0, 6);
+  const seenAsset = new Set();
+  const assetRefs = [];
+  for (const i of assetRaw) {
+    const ast = (i.assets || [])[0];
+    if (!ast) continue;
+    if (seenAsset.has(ast)) continue;
+    seenAsset.add(ast);
+    const c = i.eventCountry || i.country || '';
+    const prefix = (c && !_BILATERAL_ASSET.test(ast)) ? c : '';
+    assetRefs.push(prefix + ast);
+    if (assetRefs.length >= 5) break;
+  }
   if (assetRefs.length) {
     suggAll.push({ tier: '短期', txt: '涉及' + assetRefs.join('、') + '等我海外关联资产：建议项目现场指挥部会同承保机构于本周内完成：通行安排与保险覆盖范围重估，重点物资通道临时管控或绕行评估' });
   }
@@ -1279,7 +1325,7 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   }
   /* 排序保留紧迫性权重（tier 仅作排序键），编号直接跟内容（第三轮修正：不输出分层标签） */
   const sugg2 = suggAll.slice(0, 6).sort((a, b) => (_TIER_ORD[a.tier] ?? 9) - (_TIER_ORD[b.tier] ?? 9)).slice(0, 5);
-  const suggHtml = sugg2.map((s, n) => '<p class="drg-p">（' + (n + 1) + '）' + _escapeHtml(s.txt) + '。</p>').join('');
+  const suggHtml = sugg2.map((s, n) => '<p class="drg-p">（' + ('一二三四五六七八九十'[n] || (n + 1)) + '）' + _escapeHtml(s.txt) + '。</p>').join('');
   /* ===== 内容提要（指南二.2：交代背景、核心问题、关键判断、总体对策，短稿150-300字；
    * 首句必须给出最重要的结论——领导可能只看摘要和结论） ===== */
   const absFocus = focus.length ? '需重点关注' + focus.slice(0, 2).map(f => f[0]).join('、') + '等方向' : '暂无集中风险方向';
@@ -8922,6 +8968,21 @@ async function _runGapScheduler() {
         try { arts = await crawler.gdeltSearch('sourcecountry:' + iso + ' ' + kw, { timespan: '1d', maxrecords: 40 }); } catch (e) {}
         if (arts.length) break;
       }
+      /* 2026-09-03 全文国名腿（白天验证根因修复）：sourcecountry 语义是「该国媒体发布」而非
+       * 「关于该国」——沙特/印尼/埃塞/哈萨克实测英文源召回 0-7 条且多为该国媒体报道的外国事件
+       * （Arab News 报美国明尼阿波利斯枪击案），过闸必拒 → 目标国长期 0 入库。
+       * 增补全文国名检索召回全球英文媒体报道该国的事件（实测 沙特40/印尼19/埃塞18/哈萨克9 条），
+       * 后置「标题含国名」过滤保证国别归因成立（「非洲粮食安全」类泛区域报道剔除），
+       * 与 sourcecountry 腿按 URL 合并去重。 */
+      if (_en) {
+        try {
+          const ft = await crawler.gdeltSearch('"' + _en + '" ' + kw + ' sourcelang:english', { timespan: '1d', maxrecords: 40 });
+          const _re = new RegExp(_en.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+          const _keep = ft.filter(a => _re.test(String(a.title || '')));
+          _keep.forEach(a => { if (!arts.some(x => x.url === a.url)) arts.push(a); });
+          console.log('[GAP-SCHED] 全文腿 ' + g.cn + '（' + kwCt + '）: 召回 ' + ft.length + ' / 标题含国名 ' + _keep.length);
+        } catch (e) {}
+      }
       if (!arts.length) {
         const en = GAP_COUNTRY_EN[g.cn];
         if (en) { try { arts = await crawler.apSearch(en + ' ' + kw.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), { maxrecords: 20, pages: 1 }); } catch (e) {} }
@@ -8932,6 +8993,7 @@ async function _runGapScheduler() {
         if (!it.country && !it.country_cn) it.country = g.cn;   /* 缺口归因：无国别字段按目标国记账 */
         if (!it.source) it.source = '缺口调度·' + g.cn;
       });
+      if (arts.length || batch.length) console.log('[GAP-SCHED] 国别 ' + g.cn + '（' + g.tier + '·' + kwCt + '）: 抓取 ' + arts.length + ' 过闸 ' + batch.length);
       if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + g.cn + '·' + g.tier + '）'); inserted += (res && res.inserted) || 0; }
     }
     /* ⑤ 类别缺口回填：GNews 原子 → GDELT → AP 三级兜底 */
