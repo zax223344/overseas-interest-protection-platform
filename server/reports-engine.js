@@ -415,9 +415,9 @@ function freqOfPeriodKey(key) {
   return '';
 }
 /* 报告名称随所选周期改写（2026-09-03 用户指令：周期是实实在在变动的，名称也要跟着变）
- * 规则：名称尾部为「日报/周报/月报/季报/半年报/年报」→ 换成目标周期名词（涉华负面情报周报→季报）；
- *       尾部为「分析/评估/专报/简报」→ 在前面插入周期形容词（国别风险月度评估→季度评估）；
- *       与类型默认频率一致时不改写（幂等，默认期次名称保持原样）。 */
+ * 规则：名称尾部为「日报/周报/月报/季报/半年报/年报」→ 换成目标周期名词（幂等，同词不变）；
+ *       尾部为「分析/评估/专报/简报」→ 在前面插入周期形容词（国别风险评估→月度评估）；
+ *       尾部无周期词（涉华负面情报）→ 直接追加目标周期名词（→涉华负面情报周报）。 */
 const FREQ_NOUN = { daily: '日报', weekly: '周报', monthly: '月报', quarterly: '季报', semiannual: '半年报', yearly: '年报' };
 const FREQ_ADJ = { daily: '每日', weekly: '每周', monthly: '月度', quarterly: '季度', semiannual: '半年度', yearly: '年度' };
 function titleForFreq(name, freq) {
@@ -833,7 +833,7 @@ function renderGovHtml(def, periodKey, data, llmText, llmOk) {
  * 九、9 类报告装配器
  * ============================================================ */
 
-/* 1. 涉华负面情报周报（六节：人员安全/财产受损/制裁合规/舆情攻击/间谍渗透/领事保护） */
+/* 1. 涉华负面情报（六节：人员安全/财产受损/制裁合规/舆情攻击/间谍渗透/领事保护；周期词由所选频率动态追加） */
 const CN_NEG_SECTIONS = [
   { name: '人员安全', re: /袭击|绑架|劫持|枪击|伤亡|死亡|遇难|受伤|身亡|遇害|抢劫|失踪|勒索|遇袭|绑架案|安全事件/ },
   { name: '财产受损', re: /劫掠|哄抢|打砸|纵火|火灾|爆炸|受损|破坏|盗窃|侵占|工地|工厂|园区|矿区|资产|船只|店铺|银行账户|没收/ },
@@ -855,7 +855,7 @@ async function assembleCnNegativeWeekly(q, win) {
   sections.push(section('其他涉华动态', take(other, 8), 8));
   const st = lvStat(neg);
   return {
-    title: '涉华负面情报周报',
+    title: '涉华负面情报',
     stats: Object.assign({ total: neg.length, chinaCount: neg.length }, st),
     sections,
     chart: CN_NEG_SECTIONS.map((s, i) => ({ label: s.name, value: sections[i].count })).concat([{ label: '其他', value: sections[6].count }]),
@@ -864,7 +864,7 @@ async function assembleCnNegativeWeekly(q, win) {
   };
 }
 
-/* 2. 国别风险月度评估（TOP15 + 梯队/COSRI 高危国全集，环比上月） */
+/* 2. 国别风险评估（TOP15 + 梯队/COSRI 高危国全集，环比上一周期） */
 const CASUALTY_RE = /死亡|遇难|伤亡|受伤|身亡|丧生|遇难/;
 async function assembleCountryRisk(q, win) {
   const items = dedupeEvents(cleanItems(await fetchItems(q, win[0], win[1])));
@@ -912,7 +912,7 @@ async function assembleCountryRisk(q, win) {
   });
   const st = lvStat(items);
   return {
-    title: '国别风险月度评估',
+    title: '国别风险评估',
     stats: Object.assign({ total: items.length, chinaCount: items.filter(i => i.china).length, countries: Object.keys(byC).length }, st),
     sections,
     chart: focus.filter(c => byC[c]).map(c => ({ label: c, value: byC[c].list.length })).sort((a, b) => b.value - a.value).slice(0, 12),
@@ -959,7 +959,7 @@ async function assembleProjectExposure(q, win) {
   };
 }
 
-/* 4. 威胁组织活动季报（threats.js 组织库 name+aliases 归因） */
+/* 4. 威胁组织活动评估（threats.js 组织库 name+aliases 归因） */
 const TACTIC_RE = /(袭击|爆炸|绑架|劫持|枪击|炮击|空袭|无人机|自杀式|路边炸弹|伏击|暗杀|网络攻击|勒索|海盗|走私|洗钱|招募|煽动|政变|屠杀|火箭弹|导弹)/g;
 async function assembleThreatOrg(q, win) {
   const items = dedupeEvents(cleanItems(await fetchItems(q, win[0], win[1])));
@@ -989,7 +989,7 @@ async function assembleThreatOrg(q, win) {
   });
   const st = lvStat(items);
   return {
-    title: '威胁组织活动季报',
+    title: '威胁组织活动评估',
     stats: Object.assign({ total: items.length, orgs: Object.keys(byOrg).length, chinaCount: items.filter(i => i.china).length }, st),
     sections,
     chart: ranked.map(g => ({ label: g.org.name, value: g.list.length })),
@@ -998,7 +998,7 @@ async function assembleThreatOrg(q, win) {
   };
 }
 
-/* 5. 海上咽喉要道月报（interest-base 八大通道 + 袭击/劫持/扣押/水雷/封锁等事件词） */
+/* 5. 海上咽喉要道评估（interest-base 八大通道 + 袭击/劫持/扣押/水雷/封锁等事件词） */
 const CHOKE_INCIDENT_RE = /袭击|劫持|扣押|水雷|封锁|海盗|导弹|爆炸|无人机|攻击|扰动|中断|停航|绕行|险情|碰撞|失事/;
 async function assembleChokepoint(q, win) {
   const items = dedupeEvents(cleanItems(await fetchItems(q, win[0], win[1])));
@@ -1014,7 +1014,7 @@ async function assembleChokepoint(q, win) {
   items.forEach(i => { if (CHOKE_INCIDENT_RE.test(i.title + ' ' + i.digest) && channels.some(ch => ch.re.test(i.title + ' ' + i.digest))) hitItems.add(i); });
   const st = lvStat(Array.from(hitItems));
   return {
-    title: '海上咽喉要道月报',
+    title: '海上咽喉要道评估',
     stats: Object.assign({ total: items.length, hitItems: hitItems.size, chinaCount: Array.from(hitItems).filter(i => i.china).length }, st),
     sections,
     chart: sections.map(s => ({ label: s.name, value: s.count })),
@@ -1312,14 +1312,14 @@ async function assembleModelExport(q, win, periodKey, opts) {
  * ============================================================ */
 const REPORT_TYPES = [
   {
-    id: 'cn-negative-weekly', name: '涉华负面情报周报', freq: 'weekly',
+    id: 'cn-negative-weekly', name: '涉华负面情报', freq: 'weekly',
     desc: '每周一 06:00 生成上一 ISO 周，按人员安全/财产受损/制裁合规/舆情攻击/间谍渗透/领事保护六维归集涉华负面情报',
     periodKey: weekKey, window: weekWindow,
     assemble: assembleCnNegativeWeekly,
     promptBrief: '请撰写：第一段"内容提要"（120字以内，概括本周期涉华负面态势总体判断，置于最前）；随后按公文体撰写"综合研判与对策建议"（600至900字）：（一）总体态势研判，须引用具体统计数字；（二）重点方向研判，选取数据量最大或红橙最集中的两至三个方向逐项研判，明确区分"已证实""研判认为""需持续关注"三级确定性表述；（三）对策建议，3至5条，按紧迫性排序，面向外交部、商务部、公安部及中央企业领导决策参考。'
   },
   {
-    id: 'country-risk-monthly', name: '国别风险月度评估', freq: 'monthly',
+    id: 'country-risk-monthly', name: '国别风险评估', freq: 'monthly',
     desc: '每月 1 日 06:00 生成上一自然月，情报量前 15 国与 TIER1/COSRI 高危国全集逐国画像与风险等级建议',
     periodKey: null, window: monthWindow,
     assemble: assembleCountryRisk,
@@ -1333,14 +1333,14 @@ const REPORT_TYPES = [
     promptBrief: '请撰写：第一段"内容提要"（120字以内，概括本季度中资项目安全暴露总体态势）；随后按公文体撰写"综合研判与对策建议"（600至900字）：（一）项目暴露总体研判，须引用命中项目数、命中情报量、红橙结构等具体数字；（二）重点项目逐项研判，选取命中量最大或红橙最集中的3至5个项目，结合其所在国事件密度研判安全形势；（三）对策建议，3至5条，按项目风险紧迫性排序，面向中央企业安全生产与海外项目管理决策参考。'
   },
   {
-    id: 'threat-org-quarterly', name: '威胁组织活动季报', freq: 'quarterly',
+    id: 'threat-org-quarterly', name: '威胁组织活动评估', freq: 'quarterly',
     desc: '每季首日 06:00 生成上一季度，威胁组织库归因关联情报的活动区域与手法分析',
     periodKey: null, window: quarterWindow,
     assemble: assembleThreatOrg,
     promptBrief: '请撰写：第一段"内容提要"（120字以内，概括本季度威胁组织活动总体态势）；随后按公文体撰写"综合研判与对策建议"（600至900字）：（一）组织活动总体研判，须引用命中组织数、关联情报量等具体数字；（二）重点组织逐项研判，选取关联情报量最大的3至5个组织，结合其活动区域、手法关键词、组织状态研判威胁走向，区分"已证实""研判认为""需持续关注"；（三）对策建议，3至5条，面向公安部、国家安全部反恐与海外利益保护决策参考。'
   },
   {
-    id: 'chokepoint-monthly', name: '海上咽喉要道月报', freq: 'monthly',
+    id: 'chokepoint-monthly', name: '海上咽喉要道评估', freq: 'monthly',
     desc: '每月 1 日 06:00 生成上一自然月，八大海上咽喉要道袭击/劫持/扣押/封锁类事件监测',
     periodKey: null, window: monthWindow,
     assemble: assembleChokepoint,
@@ -1409,10 +1409,12 @@ async function generateReport(typeId, periodKey, opts) {
   try {
     const data = await def.assemble(_ctx.query, win, periodKey, o);
     data.win = win;
-    /* 2026-09-03 名称随周期变动：有效频率（显式 freq 或期次键推断）≠ 类型默认频率时改写名称；
+    /* 2026-09-03 名称随周期变动（v2 基础名去周期词）：类型基础名不再携带周期词，
+     * 名称完全由有效频率（显式 freq 或期次键推断，缺省回落类型默认）驱动——
+     * 选日报叫日报、选半年报叫半年报；titleForFreq 幂等，旧带词名称重生成不会重复叠加。
      * def2 让 LLM 提示词 / 标准版徽标 / 公文版头部 / 摘要 / 入库标题全部使用同一动态名称 */
     const effFreq = freq || freqOfPeriodKey(periodKey) || def.freq;
-    const dynTitle = (!def.manualOnly && effFreq !== def.freq && FREQ_ALL.indexOf(effFreq) >= 0)
+    const dynTitle = (!def.manualOnly && FREQ_ALL.indexOf(effFreq) >= 0)
       ? titleForFreq(data.title || def.name, effFreq)
       : (data.title || def.name);
     const def2 = (dynTitle !== def.name) ? Object.assign({}, def, { name: dynTitle, title: dynTitle }) : def;

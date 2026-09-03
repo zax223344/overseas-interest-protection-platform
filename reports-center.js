@@ -21,11 +21,11 @@
 
   /* ===== 9 类报告静态配置（类型卡降级展示 + 徽标渲染辅助，与服务端 types 对齐） ===== */
   var TYPES = [
-    { id: 'cn-negative-weekly', name: '涉华负面情报周报', freq: 'weekly', ic: '🇨🇳', desc: '聚合全球涉华负面情报动态（安全事件、舆情发酵、经贸摩擦）的周期性研判周报，按周汇总涉华负面信号并给出等级研判与建议。' },
-    { id: 'country-risk-monthly', name: '国别风险月度评估', freq: 'monthly', ic: '🌏', desc: '重点国家 / 地区政治、安全、社会、经济四维风险综合评估月报，含风险值变化、趋势研判与下月展望。' },
-    { id: 'project-exposure-quarterly', name: '中资项目安全暴露分析', freq: 'quarterly', ic: '🏗️', desc: '海外中资重点项目安全暴露面、所在国威胁态势、安保薄弱环节与防护建议的季度分析。' },
-    { id: 'threat-org-quarterly', name: '威胁组织活动季报', freq: 'quarterly', ic: '🎯', desc: '重点威胁组织季度活动能力、袭击偏好、势力演变与对中资目标威胁评估。' },
-    { id: 'chokepoint-monthly', name: '海上咽喉要道航运安全月报', freq: 'monthly', ic: '⚓', desc: '霍尔木兹 / 曼德 / 马六甲等海上咽喉要道安全态势、航运风险与绕行方案月度分析。' },
+    { id: 'cn-negative-weekly', name: '涉华负面情报', freq: 'weekly', ic: '🇨🇳', desc: '聚合全球涉华负面情报动态（安全事件、舆情发酵、经贸摩擦），按所选周期汇总涉华负面信号并给出等级研判与建议。' },
+    { id: 'country-risk-monthly', name: '国别风险评估', freq: 'monthly', ic: '🌏', desc: '重点国家 / 地区政治、安全、社会、经济四维风险综合评估，含风险值变化、趋势研判与周期展望。' },
+    { id: 'project-exposure-quarterly', name: '中资项目安全暴露分析', freq: 'quarterly', ic: '🏗️', desc: '海外中资重点项目安全暴露面、所在国威胁态势、安保薄弱环节与防护建议分析。' },
+    { id: 'threat-org-quarterly', name: '威胁组织活动评估', freq: 'quarterly', ic: '🎯', desc: '重点威胁组织活动能力、袭击偏好、势力演变与对中资目标威胁评估。' },
+    { id: 'chokepoint-monthly', name: '海上咽喉要道评估', freq: 'monthly', ic: '⚓', desc: '霍尔木兹 / 曼德 / 马六甲等海上咽喉要道安全态势、航运风险与绕行方案分析。' },
     { id: 'sanction-compliance-monthly', name: '制裁合规动态分析', freq: 'monthly', ic: '⚖️', desc: '国际制裁措施动态、涉华合规风险点与中资企业应对建议的月度分析。' },
     { id: 'anomaly-daily', name: '风险异动信号日报', freq: 'daily', ic: '📊', desc: '当日全库风险异动信号聚合、分级研判与重点关注提示。' },
     { id: 'conflict-spillover-weekly', name: '热点冲突外溢专报', freq: 'weekly', ic: '💥', desc: '热点冲突外溢效应、周边次生风险与中资利益影响评估专报。' },
