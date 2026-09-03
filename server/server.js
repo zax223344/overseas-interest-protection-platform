@@ -4440,6 +4440,15 @@ app.post('/api/gap-scheduler/run', (req, res) => {
   res.json({ ok: true });
 });
 
+/* 2026-09-03：intel_data 端 GNews 旧闻 SQL 级清扫手动端点（admin）——便于验证/极端兜底
+ * 定时任务每 15 分钟自动跑一轮（_runGnewsTruthSweep 末尾触发 _gnewsDbSweep） */
+app.post('/api/admin/gnews-db-sweep', async (req, res) => {
+  try {
+    const n = await _gnewsDbSweep();
+    res.json({ ok: true, removed: n });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 /* ===== 威胁组织专项采集哨兵手动触发端点（2026-09-02） ===== */
 app.post('/api/org-watch/run', async (req, res) => {
   try {
@@ -5456,10 +5465,52 @@ async function _runGnewsTruthSweep() {
       await _addTombstone(x.a.title, x.a.title_zh, x.a.url);   /* 谷歌链接为重入主键 */
     }
     console.log('[GNEWS-TRUTH] 本轮剔除旧闻 ' + removed.length + ' 条并立墓碑');
+    /* 2026-09-03 根因闭环：intel_data 端 GNews 旧闻定时清扫——纯 SQL 零网络成本，
+     * 按通道差异化窗口：threatroom 7d（专项回顾）/ 其余 24h（服务端时效闸上限）。
+     * 服务端 _isFreshEnough 已拒新数据；此清扫为历史/边缘漏网兜底，自动立墓碑永不再入。 */
+    await _gnewsDbSweep();
   } catch (e) {
     console.warn('[GNEWS-TRUTH] 清扫异常:', e.message);
   } finally {
     _gnewsSweepBusy = false;
+  }
+}
+/* 2026-09-03：intel_data 端 GNews 旧闻 SQL 级清扫——与 datahub_store 清扫同节奏，
+ * 纯 SQL 无解码网络调用，秒级完成；按通道差异化窗口（与 _isFreshEnough 一致）：
+ *   socmint_watch 60h / special_matrix 48h / threatroom 7d / 其余 24h */
+async function _gnewsDbSweep() {
+  try {
+    const sql = `
+      WITH del AS (
+        DELETE FROM intel_data
+        WHERE data_json->>'url' LIKE '%news.google.com%'
+          AND event_date IS NOT NULL AND event_date <> ''
+          AND (
+            (data_json->>'_sourceType' = 'socmint_watch'
+              AND event_date < to_char(NOW() - INTERVAL '60 hours','YYYY-MM-DD HH24:MI:SS'))
+            OR
+            (data_json->>'_sourceType' = 'special_matrix'
+              AND event_date < to_char(NOW() - INTERVAL '48 hours','YYYY-MM-DD HH24:MI:SS'))
+            OR
+            (data_json->>'_sourceType' = 'threatroom'
+              AND event_date < to_char(NOW() - INTERVAL '7 days','YYYY-MM-DD'))
+            OR
+            (data_json->>'_sourceType' NOT IN ('socmint_watch','special_matrix','threatroom')
+              AND event_date < to_char(NOW() - INTERVAL '24 hours','YYYY-MM-DD HH24:MI:SS'))
+          )
+        RETURNING id, data_json->>'url' AS url, title
+      )
+      SELECT * FROM del`;
+    const r = await query(sql);
+    if (!r.rows.length) return 0;
+    for (const row of r.rows) {
+      try { await _addTombstone(row.title, null, row.url); } catch (e) {}
+    }
+    console.log('[GNEWS-DB-SWEEP] 定时清扫 intel_data GNews 旧闻 ' + r.rows.length + ' 条并立墓碑');
+    return r.rows.length;
+  } catch (e) {
+    console.warn('[GNEWS-DB-SWEEP] 异常:', e.message);
+    return 0;
   }
 }
 function _coreEntityKey(t) {
