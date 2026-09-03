@@ -135,12 +135,24 @@ async function main() {
   const { rssSources, ttSources, gnQueries } = pickSources();
   console.log('[ACTION] 本轮源: 媒体 ' + rssSources.length + ' / 智库 ' + ttSources.length + ' / GDELT主题 ' + gnQueries.length);
 
+  /* 2026-09-03 时长治理（根因：GDELT 限流时段串行查询拖爆 6 分钟 HARD_CAP，exit 2 且已抓数据全丢）：
+   * ① 各通道内部 deadline 止损（GDELT-THEMES 200s / 涉华哨兵 150s，剩余预算不足即返回已抓部分）
+   * ② 各通道外层软预算双保险——超预算放弃该通道本轮，不影响其他通道与入库
+   * ③ 四通道仍并行，正常时段总时长 ≤ 4 分钟，HARD_CAP 6 分钟仅作最后兜底 */
+  const _budget = (p, ms, label) => Promise.race([
+    p,
+    new Promise(resolve => setTimeout(() => {
+      console.warn('[ACTION] ' + label + ' 超出软预算 ' + Math.round(ms / 1000) + 's，放弃该通道本轮');
+      resolve({ items: [], count: 0 });
+    }, ms))
+  ]);
+
   const [rss, tanks, gnews, cnsec] = await Promise.all([
-    globalmedia.scrapeDirectRss({ sources: rssSources, concurrency: 10, timeout: 12000 }).catch(e => { console.warn('[ACTION] RSS通道异常:', e.message); return { items: [], count: 0 }; }),
-    globalmedia.scrapeThinkTanks({ sources: ttSources, concurrency: 10, timeout: 12000 }).catch(e => { console.warn('[ACTION] 智库通道异常:', e.message); return { items: [], count: 0 }; }),
-    globalmedia.scrapeGdeltThemes({ queries: gnQueries, maxPerQuery: 25 }).catch(e => { console.warn('[ACTION] GDELT通道异常:', e.message); return { items: [], count: 0 }; }),
+    _budget(globalmedia.scrapeDirectRss({ sources: rssSources, concurrency: 10, timeout: 12000 }), 100000, 'RSS媒体通道').catch(e => { console.warn('[ACTION] RSS通道异常:', e.message); return { items: [], count: 0 }; }),
+    _budget(globalmedia.scrapeThinkTanks({ sources: ttSources, concurrency: 10, timeout: 12000 }), 100000, '智库通道').catch(e => { console.warn('[ACTION] 智库通道异常:', e.message); return { items: [], count: 0 }; }),
+    _budget(globalmedia.scrapeGdeltThemes({ queries: gnQueries, maxPerQuery: 25, deadlineMs: 210000 }), 230000, 'GDELT主题通道').catch(e => { console.warn('[ACTION] GDELT通道异常:', e.message); return { items: [], count: 0 }; }),
     /* 涉华人员安全专项哨兵（2026-08-25 用户铁指令：中国#袭击/中国#绑架/中国公民#绑架）云端同跑，关机也照采 */
-    cnsecWatch.runCnSecurityWatch().catch(e => { console.warn('[ACTION] 涉华安全哨兵异常:', e.message); return { items: [], count: 0 }; })
+    _budget(cnsecWatch.runCnSecurityWatch({ deadlineMs: 160000 }), 180000, '涉华安全哨兵').catch(e => { console.warn('[ACTION] 涉华安全哨兵异常:', e.message); return { items: [], count: 0 }; })
   ]);
 
   const all = sane((rss.items || []).concat(tanks.items || []).concat(gnews.items || []).concat(cnsec.items || []));

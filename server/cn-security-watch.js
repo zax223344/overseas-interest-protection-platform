@@ -154,6 +154,10 @@ async function runCnSecurityWatch(opts) {
   const t0 = Date.now();
   const out = []; const seenUrl = new Set();
   const stats = { gdelt: 0, gnews: 0, bing: 0, local: 0, dropped: 0 };
+  /* 2026-09-03 时长止损：GDELT 串行查询限流时段单条顶满 30s 会拖爆
+   * action-collect 的 6 分钟 HARD_CAP（同因 GDELT-THEMES 修复）。 */
+  const _deadline = Date.now() + (opts.deadlineMs || 150000);
+  const _timeLeft = () => _deadline - Date.now();
   const push = (it, ch) => {
     if (!it.url || seenUrl.has(it.url)) { stats.dropped++; return; }
     seenUrl.add(it.url); out.push(it); stats[ch]++;
@@ -162,6 +166,7 @@ async function runCnSecurityWatch(opts) {
   /* L1：GDELT 复杂布尔（内部 5.2s 全局节流，天然串行） */
   if (!opts.skipGdelt) {
     for (const qs of GDELT_QUERIES) {
+      if (_timeLeft() < 35000) { console.warn('[CNSEC-WATCH] 剩余时长预算不足，L1 提前止损（已抓 gdelt ' + stats.gdelt + '）'); break; }
       let arts = [];
       try {
         arts = await Promise.race([

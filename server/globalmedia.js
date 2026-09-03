@@ -729,7 +729,17 @@ async function scrapeGdeltThemes(opts) {
   const queries = opts.queries || GDELT_THEME_QUERIES;
   const out = [];
   const seenUrl = new Set();
+  /* 2026-09-03 时长止损：串行逐条 × 每条最长 45s（AP 20s+GDELT 45s 并行）在 GDELT
+   * 限流时段最坏 18 条 × 45s = 13.5 分钟，远超 action-collect 6 分钟 HARD_CAP，
+   * 导致整轮 exit 2 且已抓数据全丢。加整体 deadline：剩余预算不够一条查询即止损返回。 */
+  const _deadline = Date.now() + (opts.deadlineMs || 200000);
+  let _done = 0;
   for (const qs of queries) {
+    if (Date.now() + 50000 > _deadline) {
+      console.warn('[GDELT-THEMES] 剩余时长预算不足，提前止损（完成 ' + _done + '/' + queries.length + ' 条查询，已抓 ' + out.length + ' 条）');
+      break;
+    }
+    _done++;
     let arts = [];
     /* 2026-08-25 漏采根因修复：AP 与 GDELT 双通道并行合并（下游按 URL 去重）。
      * 旧逻辑「AP 有结果则 GDELT 不开火」——AP 是美联社一家之声，对泛词组总能返回结果，
