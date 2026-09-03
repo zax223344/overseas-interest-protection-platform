@@ -89,6 +89,7 @@ var MYFOCUS = {
       '<span style="font-size:10px;color:var(--text3)">勾选你负责的国家/项目/企业，工作台只显示相关的预警</span>' +
       '<span style="flex:1"></span>' +
       '<label style="font-size:10px;color:var(--text3);cursor:pointer"><input type="checkbox" ' + (s.redOnly ? 'checked' : '') + ' onchange="MYFOCUS._subs.redOnly=this.checked;MYFOCUS.saveSubs();MYFOCUS.render()"> 只看红橙</label>' +
+      '<button class="dc-tab" style="font-size:10px;cursor:pointer;padding:2px 10px;border-radius:6px" onclick="if(typeof GOVDOC!==\'undefined\')GOVDOC.open(\'myfocus\')" title="按当前订阅范围与命中预警，生成公文《重点目标动态通报》">📄 公文输出</button>' +
       '</label></div>' +
       '<div style="display:flex;gap:16px;flex-wrap:wrap">' +
       '<div style="flex:1;min-width:280px"><div style="font-size:10px;color:var(--cyan);margin-bottom:4px">📍 国家（' + s.countries.length + ' 已选）</div>' +

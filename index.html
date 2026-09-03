@@ -73,17 +73,49 @@ body{font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif;background:va
 ::-webkit-scrollbar-thumb:hover{background:rgba(0,212,255,0.4)}
 
 /* ===== AUTH ===== */
-#auth-overlay{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center}
-#auth-overlay::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%,rgba(0,212,255,0.12),transparent 60%),radial-gradient(ellipse at 70% 80%,rgba(179,102,255,0.06),transparent 50%)}
-.auth-box{position:relative;width:400px;max-width:90vw}
-.auth-ring-svg{position:absolute;top:50%;left:50%;width:660px;height:660px;max-width:none;transform:translate(-50%,-50%);pointer-events:none;z-index:0;opacity:0.7}
+#auth-overlay{position:fixed;inset:0;z-index:9999;background:radial-gradient(ellipse at 50% 36%,rgba(0,70,160,.22),transparent 60%),radial-gradient(ellipse at 10% 88%,rgba(0,150,190,.08),transparent 50%),linear-gradient(180deg,#02070f 0%,#041024 48%,#020a18 100%);display:flex;align-items:center;justify-content:center}
+/* ===== 未来军事指挥中心 HUD（整页统一，不分左右） ===== */
+#auth-hud{position:absolute;inset:0;z-index:1;pointer-events:none;font-family:Consolas,'Courier New',monospace}
+.hud-bg{position:absolute;inset:0;width:100%;height:100%}
+.hud-bg .tag{animation:hudBlink 2.8s ease-in-out infinite}
+.hud-bg .tag2{animation:hudBlink 3.6s ease-in-out .9s infinite}
+.hud-bg .blip{animation:hudBlip 2.4s ease-in-out infinite}
+.hud-bg .hud-bar{animation:hudBar 2.2s ease-in-out infinite alternate;transform-box:fill-box;transform-origin:bottom}
+.hud-bg .hud-spark{stroke-dasharray:8 6;animation:hudSpark 1.6s linear infinite}
+@keyframes hudBlink{0%,100%{opacity:.3}50%{opacity:.95}}
+@keyframes hudBlip{0%,100%{opacity:.15}50%{opacity:1}}
+@keyframes hudBar{from{transform:scaleY(.45)}to{transform:scaleY(1)}}
+@keyframes hudSpark{from{stroke-dashoffset:0}to{stroke-dashoffset:-28}}
+.hud-top{position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 34px;border-bottom:1px solid rgba(0,212,255,.14);background:linear-gradient(180deg,rgba(2,10,24,.88),rgba(2,10,24,.30))}
+.hud-top .ht-l{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;letter-spacing:3px;color:#bfe9ff;text-shadow:0 0 12px rgba(0,212,255,.5)}
+.hud-top .ht-l .dia{color:#00e5ff}
+.hud-top .ht-m{font-size:11px;letter-spacing:6px;color:#4d6f96}
+.hud-top .ht-r{display:flex;align-items:center;gap:14px;font-size:11px;letter-spacing:2px;color:#7fd8ff}
+.hud-clock{font-size:14px;font-weight:700;color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,.45);letter-spacing:1px}
+.hud-dot{width:7px;height:7px;border-radius:50%;background:#2bd67b;box-shadow:0 0 8px #2bd67b;animation:hudDot 1.6s ease-in-out infinite}
+.hud-dot.d2{background:#ffb020;box-shadow:0 0 8px #ffb020;animation-delay:.5s}
+@keyframes hudDot{0%,100%{opacity:.35}50%{opacity:1}}
+.hud-ticker{position:absolute;bottom:0;left:0;right:0;height:36px;border-top:1px solid rgba(0,212,255,.14);background:linear-gradient(0deg,rgba(2,10,24,.92),rgba(2,10,24,.40));display:flex;align-items:center;overflow:hidden}
+.hud-ticker .tk-label{flex:0 0 auto;padding:0 16px;font-size:10px;letter-spacing:3px;color:#02070f;background:linear-gradient(135deg,#00d4ff,#0090c0);font-weight:700;height:100%;display:flex;align-items:center}
+.hud-ticker .tk-in{white-space:nowrap;display:inline-block;animation:hudScroll 38s linear infinite;font-size:11px;letter-spacing:1.5px;color:#6e93b8}
+.hud-ticker .tk-in b{color:#9fe6ff;font-weight:700}
+@keyframes hudScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.auth-box{position:relative;width:460px;max-width:calc(100vw - 48px);z-index:2}
 .auth-logo,.auth-card{position:relative;z-index:1}
-.auth-logo{text-align:center;margin-bottom:24px}
-.auth-logo img{width:150px;height:150px;object-fit:contain;filter:drop-shadow(0 0 25px rgba(0,212,255,0.35));margin-bottom:8px}
-.auth-logo .ic{font-size:48px;filter:drop-shadow(0 0 20px rgba(0,212,255,0.5))}
-.auth-logo h1{font-size:24px;font-weight:700;letter-spacing:3px;margin-top:10px;background:linear-gradient(90deg,var(--cyan),var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 6px rgba(0,212,255,0.2))}
-.auth-logo p{font-size:12px;color:var(--text2);letter-spacing:5px;margin-top:6px}
+.auth-logo{text-align:center;margin-bottom:26px}
+/* 自主设计动图徽标：双环旋转 + 六边形盾 + 雷达扫描 */
+.auth-emblem{width:108px;height:108px;margin:0 auto 6px;display:block;filter:drop-shadow(0 0 18px rgba(0,180,255,.35))}
+.auth-emblem .e-r1{transform-box:fill-box;transform-origin:center;animation:embSpin 22s linear infinite}
+.auth-emblem .e-r2{transform-box:fill-box;transform-origin:center;animation:embSpinR 15s linear infinite}
+.auth-emblem .e-sweep{transform-box:fill-box;transform-origin:center;animation:embSpin 3.8s linear infinite}
+.auth-emblem .e-core{animation:embPulse 2.8s ease-in-out infinite}
+@keyframes embSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes embSpinR{from{transform:rotate(360deg)}to{transform:rotate(0)}}
+@keyframes embPulse{0%,100%{opacity:.85}50%{opacity:1}}
+.auth-logo h1{font-size:21px;font-weight:700;letter-spacing:3px;margin-top:12px;background:linear-gradient(120deg,#ffffff 15%,#bfe0ff 55%,#7fd8ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 10px rgba(0,180,255,.3))}
+.auth-logo p{font-size:10px;color:#5f7490;letter-spacing:4.5px;margin-top:8px;font-family:Consolas,monospace}
 .auth-card{background:rgba(10,18,35,0.55);border:1px solid rgba(0,212,255,0.15);border-radius:16px;padding:28px;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 8px 32px rgba(0,0,0,0.4),0 0 60px rgba(0,212,255,0.08),inset 0 1px 0 rgba(255,255,255,0.05)}
+.auth-card::before{content:'';position:absolute;top:0;left:24px;right:24px;height:1px;background:linear-gradient(90deg,transparent,rgba(0,229,255,.7),transparent)}
 .auth-card h3{font-size:14px;margin-bottom:16px;color:var(--cyan);letter-spacing:1px}
 .auth-input{width:100%;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:12px;transition:.2s}
 .auth-input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,212,255,0.1)}
@@ -102,7 +134,7 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 .auth-switch a{color:var(--cyan);cursor:pointer;text-decoration:none}
 .auth-demo{margin-top:16px;padding:10px;background:var(--blue-bg);border-radius:6px;font-size:11px;color:var(--text2);text-align:center}
 .auth-demo b{color:var(--cyan)}
-@media(max-width:820px){#auth-overlay{justify-content:center;padding-right:0}}
+@media(max-width:820px){#auth-hud .hud-bg{opacity:.35}.hud-top .ht-m{display:none}}
 
 /* ===== LAYOUT ===== */
 #app{display:flex;height:100vh}
@@ -747,15 +779,164 @@ select.intel-input{cursor:pointer}
 </head>
 <body>
 
-<!-- AUTH -->
+<!-- AUTH：左侧卫星+战机+地球+月球深空场景 / 右侧登录卡（2026-09-04 参考国防大学版式重设计） -->
 <div id="auth-overlay">
 <canvas id="auth-canvas"></canvas>
+<div id="auth-hud">
+<svg class="hud-bg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<pattern id="hudGrid" width="64" height="64" patternUnits="userSpaceOnUse"><path d="M64 0H0V64" fill="none" stroke="rgba(0,150,220,.09)" stroke-width="1"/></pattern>
+<linearGradient id="sweepG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="rgba(0,255,200,.42)"/><stop offset="1" stop-color="rgba(0,255,200,0)"/></linearGradient>
+<linearGradient id="barG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#00e5ff"/><stop offset="1" stop-color="rgba(0,120,200,.25)"/></linearGradient>
+</defs>
+<rect width="1920" height="1080" fill="url(#hudGrid)"/>
+<!-- 四角边框括号 -->
+<g stroke="rgba(0,212,255,.55)" stroke-width="2.5" fill="none">
+<path d="M66 66 H136 V96"/><path d="M1854 66 H1784 V96"/><path d="M66 1014 H136 V984"/><path d="M1854 1014 H1784 V984"/>
+</g>
+<!-- 中央雷达 -->
+<g>
+<circle cx="960" cy="545" r="440" fill="none" stroke="rgba(0,200,255,.13)" stroke-width="1.5"/>
+<circle cx="960" cy="545" r="350" fill="none" stroke="rgba(0,200,255,.17)" stroke-width="1.5" stroke-dasharray="4 10"/>
+<circle cx="960" cy="545" r="250" fill="none" stroke="rgba(0,200,255,.22)" stroke-width="1.5"/>
+<circle cx="960" cy="545" r="150" fill="none" stroke="rgba(0,200,255,.30)" stroke-width="1.5" stroke-dasharray="4 8"/>
+<line x1="520" y1="545" x2="1400" y2="545" stroke="rgba(0,200,255,.15)"/>
+<line x1="960" y1="105" x2="960" y2="985" stroke="rgba(0,200,255,.15)"/>
+<circle cx="960" cy="545" r="6" fill="#00e5ff"/>
+<g stroke="rgba(0,212,255,.45)" stroke-width="2">
+<line x1="960" y1="105" x2="960" y2="125"/><line x1="960" y1="985" x2="960" y2="965"/>
+<line x1="520" y1="545" x2="540" y2="545"/><line x1="1400" y1="545" x2="1380" y2="545"/>
+</g>
+<!-- 旋转扫描扇 -->
+<g>
+<path d="M960 545 L960 105 A440 440 0 0 1 1341 325 Z" fill="url(#sweepG)"/>
+<path d="M960 545 L960 105 A440 440 0 0 1 1146 146 Z" fill="rgba(0,255,200,.15)"/>
+<line x1="960" y1="545" x2="960" y2="105" stroke="rgba(0,255,200,.85)" stroke-width="2"/>
+<animateTransform attributeName="transform" type="rotate" from="0 960 545" to="360 960 545" dur="7s" repeatCount="indefinite"/>
+</g>
+<!-- 目标点 -->
+<circle class="blip" cx="1120" cy="400" r="5" fill="#2bd67b"/>
+<circle class="blip" cx="830" cy="300" r="4" fill="#ffb020" style="animation-delay:.6s"/>
+<circle class="blip" cx="1050" cy="700" r="4" fill="#2bd67b" style="animation-delay:1.2s"/>
+<circle class="blip" cx="760" cy="620" r="5" fill="#ff5470" style="animation-delay:.3s"/>
+<circle class="blip" cx="900" cy="200" r="3" fill="#00e5ff" style="animation-delay:.9s"/>
+<!-- 目标锁定框 -->
+<g stroke="#2bd67b" stroke-width="2" fill="none">
+<path d="M1100 380 h10 M1100 380 v10"/><path d="M1140 380 h-10 M1140 380 v10"/>
+<path d="M1100 420 h10 M1100 420 v-10"/><path d="M1140 420 h-10 M1140 420 v-10"/>
+</g>
+<text class="tag2" x="1152" y="386" fill="#2bd67b" font-size="13" letter-spacing="2" font-family="Consolas,monospace">TGT-07 · TRACKING</text>
+<!-- 雷达标签 -->
+<text class="tag" x="960" y="1035" fill="#4d7fa8" font-size="12" letter-spacing="4" text-anchor="middle" font-family="Consolas,monospace">RADAR SWEEP · SCAN 440KM · AUTO</text>
+<text class="tag2" x="960" y="135" fill="#4d7fa8" font-size="12" letter-spacing="4" text-anchor="middle" font-family="Consolas,monospace">N</text>
+</g>
+<!-- 左面板：SECTOR LOAD -->
+<g>
+<rect x="80" y="180" width="320" height="360" fill="rgba(2,16,36,.35)" stroke="rgba(0,212,255,.22)" stroke-width="1.5"/>
+<g stroke="rgba(0,212,255,.8)" stroke-width="2" fill="none">
+<path d="M80 180 h22 M80 180 v22"/><path d="M400 180 h-22 M400 180 v22"/>
+<path d="M80 540 h22 M80 540 v-22"/><path d="M400 540 h-22 M400 540 v-22"/>
+</g>
+<text x="100" y="216" fill="#9fe6ff" font-size="15" letter-spacing="3" font-weight="bold" font-family="Consolas,monospace">SECTOR LOAD</text>
+<text x="100" y="236" fill="#4d6f96" font-size="10" letter-spacing="2" font-family="Consolas,monospace">区域负载 · 实时监测</text>
+<line x1="100" y1="490" x2="380" y2="490" stroke="rgba(0,212,255,.35)"/>
+<g stroke="rgba(0,212,255,.12)"><line x1="100" y1="430" x2="380" y2="430"/><line x1="100" y1="370" x2="380" y2="370"/><line x1="100" y1="310" x2="380" y2="310"/></g>
+<g>
+<rect class="hud-bar" x="112" y="410" width="20" height="80" fill="url(#barG)" opacity=".85"/>
+<rect class="hud-bar" x="150" y="360" width="20" height="130" fill="url(#barG)" opacity=".85" style="animation-delay:.25s"/>
+<rect class="hud-bar" x="188" y="425" width="20" height="65" fill="url(#barG)" opacity=".85" style="animation-delay:.5s"/>
+<rect class="hud-bar" x="226" y="320" width="20" height="170" fill="url(#barG)" opacity=".85" style="animation-delay:.75s"/>
+<rect class="hud-bar" x="264" y="385" width="20" height="105" fill="url(#barG)" opacity=".85" style="animation-delay:1s"/>
+<rect class="hud-bar" x="302" y="345" width="20" height="145" fill="url(#barG)" opacity=".85" style="animation-delay:1.25s"/>
+<rect class="hud-bar" x="340" y="420" width="20" height="70" fill="url(#barG)" opacity=".85" style="animation-delay:1.5s"/>
+</g>
+<text class="tag" x="100" y="528" fill="#4d7fa8" font-size="10" letter-spacing="2" font-family="Consolas,monospace">A1 · A2 · A3 · A4 · B1 · B2 · C1</text>
+</g>
+<!-- 右面板：SIGNAL MATRIX -->
+<g>
+<rect x="1520" y="180" width="320" height="360" fill="rgba(2,16,36,.35)" stroke="rgba(0,212,255,.22)" stroke-width="1.5"/>
+<g stroke="rgba(0,212,255,.8)" stroke-width="2" fill="none">
+<path d="M1520 180 h22 M1520 180 v22"/><path d="M1840 180 h-22 M1840 180 v22"/>
+<path d="M1520 540 h22 M1520 540 v-22"/><path d="M1840 540 h-22 M1840 540 v-22"/>
+</g>
+<text x="1540" y="216" fill="#9fe6ff" font-size="15" letter-spacing="3" font-weight="bold" font-family="Consolas,monospace">SIGNAL MATRIX</text>
+<text x="1540" y="236" fill="#4d6f96" font-size="10" letter-spacing="2" font-family="Consolas,monospace">信号矩阵 · 链路状态</text>
+<polyline class="hud-spark" points="1540,330 1575,345 1610,300 1645,335 1680,265 1715,305 1750,240 1785,275 1820,225" fill="none" stroke="#00e5ff" stroke-width="2"/>
+<g stroke="rgba(0,255,200,.6)" fill="none"><circle cx="1680" cy="265" r="4"/><circle cx="1820" cy="225" r="4"/></g>
+<g font-family="Consolas,monospace" font-size="11" letter-spacing="1.5">
+<text x="1540" y="400" fill="#6e93b8">CH-01 ▸ 采集链路</text><text x="1800" y="400" fill="#2bd67b" text-anchor="end" class="tag">ACTIVE</text>
+<text x="1540" y="428" fill="#6e93b8">CH-02 ▸ 传输加密</text><text x="1800" y="428" fill="#2bd67b" text-anchor="end" class="tag2">LOCKED</text>
+<text x="1540" y="456" fill="#6e93b8">CH-03 ▸ 预警引擎</text><text x="1800" y="456" fill="#00e5ff" text-anchor="end" class="tag">READY</text>
+<text x="1540" y="484" fill="#6e93b8">CH-04 ▸ 数据核验</text><text x="1800" y="484" fill="#ffb020" text-anchor="end" class="tag2">VERIFY</text>
+</g>
+<rect x="1540" y="500" width="280" height="4" fill="rgba(0,212,255,.12)"/><rect x="1540" y="500" width="196" height="4" fill="#00e5ff" class="tag"/>
+</g>
+<!-- 面板与雷达连接线 -->
+<g stroke="rgba(0,212,255,.30)" fill="none" stroke-width="1.5">
+<path d="M400 360 H540 L660 470"/><path d="M1520 360 H1380 L1260 470"/>
+</g>
+<circle class="tag" cx="400" cy="360" r="4" fill="#00e5ff"/>
+<circle class="tag2" cx="1520" cy="360" r="4" fill="#00e5ff"/>
+<!-- 侧边装饰标签 -->
+<text class="tag" x="80" y="600" fill="#4d7fa8" font-size="11" letter-spacing="3" font-family="Consolas,monospace">GRID 34.51N 108.93E · SECTOR-07</text>
+<text class="tag2" x="1840" y="600" fill="#4d7fa8" font-size="11" letter-spacing="3" text-anchor="end" font-family="Consolas,monospace">UPLINK STABLE · SYNC 10Hz</text>
+</svg>
+<div class="hud-top">
+<div class="ht-l"><span class="dia">◈</span>ORPS COMMAND CENTER</div>
+<div class="ht-m">— 情报预警 · 态势感知 · 安全终端 —</div>
+<div class="ht-r"><span class="hud-dot"></span>SYSTEM ONLINE<span class="hud-dot d2"></span><span class="hud-clock" id="hud-clock">----.--.-- --:--:--</span></div>
+</div>
+<div class="hud-ticker">
+<div class="tk-label">LIVE FEED</div>
+<div class="tk-in"><span>◤ 多源情报采集通道运行正常 ◢&nbsp;&nbsp;·&nbsp;&nbsp;全球态势监测网络已接入&nbsp;&nbsp;·&nbsp;&nbsp;<b>数据链路加密传输已建立</b>&nbsp;&nbsp;·&nbsp;&nbsp;预警引擎自检通过&nbsp;&nbsp;·&nbsp;&nbsp;<b>全系统就绪</b>&nbsp;&nbsp;·&nbsp;&nbsp;情报预警态势感知终端待命&nbsp;&nbsp;·&nbsp;&nbsp;身份核验通过后进入指挥中心&nbsp;&nbsp;·&nbsp;&nbsp;</span><span>◤ 多源情报采集通道运行正常 ◢&nbsp;&nbsp;·&nbsp;&nbsp;全球态势监测网络已接入&nbsp;&nbsp;·&nbsp;&nbsp;<b>数据链路加密传输已建立</b>&nbsp;&nbsp;·&nbsp;&nbsp;预警引擎自检通过&nbsp;&nbsp;·&nbsp;&nbsp;<b>全系统就绪</b>&nbsp;&nbsp;·&nbsp;&nbsp;情报预警态势感知终端待命&nbsp;&nbsp;·&nbsp;&nbsp;身份核验通过后进入指挥中心&nbsp;&nbsp;·&nbsp;&nbsp;</span></div>
+</div>
+<script>(function(){var el=document.getElementById('hud-clock');if(!el)return;function p(n){return String(n).padStart(2,'0')}function f(){var d=new Date();el.textContent=d.getFullYear()+'.'+p(d.getMonth()+1)+'.'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())}f();setInterval(f,1000)})();</script>
+</div>
+
 <div class="auth-box">
-<svg class="auth-ring-svg" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg"><g><animateTransform attributeName="transform" type="rotate" from="0 300 300" to="360 300 300" dur="30s" repeatCount="indefinite"/><circle cx="300" cy="300" r="285" fill="none" stroke="rgba(0,212,255,0.15)" stroke-width="1" stroke-dasharray="8 4"/><circle cx="300" cy="300" r="285" fill="none" stroke="rgba(0,212,255,0.35)" stroke-width="1" stroke-dasharray="2 6"/><line x1="300" y1="5" x2="300" y2="20" stroke="#00d4ff" stroke-width="2"/><line x1="300" y1="580" x2="300" y2="595" stroke="rgba(0,212,255,0.3)" stroke-width="1.5"/><line x1="5" y1="300" x2="20" y2="300" stroke="rgba(0,212,255,0.3)" stroke-width="1.5"/><line x1="580" y1="300" x2="595" y2="300" stroke="rgba(0,212,255,0.3)" stroke-width="1.5"/></g><circle cx="300" cy="300" r="270" fill="none" stroke="rgba(0,212,255,0.06)" stroke-width="0.5"/></svg>
 <div class="auth-logo">
-<img src="swupl-logo.png" alt="SWUPL">
-<h1>海外利益保护情报预警平台</h1>
-<p>OVERSEAS INTEREST PROTECTION</p>
+<svg class="auth-emblem" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="eb-shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0e3a66"/><stop offset="100%" stop-color="#061a34"/>
+    </linearGradient>
+    <linearGradient id="eb-sweep" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="rgba(0,212,255,.5)"/><stop offset="100%" stop-color="rgba(0,212,255,0)"/>
+    </linearGradient>
+    <clipPath id="eb-clip"><path d="M60 20 L93 39 V81 L60 100 L27 81 V39 Z"/></clipPath>
+  </defs>
+  <!-- 外环：正向旋转刻度环 -->
+  <g class="e-r1" fill="none" stroke="rgba(0,212,255,.5)" stroke-width="1.5">
+    <circle cx="60" cy="60" r="56" stroke-dasharray="42 9 7 9"/>
+  </g>
+  <!-- 中环：反向旋转虚线环 -->
+  <g class="e-r2" fill="none" stroke="rgba(0,212,255,.32)" stroke-width="1">
+    <circle cx="60" cy="60" r="48" stroke-dasharray="3 6"/>
+  </g>
+  <!-- 六边形盾底 -->
+  <path d="M60 20 L93 39 V81 L60 100 L27 81 V39 Z" fill="url(#eb-shield)" stroke="rgba(0,212,255,.65)" stroke-width="1.5"/>
+  <!-- 雷达扫描扇形（裁剪进盾内，旋转） -->
+  <g clip-path="url(#eb-clip)">
+    <g class="e-sweep">
+      <path d="M60 60 L60 14 A46 46 0 0 1 92 27 Z" fill="url(#eb-sweep)"/>
+    </g>
+  </g>
+  <!-- 核心：经纬地球 + 定位光点 -->
+  <g class="e-core">
+    <circle cx="60" cy="60" r="24" fill="none" stroke="rgba(120,205,255,.8)" stroke-width="1.2"/>
+    <g fill="none" stroke="rgba(120,205,255,.5)" stroke-width=".8">
+      <ellipse cx="60" cy="60" rx="24" ry="8.5"/>
+      <ellipse cx="60" cy="60" rx="24" ry="17"/>
+      <ellipse cx="60" cy="60" rx="8.5" ry="24"/>
+      <ellipse cx="60" cy="60" rx="17" ry="24"/>
+    </g>
+    <circle cx="48" cy="52" r="2.2" fill="#7fd8ff"/>
+    <circle cx="72" cy="66" r="1.6" fill="#7fd8ff"/>
+    <circle cx="55" cy="70" r="1.3" fill="#7fd8ff"/>
+  </g>
+</svg>
+<h1>海外利益安全情报预警态势感知系统</h1>
+<p>OVERSEAS INTEREST SECURITY · EARLY WARNING</p>
 </div>
 <div class="auth-card">
 <div id="auth-card-login">
@@ -818,8 +999,9 @@ select.intel-input{cursor:pointer}
 <input class="auth-input" id="su-pass2" type="password" placeholder="确认密码">
 <button class="auth-btn" onclick="AUTH.setupAdmin()" style="background:var(--orange);border-color:var(--orange)">创建管理员</button>
 </div>
-</div>
-</div>
+</div><!-- /auth-box -->
+
+</div><!-- /auth-overlay -->
 </div>
 
 <!-- APP -->
@@ -1225,11 +1407,11 @@ function closeMobileMenu(){
 <script src="scraper.js?v=53"></script>
 <!-- 天地图/本地矢量底图统一封装，所有 Leaflet 地图共用 -->
 <script src="local-basemap.js?v=2"></script>
-<script src="myfocus.js?v=2"></script>
+<script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
 <script src="app.js?v=278"></script>
-<script src="workbench.js?v=3"></script>
-<script src="threatroom.js?v=9"></script>
+<script src="workbench.js?v=4"></script>
+<script src="threatroom.js?v=10"></script>
 <script src="foresee.js?v=2"></script>
 <script src="distribute.js?v=2"></script>
 <script src="datasources.js?v=26"></script>
@@ -1241,10 +1423,11 @@ function closeMobileMenu(){
 <script src="deepsearch.js?v=2"></script>
 <script src="socmint.js?v=4"></script>
 <script src="manual-entry.js?v=2"></script>
-<script src="command-center.js?v=3"></script>
+<script src="command-center.js?v=4"></script>
 <script src="explanability.js?v=2"></script>
 <script src="role-ui.js?v=7"></script>
-<script src="model-analysis.js?v=4"></script>
+<script src="model-analysis.js?v=5"></script>
+<script src="govdoc.js?v=3"></script>
 <script src="dailyreport.js?v=7"></script>
 <script src="wechat.js?v=4"></script>
 <script src="reports-center.js?v=1"></script>
