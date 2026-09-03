@@ -485,9 +485,13 @@ function isChinaRelatedStrict(text){
   if(!text) return false;
   var t = String(text);
   // 强直接主体词
-  if(/中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|中国驻|访华|驻华|CPEC|中巴经济走廊|北京|Beijing|Belt and Road|RMB|Yuan|BRICS|AIIB|Shanghai Cooperation|Xi Jinping/i.test(t)) return true;
+  if(/中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|中国驻|访华|驻华|CPEC|中巴经济走廊|北京|Beijing|Belt and Road|RMB|Yuan|BRICS|AIIB|Shanghai Cooperation|Xi Jinping|习近平|王毅/i.test(t)) return true;
   // China 作为整词出现
   if(/\bChina\b/i.test(t)) return true;
+  // P1-5（2026-09-04）：元首/外长出访语境——Xi/Wang Yi/Li Qiang 单独出现不算，
+  // 必须与出访/会谈/峰会动词在同一句内相邻共现（≤80字符），避免误伤同名外国人。
+  if(/\b(?:Xi|Wang Yi|Li Qiang)\b[^.!?]{0,80}\b(?:state visit|visit|visits|visited|summit|talks?|meeting|meets?|leaves?|arrives?|heads? to|trip|tour|holds?|attend|attends?)\b/i.test(t)) return true;
+  if(/\b(?:state visit|visit|visits|visited|summit|talks?|meeting|meets?|leaves?|arrives?|heads? to|trip|tour|holds?|attend|attends?)\b[^.!?]{0,80}\b(?:Xi|Wang Yi|Li Qiang)\b/i.test(t)) return true;
   // Chinese 必须依附明确主体：公民/企业/使馆/人员/项目/资产/学生/游客/船员等
   if(/\bChinese (?:citizen|national|company|companies|worker|workers|engineer|engineers|embassy|consulate|ambassador|official|officials|firm|firms|investment|investor|investors|tourist|tourists|student|students|crew|vessel|ship|ships|plane|national|nationals|nationality|flag|language|government|ministry|army|military|forces|naval|navy|aircraft|drone|drones|tech|technology|chip|chips|AI|telecom|app|apps|platform|platforms|owned|operated|contractor|contractors|mine|mining|project|projects|port|ports|base|bases|interest|interests|overseas|diaspora|community|communities|communist|communists)\b/i.test(t)) return true;
   // Chinese + 明确海外/安全语境（被袭/被绑/遇难/撤离等）

@@ -109,6 +109,20 @@ async function runChannelWatch(opts) {
       });
     } catch (e) { /* GDELT 熔断则本轮跳过 */ }
   }
+  /* ①b GNews RSS 检索（2026-09-04 P1-4 空转治理：CHANNEL_GNEWS_QUERIES 此前定义从未调用——
+   * GDELT 服务进程内 30s 竞速常空转，GNews 英文检索实测高可用（Hormuz 100 条/天）。
+   * 轮换偏移 +1/+4 与 GDELT 腿错开，扩大查询覆盖面；串行防 Google News 并发限流） */
+  const gqs = [CHANNEL_GNEWS_QUERIES[(cyc + 1) % CHANNEL_GNEWS_QUERIES.length], CHANNEL_GNEWS_QUERIES[(cyc + 4) % CHANNEL_GNEWS_QUERIES.length]];
+  for (const q of gqs) {
+    try {
+      const arts = await _gnewsRss(q, 10);
+      (arts || []).forEach(a => out.push({
+        title: a.title || '', content: a.content || '', url: a.url || '',
+        publish_time: a.publish_time || '', source: a.source || 'Google News',
+        country: '', _sourceType: 'channel_watch'
+      }));
+    } catch (e) { /* GNews 限流则本轮跳过 */ }
+  }
   /* ② 专业 RSS（走 scrapers.fetchText 既有通道：UA+白名单+竞速；2026-08-28 修复
    * 旧版误用 netx.smartFetch 返回值当 {body} —— 实际返回 fetch Response 对象，取 body 恒 undefined → 8h 零产出根因） */
   const rssTexts = await Promise.all(CHANNEL_RSS.map(s =>

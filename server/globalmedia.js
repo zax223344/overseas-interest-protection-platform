@@ -1164,10 +1164,19 @@ const _TERROR_ATTACK_RE = /terror|terrorist|kidnap|kidnapped|kidnapping|abduct|a
  * 英文媒体把政治抨击(political attack)、警方案件、板球赛况都写成这些词，
  * 实测混入"读书会/烟花悲剧/比利时农夫/电影审查"等非恐袭新闻污染 terror_events。
  * 泛词疑似的条目需暴力语境共现才放行（_hasViolenceContext）。 */
-const _VIOLENCE_CONTEXT_RE = /kill|killed|dead|death|died|wound|injur|casualt|victim|bomb|blast|explosion|gun|shoot|shot|bullet|mortar|shell|drone|missile|IED|improvised|suicide|slain|behead|corpse|尸体|伤亡|死亡|遇难|身亡|炸|枪|炮|无人机|导弹|袭击者|武装人员/i;
+const _VIOLENCE_CONTEXT_RE = /kill|killed|dead|death|died|wound|injur|casualt|victim|bomb|blast|explosion|gun|shot|bullet|mortar|shell|drone|missile|IED|improvised|suicide|slain|behead|corpse|尸体|伤亡|死亡|遇难|身亡|炸|枪|炮|无人机|导弹|袭击者|武装人员/i;
+/* 2026-09-04 P1 五哨兵体检修复：
+ * ① _VIOLENCE_CONTEXT_RE 删 shoot 子串——"亚运会射击队"译文的 shooting 同时命中泛词 shoot
+ *   与语境 shoot 自我印证，体育新闻被误判恐袭（实测 793 条 terror_attack 混入水危机/射击队）；
+ * ② 新增体育噪声闸 _TERROR_SPORTS_RE——赛事/奖牌/射击/田径类一律拒收，除非同时命中
+ *   强恐袭核心词（赛事现场恐袭属真实安全事件，须放行：_TERROR_STRONG_RE 可穿透）。 */
+const _TERROR_SPORTS_RE = /asian games|olympic|world cup|championship|tournament|medal|shooting team|archery|athletics|cricket|football|soccer|basketball|badminton|table tennis|volleyball|boxing|wrestling|esports|e-sports|亚运|奥运|世界杯|锦标赛|射击队|射箭|田径|板球|足球|篮球|羽毛球|乒乓球|排球|奖牌|选手|运动员|金牌|银牌|铜牌/i;
+const _TERROR_STRONG_RE = /terror|terrorist|bombing|suicide (?:bomb|attack|blast)|kidnap|abduct|hostage|massacre|behead|gunmen|ISIS|ISIL|Taliban|Boko Haram|Al-Shabaab|Al-Qaeda|恐袭|恐怖袭击|自杀式|绑架|劫持|人质|伏击|屠杀|斩首/i;
 function _isTerrorLike(txt) {
   const t = String(txt || '');
   if (!t) return false;
+  /* 体育噪声闸：赛事类无强恐袭核心词一律拒收 */
+  if (_TERROR_SPORTS_RE.test(t) && !_TERROR_STRONG_RE.test(t)) return false;
   if (_TERROR_ATTACK_RE.test(t)) return true;
   /* 泛词路径：attack/armed/raid/assault/shooting 必须与暴力后果共现 */
   if (/\b(attack|attacks|attacked|armed|raid|raided|assault|shooting|suicide)\b/i.test(t) && _VIOLENCE_CONTEXT_RE.test(t)) return true;
@@ -1245,7 +1254,9 @@ async function scrapeTerrorAttacks(opts) {
         const tagged2 = [];
         for (const it of parsed) {
           if (!_isRssFresh(it.pubDate)) continue;
-          const txt = (it.title || '') + ' ' + (it.description || '');
+          /* 2026-09-04 P1 修复：RSS 腿改 title-only 匹配——description 常为站点栏目词
+           * （"Vizag水危机"等版块名），混入正文匹配导致大量跑题条目污染 terror_events */
+          const txt = (it.title || '');
           if (!_isTerrorLike(txt)) continue;
           /* 2026-09-02 词边界修复：同 GDELT 通道，BRI/China/Chinese 加 \b 防 Brigade/briefing 子串误命中 */
           const hasChina = /中国|中资|中企|华人|华侨|一带一路|Belt and Road|\bBRI\b|\bChinese\b|\bChina\b|\bBeijing\b/i.test(txt);

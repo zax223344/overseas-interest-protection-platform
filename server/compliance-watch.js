@@ -46,14 +46,22 @@ const COMPLIANCE_QUERIES_EN = [
   'EU investment screening OR foreign subsidy China',
   'Chinese companies blacklisted OR sanctioned overseas'
 ];
-/* GNews 原子查询集（GNews 不支持 OR 操作符——含 OR 的查询返回 0 条，2026-08-28 实测） */
+/* GNews 原子查询集（GNews 不支持 OR 操作符——含 OR 的查询返回 0 条，2026-08-28 实测）
+ * 2026-09-04 P1-4 扩面：6→12 条。原 6 条中 'OFAC sanctions Chinese company' 措辞过窄 0 命中，
+ * 补充宽措辞（US sanctions China / China tariffs / Chinese firm sanctioned 等）提升召回。 */
 const COMPLIANCE_GNEWS_QUERIES = [
-  'OFAC sanctions Chinese company',
   'entity list Chinese companies',
   'CFIUS Chinese acquisition',
   'export control China semiconductor',
   'China sanctions announced',
-  'Chinese companies blacklisted'
+  'Chinese companies blacklisted',
+  'US sanctions China',
+  'China entity list addition',
+  'Chinese firm sanctioned',
+  'China trade restrictions',
+  'China tariffs announced',
+  'China investment screening',
+  'EU measures Chinese companies'
 ];
 
 /* 制裁合规信号（标题必须命中） */
@@ -106,11 +114,11 @@ async function runComplianceWatch(opts) {
     if (!arts || !arts.length) arts = await _gnewsRss(qEn, opts.maxPerQuery || 10);
     _push(arts);
   } catch (e) {}
-  /* ② GNews RSS 原子查询×3 并发（2026-08-28 实测：召回对措辞极敏感——
+  /* ② GNews RSS 原子查询×4 串行（2026-08-28 实测：召回对措辞极敏感——
    * 'export control China semiconductor' 62条 vs 'OFAC sanctions Chinese company' 0条，
-   * 单查询轮换会出现整轮空手；每轮并发 3 条互补） */
+   * 单查询轮换会出现整轮空手；每轮串行 4 条互补（偏移 0/3/6/9，12 词表 3 轮全覆盖）） */
   try {
-    const gq = [0, 2, 4].map(i => COMPLIANCE_GNEWS_QUERIES[(cyc + i) % COMPLIANCE_GNEWS_QUERIES.length]);
+    const gq = [0, 3, 6, 9].map(i => COMPLIANCE_GNEWS_QUERIES[(cyc + i) % COMPLIANCE_GNEWS_QUERIES.length]);
     for (const q of gq) { _push(await _gnewsRss(q, opts.maxPerQuery || 10)); }  /* 串行：并发触发限流 */
   } catch (e) {}
   const filtered = out.filter(it => {

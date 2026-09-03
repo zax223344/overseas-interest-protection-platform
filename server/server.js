@@ -8230,6 +8230,17 @@ async function _runBriFocus() {
         if (before === true) it.interestLinked = true;
       } catch (e) {}
     });
+    /* 2026-09-04 P1 五哨兵体检修复：GDELT 主题腿 country=查询目标国（qs.cn）非事件国——
+     * 实测"孟加拉国不良贷款"被乌克兰轮询查询捞出错标 country=乌克兰。
+     * 若标题/译文不含目标国关键词，置空让 _preInsertGate 国别三级兜底从标题回填真实事件国。 */
+    items.forEach(it => {
+      if (!/^GTHEME:/.test(String(it._fromSource || ''))) return;
+      const qcn = String(it.country_cn || it.country || '').trim();
+      if (!qcn || qcn === '国际') return;
+      const txt = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || '').slice(0, 200);
+      if (txt.indexOf(qcn) >= 0) return;  /* 标题确含目标国 → 查询标签可信 */
+      it.country_orig = qcn; it.country = ''; if (it.country_cn) it.country_cn = '';
+    });
     const linked = items.filter(it => it.interestLinked === true);
     let inserted = 0, pkInserted = 0, skippedDup = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedNoUrl = 0, insertErr = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0;
     if (linked.length) {
@@ -9098,7 +9109,11 @@ async function _runSpecialMatrix(manual) {
   if (Date.now() < _specialMatrixBusyUntil) return { ok: false, error: '上一轮专项矩阵尚未结束' };
   _specialMatrixBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   try {
-    const r = await specialMatrix.runSpecialMatrix({});
+    /* 2026-09-04 P1-4 空转治理：GDELT 软熔断期跳过矩阵 GDELT 腿（30s 竞速纯烧时间，
+     * 熔断期 gdeltSearch 恒空返回）——GNews 腿继续，配额让给主力通道 */
+    const gdeltCooling = (typeof crawler.gdeltStatus === 'function') && crawler.gdeltStatus().cooling;
+    if (gdeltCooling) console.log('[SPECIAL-MATRIX] GDELT 熔断期，本轮跳过 GDELT 腿');
+    const r = await specialMatrix.runSpecialMatrix({ gdelt: !gdeltCooling });
     const items = r.items || [];
     _specialMatrixLastStats = Object.assign({ manual: !!manual, at: new Date().toISOString() }, r.stats || {});
     let inserted = 0;
@@ -9397,7 +9412,7 @@ function startGlobalMediaCron() {
   setTimeout(() => { _syncDailyStatsFromDB().then(() => { _runGlobalMedia(); _runChinaFocus(); _runChinaNegative(); _runTerrorAttacks(); _runCoreThreatWatch(); }); }, 5000);  // 启动后5s先同步统计再首跑
   setInterval(_runGlobalMedia, GLOBAL_MEDIA_INTERVAL_MS); // 每60秒刷新一轮
   setInterval(_runChinaFocus, GLOBAL_MEDIA_INTERVAL_MS);  // 涉华专项同步运行
-  setInterval(_runChinaNegative, 60 * 1000);  // 境外涉华负面专项每60秒运行一次（AP检索耗时较长，避免阻塞主循环）
+  setInterval(_runChinaNegative, 30 * 60 * 1000);  /* 2026-09-04 P1-4 空转治理：60s 一轮仅产 0.7 条/日，降频 30min，GDELT/GNews 配额让给主力通道 */
   setInterval(_runTerrorAttacks, 90 * 1000);  // 恐怖袭击/武装袭击专项每90秒运行一次（高危国家重点监控）
   setInterval(_runCoreThreatWatch, 60 * 1000);  // 海外核心安全威胁一分钟哨兵（巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚），用户 2026-08-27 铁指令
   // ===== 官方框架五维哨兵（2026-08-28 用户指令：六大维度不留空白）=====
