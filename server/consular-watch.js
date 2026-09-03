@@ -65,8 +65,12 @@ const CONSULAR_GNEWS_QUERIES = [
   'Chinese national detained'
 ];
 
-/* 领保信号词（标题必须命中其一；2026-08-28 扩充：warns citizens to leave / Chinese student death 等领保新闻高频句式） */
-const CONSULAR_RE = /embassy|consulate|consular|evacuat|12308|领保|领事|使馆|撤侨|撤离|撤回|安全提醒|暂勿前往|谨慎前往|提醒.*公民|citizens? (?:evacuated|rescued|missing|abroad|to leave|warned|urged|alerted)|(?:evacuated|rescued|missing) .{0,20}Chinese|warns? citizens|urges? citizens|Chinese (?:student|tourist|worker|national)s? .{0,40}(?:death|killed|missing|died|warning|alert|alarm)|(?:death|killed|missing|died|tragic) .{0,30}Chinese (?:student|tourist|worker|national)/i;
+/* 领保信号词（标题必须命中其一；2026-08-28 扩充：warns citizens to leave / Chinese student death 等领保新闻高频句式）
+ * 2026-09-04 采集矩阵体检 P0-R3 根因修复：此前词表与自家 GNews 查询词表不同步——
+ * 查询用 detained/abducted/attacked/robbed/injured 等句式搜回的标题，被本过滤器全数击杀，
+ * 实测 rss=10/27 条 → 过滤后 0 条，领事哨兵 72h 零入库（每 10 分钟空转一轮）。
+ * 现把全部查询句式补进信号词表，保证"搜得回来的就杀不掉"。 */
+const CONSULAR_RE = /embassy|consulate|consular|evacuat|12308|领保|领事|使馆|撤侨|撤离|撤回|安全提醒|暂勿前往|谨慎前往|提醒.*公民|citizens? (?:evacuated|rescued|missing|abroad|to leave|warned|urged|alerted|detained|attacked|kidnapped|robbed|injured)|(?:evacuated|rescued|missing|detained|abducted|attacked|kidnapped|robbed|injured|arrested|charged|charges|fined|sentenced|convicted) .{0,30}(?:Chinese|China)|warns? citizens|urges? citizens|Chinese (?:student|tourist|worker|engineer|national)s? .{0,40}(?:death|killed|missing|died|warning|alert|alarm|detained|abducted|attacked|kidnapped|robbed|injured|arrested|charged|rescued|evacuated)|(?:death|killed|missing|died|tragic) .{0,30}Chinese (?:student|tourist|worker|engineer|national)/i;
 
 function parseMfaList(html) {
   /* 两段式线性解析（2026-08-28）：旧版嵌套量词正则在领事司大页面上灾难性回溯卡死事件循环。

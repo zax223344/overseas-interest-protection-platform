@@ -900,14 +900,20 @@ async function scrapeThinkTanks(opts) {
         if (_isDomesticChina(txt)) continue;
         if (!_chinaFocusGate(txt, gate)) continue;
         const sc2 = scoreDimensions(it.title, dims);
+        /* 2026-09-04 采集矩阵体检 P0-R1/R2 根因修复：
+         * R1 此前放宽闸（_chinaFocusGate）放行的条目一律硬标 chinaRelated:true —— 放宽≠涉华，
+         *    72h 实测 350/764 条（45.8%）无涉华依据却带涉华标，污染涉华统计与 LLM 研判。
+         *    现改为入库闸同源严格判定（只看标题要素），放宽放行仍入库但涉华标记如实。
+         * R2 此前 _sourceType 继承 RSS 源类型（s.type||'media'）——涉华专项产出被记到
+         *    media 通道头上，通道效能统计失真。现固定 china_focus 溯源。 */
         tagged.push({
           title: it.title, content: it.description || '', url: it.link || s.url,
           country_cn: s.cn, country_iso: s.iso, dims: sc2.dims, maxScore: sc2.maxScore, dimScores: sc2.scores,
           source: s.name, credibility: _sourceCredibility(s.name), category: '涉华专项情报', data_type: 'osint_intel',
-          interestLinked: true, chinaRelated: true,
+          interestLinked: true, chinaRelated: scrapers.isChinaRelatedStrict(it.title || ''),
           language: s.lang || '', publish_time: (it.pubDate || ''),
           _real: true, _fromSource: 'CHINA_FOCUS:SCAN:' + s.iso,
-          _sourceType: s.type || 'media'
+          _sourceType: 'china_focus'
         });
       }
       return { cn: s.cn, tagged };
@@ -957,9 +963,10 @@ async function scrapeChinaFocus(opts) {
         _sourceType: s.type || 'media'
       };
       // 必须通过中国海外利益安全权威闸门；对涉华专项源适当放宽，避免正常外交/经贸/BRI新闻被批量拦截
+      // 2026-09-04 P0-R1/R2 同款修复：涉华标记改严格实判（放宽放行≠涉华）；溯源固定 china_focus
       const gate = scrapers.chinaOverseasGate(txt);
       if (gateRelevant(txt) && (gate.pass || _chinaFocusGate(txt, gate))) {
-        tagged.push(Object.assign({}, base, { interestLinked: true, chinaRelated: true }));
+        tagged.push(Object.assign({}, base, { interestLinked: true, chinaRelated: scrapers.isChinaRelatedStrict(it.title || ''), _sourceType: 'china_focus' }));
       }
     }
     return { cn: s.cn, tagged };
