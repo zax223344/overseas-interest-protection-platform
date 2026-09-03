@@ -132,7 +132,7 @@ const THREATS={
     </div>
 
     <div class="card">
-      <div class="card-tt"><span class="ic" style="display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="url(#ig-tog-h)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 3px rgba(255,80,120,.5))"><defs><linearGradient id="ig-tog-h" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#ff4d6d"/><stop offset="1" stop-color="#b44bff"/></linearGradient></defs><circle cx="12" cy="12" r="2.4"/><line x1="10.4" y1="10.4" x2="6.2" y2="6.8"/><line x1="13.6" y1="10.4" x2="17.8" y2="6.8"/><line x1="10.4" y1="13.6" x2="6.2" y2="17.2"/><line x1="13.6" y1="13.6" x2="17.8" y2="17.2"/><circle cx="5" cy="5.8" r="1.7"/><circle cx="19" cy="5.8" r="1.7"/><circle cx="5" cy="18.2" r="1.7"/><circle cx="19" cy="18.2" r="1.7"/></svg></span>威胁组织图谱 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 交互式情报档案 · 支持自定义组织和评估结论</span>
+      <div class="card-tt"><span class="ic">🎯</span>威胁组织图谱 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 交互式情报档案 · 支持自定义组织和评估结论</span>
         <button class="btn btn-sm" style="margin-left:auto;font-size:11px;padding:4px 12px" onclick="THREATS.showOrgForm(null)">+ 新增组织</button>
       </div>
       <div class="flex gap-8 mb-12 wrap items-center">

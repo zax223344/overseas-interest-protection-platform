@@ -60,14 +60,13 @@ if('serviceWorker' in navigator){window.addEventListener('load',function(){navig
   --bg:#070b14;--bg2:#0c1120;--panel:rgba(16,22,38,0.85);--panel2:rgba(22,30,50,0.6);
   --border:rgba(0,212,255,0.12);--border2:rgba(0,212,255,0.25);
   --cyan:#00d4ff;--cyan-d:#0099cc;--green:#00ff9f;--red:#ff3355;--orange:#ff8800;--yellow:#ffcc00;--purple:#b366ff;
-  --text:#e8eef7;--text2:#8798b0;--text3:#566a83;
+  --text:#e2e8f0;--text2:#7a8ba3;--text3:#4a5a70;
   --red-bg:rgba(255,51,85,0.1);--orange-bg:rgba(255,136,0,0.1);--yellow-bg:rgba(255,204,0,0.1);
   --green-bg:rgba(0,255,159,0.08);--blue-bg:rgba(0,212,255,0.08);--purple-bg:rgba(179,102,255,0.08);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
-body{font-family:'Inter','Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:12px;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
-#app{background:radial-gradient(ellipse 1400px 900px at 16% -12%,#0b1426 0%,transparent 60%),radial-gradient(ellipse 900px 700px at 110% 115%,#0a1322 0%,transparent 55%)}
+body{font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg2)}
 ::-webkit-scrollbar-thumb{background:rgba(0,212,255,0.2);border-radius:3px}
@@ -107,35 +106,29 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 
 /* ===== LAYOUT ===== */
 #app{display:flex;height:100vh}
-.sidebar{width:208px;background:linear-gradient(180deg,#0c1322 0%,#090e1a 100%);border-right:1px solid rgba(0,212,255,0.10);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s}
-.sidebar.collapsed{width:58px}
-.sb-brand{padding:16px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(0,212,255,0.10);min-height:58px}
+.sidebar{width:200px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s}
+.sidebar.collapsed{width:56px}
+.sb-brand{padding:16px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);min-height:56px}
 .sb-brand img{width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 0 6px rgba(0,212,255,0.3));flex-shrink:0}
 .sb-brand .ic{font-size:24px;filter:drop-shadow(0 0 8px rgba(0,212,255,0.4));flex-shrink:0}
-.sb-brand .tt{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;letter-spacing:1px}
-.sb-brand .tt span{display:block;font-size:10px;color:var(--cyan);letter-spacing:2.4px;font-weight:500;margin-top:1px}
+.sb-brand .tt{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden}
+.sb-brand .tt span{display:block;font-size:9px;color:var(--cyan);letter-spacing:1px;font-weight:400}
 .sidebar.collapsed .sb-brand .tt{display:none}
 .sb-nav{flex:1;overflow-y:auto;padding:8px 0}
-.sb-nav::-webkit-scrollbar{width:4px}
-.sb-nav::-webkit-scrollbar-thumb{background:rgba(0,212,255,0.15);border-radius:2px}
-.sb-group{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:2.5px;padding:14px 18px 6px;font-weight:600}
+.sb-group{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:2px;padding:12px 16px 4px;font-weight:600}
 .sidebar.collapsed .sb-group{display:none}
-.sb-item{display:flex;align-items:center;gap:11px;padding:8px 16px;cursor:pointer;font-size:13px;color:var(--text2);transition:color .15s,background .15s;position:relative;white-space:nowrap;font-weight:500}
-.sb-item:hover{background:rgba(0,212,255,0.05);color:var(--text)}
-.sb-item.active{background:linear-gradient(90deg,rgba(0,212,255,0.13),rgba(0,212,255,0.01) 75%);color:var(--cyan);font-weight:600}
-.sb-item.active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--cyan);box-shadow:0 0 8px rgba(0,212,255,0.6)}
-.sb-item .ic{width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#5a7188;transition:color .15s}
-.sb-item .ic svg{display:block;width:18px;height:18px}
-.sb-item:hover .ic{color:var(--cyan)}
-.sb-item.active .ic{color:var(--cyan);filter:drop-shadow(0 0 5px rgba(0,212,255,0.45))}
+.sb-item{display:flex;align-items:center;gap:10px;padding:8px 16px;cursor:pointer;font-size:13px;color:var(--text2);transition:.15s;position:relative;white-space:nowrap}
+.sb-item:hover{background:rgba(0,212,255,0.06);color:var(--text)}
+.sb-item.active{background:linear-gradient(90deg,rgba(0,212,255,0.12),transparent);color:var(--cyan);border-left:2px solid var(--cyan)}
+.sb-item .ic{font-size:18px;width:24px;text-align:center;flex-shrink:0}
 .sidebar.collapsed .sb-item .lb{display:none}
-.sb-item .badge{margin-left:auto;background:var(--red);color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;font-weight:700}
-.sb-item .badge.zero{background:#2a3a52}
+.sb-item .badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600}
+.sb-item .badge.zero{background:var(--text3)}
 
 /* ===== MAIN ===== */
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.topbar{height:48px;background:linear-gradient(180deg,rgba(14,20,36,0.92),rgba(10,15,28,0.92));border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0}
-.tb-title{font-size:14px;font-weight:700;color:var(--text);letter-spacing:1.5px}
+.topbar{height:48px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0}
+.tb-title{font-size:15px;font-weight:700;color:var(--text)}
 .tb-crumb{font-size:11px;color:var(--text2);margin-left:8px}
 .tb-spacer{flex:1}
 .tb-stat{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);padding:4px 10px;background:var(--panel2);border-radius:6px;border:1px solid var(--border)}
@@ -197,8 +190,8 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 
 /* ===== COMPONENTS ===== */
 .grid{display:grid;gap:12px}
-.card{background:linear-gradient(180deg,rgba(19,26,44,0.88),rgba(14,20,34,0.82));border:1px solid rgba(0,212,255,0.10);border-radius:10px;padding:14px;backdrop-filter:blur(10px);box-shadow:0 2px 12px rgba(0,0,0,0.25),inset 0 1px 0 rgba(255,255,255,0.03)}
-.card-tt{font-size:13px;font-weight:700;color:var(--cyan);margin-bottom:10px;display:flex;align-items:center;gap:6px;letter-spacing:1px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;backdrop-filter:blur(10px)}
+.card-tt{font-size:13px;font-weight:700;color:var(--cyan);margin-bottom:10px;display:flex;align-items:center;gap:6px;letter-spacing:.5px}
 .card-tt .ic{font-size:16px}
 /* 态势总览—预警行 */
 .sit-alert-row{border-left:3px solid transparent;background:var(--panel2);border-radius:6px;transition:.15s}
@@ -836,29 +829,29 @@ select.intel-input{cursor:pointer}
 <div class="sb-brand"><img src="swupl-logo.png" alt="SWUPL"><div class="tt">海安情报预警平台<span>v6.0 INTELLIGENCE</span></div></div>
 <div class="sb-nav">
 <div class="sb-group">态势感知</div>
-<div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.2"/><ellipse cx="12" cy="12" rx="10.4" ry="4.2" transform="rotate(-20 12 12)"/><circle cx="17.6" cy="7.2" r="1.4" fill="currentColor" stroke="none"/></svg></span><span class="lb">全域态势感知</span></div>
-<div class="sb-item" data-view="workbench" onclick="navigateTo('workbench')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8.2" height="8.2" rx="1.6"/><rect x="13.8" y="3" width="7.2" height="4.6" rx="1.6"/><rect x="13.8" y="9.6" width="7.2" height="11.4" rx="1.6"/><rect x="3" y="13.2" width="8.2" height="7.8" rx="1.6"/></svg></span><span class="lb">智能协同作业台</span></div>
-<div class="sb-item" data-view="threatroom" onclick="navigateTo('threatroom')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7V5A1.5 1.5 0 0 1 5 3.5h2"/><path d="M17 3.5h2A1.5 1.5 0 0 1 20.5 5v2"/><path d="M20.5 17v2a1.5 1.5 0 0 1-1.5 1.5h-2"/><path d="M7 20.5H5A1.5 1.5 0 0 1 3.5 19v-2"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg></span><span class="lb">专项情报作战室</span></div>
-<div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 12s4-7.5 10.2-7.5S22.2 12 22.2 12s-4 7.5-10.2 7.5S1.8 12 1.8 12z"/><circle cx="12" cy="12" r="3"/><line x1="4.5" y1="12" x2="8" y2="12" stroke-dasharray="1.5 2.5"/><line x1="16" y1="12" x2="19.5" y2="12" stroke-dasharray="1.5 2.5"/></svg></span><span class="lb">重点目标监测</span></div>
-<div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.25a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg></span><span class="lb">指挥调度中心</span></div>
+<div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">全域态势感知</span></div>
+<div class="sb-item" data-view="workbench" onclick="navigateTo('workbench')"><span class="ic">🧭</span><span class="lb">智能协同作业台</span></div>
+<div class="sb-item" data-view="threatroom" onclick="navigateTo('threatroom')"><span class="ic">🎯</span><span class="lb">专项情报作战室</span></div>
+<div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">🎯</span><span class="lb">重点目标监测</span></div>
+<div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
 <div class="sb-group">监测中心</div>
-<div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18.5 12 16 17 13 7 10 16 7.8 12 2 12"/><circle cx="13" cy="7" r="1.1" fill="currentColor" stroke="none"/></svg></span><span class="lb">实时风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
-<div class="sb-item" data-view="intel" onclick="navigateTo('intel')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.2"/><circle cx="8.5" cy="8.5" r="1.6"/><polyline points="21 15.5 16 10.5 5 21"/></svg></span><span class="lb">影像情报中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
-<div class="sb-item" data-view="threatorgs" onclick="navigateTo('threatorgs')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.4"/><line x1="10.4" y1="10.4" x2="6.2" y2="6.8"/><line x1="13.6" y1="10.4" x2="17.8" y2="6.8"/><line x1="10.4" y1="13.6" x2="6.2" y2="17.2"/><line x1="13.6" y1="13.6" x2="17.8" y2="17.2"/><circle cx="5" cy="5.8" r="1.7"/><circle cx="19" cy="5.8" r="1.7"/><circle cx="5" cy="18.2" r="1.7"/><circle cx="19" cy="18.2" r="1.7"/></svg></span><span class="lb">威胁组织图谱</span><span class="badge zero" id="sb-threat-count">0</span></div>
-<div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.6 2.9 19a1.2 1.2 0 0 0 1.05 1.8h16.1A1.2 1.2 0 0 0 21.1 19z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="17.3" r="1" fill="currentColor" stroke="none"/></svg></span><span class="lb">智能预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
+<div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic">📡</span><span class="lb">实时风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
+<div class="sb-item" data-view="intel" onclick="navigateTo('intel')"><span class="ic">📸</span><span class="lb">影像情报中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
+<div class="sb-item" data-view="threatorgs" onclick="navigateTo('threatorgs')"><span class="ic">🎯</span><span class="lb">威胁组织图谱</span><span class="badge zero" id="sb-threat-count">0</span></div>
+<div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">智能预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
 <div class="sb-group">分析研判</div>
-<div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5S5.2 16 5.2 10.8a6.8 6.8 0 0 1 13.6 0C18.8 16 12 21.5 12 21.5z"/><circle cx="12" cy="10.8" r="2.4"/></svg></span><span class="lb">国别风险研判</span></div>
-<div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 8.5h18"/><path d="M3 15h18"/><path d="M12 3v18"/></svg></span><span class="lb">国别档案总表</span></div>
-<div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><polyline points="14 2.5 14 8 19.5 8"/><line x1="15.5" y1="13" x2="8.5" y2="13"/><line x1="15.5" y1="17" x2="8.5" y2="17"/></svg></span><span class="lb">周期简报中心</span></div>
-<div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h5.5a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2.5z"/><path d="M21.5 4H16a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h6.5z"/></svg></span><span class="lb">专题分析中心</span></div>
-<div class="sb-item" data-view="aireport" onclick="navigateTo('aireport')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><rect x="9.2" y="9.2" width="5.6" height="5.6" rx="1"/><line x1="9.2" y1="1.5" x2="9.2" y2="4.5"/><line x1="14.8" y1="1.5" x2="14.8" y2="4.5"/><line x1="9.2" y1="19.5" x2="9.2" y2="22.5"/><line x1="14.8" y1="19.5" x2="14.8" y2="22.5"/><line x1="19.5" y1="9.2" x2="22.5" y2="9.2"/><line x1="19.5" y1="14.8" x2="22.5" y2="14.8"/><line x1="1.5" y1="9.2" x2="4.5" y2="9.2"/><line x1="1.5" y1="14.8" x2="4.5" y2="14.8"/></svg></span><span class="lb">AI智能研判</span><span class="badge zero" id="sb-aireport-nav-count">0</span></div>
-<div class="sb-item" data-view="models" onclick="navigateTo('models')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2.5 2.5 7.2 12 11.9 21.5 7.2 12 2.5"/><polyline points="2.5 16.8 12 21.5 21.5 16.8"/><polyline points="2.5 12 12 16.7 21.5 12"/></svg></span><span class="lb">风险预测模型</span></div>
+<div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别风险研判</span></div>
+<div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国别档案总表</span></div>
+<div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">周期简报中心</span></div>
+<div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic">📚</span><span class="lb">专题分析中心</span></div>
+<div class="sb-item" data-view="aireport" onclick="navigateTo('aireport')"><span class="ic">🤖</span><span class="lb">AI智能研判</span><span class="badge zero" id="sb-aireport-nav-count">0</span></div>
+<div class="sb-item" data-view="models" onclick="navigateTo('models')"><span class="ic">🧮</span><span class="lb">风险预测模型</span></div>
 <div class="sb-group">数据管理</div>
-<div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8.5" ry="2.8"/><path d="M20.5 12c0 1.55-3.8 2.8-8.5 2.8S3.5 13.55 3.5 12"/><path d="M3.5 5v14c0 1.55 3.8 2.8 8.5 2.8s8.5-1.25 8.5-2.8V5"/></svg></span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
-<div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5.5l-8-3-8 3V12c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
-<div class="sb-item" data-view="manual-entry" onclick="navigateTo('manual-entry')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 20H21"/><path d="M16.3 3.7a2.1 2.1 0 0 1 3 3L7.5 18.5l-4 1 1-4z"/></svg></span><span class="lb">情报录入</span></div>
+<div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
+<div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
+<div class="sb-item" data-view="manual-entry" onclick="navigateTo('manual-entry')"><span class="ic">✍️</span><span class="lb">情报录入</span></div>
 <div class="sb-group">系统</div>
-<div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
+<div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
 <!-- 合并后保留的隐藏徽章（代码仍会更新计数，避免空指针） -->
 <span style="display:none"><span class="badge zero" id="sb-autoalert-count">0</span><span class="badge zero" id="sb-aireport-count">0</span><span class="badge zero" id="sb-wechat-count">0</span><span class="badge zero" id="sb-sp-count">0</span></span>
 </div>
@@ -1232,16 +1225,16 @@ function closeMobileMenu(){
 <script src="scraper.js?v=53"></script>
 <!-- 天地图/本地矢量底图统一封装，所有 Leaflet 地图共用 -->
 <script src="local-basemap.js?v=2"></script>
-<script src="myfocus.js?v=1"></script>
+<script src="myfocus.js?v=2"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=277"></script>
+<script src="app.js?v=278"></script>
 <script src="workbench.js?v=3"></script>
 <script src="threatroom.js?v=9"></script>
 <script src="foresee.js?v=2"></script>
 <script src="distribute.js?v=2"></script>
 <script src="datasources.js?v=26"></script>
-<script src="threats.js?v=10"></script>
-<script src="aireport.js?v=4"></script>
+<script src="threats.js?v=11"></script>
+<script src="aireport.js?v=5"></script>
 <script src="autoalert-v3.js?v=8"></script>
 <script src="geoint_live.js?v=5"></script>
 <script src="gate-admin.js?v=2"></script>

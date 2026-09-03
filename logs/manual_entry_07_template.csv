@@ -1,3 +1,0 @@
-﻿data_type,country,city,event_time,title,content,china_related,china_note,related_projects,related_enterprises,deaths,injured,asset_loss_value,asset_loss_currency,source_channel,source_desc,source_url,reliability,classification,severity,tags,attachments
-terror_events,巴基斯坦,奎达,2026-09-01T08:30,示例-奎达集市发生爆炸袭击,示例行-请删除本行后按此格式填写；severity 填 red/orange/yellow/blue；china_related 填 是/否,是,现场有中资商铺,中巴经济走廊,某中资企业,2,5,,USD,现场联络员,目击者转述,,B,内部,orange,恐袭;爆炸,
-geopolitical_intel,美国,,2026-09-01T10:00,示例-新的出口管制清单涉及中企,示例行-请删除本行后按此格式填写,是,,,,,,,,官方公报,联邦公报原文,https://example.gov,A,公开,orange,出口管制,
