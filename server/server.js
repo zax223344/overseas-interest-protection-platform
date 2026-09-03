@@ -985,18 +985,27 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     .filter(x => x.t && !_VAGUE_T.test(x.t))
     .map(x => ({ i: x.i, t: _cutTitle(x.t) }))
     .sort((a, b) => _repScore(b.i) - _repScore(a.i))
-    .slice(0, 2);
+    .slice(0, 3); /* 09-04：3件备选——第1件作案例剖析主角，第2/3件进代表事件列表（同一标题全段只引一次） */
   /* ===== 09-02 返工：案例性质按条目真实类型映射（标题词优先于 type——数据侧 type 有错标，
    * 如治安执法案标 terror_events），四维影响按性质条件触发，杜绝 blanket 错配 ===== */
   const _caseNature = b => {
     const t = String(b.title || '');
     if (_isPositiveDip(b)) return { k: 'dip', s: '属高层外交动态' };
+    /* 09-04：自然灾害类标题词优先于 type（数据侧 type 错标根治之一——台风救援事件被错标
+     * sanctions_data 时，标题词兜底保证定性正确，杜绝"台风事件定性为制裁"引析错配） */
+    if (/台风|飓风|洪水|洪灾|地震|海啸|暴雨|泥石流|山火|火山喷发|龙卷风/.test(t)) return { k: 'disaster', s: '属自然灾害突发事件' };
     if (/制裁|管制|实体清单|出口管制/.test(t) || /sanctions_data/.test(b.type)) return { k: 'sanc', s: '属外部制裁与合规压力事件' };
     if (/逮捕|营救|解救|查获|缴获|追回|破获|抓获|获救|获释|警方|执法|安全部队|谋杀|凶案|命案|杀人|突袭.{0,8}(俱乐部|窝点|团伙)/.test(t)) return { k: 'law', s: '属当地治安执法或刑事案件' };
-    if (/武装冲突|交火|炮击|空袭|军事打击|无人机打击|战斗/.test(t) || /military_conflicts/.test(b.type)) return { k: 'conflict', s: '属武装冲突' };
+    if (/武装冲突|交火|炮击|空袭|军事打击|无人机打击|战斗|拦截.{0,10}(导弹|无人机)|击落|防空/.test(t) || /military_conflicts/.test(b.type)) return { k: 'conflict', s: '属武装冲突与军事对抗事件' };
     if (/袭击|爆炸|枪击|炸弹|恐袭|自杀式/.test(t) || /terror_events/.test(b.type)) return { k: 'terror', s: '属恐怖主义暴力袭击' };
+    /* 2026-09-04 用户返工：涉华政策博弈（攻击/打压/关税/禁令/立法等 + 涉华标志）单独定性——
+     * 根治"美国立法者再次攻击中国"类事件落入 other 空性质（"性质待进一步核实"空话收尾） */
+    if ((b.china || b.negative) && /攻击|打压|施压|对抗|遏制|关税|禁令|限制|审查|指控|调查|法案|立法|排挤|脱钩/.test(t)) return { k: 'geo', s: '属涉华政策博弈动态' };
     if (/geopolitical/.test(b.type)) return { k: 'geo', s: '属地缘政治博弈动态' };
-    return { k: 'other', s: '属安全风险事件，性质待进一步核实' };
+    /* 2026-09-04 用户返工：other 兜底给实质定性（severity 级别 + 涉华标志），杜绝空话 */
+    const lvS = { red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[b.severity] || '';
+    if (b.china || b.negative) return { k: 'other', s: '属' + (lvS ? lvS + '级别' : '') + '涉华关联风险动态' };
+    return { k: 'other', s: '属' + (lvS ? lvS + '级别' : '一般性') + '安全风险动态' };
   };
   /* 案例用 digest 清洗：按句切分取前2句、剔除网页残留词句、超120字截断、不足20字返回空（宁缺毋滥）；
    * 09-02 第四轮修单：digest 与标题中文二元词交集为0 → 判为多条新闻拼接/张冠李戴（如泰国案 digest
@@ -1034,26 +1043,37 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     }
     return d.length >= 20 ? d : '';
   };
-  /* 案例剖析：取主题内最优1件；事件脉络取自清洗后 digest（无干净脉络则整段跳过），
-   * 性质判断按真实类型映射，四维影响（人员/项目/合规与结算/舆情）按性质条件触发，零虚构 */
-  const _caseStudy = g => {
-    const cand = _pickRepr(g.arr);
-    if (!cand.length) return '';
-    const b = cand[0].i, bt = cand[0].t;
+  /* 案例剖析：取主题内最优1件；事件脉络取自清洗后 digest，性质判断按真实类型映射，
+   * 四维影响（人员/项目/合规与结算/舆情）按性质条件触发，零虚构。
+   * 2026-09-04 用户返工（9月3日简报三类问题 root-cause）：
+   * ①"其中，X一案：X描述"机翻同源复读——digest 与标题近重复（前10字相同或标题二元词组≥65%
+   *   命中 digest）时跳过 digest，直接给定性研判，不再复述事件；
+   * ②空话收尾根治——other 性质已按 severity+涉华标志给实质定性（_caseNature）；
+   * ③无 digest 且无可定性要素时整段跳过（宁缺毋滥）；
+   * ④案例主角由调用方从代表事件列表移除，标题全段只引用一次。 */
+  const _caseStudy = cand => {
+    if (!cand) return '';
+    const b = cand.i, bt = cand.t;
     const d = _govDigestCase(b);
-    if (!d) return ''; /* digest 不足20字（拼接噪声/网页残留被剔除后）→ 宁缺毋滥，整段跳过 */
     const nat = _caseNature(b);
+    /* digest 与标题近重复检测（同一事件的另一版机翻，如"出生公民权"vs"与生俱来的公民身份"） */
+    const tBig = [];
+    for (let k = 0; k < bt.length - 1; k++) { const g2 = bt.substr(k, 2); if (/^[\u4e00-\u9fa5]{2}$/.test(g2)) tBig.push(g2); }
+    const dup = !!d && tBig.length >= 2 && (bt.slice(0, 10) === d.slice(0, 10) || tBig.filter(g2 => d.indexOf(g2) >= 0).length / tBig.length >= 0.65);
     const dims = [];
-    if (nat.k === 'terror' || nat.k === 'conflict') dims.push('人员安全维度，我在当地人员面临' + (b.severity === 'red' ? '直接现实威胁' : '潜在波及风险'));
+    if (nat.k === 'terror' || nat.k === 'conflict' || nat.k === 'disaster') dims.push('人员安全维度，我在当地人员面临' + (nat.k === 'disaster' ? '现实人身与财产安全风险' : (b.severity === 'red' ? '直接现实威胁' : '潜在波及风险')));
     if (nat.k === 'sanc') dims.push('合规与结算维度，外部管制压力或经供应链与结算通道向我方业务传导');
+    if (nat.k === 'geo' && (b.china || b.negative)) dims.push('涉我政策环境维度，相关博弈或影响我机构与项目在当地的政策待遇与营商氛围');
     if (nat.k === 'law' && (b.china || b.negative)) dims.push('涉我人员维度，涉事人员合规与涉讼风险需关注');
     if (b.assets && b.assets.length) dims.push('项目运营维度，' + (b.assets || []).slice(0, 2).join('、') + '等在地项目的外部安全环境趋于复杂');
     if ((nat.k === 'conflict' || nat.k === 'terror') && /边境|通道|港口|航线|撤离|封锁|断航/.test(String(b.title || ''))) dims.push('通道安全维度，相关通行与撤离路线的可靠性需重新评估');
     if (nat.k !== 'dip' && b.negative && nat.k !== 'law') dims.push('舆情维度，事件存在被负面叙事放大的可能，或波及我形象与营商口碑');
-    let s = '其中，' + bt + '一案：' + d + '。该案' + nat.s;
-    if (dims.length) s += '。综合评估，' + dims.join('；');
-    else s += '。综合评估，该案对我海外利益直接影响有限，间接影响值得关注';
-    return s + '。';
+    const tail = dims.length ? dims.join('；') : '该案对我海外利益直接影响有限，间接影响值得关注';
+    if (!d || dup) {
+      if (nat.k === 'other' && !dims.length) return ''; /* 无干净脉络且无可定性要素 → 宁缺毋滥 */
+      return '其中，“' + bt + '”一案，' + nat.s + '。综合评估，' + tail + '。';
+    }
+    return '其中，“' + bt + '”一案：据采集信息，' + d + '。该案' + nat.s + '。综合评估，' + tail + '。';
   };
   /* 第三轮修正（3000-3200字）：topN 控制展开方向数、csN 控制案例剖析数（二节4/3，三节3/2），
    * 未展开方向由 rest 句兜底，信息不丢 */
@@ -1078,37 +1098,71 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
       const pct = list.length ? Math.round(g.arr.length / list.length * 100) : 0;
       /* 2026-09-03 用户铁律「没有具体事件是不够的」：代表事件必须点名——严格筛选
        * （空泛词/正向外交/非涉华治安剔除）一无所获时，降级取级别最高前2件，代表事件名永不为空 */
-      let repr = _pickRepr(g.arr).map(x => x.t);
-      if (!repr.length) {
-        repr = g.arr.slice()
+      let reprCand = _pickRepr(g.arr);
+      if (!reprCand.length) {
+        reprCand = g.arr.slice()
           .sort((a, b) => (_lvW2[b.severity] || 0) - (_lvW2[a.severity] || 0) || _repScore(b) - _repScore(a))
-          .slice(0, 2).map(i => _cutTitle(_govTitle(i))).filter(Boolean);
+          .slice(0, 2).map(i => ({ i: i, t: _cutTitle(_govTitle(i)) })).filter(x => x.t);
       }
+      /* 2026-09-04 用户返工：案例主角从代表事件列表移除（列表出后续备选件）——杜绝
+       * "代表性事件为X。其中，X一案"同一标题前后连引两次；案例未成文时主角保留在列表 */
+      const caseCand = (n < (csN || 3)) ? reprCand[0] : null;
+      const csTxt = caseCand ? _caseStudy(caseCand) : '';
+      const repr = reprCand.filter((x, xi) => !(csTxt && xi === 0)).slice(0, 2).map(x => x.t);
       const reprQ = repr.map(t => '“' + t + '”');
-      /* 开门见山（指南四）：二级标题句先给结论（金钩子），再展开定量事实 */
-      const leadP = g.red >= 2 ? '红色事件集中，威胁等级高' : (g.red === 1 ? '出现红色事件，需重点关注' : (g.orange >= 2 ? '橙色事件多发，存在升级可能' : '以一般性动态为主'));
+      /* 开门见山（指南四）：二级标题句先给结论（金钩子），再展开定量事实。
+       * 09-04 返工：lead 句去模板化——按方向事件性质构成给具体定性，替代"存在升级可能"套话 */
+      const natCnt = {};
+      g.arr.forEach(i => { const nk = _caseNature(i).k; natCnt[nk] = (natCnt[nk] || 0) + 1; });
+      const domK = (Object.entries(natCnt).sort((a, b) => b[1] - a[1])[0] || ['', 0])[0];
+      const _LEAD_NAT = {
+        terror: '暴力袭击类事件为主，安全环境趋于恶化',
+        conflict: '武装冲突类事件为主，外溢风险上升',
+        sanc: '制裁管制类动态为主，合规风险上升',
+        geo: '涉华政策摩擦为主，政策环境扰动上升',
+        law: '治安司法类案件为主，处置压力上升',
+        disaster: '自然灾害类事件为主，涉我人员安全保障优先'
+      };
+      const leadP = g.red >= 2 ? '红色事件集中，威胁等级高' : (g.red === 1 ? '出现红色事件，需重点关注' : (g.orange >= 2 ? ('橙色事件多发，' + (_LEAD_NAT[domK] || '风险动态活跃，需逐日跟踪')) : '以一般性动态为主'));
       let p1 = '（' + '一二三四'[n] + '）' + g.c + '方向' + (chinaSide ? '涉华安全事件' : '重大安全事件') + '：' + leadP + '。当日监测到' + g.arr.length + '件（' + lvStr + '，占比' + pct + '%）'
         + (reprQ.length ? '，代表性事件为' + reprQ.join('、') + (g.arr.length > reprQ.length ? '等' : '') : '')
         + '。';
-      if (n < (csN || 3)) { const cs = _caseStudy(g); if (cs) p1 += cs; }
+      if (csTxt) p1 += csTxt;
       paras.push(p1);
       /* 趋势研判（智库视角，由级别构成/类型/资产关联/国别环比推导演化方向）
        * 2026-09-03 用户铁律：研判句必须落到具体事件样态——嵌入该方向最高级别事件标题（“”引注），
        * 杜绝「该方向涉我人员与机构安全面临现实直接威胁」式无事件实体的纯模板句 */
-      const _topEvTs = lv => g.arr.filter(i => i.severity === lv)
+      const _topEvTs = (lv, pool) => (pool || g.arr).filter(i => i.severity === lv)
         .sort((a, b) => _repScore(b) - _repScore(a)).slice(0, 2)
         .map(i => _cutTitle(_govTitle(i))).filter(Boolean);
       const redTs = _topEvTs('red');
-      const orangeTs = _topEvTs('orange');
+      /* 09-04：橙色研判引用事件从主体性质子集取——引用样例与性质定性自洽，
+       * 杜绝"从台风被困学生事件看，制裁管制动态密集"式引析错配 */
+      const domPool = g.arr.filter(i => _caseNature(i).k === domK);
+      const orangeTs = _topEvTs('orange', domPool.length ? domPool : g.arr);
       const redLead = redTs.length ? '“' + redTs.join('”、“') + '”等事件显示，' : '';
       const orangeLead = orangeTs.length ? '从“' + orangeTs.join('”、“') + '”等事件看，' : '';
       const parts = [];
       if (chinaSide) {
+        /* 2026-09-04 用户返工：研判句深度化——按方向内事件性质构成推导威胁指向与衍生后果，
+         * 杜绝「事件以橙色为主，存在升级可能，态势走向需持续观察」式无事件内核的套话（natCnt 见 lead 处） */
+        const NAT_ANALY = {
+          terror: '该方向暴力恐怖活动活跃，涉我人员与机构面临直接现实威胁，需防范针对我方的仿袭与误伤波及',
+          conflict: '该方向武装冲突持续，地面安全环境趋于恶化，或波及我在地项目施工与通行安全，撤离通道可靠性需同步评估',
+          sanc: '该方向制裁与管制动态密集，合规与结算通道风险上升，或经供应链与金融渠道向我方业务传导',
+          geo: '该方向涉华政策与舆论摩擦升温，或影响我机构与项目在当地的政策待遇、审批节奏与营商口碑',
+          law: '该方向涉我治安与司法案件多发，需防范个案叠加引发舆情放大与领事协助压力',
+          disaster: '该方向发生自然灾害突发事件，涉我人员与财产面临现实损害风险，需即时核实受灾情况并启动领事保护与应急安置'
+        };
         if (g.red) parts.push(redLead + '该方向涉我人员与机构安全面临现实直接威胁，后续演化与外溢效应需高度关注');
-        else if (g.orange) parts.push(orangeLead + '事件以橙色为主，存在升级可能，态势走向需持续观察');
+        else if (g.orange) {
+          const mainNat = Object.entries(natCnt).sort((a, b) => b[1] - a[1]).filter(x => NAT_ANALY[x[0]])[0];
+          parts.push(orangeLead + (mainNat ? NAT_ANALY[mainNat[0]] : '该方向风险事件呈多发态势，需结合事件指向评估对我人员与项目的潜在影响'));
+        }
         const gAssets = g.arr.filter(i => i.assets && i.assets.length);
         if (gAssets.length) parts.push('其中' + gAssets.length + '件与我当地资产关联，项目运营面临潜在扰动');
-        if (g.arr.filter(i => /terror_events|military_conflicts/.test(i.type)).length) parts.push('事件类型以恐怖袭击与武装冲突为主，暴力外溢风险上升');
+        const tmN = g.arr.filter(i => /terror_events|military_conflicts/.test(i.type)).length;
+        if (tmN) parts.push('事件类型以恐怖袭击与武装冲突为主（' + tmN + '件），暴力外溢风险上升');
       } else {
         if (g.red) parts.push((redTs.length ? '“' + redTs.join('”、“') + '”等红色事件' : '红色级别事件') + '已对地区安全格局产生现实冲击，安全环境呈恶化趋势');
         const conflictN = g.arr.filter(i => /military_conflicts/.test(i.type)).length;
@@ -1264,6 +1318,7 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   /* 三要素模板：责任主体+时间节点+实施步骤（与案例剖析共用 _caseNature 映射） */
   const _SUGG_NATURE = {
     terror: { tier: '短期·优先级高', who: '属地使领馆、企业总部安保部门', when: '24小时内', what: '涉事方向现场安保等级复核与非必要驻留人员分级管控，预置撤离触发条件，核查撤离路线与应急通讯可靠性' },
+    disaster: { tier: '短期·优先级高', who: '属地使领馆领事部门、企业总部应急管理部门', when: '24小时内', what: '核实涉我人员受灾情况并启动领事保护与应急安置，跟踪当地救援进展、通讯恢复与撤离条件' },
     conflict: { tier: '短期·优先级高', who: '项目现场指挥部、企业总部安保部门', when: '24小时内', what: '冲突外溢波及范围评估，复核现场安保与撤离预案，确认周边通道与口岸开放状态' },
     law: { tier: '短期', who: '属地使领馆领事部门', when: '本周内', what: '启动涉我公民领事协助并跟踪当地司法程序，向涉事中方人员作出合规涉讼提示，同步跟踪舆情走向' },
     sanc: { tier: '中期', who: '相关企业总部合规部门', when: '一个月内', what: '结算通道敞口评估与关联实体合规审查，防范次级制裁风险经供应链向我方业务传导' },
@@ -1357,9 +1412,9 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     + '.drg-title{text-align:center;font-family:"方正小标宋简体","FZXiaoBiaoSong-B05S","华文中宋","STZhongsong","宋体","SimSun",serif;font-size:22pt;line-height:34pt;font-weight:700;margin:14pt 0 6pt;}' /* 2号=22pt 小标宋，fallback 华文中宋 */
     + '.drg-datebar{text-align:center;font-family:"Times New Roman","楷体","KaiTi",serif;font-size:16pt;line-height:28.5pt;margin:0 0 6pt;}'
     + '.drg-abstract{font-family:"Times New Roman","楷体","KaiTi",serif;font-size:16pt;line-height:28.5pt;margin:8pt 0 4pt;padding:6pt 10pt;border:0.5pt solid #999;background:#fafafa;}' /* 内容提要：智库指南结构要素，楷体 3 号 */
-    + '.drg-h1{font-family:"黑体","SimHei",serif;font-size:16pt;font-weight:400;line-height:28.5pt;margin:12pt 0 2pt;text-align:left;}' /* 一级「一、」3 号黑体（不加粗） */
-    + '.drg-h2{font-family:"楷体","KaiTi",serif;font-size:16pt;font-weight:400;line-height:28.5pt;margin:8pt 0 0;text-align:left;}' /* 二级「（一）」3 号楷体（不加粗） */
-    + '.drg-h3{font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;font-size:16pt;font-weight:700;line-height:28.5pt;margin:6pt 0 0;text-align:left;}' /* 三级「1.」3 号仿宋（可加粗） */
+    + '.drg-h1{font-family:"黑体","SimHei",serif;font-size:16pt;font-weight:400;line-height:28.5pt;margin:12pt 0 2pt;text-align:left;text-indent:2em;}' /* 一级「一、」3 号黑体（不加粗），09-04 GB/T 9704：各级层次标题首行缩进2字符，与正文一致 */
+    + '.drg-h2{font-family:"楷体","KaiTi",serif;font-size:16pt;font-weight:400;line-height:28.5pt;margin:8pt 0 0;text-align:left;text-indent:2em;}' /* 二级「（一）」3 号楷体（不加粗），09-04 补首行缩进2字符——五节（一）标题与二节（一）段首口径统一 */
+    + '.drg-h3{font-family:"仿宋_GB2312","FangSong_GB2312","仿宋","FangSong",serif;font-size:16pt;font-weight:700;line-height:28.5pt;margin:6pt 0 0;text-align:left;text-indent:2em;}' /* 三级「1.」3 号仿宋（可加粗），09-04 补首行缩进2字符 */
     + '.drg-p{font-size:16pt;line-height:28.5pt;text-indent:2em;margin:0;}' /* 正文 3 号仿宋，首行左空二字回行顶格 */
     + '.drg-tblwrap{margin:8pt 0;}'
     + '.drg-table{width:100%;border-collapse:collapse;font-size:14pt;line-height:1.4;color:#000!important;}' /* 表格 4 号（版心宽度适配，标准对表格字号无强制） */
