@@ -156,12 +156,17 @@ async function fetchItems(q, start, end) {
   });
 }
 /* 三过滤：体育噪声 / 标题无汉字（落库即中文铁律）；同时归一标题中中文邻接的半角标点
- * （2026-09-03 实测：源标题"实施制裁.华盛顿"类残留——报告正文条目也须公文标点规范） */
+ * （2026-09-03 实测：源标题"实施制裁.华盛顿"类残留——报告正文条目也须公文标点规范）
+ * 2026-09-03 二轮铁律：省略号(……/…/...)一律剥离、汉字间多余空格压缩——公文书面上不得出现 */
 function cleanItems(items) {
   return items.filter(i => {
     if (_NOISE_RE.test(String(i.title || ''))) return false;
     if (!_HAN.test(String(i.title || ''))) return false;
-    if (i.title) i.title = i.title.replace(/([\u4e00-\u9fa5])[,;]([\u4e00-\u9fa5])/g, '$1，$2').replace(/([\u4e00-\u9fa5])\.([\u4e00-\u9fa5])/g, '$1。$2').replace(/([\u4e00-\u9fa5])[;:?!]([\u4e00-\u9fa5])/g, function (m, a, b) { return a + { ';': '；', ':': '：', '?': '？', '!': '！' }[m[1]] + b; });
+    if (i.title) i.title = i.title
+      .replace(/……|…/g, '').replace(/\.{3,}/g, '')
+      .replace(/([\u4e00-\u9fa5《》""''])\s+(?=[\u4e00-\u9fa5《》""''])/g, '$1')
+      .replace(/[\s]+([，。；：、！？）】》])/g, '$1').replace(/([（【《])\s+/g, '$1')
+      .replace(/([\u4e00-\u9fa5])[,;]([\u4e00-\u9fa5])/g, '$1，$2').replace(/([\u4e00-\u9fa5])\.([\u4e00-\u9fa5])/g, '$1。$2').replace(/([\u4e00-\u9fa5])[;:?!]([\u4e00-\u9fa5])/g, function (m, a, b) { return a + { ';': '；', ':': '：', '?': '？', '!': '！' }[m[1]] + b; });
     return true;
   });
 }
@@ -335,7 +340,9 @@ async function _anomCounts(q, s, e) {
 const _ANOM_CAT_LABELS = {
   terror_events: '恐怖事件', military_conflicts: '军事冲突', security_events: '治安事件', social_unrest: '社会动荡',
   political_events: '政治动态', economic_risk: '经济风险', sanctions_data: '制裁数据', legal_compliance: '法律合规',
-  cyber_security: '网络安全', infrastructure: '基础设施', natural_disasters: '自然灾害', public_health: '公共卫生'
+  cyber_security: '网络安全', infrastructure: '基础设施', natural_disasters: '自然灾害', public_health: '公共卫生',
+  /* 2026-09-03 实测：geopolitical_intel 为库内最大类(2432条)，缺映射导致公文出现英文残留 */
+  geopolitical_intel: '地缘政治情报', osint_intel: '开源情报', china_security: '涉华安全'
 };
 
 /* ============================================================
@@ -632,15 +639,19 @@ function polishGovText(text) {
   /* URL/邮箱保护 */
   const holds = [];
   t = t.replace(/https?:\/\/[^\s<>"'，。；：）)]+/gi, m => { holds.push(m); return '\x00' + (holds.length - 1) + '\x00'; });
-  /* ① 西式时间括注：含星期英文缩写或 GMT/+0800 时区的（…）整段删除 */
+  /* ① 西式时间括注：含星期英文缩写或 GMT/+0800 时区的（…）整段删除
+   * （支持国家名嵌套括号——"（刚果（金），Mon, 31 Aug 2026 …+0000）"实测样本） */
+  t = t.replace(/（[^（）]*(?:（[^（）]*）[^（）]*)*，\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*\d{1,2}\s+\w+\s+\d{4}[^（）]*）/gi, '');
   t = t.replace(/（[^（）]*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?[^（）]*(?:GMT|UTC|[+-]\d{2}:?\d{2})[^（）]*）/gi, '');
   t = t.replace(/\([^()]*\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b[^()]*(?:GMT|UTC)\)/gi, '');
-  /* ② 省略号残留归一：连续…全部收敛为句号（公文正文不用省略号） */
-  t = t.replace(/\s*…+\s*/g, '。');
-  /* ③ 内部源类型蛇形代号（前后为中文或行首行尾时） */
-  t = t.replace(/(?:^|(?<=[\u4e00-\u9fa5，。；：、（）\s]))[a-z][a-z0-9]*_(?:intel|watch|feed|data|events?|daily|weekly|sentinel|matrix)(?=(?:$|[\s，。；：、）(][^a-zA-Z]|[\u4e00-\u9fa5]))/gi, '');
-  /* ④ 空白归一 */
+  /* ② 省略号残留归一：连续…全部收敛为句号（公文正文不用省略号），ASCII 三连点同规则 */
+  t = t.replace(/\s*…+\s*/g, '。').replace(/\s*\.{3,}\s*/g, '。');
+  /* ③ 内部源类型蛇形代号（前后为中文/间隔号·或行首行尾时——"秘鲁·geopolitical_intel"实测样本） */
+  t = t.replace(/(?:^|(?<=[\u4e00-\u9fa5，。；：、（）·\s]))[a-z][a-z0-9]*_(?:intel|watch|feed|data|events?|daily|weekly|sentinel|matrix)(?=(?:$|[\s，。；：、）(][^a-zA-Z]|[\u4e00-\u9fa5]))/gi, '');
+  /* ④ 空白归一（含汉字邻接空格压缩——"新 倍"类翻译残空格；连字符后空格一并压） */
   t = t.replace(/[\u3000\t]+/g, '')
+       .replace(/([\u4e00-\u9fa5，。；：、）】》])[ ]+(?=[\u4e00-\u9fa5（【《，。；：、])/g, '$1')
+       .replace(/-[ ]+(?=[\u4e00-\u9fa5])/g, '-')
        .replace(/[ \t]{2,}/g, ' ')
        .replace(/（\s*）/g, '')
        .replace(/\(\s*\)/g, '')
@@ -725,7 +736,7 @@ function renderHtml(def, periodKey, data, llmText, llmOk) {
       '<tr><td class="rp-lv rp-lv-' + _esc(it.level) + '">' + _esc(_LV_CN[it.level] || it.level || '—') + '</td>' +
       '<td class="rp-ct">' + _esc(it.country || '未标注') + '</td>' +
       '<td class="rp-tt">' + _esc(it.title) + (it.url ? ' <a class="rp-url" href="' + _esc(it.url) + '" target="_blank" rel="noopener">原文</a>' : '') + '</td>' +
-      '<td class="rp-tm">' + _esc(it.time || '—') + '</td></tr>').join('');
+      '<td class="rp-tm">' + _esc(_cnTime(it.time) || '—') + '</td></tr>').join('');
     return '<div class="rp-sec"><h2>' + _esc(s.name) +
       '<span class="rp-cnt">' + (s.count || 0) + ' 条 · 红' + (s.red || 0) + ' 橙' + (s.orange || 0) + '</span></h2>' +
       (s.note ? '<p class="rp-note">' + _esc(s.note) + '</p>' : '') +
@@ -790,7 +801,9 @@ function renderGovHtml(def, periodKey, data, llmText, llmOk) {
     + '<p class="rgp-p">' + (s.count || 0) + ' 条（红色 ' + (s.red || 0) + ' 条、橙色 ' + (s.orange || 0) + ' 条）。' + (s.note ? _esc(s.note) : '') + '</p>'
     + ((s.items || []).length
       ? (s.items.slice(0, 6).map((it, ii) =>
-        '<p class="rgp-p">' + (ii + 1) + '.' + _esc(_LV_CN[it.level] || '') + '级：' + _esc(it.title) + '（' + _esc(it.country || '未标注') + '，' + _esc(it.time || '时间不详') + '）。</p>').join(''))
+        /* 2026-09-03 用户铁律：段落尾部（国家，西式时间）括号整体删除——国别在表格与节标题中已有，公文书面上不留来源尾注
+         * 标题已带句末标点（。！？）时不再补句号，避免"？。"双标点 */
+        '<p class="rgp-p">' + (ii + 1) + '.' + _esc(_LV_CN[it.level] || '') + '级：' + _esc(String(it.title || '').replace(/[。！？!?…]+$/, '')) + '。</p>').join(''))
       : '<p class="rgp-p">本周期内未监测到相关情报。</p>')
   ).join('');
   return '<style>'

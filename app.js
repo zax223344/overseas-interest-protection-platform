@@ -4117,9 +4117,10 @@ const VIEW_MAP={
   alerts:{t:'预警中心',b:'监测中心 / 预警中心（实时队列 · 智能联动 · 异动信号）'},
   country:{t:'国别档案',b:'分析研判 / 国别档案（风险矩阵 · 预测推演 · 企业资产）'},
   countryfile:{t:'国家档案总表',b:'分析研判 / 国家档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
-  reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（研判简报 · AI分析报告）'},
+  reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报）'},
   models:{t:'专题分析模型',b:'分析研判 / 专题分析模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
-  reportsc:{t:'智库报告中心',b:'分析研判 / 智库报告中心（9类专业分析报告 · 生成 / 阅读 / 修订 / 公文版导出）'},
+  reportsc:{t:'专题分析中心',b:'分析研判 / 专题分析中心（9类专业分析报告 · 全周期生成 / 阅读 / 修订 / 公文版导出）'},
+  aireport:{t:'AI情报分析报告',b:'分析研判 / AI情报分析报告（深度分层研判 · BLUF · 情景推演 · 对策建议）'},
   datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
   'manual-entry':{t:'手动录入工作区',b:'数据管理 / 手动录入工作区（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
@@ -4128,8 +4129,7 @@ const VIEW_MAP={
   /* —— 以下为合并前的旧键：VIEW_MERGE_ALIAS 自动跳转到伞形视图，VIEW_MAP 保留供兼容 —— */
   datasources:{t:'数据中枢 · 数据源库',b:'数据管理 / 数据中枢 / 数据源库'},
   wechat:{t:'数据中枢 · 公众号采集',b:'数据管理 / 数据中枢 / 公众号采集'},
-  analysis:{t:'情报报告中心 · 研判简报',b:'分析研判 / 情报报告中心 / 研判简报'},
-  aireport:{t:'情报报告中心 · AI分析报告',b:'分析研判 / 情报报告中心 / AI分析报告'},
+  analysis:{t:'周期简报中心 · 研判简报',b:'分析研判 / 周期简报中心 / 研判简报'},
   matrix:{t:'国别档案 · 风险矩阵',b:'分析研判 / 国别档案 / 风险矩阵'},
   forecast:{t:'国别档案 · 预测推演',b:'分析研判 / 国别档案 / 预测推演'},
   assets:{t:'国别档案 · 企业资产',b:'分析研判 / 国别档案 / 企业资产'},
@@ -4147,7 +4147,7 @@ const VIEW_MAP={
  * 功能区合并引擎（2026-08-28 信息架构重组）
  * 伞形视图 = 一个职责一个家；旧视图键全兼容跳转
  * 预警中心 = 实时队列 + 智能联动(autoalert)
- * 情报报告中心 = 研判简报(analysis) + AI报告(aireport)
+ * 周期简报中心(reports) = 研判简报(analysis)；AI情报分析报告(aireport) 已独立为并列功能区
  * 国别档案 = 风险矩阵(matrix) + 预测推演(forecast) + 企业资产(assets)
  * 数据中枢 = 数据源库(datasources) + 公众号采集(wechat)
  * 数据治理 = 数据中心(datacenter) + 非预警数据池(sidepool) + 可解释审计(explain)
@@ -4155,7 +4155,7 @@ const VIEW_MAP={
  * ============================================================ */
 const VIEW_MERGE_ALIAS={
   autoalert:'alerts', anomaly:'alerts',
-  analysis:'reports', aireport:'reports',
+  analysis:'reports',
   matrix:'country', forecast:'country', assets:'country', cosri:'country',
   datasources:'datapool', wechat:'datapool',
   datacenter:'datagov', sidepool:'datagov', funnel:'datagov', archive:'datagov', explain:'datagov',
@@ -4168,8 +4168,7 @@ const VIEW_MERGE_TABS={
     {k:'anomaly',label:'📈 异动信号'}
   ],
   reports:[
-    {k:'analysis',label:'📋 研判简报'},
-    {k:'aireport',label:'🤖 AI情报分析报告'}
+    {k:'analysis',label:'📋 研判简报'}
   ],
   country:[
     {k:'matrix',label:'📊 风险矩阵'},

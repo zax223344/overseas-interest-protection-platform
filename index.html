@@ -842,9 +842,10 @@ select.intel-input{cursor:pointer}
 <div class="sb-group">分析研判</div>
 <div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别档案</span></div>
 <div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国家档案总表</span></div>
-<div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">情报报告中心</span></div>
+<div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">周期简报中心</span></div>
+<div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic">📚</span><span class="lb">专题分析中心</span></div>
+<div class="sb-item" data-view="aireport" onclick="navigateTo('aireport')"><span class="ic">🤖</span><span class="lb">AI情报分析报告</span><span class="badge zero" id="sb-aireport-nav-count">0</span></div>
 <div class="sb-item" data-view="models" onclick="navigateTo('models')"><span class="ic">🧮</span><span class="lb">专题分析模型</span></div>
-<div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic">📚</span><span class="lb">智库报告中心</span></div>
 <div class="sb-group">数据管理</div>
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
 <div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
@@ -1656,7 +1657,7 @@ function escalateToReport(alertId, alertTitle){
       var titleEl = document.getElementById('pageTitle');
       if(titleEl) titleEl.textContent = 'AI情报分析报告';
       var crumbEl = document.getElementById('pageCrumb');
-      if(crumbEl) crumbEl.textContent = '分析工具 / AI情报分析报告';
+      if(crumbEl) crumbEl.textContent = '分析研判 / AI情报分析报告';
     }
 
     // 在综合报告区域顶部插入"已纳入预警"提示（不修改aireport.js的渲染）

@@ -28,12 +28,12 @@
 
   const VIEW_LABELS = {
     situation:'态势总览', workbench:'联合作业台', threatroom:'专项情报作战室', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
-    intel:'情报影像中心', alerts:'预警中心', country:'国别档案', countryfile:'国家档案总表', reports:'情报报告中心',
-    models:'专题分析模型', reportsc:'智库报告中心',
+    intel:'情报影像中心', alerts:'预警中心', country:'国别档案', countryfile:'国家档案总表', reports:'周期简报中心',
+    models:'专题分析模型', reportsc:'专题分析中心', aireport:'AI情报分析报告',
     datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
     'manual-entry':'手动录入工作区',
     /* 合并前的旧键（兼容跳转用） */
-    autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报', aireport:'AI情报分析报告',
+    autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报',
     explain:'可解释审计', role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池',
     dailyreport:'每日简报', wechat:'公众号采集', assets:'企业资产',
     anomaly:'异动信号', funnel:'采集漏斗', archive:'归档检索'
@@ -44,7 +44,7 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','country','countryfile','reports','reportsc','datapool','datagov','manual-entry','settings']
+    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','country','countryfile','reports','reportsc','aireport','models','datapool','datagov','manual-entry','settings']
   };
 
   const PERMISSION_MATRIX = [
@@ -59,7 +59,7 @@
     { key: 'threatorgs', label: '威胁组织', roles: ['mfa','mofcom','mps'] },
     { key: 'datagov', label: '数据治理（数据池+漏斗+归档检索+审计）', roles: ['mfa','mofcom','mps'] },
     { key: 'datapool', label: '数据中枢', roles: ['mfa','mofcom','mps'] },
-    { key: 'reports', label: '情报报告中心', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'reports', label: '周期简报中心（研判简报 · 每日简报）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'settings', label: '系统设置', roles: ['mfa','mofcom','mps','enterprise'] }
   ];
 
