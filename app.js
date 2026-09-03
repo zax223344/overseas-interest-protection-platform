@@ -1653,7 +1653,7 @@ var DATACENTER={
     var collections=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel'];
     collections.forEach(function(k){totalApproved+=DBCenter.getAuditSummary(k).approved;});
     if(totalApproved===0){showToast('⚠ 没有已审核的数据可同步，请先在数据库浏览中审核数据');return;}
-    var confirmMsg='确认将 '+totalApproved+' 条已审核数据同步到态势总览和监测中心？\n\n⚠ 请确保数据来源可靠、内容真实，已审核的数据将立即在态势感知和监测中心显示。';
+    var confirmMsg='确认将 '+totalApproved+' 条已审核数据同步到全域态势感知和实时风险监测？\n\n⚠ 请确保数据来源可靠、内容真实，已审核的数据将立即在态势感知和监测中心显示。';
     if(!confirm(confirmMsg))return;
     var syncCount=DataHub.syncFromDBCenter();
     DBCenter.addLog('🚀 手动同步: '+syncCount+' 条已审核数据注入态势感知/监测中心');
@@ -4107,24 +4107,24 @@ var AUDIT={
 // ===== VIEW_MAP_MARKER =====
 // ===== VIEW MAP =====
 const VIEW_MAP={
-  situation:{t:'态势总览',b:'态势感知 / 态势总览'},
-  workbench:{t:'联合作业台',b:'态势感知 / 联合作业台（任务工作区 · 情报图层 · 安全指数）'},
+  situation:{t:'全域态势感知',b:'态势感知 / 全域态势感知'},
+  workbench:{t:'智能协同作业台',b:'态势感知 / 智能协同作业台（任务工作区 · 情报图层 · 安全指数）'},
   threatroom:{t:'专项情报作战室',b:'态势感知 / 专项情报作战室（实体专项采集 · 态势预警分析报告 · 预警图）'},
-  myfocus:{t:'我的关注',b:'态势感知 / 我的工作台'},
+  myfocus:{t:'重点目标监测',b:'态势感知 / 重点目标监测（订阅国家 · 项目 · 企业，定向预警流）'},
   datapool:{t:'数据中枢',b:'数据管理 / 数据中枢（数据源库 · 公众号采集）'},
-  intel:{t:'情报影像中心',b:'监测中心 / 情报影像中心'},
-  monitor:{t:'风险监测',b:'监测中心 / 风险监测'},
-  alerts:{t:'预警中心',b:'监测中心 / 预警中心（实时队列 · 智能联动 · 异动信号）'},
-  country:{t:'国别档案',b:'分析研判 / 国别档案（风险矩阵 · 预测推演 · 企业资产）'},
-  countryfile:{t:'国家档案总表',b:'分析研判 / 国家档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
+  intel:{t:'影像情报中心',b:'监测中心 / 影像情报中心（影像图库 · 社媒监测 · 影像分析 · 地理空间情报）'},
+  monitor:{t:'实时风险监测',b:'监测中心 / 实时风险监测'},
+  alerts:{t:'智能预警中心',b:'监测中心 / 智能预警中心（实时队列 · 智能联动 · 异动信号）'},
+  country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · 企业资产）'},
+  countryfile:{t:'国别档案总表',b:'分析研判 / 国别档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报）'},
-  models:{t:'专题分析模型',b:'分析研判 / 专题分析模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
+  models:{t:'风险预测模型',b:'分析研判 / 风险预测模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
   reportsc:{t:'专题分析中心',b:'分析研判 / 专题分析中心（9类专业分析报告 · 全周期生成 / 阅读 / 修订 / 公文版导出）'},
-  aireport:{t:'AI情报分析报告',b:'分析研判 / AI情报分析报告（深度分层研判 · BLUF · 情景推演 · 对策建议）'},
+  aireport:{t:'AI智能研判',b:'分析研判 / AI智能研判（深度分层研判 · BLUF · 情景推演 · 对策建议）'},
   datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
-  'manual-entry':{t:'手动录入工作区',b:'数据管理 / 手动录入工作区（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
+  'manual-entry':{t:'情报录入',b:'数据管理 / 情报录入（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
-  threatorgs:{t:'威胁组织',b:'监测中心 / 威胁组织'},
+  threatorgs:{t:'威胁组织图谱',b:'监测中心 / 威胁组织图谱'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
   /* —— 以下为合并前的旧键：VIEW_MERGE_ALIAS 自动跳转到伞形视图，VIEW_MAP 保留供兼容 —— */
   datasources:{t:'数据中枢 · 数据源库',b:'数据管理 / 数据中枢 / 数据源库'},
@@ -4433,7 +4433,7 @@ const COUNTRYFILE={
     var host=document.getElementById('countryfile-content');
     if(!host)return;
     host.innerHTML=
-      '<div class="card"><div class="card-tt"><span class="ic">📊</span>国家档案总表 · 风险值×预警×项目×人员 一表通览'+
+      '<div class="card"><div class="card-tt"><span class="ic">📊</span>国别档案总表 · 风险值×预警×项目×人员 一表通览'+
         '<span style="margin-left:auto;font-size:10px;color:var(--text3);font-weight:400">点任意行 → 国别联动详情抽屉</span></div>'+
       '<div id="cf-stats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px"></div>'+
       '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">'+
@@ -6724,7 +6724,7 @@ const COUNTRY_DRAWER={
         '</div>'+
         (ents.length?'<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">'+ents.map(function(e){return '<span class="badge b-blue" style="font-size:10px;cursor:pointer" onclick="showEntDetail('+e.id+')">'+e.short+'</span>';}).join('')+'</div>':'<div style="margin-top:6px;font-size:10px;color:var(--text3)">无在档中资企业</div>')+
         '<div style="margin-top:16px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:8px">'+
-          '<button class="btn sm" style="flex:1;font-size:11px" onclick="COUNTRY_DRAWER.close();navigateTo(\'countryfile\')">📊 查看国家档案总表</button>'+
+          '<button class="btn sm" style="flex:1;font-size:11px" onclick="COUNTRY_DRAWER.close();navigateTo(\'countryfile\')">📊 查看国别档案总表</button>'+
           (c?'<button class="btn sm" style="flex:1;font-size:11px" onclick="COUNTRY_DRAWER.close();showCtyDetail(\''+name+'\')">🗂️ 完整风险详情</button>':'')+
         '</div>'+
       '</div>';
@@ -7467,7 +7467,7 @@ var INTELCENTER={
   },
   renderAiReport(el){
     this._aiReportInit();
-    if(!PERM.canUpload()){el.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3)"><div style="font-size:36px;margin-bottom:8px">🔒</div>请先登录后使用AI情报分析报告功能</div>';return;}
+    if(!PERM.canUpload()){el.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3)"><div style="font-size:36px;margin-bottom:8px">🔒</div>请先登录后使用AI智能研判功能</div>';return;}
     var html=this._trainLabel();
     // 概览统计
     var reports=this._aiReports;
@@ -7483,7 +7483,7 @@ var INTELCENTER={
     });
     html+='</div>';
     // 操作栏
-    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F916}</span>AI情报分析报告 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 数据驱动智能研判：系统真实数据装配 + LLM 研判（云端失败自动降级本地引擎）</span></div>';
+    html+='<div class="card"><div class="card-tt"><span class="ic" style="display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="url(#ig-air-t)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 3px rgba(170,100,255,.55))"><defs><linearGradient id="ig-air-t" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#8f6bff"/><stop offset="1" stop-color="#ff6bd6"/></linearGradient></defs><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><rect x="9.2" y="9.2" width="5.6" height="5.6" rx="1"/><line x1="9.2" y1="1.5" x2="9.2" y2="4.5"/><line x1="14.8" y1="1.5" x2="14.8" y2="4.5"/><line x1="9.2" y1="19.5" x2="9.2" y2="22.5"/><line x1="14.8" y1="19.5" x2="14.8" y2="22.5"/><line x1="19.5" y1="9.2" x2="22.5" y2="9.2"/><line x1="19.5" y1="14.8" x2="22.5" y2="14.8"/><line x1="1.5" y1="9.2" x2="4.5" y2="9.2"/><line x1="1.5" y1="14.8" x2="4.5" y2="14.8"/></svg></span>AI智能研判 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 数据驱动智能研判：系统真实数据装配 + LLM 研判（云端失败自动降级本地引擎）</span></div>';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
       '<span style="font-size:12px;color:var(--text3)">共 '+reports.length+' 份报告 | 管理员和注册用户均可使用</span>'+
       '<button class="btn primary sm" onclick="INTELCENTER.showAiReportForm()">\u2795 新建情报分析报告</button></div>';
@@ -7565,7 +7565,7 @@ var INTELCENTER={
   _selectedMaterials:[],
   // 预警推送至AI报告的预填充数据
   _pendingPush:null,
-  // 单条预警推送至AI情报分析报告
+  // 单条预警推送至AI智能研判
   pushAlertToReport(alertId){
     if(!PERM.canUpload()){showToast('⚠️ 请先登录');return;}
     var a=(typeof _findAlertAny==='function')?_findAlertAny(alertId):ALERTS.find(function(x){return String(x.id)===String(alertId);});
@@ -13919,7 +13919,7 @@ const AVIEW={
     var lvSummary={red:0,orange:0,yellow:0,blue:0};
     alerts.forEach(function(a){if(lvSummary[a.level])lvSummary[a.level]++;});
     var lvText=Object.keys(lvSummary).filter(function(k){return lvSummary[k]>0;}).map(function(k){return lvSummary[k]+'条'+ALERT_LV[k].label;}).join('、');
-    showConfirm('将当前筛选的 '+alerts.length+' 条预警（'+lvText+'）批量推送至AI情报分析报告？',function(){
+    showConfirm('将当前筛选的 '+alerts.length+' 条预警（'+lvText+'）批量推送至AI智能研判？',function(){
       INTELCENTER.pushAlertsToReport(ids);
     });
   },

@@ -747,7 +747,7 @@ var THREATROOM = {
      * 不再说「监测盲区或信息真空」误导用户（用户原话：刚果（金）不可能没有数据）。 */
     var webN = (collect && Array.isArray(collect.fresh)) ? collect.fresh.length : (this._fresh ? this._fresh.length : 0);
     if (!st.n && !webN) return '「' + e.cn + '」库内近 ' + this._days + ' 天与本轮全网检索均无有效命中；可能关键词过窄或源覆盖较弱，建议放宽检索词或更换主题词重试。';
-    if (!st.n && webN) return '「' + e.cn + '」库内近 ' + this._days + ' 天无相关数据；本轮全网命中 ' + webN + ' 条（GDELT/GNews/AP 三引擎实时检索）——库内尚未沉淀，请持续关注或加入我的关注。';
+    if (!st.n && webN) return '「' + e.cn + '」库内近 ' + this._days + ' 天无相关数据；本轮全网命中 ' + webN + ' 条（GDELT/GNews/AP 三引擎实时检索）——库内尚未沉淀，请持续关注或加入重点目标监测。';
     var parts = [];
     parts.push('「' + e.cn + '」（' + this._typeLabel(e.type) + '）近 ' + this._days + ' 天库内关联数据 ' + st.n + ' 条，综合威胁等级 ' + grade.t + '（' + grade.score + ' 分）');
     if (webN) parts.push('本轮全网命中 ' + webN + ' 条已纳入研判');

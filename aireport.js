@@ -236,7 +236,7 @@ var AIREPORT = {
     this._destroyCharts();
 
     if (!PERM.canUpload()) {
-      el.innerHTML = '<div class="empty"><div class="ic">🔒</div><div>请先登录后使用AI情报分析报告功能</div></div>';
+      el.innerHTML = '<div class="empty"><div class="ic">🔒</div><div>请先登录后使用AI智能研判功能</div></div>';
       return;
     }
 
@@ -326,7 +326,7 @@ var AIREPORT = {
     }
 
     /* 报告列表 */
-    html += '<div class="card mt-12"><div class="card-tt"><span class="ic">🤖</span>AI情报分析报告';
+    html += '<div class="card mt-12"><div class="card-tt"><span class="ic" style="display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="url(#ig-air-l)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 3px rgba(170,100,255,.55))"><defs><linearGradient id="ig-air-l" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#8f6bff"/><stop offset="1" stop-color="#ff6bd6"/></linearGradient></defs><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><rect x="9.2" y="9.2" width="5.6" height="5.6" rx="1"/><line x1="9.2" y1="1.5" x2="9.2" y2="4.5"/><line x1="14.8" y1="1.5" x2="14.8" y2="4.5"/><line x1="9.2" y1="19.5" x2="9.2" y2="22.5"/><line x1="14.8" y1="19.5" x2="14.8" y2="22.5"/><line x1="19.5" y1="9.2" x2="22.5" y2="9.2"/><line x1="19.5" y1="14.8" x2="22.5" y2="14.8"/><line x1="1.5" y1="9.2" x2="4.5" y2="9.2"/><line x1="1.5" y1="14.8" x2="4.5" y2="14.8"/></svg></span>AI智能研判';
     html += '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 平台核心竞争力：基于系统真实数据的分层专业研判（客观事实 + 分析判断 + 公文表达），四分析师七段生成</span>';
     html += '</div>';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';

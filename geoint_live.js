@@ -210,7 +210,7 @@
       this._lastRegion = name || '';
       /* 如果输入框不存在（不在GEOINT面板），直接显示提示 */
       if (!le || !lo) {
-        showToast('🛰️ 请前往情报影像中心拉取卫星影像');
+        showToast('🛰️ 请前往影像情报中心拉取卫星影像');
         return;
       }
       this.fetchIngest();
@@ -222,7 +222,7 @@
       var lonEl = document.getElementById('gl-lon');
       var box = document.getElementById('gl-results');
       if (!srcEl || !latEl || !lonEl) {
-        showToast('⚠️ 请前往情报影像中心面板操作');
+        showToast('⚠️ 请前往影像情报中心面板操作');
         return;
       }
       var src = srcEl.value;

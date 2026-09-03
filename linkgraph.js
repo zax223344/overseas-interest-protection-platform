@@ -670,7 +670,7 @@ var LINK_GRAPH = (function () {
       h += '<div style="padding:10px;background:var(--bg2);border-radius:8px;font-size:11.5px;line-height:1.7;color:var(--text2)">' + _esc(s.desc || '') + '</div>';
       if (s.feeds && s.feeds.length) {
         h += '<div style="font-size:11px;font-weight:700;color:var(--cyan);margin:12px 0 6px">🔀 该源供给的下游功能区</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
-        var VMAP = { '预警中心': 'alerts', '态势总览': 'situation', '企业资产': 'assets', '风险监测': 'monitor', '威胁组织': 'threatorgs', '预测分析': 'forecast', '情报影像中心': 'intel', '风险矩阵': 'matrix', '数据中心': 'datacenter' };
+        var VMAP = { '智能预警中心': 'alerts', '全域态势感知': 'situation', '企业资产': 'assets', '实时风险监测': 'monitor', '威胁组织图谱': 'threatorgs', '预测分析': 'forecast', '影像情报中心': 'intel', '风险矩阵': 'matrix', '数据中心': 'datacenter' };
         s.feeds.forEach(function (f) {
           var v = VMAP[f];
           h += '<span onclick="' + (v ? "LINK_GRAPH.goView('" + _q(v) + "')" : '') + '" style="font-size:10px;padding:3px 10px;border-radius:10px;background:rgba(0,212,255,.1);color:var(--cyan);' + (v ? 'cursor:pointer' : '') + '">' + _esc(f) + (v ? ' →' : '') + '</span>';

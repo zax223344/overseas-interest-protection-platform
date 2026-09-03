@@ -27,11 +27,11 @@
   };
 
   const VIEW_LABELS = {
-    situation:'态势总览', workbench:'联合作业台', threatroom:'专项情报作战室', myfocus:'我的关注', command:'指挥调度中心', monitor:'风险监测', threatorgs:'威胁组织',
-    intel:'情报影像中心', alerts:'预警中心', country:'国别档案', countryfile:'国家档案总表', reports:'周期简报中心',
-    models:'专题分析模型', reportsc:'专题分析中心', aireport:'AI情报分析报告',
+    situation:'全域态势感知', workbench:'智能协同作业台', threatroom:'专项情报作战室', myfocus:'重点目标监测', command:'指挥调度中心', monitor:'实时风险监测', threatorgs:'威胁组织图谱',
+    intel:'影像情报中心', alerts:'智能预警中心', country:'国别风险研判', countryfile:'国别档案总表', reports:'周期简报中心',
+    models:'风险预测模型', reportsc:'专题分析中心', aireport:'AI智能研判',
     datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
-    'manual-entry':'手动录入工作区',
+    'manual-entry':'情报录入',
     /* 合并前的旧键（兼容跳转用） */
     autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报',
     explain:'可解释审计', role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池',
@@ -48,15 +48,15 @@
   };
 
   const PERMISSION_MATRIX = [
-    { key: 'situation', label: '态势总览', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'workbench', label: '联合作业台（任务工作区+情报图层+安全指数）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'situation', label: '全域态势感知', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'workbench', label: '智能协同作业台（任务工作区+情报图层+安全指数）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'threatroom', label: '专项情报作战室（实体专项采集+态势预警分析报告+预警图）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'myfocus', label: '我的关注', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'alerts', label: '预警中心（实时队列+智能联动+异动信号）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'country', label: '国别档案（矩阵+推演+企业资产）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'countryfile', label: '国家档案总表（风险值+预警+项目+人员）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'myfocus', label: '重点目标监测（订阅国家+项目+企业，定向预警流）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'alerts', label: '智能预警中心（实时队列+智能联动+异动信号）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'country', label: '国别风险研判（单国下钻：矩阵+推演+企业资产）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'countryfile', label: '国别档案总表（风险值+预警+项目+人员）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'command', label: '指挥调度', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'threatorgs', label: '威胁组织', roles: ['mfa','mofcom','mps'] },
+    { key: 'threatorgs', label: '威胁组织图谱', roles: ['mfa','mofcom','mps'] },
     { key: 'datagov', label: '数据治理（数据池+漏斗+归档检索+审计）', roles: ['mfa','mofcom','mps'] },
     { key: 'datapool', label: '数据中枢', roles: ['mfa','mofcom','mps'] },
     { key: 'reports', label: '周期简报中心（研判简报 · 每日简报）', roles: ['mfa','mofcom','mps','enterprise'] },

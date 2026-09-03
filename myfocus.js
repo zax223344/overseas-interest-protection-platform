@@ -145,8 +145,8 @@ var MYFOCUS = {
     el.innerHTML =
       '<div style="padding:16px 18px;max-width:1200px">' +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
-      '<span style="font-size:18px">🎯</span><span style="font-size:16px;font-weight:700">我的关注</span>' +
-      '<span style="font-size:11px;color:var(--text3)">只看订阅相关的预警 · 安保主管视角工作台</span>' +
+      '<span style="font-size:18px;display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="url(#ig-myf-h)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 3px rgba(60,255,160,.5))"><defs><linearGradient id="ig-myf-h" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop stop-color="#52ff8a"/><stop offset="1" stop-color="#00e5c3"/></linearGradient></defs><path d="M1.8 12s4-7.5 10.2-7.5S22.2 12 22.2 12s-4 7.5-10.2 7.5S1.8 12 1.8 12z"/><circle cx="12" cy="12" r="3"/><line x1="4.5" y1="12" x2="8" y2="12" stroke-dasharray="1.5 2.5"/><line x1="16" y1="12" x2="19.5" y2="12" stroke-dasharray="1.5 2.5"/></svg></span><span style="font-size:16px;font-weight:700">重点目标监测</span>' +
+      '<span style="font-size:11px;color:var(--text3)">订阅国家 / 项目 / 企业的定向预警流</span>' +
       '<span style="flex:1"></span>' +
       '<span style="font-size:12px;color:' + (matched.some(function (a) { return a.level === 'red'; }) ? 'var(--red)' : 'var(--text2)') + ';font-weight:700">🔴 ' + matched.filter(function (a) { return a.level === 'red'; }).length + '</span>' +
       '<span style="font-size:12px;color:var(--orange);font-weight:700">🟠 ' + matched.filter(function (a) { return a.level === 'orange'; }).length + '</span>' +
