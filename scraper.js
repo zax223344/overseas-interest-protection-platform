@@ -1631,16 +1631,16 @@ var SOURCE_REGISTRY={
   };
   for(var cat in googleNewsCn){
     if(!SOURCE_REGISTRY[cat])continue;
-    // Google News 中文聚合
+    // Google News 中文聚合（2026-09-03 加 when:3d 时间窗——无窗时任意年代旧文混入，土库曼 2023 旧闻冒充当日情报）
     SOURCE_REGISTRY[cat].sources.push({
       name:'Google资讯(中文)',type:'rss',
-      url:'https://news.google.com/rss/search?q='+encodeURIComponent(googleNewsCn[cat])+'&hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
+      url:'https://news.google.com/rss/search?q='+encodeURIComponent(googleNewsCn[cat]+' when:3d')+'&hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
       region:'cn',priority:8,parser:'rss',query:googleNewsCn[cat]
     });
     // Google News 英文聚合
     SOURCE_REGISTRY[cat].sources.push({
       name:'Google News(EN)',type:'rss',
-      url:'https://news.google.com/rss/search?q='+encodeURIComponent(googleNewsEn[cat])+'&hl=en&gl=US&ceid=US:en',
+      url:'https://news.google.com/rss/search?q='+encodeURIComponent(googleNewsEn[cat]+' when:3d')+'&hl=en&gl=US&ceid=US:en',
       region:'intl',priority:9,parser:'rss',query:googleNewsEn[cat]
     });
   }
@@ -1654,7 +1654,7 @@ var SOURCE_REGISTRY={
     'geopolitical_intel':{name:'The Guardian',url:'https://www.theguardian.com/world/rss',query:'diplomacy geopolitical strategic tension'},
     'terror_events':{name:'Al Jazeera',url:'https://www.aljazeera.com/xml/rss/all.xml',query:'terror attack bombing explosion'},
     'infrastructure':{name:'The Guardian',url:'https://www.theguardian.com/world/rss',query:'infrastructure pipeline power port attack'},
-    'security_events':{name:'Google News(EN)',url:'https://news.google.com/rss/search?q='+encodeURIComponent('Chinese citizen overseas attack embassy evacuation')+'&hl=en&gl=US&ceid=US:en',query:'Chinese citizen overseas attack embassy evacuation'},
+    'security_events':{name:'Google News(EN)',url:'https://news.google.com/rss/search?q='+encodeURIComponent('Chinese citizen overseas attack embassy evacuation when:3d')+'&hl=en&gl=US&ceid=US:en',query:'Chinese citizen overseas attack embassy evacuation'},
     'osint_intel':{name:'The Guardian-Tech',url:'https://www.theguardian.com/technology/rss',query:'cyber hack breach data security'}
   };
   for(var cat2 in extraSources){

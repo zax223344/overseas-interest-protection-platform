@@ -414,6 +414,20 @@ function freqOfPeriodKey(key) {
   if (/^\d{4}-\d{2}$/.test(s)) return 'monthly';
   return '';
 }
+/* 报告名称随所选周期改写（2026-09-03 用户指令：周期是实实在在变动的，名称也要跟着变）
+ * 规则：名称尾部为「日报/周报/月报/季报/半年报/年报」→ 换成目标周期名词（涉华负面情报周报→季报）；
+ *       尾部为「分析/评估/专报/简报」→ 在前面插入周期形容词（国别风险月度评估→季度评估）；
+ *       与类型默认频率一致时不改写（幂等，默认期次名称保持原样）。 */
+const FREQ_NOUN = { daily: '日报', weekly: '周报', monthly: '月报', quarterly: '季报', semiannual: '半年报', yearly: '年报' };
+const FREQ_ADJ = { daily: '每日', weekly: '每周', monthly: '月度', quarterly: '季度', semiannual: '半年度', yearly: '年度' };
+function titleForFreq(name, freq) {
+  if (!name || !freq || !FREQ_NOUN[freq]) return name;
+  const m = /^(.*?)(每日|每周|每月|每季|每半年|每年|日常|周度|月度|季度|半年度|年度)?(日报|周报|月报|季报|半年报|年报|分析|评估|专报|简报)$/.exec(String(name).trim());
+  if (!m) return String(name).trim() + FREQ_NOUN[freq];
+  const base = m[1], tail = m[3];
+  if (tail === '分析' || tail === '评估' || tail === '专报' || tail === '简报') return base + FREQ_ADJ[freq] + tail;
+  return base + FREQ_NOUN[freq];
+}
 /* 各类型当期目标：{ key, due } —— due=false 表示未到生成时点（周一06:00/每月1日06:00/每季首日06:00/每日07:00） */
 function currentTarget(freq, now) {
   const y = now.getFullYear(), mo = now.getMonth();
@@ -454,8 +468,9 @@ function pvKimi() {
     model: process.env.LLM_MODEL || 'kimi-k2.7-code',
     /* 2026-09-03 真根因破案：kimi-k2.7-code 是推理模型，8000 max_tokens 会被思考阶段
      * 消耗殆尽（实测 finish_reason=length + content 空），复杂主题（制裁/冲突类）必然翻车。
-     * 放宽到 16000 同时保留 300s 超时 */
-    maxTokens: 16000,
+     * 2026-09-03 二次放宽：季度大盘（5729 事件上下文）实测 16000 仍被思考吃光
+     * （project-exposure 空内容 finish=length），放宽到 24000 并保留 300s 停滞超时 */
+    maxTokens: 24000,
     /* 2026-09-03：kimi-k2.7 长公文生成（制裁/冲突类分节多、输出 6000+ 字）实测 180s 不够
      * （chokepoint 148s 成功、sanction/conflict 连续 180s 超时），放宽到 300s */
     timeout: 300000
@@ -550,7 +565,7 @@ const _STREAM_TOTAL_MS = 600000;
 const SYSTEM_PROMPT = '你是中国海外利益保护情报预警平台的高级情报分析员，为外交部、商务部、公安部、国家安全部、中央企业领导撰写专业分析报告。写作要求：一、严格党政机关公文语体，庄重、准确、简明，不用口语和网络用语；二、结构层次序号：一级"一、"，二级"（一）"，三级"1."，四级"（1）"；三、标点符号严格按 GB/T 15834：中文语境一律全角标点，并列词语用顿号、分句用逗号、句末用句号，书名号《》用于文件与报告名，引号用""\'\'，严禁出现半角逗号句号残留；四、数字用法按 GB/T 15835：统计数据用阿拉伯数字，约数用"约""余"；五、判断要有分寸，区分"已证实""研判认为""需持续关注"三级确定性表述；六、只基于给定数据研判，数据未涉及的领域不得杜撰；七、输出为纯文本公文，严禁使用任何 Markdown 语法（星号加粗、井号标题、反引号、竖线表格等）。';
 /* 客观数据 → user prompt */
 /* 对策建议撰写规范（《对策建议撰写规范手册》五段式+关键句式+时序分级，2026-09-03 用户指令） */
-const RECOMMENDATION_SPEC = '【对策建议撰写规范（必须严格执行）】每条建议按五段式微观结构展开：形势判断→战略目标→具体行动→资源保障→风险成效；具体行动必须使用关键句式「由【牵头单位】会同【配合单位】，于【时间】前，通过【手段】，完成【可验收成果】，预计【成效或风险】。」；牵头单位从外交部、商务部、公安部、国家安全部、国务院国资委、中央企业、驻外使领馆中按职责选定；全部建议按时序分级标注：近期（0至6个月）、中期（6至24个月）、远期（2至5年）；一事一议、动宾结构、成果可验收、数据可追溯；严禁空泛口号式建议。';
+const RECOMMENDATION_SPEC = '【对策建议撰写规范（必须严格执行，源自《智库报告"对策建议"撰写规范手册》）】【宏观结构】对策体系按"总体思路→核心举措→保障机制→优先级与实施路径"四层组织：总体思路1段（战略定位、基本原则、目标年份）；核心举措3至5条（每条按五段式微观结构展开，一事一议，主建议不超过5条）；保障机制涵盖法治、资金、人才、考核；优先级与实施路径按时序分级：近期（0至6个月，摸底建机制试点）、中期（6至24个月，建平台推标准扩面）、远期（2至5年，制度定型）。【五段式微观结构】每条建议依次含：①形势判断（1句，点出痛点与时机，回指前文数据）；②战略目标（1句，含目标年份与覆盖率）；③具体行动（分2至4条，含牵头与配合单位）；④资源保障（钱、人、数据、法规来源明确）；⑤风险与成效（预期主要阻力与规避路径＋量化成效）。具体行动必须使用关键句式「由【牵头单位】会同【配合单位】，于【时间】前，通过【手段】，完成【可验收成果】，预计【成效或风险】。」。【四条生死线】精准（谁来做、做什么、怎么做，目标具体到部门机构）；可操作（给出工作流、工具或量化指标）；系统（组合拳，涵盖政治、经济、安全等多维度）；前瞻（针对前文研判的未来威胁趋势提出预案）；并标注国内法律框架内可行项与需国际决议支持项。【文风铁律】动宾结构开路（多用建立、推动、完善、试点），严禁"务必、必须、坚决"等口号式说教；以参谋员身份行文，用"建议、可考虑、宜"；缩略语首次出现写全称；数据注明口径（同比/环比、样本范围），杜绝"约数十""普遍认为"等模糊表述；牵头单位从外交部、商务部、公安部、国家安全部、国务院国资委、中央企业、驻外使领馆中按职责选定。';
 function buildUserPrompt(def, periodKey, win, data) {
   const lines = [];
   lines.push('【报告类型】' + def.name + '（周期 ' + periodKey + '）');
@@ -1394,24 +1409,33 @@ async function generateReport(typeId, periodKey, opts) {
   try {
     const data = await def.assemble(_ctx.query, win, periodKey, o);
     data.win = win;
-    const llm = await runLlm(def, periodKey, win, data);
+    /* 2026-09-03 名称随周期变动：有效频率（显式 freq 或期次键推断）≠ 类型默认频率时改写名称；
+     * def2 让 LLM 提示词 / 标准版徽标 / 公文版头部 / 摘要 / 入库标题全部使用同一动态名称 */
+    const effFreq = freq || freqOfPeriodKey(periodKey) || def.freq;
+    const dynTitle = (!def.manualOnly && effFreq !== def.freq && FREQ_ALL.indexOf(effFreq) >= 0)
+      ? titleForFreq(data.title || def.name, effFreq)
+      : (data.title || def.name);
+    const def2 = (dynTitle !== def.name) ? Object.assign({}, def, { name: dynTitle, title: dynTitle }) : def;
+    const llm = await runLlm(def2, periodKey, win, data);
     /* 2026-09-03 公文成稿三道清洗：Markdown 剥离 → 残留清洗（西式时间/省略号/内部代号）→ 标点全角 */
     const llmText = llm.ok ? govPunctuate(polishGovText(stripMarkdown(llm.text))) : '';
-    const html = renderHtml(def, periodKey, data, llmText, llm.ok);
-    const govHtml = renderGovHtml(def, periodKey, data, llmText, llm.ok);
+    const html = renderHtml(def2, periodKey, data, llmText, llm.ok);
+    const govHtml = renderGovHtml(def2, periodKey, data, llmText, llm.ok);
     const paras = _llmParas(llmText);
+    /* 摘要取首个有实质内容的段落（跳过「内容提要」类短标题行） */
+    const absPara = paras.find(p => p.replace(/[\s（(【】）)「」：:、，。]/g, '').length >= 15) || paras[0] || '';
     const summary = {
-      typeName: def.name, period: periodKey, freq: freq || def.freq,
+      typeName: def2.name, period: periodKey, freq: effFreq,
       total: (data.stats || {}).total || 0, red: (data.stats || {}).red || 0, orange: (data.stats || {}).orange || 0,
       sectionCounts: (data.sections || []).map(s => s.name + ':' + s.count).join('，'),
-      abstract: llm.ok ? (paras[0] || '').slice(0, 200) : '本期待大模型研判服务恢复后补充生成。',
+      abstract: llm.ok ? absPara.slice(0, 200) : '本期待大模型研判服务恢复后补充生成。',
       topic: o.topic || '',
       llmOk: llm.ok, llmError: llm.ok ? '' : llm.error
     };
     const dataJson = {
       stats: data.stats, sections: data.sections, chart: data.chart || [], chartCap: data.chartCap || '',
       extraPrompt: data.extraPrompt || '', win: [_dayKey(win[0]), _dayKey(win[1])],
-      freq: freq || def.freq,
+      freq: effFreq,
       options: def.id === 'model-export' ? { topic: o.topic || '', dims: o.dims || null, countries: o.countries || null, orgs: o.orgs || null, windowDays: o.windowDays || 90 } : null,
       generatedAt: new Date().toISOString()
     };
@@ -1420,9 +1444,9 @@ async function generateReport(typeId, periodKey, opts) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
        ON CONFLICT (rtype, period) DO UPDATE SET title=$3, html=$4, gov_html=$5, summary=$6, data_json=$7, llm_model=$8, created_at=NOW()
        RETURNING id`,
-      [typeId, periodKey, data.title, html, govHtml, JSON.stringify(summary), JSON.stringify(dataJson), llm.ok ? llm.model : null]
+      [typeId, periodKey, dynTitle, html, govHtml, JSON.stringify(summary), JSON.stringify(dataJson), llm.ok ? llm.model : null]
     );
-    return { id: r.rows[0].id, period: periodKey, freq: freq || def.freq, llmOk: llm.ok, llmError: llm.error || '' };
+    return { id: r.rows[0].id, period: periodKey, freq: effFreq, title: dynTitle, llmOk: llm.ok, llmError: llm.error || '' };
   } finally {
     _generating.delete(lockKey);
   }
@@ -1488,6 +1512,9 @@ function registerRoutes(app, auth) {
         }
       }
       if (def.manualOnly && o && (o.dims || o.topic || o.countries || o.orgs)) o.custom = true;
+      /* 2026-09-03 根因修复：useFreq 必须传入 o.freq——此前被丢弃，导致前端选了周期
+       * 服务端仍按类型默认频率取窗口，名称也不随周期变动 */
+      if (useFreq) o.freq = useFreq;
       const out = await generateReport(def.id, String(key).trim(), o);
       res.json({ ok: true, id: out.id, period: out.period, freq: out.freq, llmOk: out.llmOk, llmError: out.llmError });
     } catch (e) {
@@ -1577,4 +1604,4 @@ async function init(ctx) {
 
 module.exports = { init };
 /* 供离线验证脚本（不经 HTTP）使用的内部出口 */
-module.exports._test = { REPORT_TYPES, defOf, generateReport, periodWindowOf, currentTarget, currentPeriodOf, windowOfFreq, freqOfPeriodKey, govPunctuate, polishGovText, _cnTime, pvKimi, weekKey, _dayKey };
+module.exports._test = { REPORT_TYPES, defOf, generateReport, periodWindowOf, currentTarget, currentPeriodOf, windowOfFreq, freqOfPeriodKey, titleForFreq, govPunctuate, polishGovText, _cnTime, pvKimi, weekKey, _dayKey };

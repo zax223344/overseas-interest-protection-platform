@@ -383,15 +383,13 @@
       html += '<div style="padding:14px;color:var(--text3);font-size:11px">暂无报告类型。</div>';
     }
     S.types.forEach(function (t) {
-      var f = freqOf(t);
       var dot = S.generating && S.genType === t.id ? 'gen' : (curPeriodDone(t) ? 'on' : '');
       var dotTitle = dot === 'gen' ? '生成中' : dot === 'on' ? '当期已生成' : '当期未生成';
       var meta = t.lastAt
         ? '<span class="rc-stdot ' + dot + '" title="' + dotTitle + '"></span><span>最近：' + esc(t.lastPeriod || '—') + ' · ' + esc(fmtTs(t.lastAt)) + '</span>'
         : '<span class="rc-stdot ' + dot + '" title="' + dotTitle + '"></span><span>尚未生成</span>';
       html += '<div class="rc-tcard' + (S.cur === t.id ? ' on' : '') + '" data-t="' + esc(t.id) + '" title="' + esc(t.desc || t.name) + '">' +
-        '<div class="rc-trow"><span>' + (t.ic || '📄') + '</span><span class="nm">' + esc(t.name) + '</span>' +
-        '<span class="rc-fb" style="color:' + f.c + '">' + f.n + '</span></div>' +
+        '<div class="rc-trow"><span>' + (t.ic || '📄') + '</span><span class="nm">' + esc(t.name) + '</span></div>' +
         '<div class="rc-tmeta">' + meta + '</div>' +
         '</div>';
     });
@@ -507,7 +505,6 @@
         '<span style="font-size:16px">' + (t.ic || '📄') + '</span>' +
         '<span class="rc-tb-title">' + esc(d ? (d.title || t.name) : t.name) + '</span>' +
         (d ? '<span class="rc-badge">📅 ' + esc(d.period || '—') + '</span>' : '') +
-        '<span class="rc-badge">' + f.n + '</span>' +
         (d ? '<span class="rc-badge time">🕐 ' + esc(fmtTs(d.created_at)) + '</span>' : '') +
         '<span class="rc-badge llm" title="本报告由 LLM 生成">🤖 ' + esc((d && d.llm_model) || 'kimi-k2.7') + '</span>' +
       '</div>' +
@@ -560,12 +557,11 @@
     }
     if (!S.list.length) {
       var t = typeOf(S.cur);
-      var f = freqOf(t);
       el.innerHTML = '<div class="rc-state">' +
         '<span class="ic">' + (t && t.ic || '📄') + '</span>' +
         '<div class="big"><b style="color:#9fe8ff">' + esc(t ? t.name : '') + '</b><br>' + esc(t ? (t.desc || '') : '') + '</div>' +
         '<button class="rc-go" data-act="gen-empty">⚡ 生成本期报告</button>' +
-        '<span class="rc-dim">' + f.n + '产品 · 尚未生成任何期次 · 生成由 kimi-k2.7 撰写，约 1–3 分钟</span>' +
+        '<span class="rc-dim">支持日报/周报/月报/季报/半年报/年报六频生成 · 尚未生成任何期次 · 生成由 kimi-k2.7 撰写，约 1–3 分钟</span>' +
         '</div>';
       return;
     }

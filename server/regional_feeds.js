@@ -325,7 +325,11 @@ for (const [iso, cn, region] of GN_COUNTRIES) {
   let en = _REGION_ALIAS[iso] || '';
   if (!en) { try { en = _REGION_EN.of(iso) || ''; } catch (e) {} }
   for (const t of GN_QUERIES) {
-    const q = en ? '(' + en + ') ' + t.q : t.q;
+    /* 2026-09-03 根因修复（用户识破土库曼 2023 旧闻冒充当日情报）：
+     * 无 when: 时间窗时 Google 返回任意年代的匹配旧文（"coup" 命中 2023 年
+     * Akhal-Teke 公告被当 2026-09-02 新闻入库）。全部国别 GNews 源强制 when:3d
+     * （对齐 channel-watch），从源头杜绝旧文进入采集候选池。 */
+    const q = en ? '(' + en + ') ' + t.q + ' when:3d' : t.q + ' when:3d';
     GOOGLE_NEWS_SOURCES.push({
       cn, iso, region,
       name: 'GoogleNews·' + cn + '·' + t.focus,
