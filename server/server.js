@@ -188,6 +188,35 @@ app.use(function (req, res, next) {
   next();
 });
 
+/* ===== 2026-09-03 根治「侧栏闪现后消失」缓存错配 =====
+ * 事故：role-ui.js 改动后 ?v=7 未递增 → 用户浏览器拿到新 index.html（no-store）
+ * + 旧缓存 role-ui.js（24h 强缓存、白名单无新视图）→ applySidebar 把新侧栏项隐藏。
+ * 根治：GET / 服务端把 index.html 里 src/href 的 ?v=N 实时替换为文件 mtime 版本号
+ * （index.html 本身 no-store，每次引用最新 URL）→ JS/CSS 改动即时生效，永不依赖人工升版。 */
+const _WEBROOT = path.join(__dirname, '..');
+const _mtimeVer = {};
+function _verFor(rel) {
+  if (_mtimeVer[rel] && Date.now() - _mtimeVer[rel].at < 30000) return _mtimeVer[rel].v; /* 30s 内存缓存 */
+  let v = '0';
+  try { v = String(Math.floor(require('fs').statSync(path.join(_WEBROOT, rel)).mtimeMs / 1000)); } catch (e) {}
+  _mtimeVer[rel] = { at: Date.now(), v };
+  return v;
+}
+app.get(['/', '/index.html'], (req, res) => {
+  try {
+    let html = require('fs').readFileSync(path.join(_WEBROOT, 'index.html'), 'utf8');
+    html = html.replace(/((?:src|href)=")([^"?]+?\.(?:js|css))(?:\?v=\d+)?(")/g, (m, pre, rel, post) => {
+      if (/^(https?:)?\/\//i.test(rel)) return m; /* 外链不动 */
+      const clean = rel.replace(/^\//, '');
+      return pre + rel + '?v=' + _verFor(clean) + post;
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(html);
+  } catch (e) {
+    res.status(500).send('index.html 读取失败: ' + e.message);
+  }
+});
+
 app.use(express.static(path.join(__dirname, '..'), {
   setHeaders: function (res, filePath) {
     /* 缓存策略（2026-09-02 perf）：
