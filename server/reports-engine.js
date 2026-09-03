@@ -46,6 +46,35 @@ function _dayKey(d) {
 function _cnDate(d) {
   return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
 }
+/* 中文时间统一表达（2026-09-03 用户铁律：报告时间一律中文式，删除西式 GMT/RFC 尾注）
+ * 输入兼容：ISO(2026-08-25T13:37:35[Z]) / RFC(Tue, 25 Aug 2026 13:37:35 GMT) /
+ *          GDELT(20260825T133735Z) / 常规(2026-08-25 13:37) / 纯日期(2026-08-25)
+ * 输出：带时刻 → 2026年8月25日 13时37分；纯日期 → 2026年8月25日；解析失败 → 原样 */
+const _EN_MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function _cnTime(s) {
+  const raw = String(s == null ? '' : s).trim();
+  if (!raw) return '';
+  /* 纯中文已合规 */
+  if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(raw)) return raw;
+  let y = 0, mo = 0, d = 0, h = null, mi = null;
+  /* RFC 格式：Tue, 25 Aug 2026 13:37:35 GMT */
+  let m = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+([A-Za-z]{3})\w*\s+(\d{4})\s+(\d{1,2}):(\d{2})/i.exec(raw);
+  if (m) { d = +m[1]; mo = _EN_MON[m[2].toLowerCase()] || 0; y = +m[3]; h = +m[4]; mi = +m[5]; }
+  /* GDELT 紧凑格式：20260825T133735Z */
+  if (!y) {
+    m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/.exec(raw);
+    if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; h = +m[4]; mi = +m[5]; }
+  }
+  /* ISO / 常规格式：2026-08-25T13:37:35 / 2026-08-25 13:37 / 2026-08-25 */
+  if (!y) {
+    m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2}))?/.exec(raw);
+    if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; if (m[4] != null) { h = +m[4]; mi = +m[5] != null ? +m[5] : 0; } }
+  }
+  if (!y || !mo || !d || mo > 12 || d > 31) return raw; /* 解析失败保原样（不丢信息） */
+  let out = y + '年' + mo + '月' + d + '日';
+  if (h != null && h < 24) out += ' ' + h + '时' + String(mi || 0).padStart(2, '0') + '分';
+  return out;
+}
 /* ISO 周：返回 { year, week, monday(Date 周一 00:00) } */
 function _isoWeek(d) {
   const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -198,7 +227,7 @@ function lvStat(list) {
   return c;
 }
 function toItem(i) {
-  return { title: i.title, level: i.severity, country: i.country || '未标注', time: i.time, url: i.url, digest: i.digest };
+  return { title: i.title, level: i.severity, country: i.country || '未标注', time: _cnTime(i.time) || '时间不详', url: i.url, digest: i.digest };
 }
 function section(name, list, n) {
   const st = lvStat(list);
@@ -341,6 +370,50 @@ function dayWindow(key) {
   const start = new Date(+m[1], +m[2] - 1, +m[3]);
   return [start, new Date(start.getTime() + 86400000)];
 }
+function semiannualWindow(key) {
+  const m = /^(\d{4})-S([12])$/.exec(String(key).trim());
+  if (!m) throw new Error('周期格式错误（应为 YYYY-S1 或 YYYY-S2）');
+  const y = +m[1], s = +m[2];
+  return [new Date(y, (s - 1) * 6, 1), new Date(y, s * 6, 1)];
+}
+function yearlyWindow(key) {
+  const m = /^(\d{4})$/.exec(String(key).trim());
+  if (!m) throw new Error('周期格式错误（应为 YYYY）');
+  const y = +m[1];
+  return [new Date(y, 0, 1), new Date(y + 1, 0, 1)];
+}
+/* 全周期频率集（2026-09-03 用户指令：报告产品线各点全部支持 日/周/月/季/半年/年 报） */
+const FREQ_ALL = ['daily', 'weekly', 'monthly', 'quarterly', 'semiannual', 'yearly'];
+function currentPeriodOf(freq, now) {
+  const y = now.getFullYear(), mo = now.getMonth();
+  if (freq === 'daily') return _dayKey(now);
+  if (freq === 'weekly') return weekKey(now);
+  if (freq === 'monthly') return y + '-' + String(mo + 1).padStart(2, '0');
+  if (freq === 'quarterly') return y + '-Q' + (Math.floor(mo / 3) + 1);
+  if (freq === 'semiannual') return y + '-S' + (mo < 6 ? 1 : 2);
+  if (freq === 'yearly') return String(y);
+  return null;
+}
+function windowOfFreq(freq, key) {
+  if (freq === 'daily') return dayWindow(key);
+  if (freq === 'weekly') return weekWindow(key);
+  if (freq === 'monthly') return monthWindow(key);
+  if (freq === 'quarterly') return quarterWindow(key);
+  if (freq === 'semiannual') return semiannualWindow(key);
+  if (freq === 'yearly') return yearlyWindow(key);
+  throw new Error('不支持的周期频率：' + freq);
+}
+/* 周期键 → 频率推断（历史期次徽标） */
+function freqOfPeriodKey(key) {
+  const s = String(key || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return 'daily';
+  if (/^\d{4}-W\d{2}$/.test(s)) return 'weekly';
+  if (/^\d{4}-Q\d$/.test(s)) return 'quarterly';
+  if (/^\d{4}-S[12]$/.test(s)) return 'semiannual';
+  if (/^\d{4}$/.test(s)) return 'yearly';
+  if (/^\d{4}-\d{2}$/.test(s)) return 'monthly';
+  return '';
+}
 /* 各类型当期目标：{ key, due } —— due=false 表示未到生成时点（周一06:00/每月1日06:00/每季首日06:00/每日07:00） */
 function currentTarget(freq, now) {
   const y = now.getFullYear(), mo = now.getMonth();
@@ -476,6 +549,8 @@ const _STREAM_TOTAL_MS = 600000;
 /* 9 类共用 system prompt 基座（公文要求） */
 const SYSTEM_PROMPT = '你是中国海外利益保护情报预警平台的高级情报分析员，为外交部、商务部、公安部、国家安全部、中央企业领导撰写专业分析报告。写作要求：一、严格党政机关公文语体，庄重、准确、简明，不用口语和网络用语；二、结构层次序号：一级"一、"，二级"（一）"，三级"1."，四级"（1）"；三、标点符号严格按 GB/T 15834：中文语境一律全角标点，并列词语用顿号、分句用逗号、句末用句号，书名号《》用于文件与报告名，引号用""\'\'，严禁出现半角逗号句号残留；四、数字用法按 GB/T 15835：统计数据用阿拉伯数字，约数用"约""余"；五、判断要有分寸，区分"已证实""研判认为""需持续关注"三级确定性表述；六、只基于给定数据研判，数据未涉及的领域不得杜撰；七、输出为纯文本公文，严禁使用任何 Markdown 语法（星号加粗、井号标题、反引号、竖线表格等）。';
 /* 客观数据 → user prompt */
+/* 对策建议撰写规范（《对策建议撰写规范手册》五段式+关键句式+时序分级，2026-09-03 用户指令） */
+const RECOMMENDATION_SPEC = '【对策建议撰写规范（必须严格执行）】每条建议按五段式微观结构展开：形势判断→战略目标→具体行动→资源保障→风险成效；具体行动必须使用关键句式「由【牵头单位】会同【配合单位】，于【时间】前，通过【手段】，完成【可验收成果】，预计【成效或风险】。」；牵头单位从外交部、商务部、公安部、国家安全部、国务院国资委、中央企业、驻外使领馆中按职责选定；全部建议按时序分级标注：近期（0至6个月）、中期（6至24个月）、远期（2至5年）；一事一议、动宾结构、成果可验收、数据可追溯；严禁空泛口号式建议。';
 function buildUserPrompt(def, periodKey, win, data) {
   const lines = [];
   lines.push('【报告类型】' + def.name + '（周期 ' + periodKey + '）');
@@ -491,13 +566,14 @@ function buildUserPrompt(def, periodKey, win, data) {
       lines.push('    本周期内未监测到相关情报。');
     } else {
       s.items.slice(0, 6).forEach((it, ii) => {
-        lines.push('    ' + (ii + 1) + '. [' + (_LV_CN[it.level] || it.level || '—') + '][' + (it.country || '未标注') + '] ' + String(it.title || '').slice(0, 90) + '（' + (it.time || '时间不详') + '）');
+        lines.push('    ' + (ii + 1) + '. [' + (_LV_CN[it.level] || it.level || '—') + '][' + (it.country || '未标注') + '] ' + String(it.title || '').slice(0, 90) + '（' + (_cnTime(it.time) || '时间不详') + '）');
       });
-      if (s.items.length > 6) lines.push('    ……另有 ' + (s.items.length - 6) + ' 条详见客观数据节。');
+      if (s.items.length > 6) lines.push('    另有 ' + (s.items.length - 6) + ' 条同类事件，详见客观数据节。');
     }
   });
   if (data.extraPrompt) lines.push('', data.extraPrompt);
   lines.push('', '【写作要求】' + def.promptBrief);
+  lines.push('', RECOMMENDATION_SPEC);
   return lines.join('\n');
 }
 function _cnNum(n) { return ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五'][n - 1] || String(n); }
@@ -529,6 +605,36 @@ function stripMarkdown(text) {
     .replace(/\|/g, '｜')                 /* 竖线→全角 */
     .replace(/\r\n/g, '\n')
     .trim();
+}
+/* 公文成稿清洗（2026-09-03 用户铁律「太粗糙了，跟每日简报差距太大」）：
+ *  ① 删除西式时间尾注（巴基斯坦，Tue, 25 Aug 2026 13:37:35 GMT）类括注；
+ *  ② ……
+ *  ③ 删除正文中的蛇形小写源类型残留（geopolitical_intel / xxx_watch 等内部代号）；
+ *  ④ 空白归一：全角空格、连续空格、空括号、重复句读。 */
+function polishGovText(text) {
+  let t = String(text || '');
+  if (!t) return t;
+  /* URL/邮箱保护 */
+  const holds = [];
+  t = t.replace(/https?:\/\/[^\s<>"'，。；：）)]+/gi, m => { holds.push(m); return '\x00' + (holds.length - 1) + '\x00'; });
+  /* ① 西式时间括注：含星期英文缩写或 GMT/+0800 时区的（…）整段删除 */
+  t = t.replace(/（[^（）]*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?[^（）]*(?:GMT|UTC|[+-]\d{2}:?\d{2})[^（）]*）/gi, '');
+  t = t.replace(/\([^()]*\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b[^()]*(?:GMT|UTC)\)/gi, '');
+  /* ② 省略号残留归一：连续…全部收敛为句号（公文正文不用省略号） */
+  t = t.replace(/\s*…+\s*/g, '。');
+  /* ③ 内部源类型蛇形代号（前后为中文或行首行尾时） */
+  t = t.replace(/(?:^|(?<=[\u4e00-\u9fa5，。；：、（）\s]))[a-z][a-z0-9]*_(?:intel|watch|feed|data|events?|daily|weekly|sentinel|matrix)(?=(?:$|[\s，。；：、）(][^a-zA-Z]|[\u4e00-\u9fa5]))/gi, '');
+  /* ④ 空白归一 */
+  t = t.replace(/[\u3000\t]+/g, '')
+       .replace(/[ \t]{2,}/g, ' ')
+       .replace(/（\s*）/g, '')
+       .replace(/\(\s*\)/g, '')
+       .replace(/[，。；：]{2,}/g, m => m[0])
+       .replace(/\n{3,}/g, '\n\n')
+       .replace(/ +\n/g, '\n');
+  /* 还原 URL */
+  t = t.replace(/\x00(\d+)\x00/g, (_, i) => holds[+i]);
+  return t.trim();
 }
 
 /* ============================================================
@@ -593,6 +699,8 @@ function _llmParas(text) {
 }
 function renderHtml(def, periodKey, data, llmText, llmOk) {
   const st = data.stats || {};
+  const _now = new Date();
+  const nowCn = _now.getFullYear() + '年' + (_now.getMonth() + 1) + '月' + _now.getDate() + '日 ' + String(_now.getHours()).padStart(2, '0') + '时' + String(_now.getMinutes()).padStart(2, '0') + '分';
   const statCards = [
     ['独立事件', st.total || 0], ['红色', st.red || 0], ['橙色', st.orange || 0],
     ['涉华情报', st.chinaCount != null ? st.chinaCount : '—'], ['黄色', st.yellow || 0], ['蓝色', st.blue || 0]
@@ -645,7 +753,7 @@ function renderHtml(def, periodKey, data, llmText, llmOk) {
     + '<div class="rp-hd"><h1>' + _esc(data.title) + '</h1>'
     + '<div class="rp-line"></div>'
     + '<div class="rp-meta"><span class="rp-badge">' + _esc(def.name) + '</span><span>周期：' + _esc(periodKey) + '</span>'
-    + '<span>生成时间：' + _esc(new Date().toLocaleString('zh-CN')) + '</span>'
+    + '<span>生成时间：' + _esc(nowCn) + '</span>'
     + '<span>研判模型：' + (llmOk ? _esc(pvKimi().model) : '待补充（大模型服务暂不可用）') + '</span></div></div>'
     + '<div class="rp-stats">' + statCards + '</div>'
     + (chart ? '<div class="rp-chart"><div class="rp-cap">' + _esc(data.chartCap || '分项统计') + '</div>' + chart + '</div>' : '')
@@ -1028,72 +1136,159 @@ async function assembleSpillover(q, win) {
   };
 }
 
-/* 9. 专题分析模型报告（仅手动：组织归因 + 近90天趋势 + 国别分布） */
-async function assembleModelExport(q, win) {
-  const items = dedupeEvents(cleanItems(await fetchItems(q, win[0], win[1])));
-  /* 组织归因（与季报同源匹配器） */
-  const matchers = orgMatchers();
-  const byOrg = {};
-  items.forEach(i => {
-    const text = i.title + ' ' + i.digest;
-    matchers.forEach(m => {
-      if (!m.re.test(text)) return;
-      if (!byOrg[m.org.name]) byOrg[m.org.name] = { org: m.org, list: [], countries: {} };
-      byOrg[m.org.name].list.push(i);
-      const c = i.country || '未标注';
-      byOrg[m.org.name].countries[c] = (byOrg[m.org.name].countries[c] || 0) + 1;
+/* 9. 专题分析模型报告（仅手动：交互式选题 → 模型矩阵深度分析）
+ * 2026-09-03 用户指令重设计：「先大量给用户选择的专题内容」+「分析要详细深度、体现模型差异化」。
+ * options = { topic, dims:[org|trend|country|china|project|chokepoint|sanction], countries:[], orgs:[], windowDays }
+ * 未传 options 时保持默认三维（组织归因/趋势/国别），兼容旧入口。 */
+const MODEL_DIMS = {
+  org: '威胁组织归因分析',
+  trend: '事件趋势分析',
+  country: '国别分布分析',
+  china: '涉华暴露分析',
+  project: '中资项目关联分析',
+  chokepoint: '海上咽喉要道动态',
+  sanction: '制裁合规动态'
+};
+async function assembleModelExport(q, win, periodKey, opts) {
+  const o = opts || {};
+  let items = dedupeEvents(cleanItems(await fetchItems(q, win[0], win[1])));
+  /* 选题过滤：国别聚焦 */
+  if (Array.isArray(o.countries) && o.countries.length) {
+    const want = new Set(o.countries.map(c => _iso2cn(c)));
+    items = items.filter(i => want.has(i.country));
+  }
+  const dims = (Array.isArray(o.dims) && o.dims.length) ? o.dims.filter(d => MODEL_DIMS[d]) : ['org', 'trend', 'country'];
+  const sections = [];
+  /* —— 维度：威胁组织归因 —— */
+  if (dims.indexOf('org') >= 0) {
+    let matchers = orgMatchers();
+    if (Array.isArray(o.orgs) && o.orgs.length) {
+      const want = new Set(o.orgs.map(s => String(s).trim()));
+      matchers = matchers.filter(m => want.has(m.org.name));
+    }
+    const byOrg = {};
+    items.forEach(i => {
+      const text = i.title + ' ' + i.digest;
+      matchers.forEach(m => {
+        if (!m.re.test(text)) return;
+        if (!byOrg[m.org.name]) byOrg[m.org.name] = { org: m.org, list: [], countries: {}, tactics: {} };
+        byOrg[m.org.name].list.push(i);
+        const c = i.country || '未标注';
+        byOrg[m.org.name].countries[c] = (byOrg[m.org.name].countries[c] || 0) + 1;
+        let mm; const RE = new RegExp(TACTIC_RE.source, 'g');
+        while ((mm = RE.exec(i.title))) byOrg[m.org.name].tactics[mm[1]] = (byOrg[m.org.name].tactics[mm[1]] || 0) + 1;
+      });
     });
-  });
-  const orgRanked = Object.values(byOrg).sort((a, b) => b.list.length - a.list.length).slice(0, 10);
-  /* 周趋势（窗口内按 ISO 周分桶） */
-  const byWeek = {};
-  items.forEach(i => {
-    const t = i.time && /^\d{4}-\d{2}-\d{2}/.test(String(i.time)) ? new Date(String(i.time).replace(' ', 'T')) : (i._ct || null);
-    if (!t || isNaN(t)) return;
-    const wk = weekKey(t);
-    if (!byWeek[wk]) byWeek[wk] = { total: 0, ro: 0 };
-    byWeek[wk].total++;
-    if (i.severity === 'red' || i.severity === 'orange') byWeek[wk].ro++;
-  });
-  const weeks = Object.keys(byWeek).sort();
-  /* 国别分布 */
-  const byC = {};
-  items.forEach(i => { const c = i.country || '未标注'; byC[c] = (byC[c] || 0) + 1; });
-  const topC = Object.entries(byC).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const orgSec = {
-    name: '威胁组织归因分析（模型输出）',
-    count: orgRanked.length, red: 0, orange: 0,
-    items: orgRanked.map(g => ({
-      title: g.org.name + '：窗口内关联情报 ' + g.list.length + ' 条（' + Object.entries(g.countries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + x[1] + '条').join('、') + '）',
-      level: g.org.threatLevel >= 8 ? 'red' : g.org.threatLevel >= 6 ? 'orange' : 'yellow',
-      country: Object.keys(g.countries)[0] || '—', time: '—', url: '',
-      digest: (g.org.type || '') + '；状态：' + (g.org.status || '—')
-    }))
-  };
-  const trendSec = {
-    name: '事件趋势分析（模型输出）',
-    count: weeks.length, red: 0, orange: 0,
-    items: weeks.map(wk => ({
-      title: wk + '：独立事件 ' + byWeek[wk].total + ' 条，红橙合计 ' + byWeek[wk].ro + ' 条',
+    const orgRanked = Object.values(byOrg).sort((a, b) => b.list.length - a.list.length).slice(0, 12);
+    if (orgRanked.length) {
+      const sec = section(MODEL_DIMS.org + '（模型输出）', orgRanked.map(g => {
+        const tacs = Object.entries(g.tactics).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + x[1] + '次').join('、');
+        return {
+          title: g.org.name + '：窗口内关联情报 ' + g.list.length + ' 条（' + Object.entries(g.countries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + x[1] + '条').join('、') + '）',
+          level: g.org.threatLevel >= 8 ? 'red' : g.org.threatLevel >= 6 ? 'orange' : 'yellow',
+          country: Object.keys(g.countries)[0] || '—', time: _cnTime(g.list[0] && g.list[0].time) || '—', url: '',
+          digest: (g.org.type || '') + '；状态：' + (g.org.status || '—') + '；手法关键词：' + (tacs || '标题未含典型手法词')
+        };
+      }), 12);
+      sec.note = '归因口径：标题/摘要命中组织名或别名（含变体，ASCII 加词边界）。命中组织 ' + Object.keys(byOrg).length + ' 个。';
+      sections.push(sec);
+    } else {
+      sections.push(section(MODEL_DIMS.org + '（模型输出）', [], 0));
+    }
+    var _orgChart = orgRanked.map(g => ({ label: g.org.name, value: g.list.length }));
+  }
+  /* —— 维度：事件趋势（窗口内按周分桶 + 红橙占比拐点） —— */
+  if (dims.indexOf('trend') >= 0) {
+    const byWeek = {};
+    items.forEach(i => {
+      const t = i.time && /^\d{4}-\d{2}-\d{2}/.test(String(i.time)) ? new Date(String(i.time).replace(' ', 'T')) : (i._ct || null);
+      if (!t || isNaN(t)) return;
+      const wk = weekKey(t);
+      if (!byWeek[wk]) byWeek[wk] = { total: 0, ro: 0 };
+      byWeek[wk].total++;
+      if (i.severity === 'red' || i.severity === 'orange') byWeek[wk].ro++;
+    });
+    const weeks = Object.keys(byWeek).sort();
+    const trendSec = section(MODEL_DIMS.trend + '（模型输出）', weeks.map(wk => ({
+      title: wk + '：独立事件 ' + byWeek[wk].total + ' 条，红橙合计 ' + byWeek[wk].ro + ' 条（占比 ' + Math.round(byWeek[wk].ro * 100 / Math.max(1, byWeek[wk].total)) + '%）',
       level: byWeek[wk].ro / Math.max(1, byWeek[wk].total) >= 0.3 ? 'orange' : 'yellow',
       country: '—', time: wk, url: '', digest: ''
-    }))
-  };
-  const ctrySec = {
-    name: '国别分布（模型输出）',
-    count: topC.length, red: 0, orange: 0,
-    items: topC.map(x => ({
+    })), 14);
+    trendSec.note = '分桶口径：ISO 周；红橙占比≥30% 的周标记为橙色（威胁强度上行拐点候选）。';
+    sections.push(trendSec);
+  }
+  /* —— 维度：国别分布 —— */
+  if (dims.indexOf('country') >= 0) {
+    const byC = {};
+    items.forEach(i => { const c = i.country || '未标注'; byC[c] = (byC[c] || 0) + 1; });
+    const topC = Object.entries(byC).sort((a, b) => b[1] - a[1]).slice(0, 12);
+    sections.push(section(MODEL_DIMS.country + '（模型输出）', topC.map(x => ({
       title: x[0] + '：' + x[1] + ' 条', level: 'yellow', country: x[0], time: '—', url: '', digest: ''
-    }))
-  };
+    })), 12));
+  }
+  /* —— 维度：涉华暴露 —— */
+  if (dims.indexOf('china') >= 0) {
+    const zh = items.filter(i => i.china);
+    const zhSec = section(MODEL_DIMS.china + '（模型输出）', zh.slice(0, 12).map(toItem), 12);
+    zhSec.note = '涉华口径：isChinaRelatedStrict 严格标准；窗口内命中 ' + zh.length + ' 条（负面 ' + zh.filter(i => i.negative).length + ' 条）。';
+    sections.push(zhSec);
+  }
+  /* —— 维度：中资项目关联 —— */
+  if (dims.indexOf('project') >= 0) {
+    const projs = INTEREST_BASE.KEY_PROJECTS;
+    const byP = {};
+    items.forEach(i => {
+      const text = i.title + ' ' + i.digest;
+      projs.forEach(p => {
+        if ((i.assets && i.assets.indexOf(p.name) >= 0) || p.re.test(text)) {
+          byP[p.name] = (byP[p.name] || 0) + 1;
+        }
+      });
+    });
+    const ranked = Object.entries(byP).sort((a, b) => b[1] - a[1]).slice(0, 12);
+    const prSec = section(MODEL_DIMS.project + '（模型输出）', ranked.map(x => ({
+      title: x[0] + '：窗口内命中情报 ' + x[1] + ' 条', level: x[1] >= 5 ? 'orange' : 'yellow', country: '—', time: '—', url: '', digest: ''
+    })), 12);
+    prSec.note = '命中口径：asset_tags 或标题/摘要命中项目识别正则。在册项目 ' + projs.length + ' 个，命中 ' + Object.keys(byP).length + ' 个。';
+    sections.push(prSec);
+  }
+  /* —— 维度：海上咽喉要道 —— */
+  if (dims.indexOf('chokepoint') >= 0) {
+    const channels = INTEREST_BASE.STRAIT_CHANNELS;
+    const chSecs = channels.map(ch => {
+      const list = items.filter(i => ch.re.test(i.title + ' ' + i.digest) && CHOKE_INCIDENT_RE.test(i.title + ' ' + i.digest));
+      return { ch, n: list.length, list };
+    }).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+    const cpSec = section(MODEL_DIMS.chokepoint + '（模型输出）', chSecs.map(x => ({
+      title: x.ch.name + '：窗口内事件 ' + x.n + ' 条（' + x.list.slice(0, 2).map(i => String(i.title).slice(0, 40)).join('；') + '）',
+      level: x.list.some(i => i.severity === 'red') ? 'red' : x.n >= 3 ? 'orange' : 'yellow',
+      country: '—', time: '—', url: '', digest: x.ch.note || ''
+    })), 10);
+    cpSec.note = '口径：要道名（含中英文别名）且含袭击/劫持/扣押/封锁等事件词；八大要道命中 ' + chSecs.length + ' 条。';
+    sections.push(cpSec);
+  }
+  /* —— 维度：制裁合规 —— */
+  if (dims.indexOf('sanction') >= 0) {
+    const sanc = items.filter(i => i.type === 'sanctions_data' || SANC_SCOPE_RE.test(i.title + ' ' + i.digest));
+    const scSec = section(MODEL_DIMS.sanction + '（模型输出）', sanc.slice(0, 12).map(toItem), 12);
+    scSec.note = '口径：制裁数据类或标题/摘要命中制裁/实体清单/出口管制等词；窗口内 ' + sanc.length + ' 条（涉华 ' + sanc.filter(i => i.china).length + ' 条）。';
+    sections.push(scSec);
+  }
   const st = lvStat(items);
+  const dimNames = dims.map(d => MODEL_DIMS[d]).join('、');
+  const topicLine = o.topic ? '专题主题：「' + o.topic + '」。' : '';
+  const countryLine = (Array.isArray(o.countries) && o.countries.length) ? '国别聚焦：' + o.countries.map(_iso2cn).join('、') + '。' : '';
+  const orgLine = (Array.isArray(o.orgs) && o.orgs.length) ? '组织聚焦：' + o.orgs.join('、') + '。' : '';
   return {
-    title: '专题分析模型报告',
-    stats: Object.assign({ total: items.length, chinaCount: items.filter(i => i.china).length, orgs: Object.keys(byOrg).length }, st),
-    sections: [orgSec, trendSec, ctrySec],
-    chart: orgRanked.map(g => ({ label: g.org.name, value: g.list.length })),
-    chartCap: '组织归因情报量 TOP10（条）',
-    extraPrompt: '本报告为专题分析模型计算结果汇编：威胁组织归因模型（组织库正则归因）、事件趋势模型（按 ISO 周分桶）、国别分布模型。全部指标由平台真实数据计算。'
+    title: o.topic ? ('专题分析模型报告：' + o.topic) : '专题分析模型报告',
+    stats: Object.assign({ total: items.length, chinaCount: items.filter(i => i.china).length, orgs: dims.indexOf('org') >= 0 ? sections[0] && sections[0].count || 0 : null, dims: dims.length }, st),
+    sections,
+    chart: (dims.indexOf('org') >= 0 && typeof _orgChart !== 'undefined' && _orgChart.length) ? _orgChart
+      : (dims.indexOf('country') >= 0 ? Object.entries(items.reduce((m, i) => { const c = i.country || '未标注'; m[c] = (m[c] || 0) + 1; return m; }, {})).sort((a, b) => b[1] - a[1]).slice(0, 12).map(x => ({ label: x[0], value: x[1] })) : []),
+    chartCap: '专题模型指标分布（条）',
+    extraPrompt: topicLine + countryLine + orgLine +
+      '本报告为专题分析模型矩阵计算结果：分析维度 ' + dimNames + '；统计窗口近 ' + Math.round((win[1] - win[0]) / 86400000) + ' 天。' +
+      '深度分析要求（模型差异化，明显高于常规报告）：（一）组织行为模式分析——从手法关键词分布推断袭击偏好与能力变化；（二）趋势拐点研判——逐周红橙占比变化，识别威胁强度上行/下行的拐点周并给出数据依据；（三）风险传导链——将组织活动/要道事件/制裁动态与中资项目暴露逐环关联，形成「事件→通道→项目→人员」的传导路径；（四）对我影响量化——涉华命中与项目命中按维度汇总，明确哪些在册项目处于传导链末端；（五）全部结论标注三级确定性（已证实/研判认为/需持续关注），每个判断须指向具体节数据。'
   };
 }
 
@@ -1159,51 +1354,65 @@ const REPORT_TYPES = [
   },
   {
     id: 'model-export', name: '专题分析模型报告', freq: 'manual', manualOnly: true,
-    desc: '仅手动触发，专题分析模型计算结果汇编：威胁组织归因/事件趋势/国别分布（统计窗口近 90 天）',
+    desc: '交互式选题（分析维度/国家/组织/时间窗自由组合）→ 模型矩阵深度分析：组织行为模式/趋势拐点/风险传导链/涉华暴露量化',
     periodKey: null, window: monthWindow,
     assemble: assembleModelExport,
-    promptBrief: '请撰写：第一段"内容提要"（120字以内，概括模型计算结果总体结论）；随后按公文体撰写"综合研判与对策建议"（600至900字）：（一）模型结果总体研判，须引用组织归因、周趋势、国别分布的具体数字；（二）重点发现研判，结合组织归因与趋势拐点研判威胁演化走向，区分"已证实""研判认为""需持续关注"；（三）对策建议，3至5条。注明本报告为专题分析模型计算结果汇编，供深度研判参考。'
+    promptBrief: '请撰写：第一段"内容提要"（150字以内，概括本专题模型计算的核心结论）；随后按公文体撰写"综合研判与对策建议"（900至1400字，深度须明显高于常规周期报告）：（一）模型结果总体研判，须引用各分析维度的具体数字；（二）深度分析研判，按以下要求展开：组织行为模式分析（从手法关键词分布推断袭击偏好与能力变化）、趋势拐点研判（逐周红橙占比变化识别威胁强度拐点并给出数据依据）、风险传导链（组织活动/要道事件/制裁动态与中资项目暴露逐环关联，形成"事件→通道→项目→人员"传导路径）、对我影响量化（涉华与项目命中按维度汇总，点名处于传导链末端的在册项目）；（三）对策建议，3至6条，按风险传导链的紧迫环节排序，面向外交部、商务部、公安部、国家安全部及中央企业决策参考。注明本报告为专题分析模型矩阵计算结果，供深度研判参考。'
   }
 ];
 function defOf(typeId) { return REPORT_TYPES.find(d => d.id === typeId); }
 
-/* model-export 窗口特例：近 90 天（period 键仅为产品编号） */
-function periodWindowOf(def, key) {
+/* model-export 窗口特例：默认近 90 天；带选题 options 时按 windowDays（30/90/180/365）
+ * 2026-09-03 周期化：显式 freq（日/周/月/季/半年/年）时窗口按该频率周期键计算 */
+function periodWindowOf(def, key, freq, opts) {
   if (def.id === 'model-export') {
+    const days = (opts && Number(opts.windowDays)) || 90;
+    const d = Math.max(7, Math.min(365, days));
     const now = new Date();
-    return [new Date(now.getFullYear(), now.getMonth(), now.getDate() - 90), now];
+    return [new Date(now.getFullYear(), now.getMonth(), now.getDate() - d), now];
   }
+  if (freq && FREQ_ALL.indexOf(freq) >= 0) return windowOfFreq(freq, key);
   return def.window(key);
 }
 
 /* ============================================================
- * 十一、生成主流程：装配 → LLM 研判 → govPunctuate → 渲染 → UPSERT
+ * 十一、生成主流程：装配 → LLM 研判 → 清洗 → govPunctuate → 渲染 → UPSERT
  * ============================================================ */
-async function generateReport(typeId, periodKey) {
+async function generateReport(typeId, periodKey, opts) {
   const def = defOf(typeId);
   if (!def) throw new Error('未知报告类型：' + typeId);
-  const win = periodWindowOf(def, periodKey);
+  const o = opts || {};
+  const freq = (o.freq && FREQ_ALL.indexOf(o.freq) >= 0) ? o.freq : '';
+  /* model-export 带自定义选题：期次键用时间戳保证每次生成独立成期 */
+  if (def.id === 'model-export' && o.custom) {
+    periodKey = periodKey || ('SP' + Date.now().toString(36).toUpperCase());
+  }
+  const win = periodWindowOf(def, periodKey, freq, o);
   const lockKey = typeId + '|' + periodKey;
   if (_generating.has(lockKey)) { const e = new Error('该报告正在生成中，请稍候'); e.code = 429; throw e; }
   _generating.add(lockKey);
   try {
-    const data = await def.assemble(_ctx.query, win, periodKey);
+    const data = await def.assemble(_ctx.query, win, periodKey, o);
     data.win = win;
     const llm = await runLlm(def, periodKey, win, data);
-    const llmText = llm.ok ? govPunctuate(llm.text) : '';
+    /* 2026-09-03 公文成稿三道清洗：Markdown 剥离 → 残留清洗（西式时间/省略号/内部代号）→ 标点全角 */
+    const llmText = llm.ok ? govPunctuate(polishGovText(stripMarkdown(llm.text))) : '';
     const html = renderHtml(def, periodKey, data, llmText, llm.ok);
     const govHtml = renderGovHtml(def, periodKey, data, llmText, llm.ok);
     const paras = _llmParas(llmText);
     const summary = {
-      typeName: def.name, period: periodKey,
+      typeName: def.name, period: periodKey, freq: freq || def.freq,
       total: (data.stats || {}).total || 0, red: (data.stats || {}).red || 0, orange: (data.stats || {}).orange || 0,
       sectionCounts: (data.sections || []).map(s => s.name + ':' + s.count).join('，'),
       abstract: llm.ok ? (paras[0] || '').slice(0, 200) : '本期待大模型研判服务恢复后补充生成。',
+      topic: o.topic || '',
       llmOk: llm.ok, llmError: llm.ok ? '' : llm.error
     };
     const dataJson = {
       stats: data.stats, sections: data.sections, chart: data.chart || [], chartCap: data.chartCap || '',
       extraPrompt: data.extraPrompt || '', win: [_dayKey(win[0]), _dayKey(win[1])],
+      freq: freq || def.freq,
+      options: def.id === 'model-export' ? { topic: o.topic || '', dims: o.dims || null, countries: o.countries || null, orgs: o.orgs || null, windowDays: o.windowDays || 90 } : null,
       generatedAt: new Date().toISOString()
     };
     const r = await _ctx.query(
@@ -1213,7 +1422,7 @@ async function generateReport(typeId, periodKey) {
        RETURNING id`,
       [typeId, periodKey, data.title, html, govHtml, JSON.stringify(summary), JSON.stringify(dataJson), llm.ok ? llm.model : null]
     );
-    return { id: r.rows[0].id, period: periodKey, llmOk: llm.ok, llmError: llm.error || '' };
+    return { id: r.rows[0].id, period: periodKey, freq: freq || def.freq, llmOk: llm.ok, llmError: llm.error || '' };
   } finally {
     _generating.delete(lockKey);
   }
@@ -1252,28 +1461,35 @@ function registerRoutes(app, auth) {
       const last = {};
       r.rows.forEach(row => { if (!last[row.rtype]) last[row.rtype] = row; });
       res.json({ ok: true, types: REPORT_TYPES.map(d => ({
-        id: d.id, name: d.name, freq: d.freq, desc: d.desc, manualOnly: !!d.manualOnly,
+        id: d.id, name: d.name, freq: d.freq, freqs: FREQ_ALL, desc: d.desc, manualOnly: !!d.manualOnly,
         lastPeriod: (last[d.id] || {}).period || null,
         lastAt: (last[d.id] || {}).created_at || null
       })) });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
-  /* 手动生成（同步返回；LLM 最长约 3 分钟） */
+  /* 手动生成（同步返回；LLM 最长约 3 分钟）
+   * 2026-09-03 周期化：body.freq 可选日/周/月/季/半年/年——任一报告类型均可按任意周期生成；
+   * 手动生成默认「当期」（含进行中周期，保证新系统也有数据），未传 freq 时回落该类型默认频率。
+   * model-export 支持 body.options（交互式选题：topic/dims/countries/orgs/windowDays）。 */
   app.post('/api/reports/products/generate', auth, async (req, res) => {
     try {
-      const { type, period } = req.body || {};
+      const { type, period, freq, options } = req.body || {};
       const def = defOf(type);
       if (!def) return res.status(400).json({ ok: false, error: '未知报告类型：' + type });
+      const o = (options && typeof options === 'object') ? options : {};
+      const useFreq = (freq && FREQ_ALL.indexOf(freq) >= 0) ? freq : '';
       let key = period;
       if (!key) {
         if (def.manualOnly) key = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0');
         else {
-          const t = currentTarget(def.freq, new Date());
-          key = t.key;
+          /* 手动默认当期（用户痛点：季报默认上一空季 → 无内容） */
+          const t = currentPeriodOf(useFreq || def.freq, new Date()) || currentTarget(useFreq || def.freq, new Date()).key;
+          key = t;
         }
       }
-      const out = await generateReport(def.id, String(key).trim());
-      res.json({ ok: true, id: out.id, period: out.period, llmOk: out.llmOk, llmError: out.llmError });
+      if (def.manualOnly && o && (o.dims || o.topic || o.countries || o.orgs)) o.custom = true;
+      const out = await generateReport(def.id, String(key).trim(), o);
+      res.json({ ok: true, id: out.id, period: out.period, freq: out.freq, llmOk: out.llmOk, llmError: out.llmError });
     } catch (e) {
       if (e.code === 429) return res.status(429).json({ ok: false, error: e.message });
       console.error('[REPORTS] 生成失败:', e.message);
@@ -1361,4 +1577,4 @@ async function init(ctx) {
 
 module.exports = { init };
 /* 供离线验证脚本（不经 HTTP）使用的内部出口 */
-module.exports._test = { REPORT_TYPES, defOf, generateReport, periodWindowOf, currentTarget, govPunctuate, pvKimi, weekKey, _dayKey };
+module.exports._test = { REPORT_TYPES, defOf, generateReport, periodWindowOf, currentTarget, currentPeriodOf, windowOfFreq, freqOfPeriodKey, govPunctuate, polishGovText, _cnTime, pvKimi, weekKey, _dayKey };

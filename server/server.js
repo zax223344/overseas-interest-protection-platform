@@ -41,6 +41,7 @@ const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维�
 const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专项哨兵（2026-08-28：涉华受害/政变/外资审查等弱类补强，10分钟一轮） */
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
+const specialMatrix = require('./special-matrix'); /* 专项采集矩阵（2026-09-03 任务 #531：涉华/项目/组织/咽喉/制裁五类 48h 深度补捞，无体积上限，60分钟一轮） */
 const reportsEngine = require('./reports-engine'); /* 智库报告产品线引擎（2026-09-03：9类专业分析报告统一后端，自注册路由+定时器） */
 const wmFeed = require('./wm-feed'); /* WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO领事警示/断网/疫情/新闻摘要，30分钟一轮） */
 const manualEntryApi = require('./manual-entry'); /* 手动录入工作区 API（2026-09-01：结构化录入+并发安全+铁律入预警中心，挂载见 DataHub API 段） */
@@ -1973,8 +1974,10 @@ function _capAlertQueue(list) {
     const t = Date.parse(a.publishedAt || '') || Date.parse(String(a.time || '').replace(' ', 'T')) || 0;
     if (t && now - t > 72 * 3600 * 1000) continue;
     /* 2026-09-02 威胁组织专项哨兵：org_watch 预警豁免国别帽（用户指令"不受采集限度影响"）。
-     * 仅豁免国别均衡帽；上方 72h 陈条目清理属时效闸，与其他通道一致照常执行。 */
+     * 仅豁免国别均衡帽；上方 72h 陈条目清理属时效闸，与其他通道一致照常执行。
+     * 2026-09-03 专项采集矩阵（任务 #531）：special_matrix 同样豁免国别帽（用户指令"采集无上限"）。 */
     if (a._sourceType === 'org_watch') { out.push(a); continue; }
+    if (a._sourceType === 'special_matrix') { out.push(a); continue; }
     /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
      * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。
      * 2026-08-29 两区渲染（用户指令：预警中心有重点和核心）：核心区条目（is_core：
@@ -3348,6 +3351,10 @@ function _deepCtx(p) {
       ? '综合 ' + co.overall + '（政治 ' + ((co.scores || {}).political || '—') + '/经济 ' + ((co.scores || {}).economic || '—') + '/社会 ' + ((co.scores || {}).social || '—') + '/公共安全 ' + ((co.scores || {}).security || '—') + '）；在册项目 ' + (co.projects != null ? co.projects : '—') + ' 个；行动指引：' + ((co.guide || []).join('；') || '无')
       : 'COSRI 库未覆盖该国') + '\n';
 }
+/* ===== #532 AI情报分析报告核心竞争力强化（2026-09-02）：公文语体规范 + 对策建议手册规范注入 =====
+ * 与 reports-engine.js 的 SYSTEM_PROMPT / RECOMMENDATION_SPEC 保持同源，两处修改须同步 */
+const _DEEP_GOV_SPEC = '写作规范：一、严格党政机关公文语体，庄重、准确、简明，不用口语和网络用语；二、结构层次序号：一级"一、"，二级"（一）"，三级"1."，四级"（1）"；三、标点符号严格按 GB/T 15834：中文语境一律全角标点，并列词语用顿号、分句用逗号、句末用句号，严禁半角逗号句号残留；四、数字用法按 GB/T 15835：统计数据用阿拉伯数字，约数用"约""余"；五、判断有分寸，严格区分"已证实""研判认为""需持续关注"三级确定性表述；六、只基于给定数据研判，数据未涉及的领域不得杜撰；七、输出纯文本公文，严禁 Markdown 语法（星号加粗、井号标题、反引号、竖线表格）。';
+const _DEEP_REC_SPEC = '对策建议撰写规范（必须严格执行）：每条建议按五段式微观结构展开——形势判断（据给定数据）→战略目标→具体行动→资源保障→风险成效；具体行动必须使用关键句式「由【牵头单位】会同【配合单位】，于【时间】前，通过【手段】，完成【可验收成果】，预计【成效或风险】。」；牵头单位从外交部、商务部、公安部、国家安全部、国务院国资委、中央企业、驻外使领馆中按职责选定；全部建议按时序分级标注：近期（0至6个月）、中期（6至24个月）、远期（2至5年）；一事一议、动宾结构、成果可验收、数据可追溯；严禁空泛口号式建议。';
 const _DEEP_SEGS = {
   fact: {
     name: 'BLUF要点摘要', maxTokens: 1500,
@@ -3355,36 +3362,39 @@ const _DEEP_SEGS = {
     task: '请基于上述数据输出 BLUF（Bottom Line Up Front）要点摘要，严格只输出 JSON（无代码块无其他文字）：{"bluf":["要点一","要点二","要点三"]}。3-5条，每条不超过55字；只概括硬事实（统计数字、关键事件标题、八维风险分变化、项目暴露数量）；不得出现"可能""或将""预计将"等推测性表述；若数据样本不足，bluf 只含一条："数据样本不足（窗口内预警0条），研判置信度低"。'
   },
   trend: {
-    name: '趋势研判', maxTokens: 2000,
+    name: '趋势研判', maxTokens: 2600,
     system: '你是服务于外交部/商务部/公安部等多部门的资深情报分析师，专注态势趋势研判。你的分析必须区分"确定信号"与"推测"：确定判断锚定给定数字，推测判断明确标注"（推测）"；数据不足时直说置信度低。全中文输出。',
-    task: '输出【趋势研判】：对比窗口内数据变化——预警总量与红橙结构、八维风险 cur→pred 走势、近72h与前72h事件数对比、系统驱动因素增减——给出趋势判断与未来72小时发展方向。350字内；至少引用3个具体统计数字；不得虚构任何未给定的数据。'
+    task: '输出【趋势研判】：对比窗口内数据变化——预警总量与红橙结构、八维风险 cur→pred 走势、近72h与前72h事件数对比、系统驱动因素增减——给出趋势判断与未来72小时发展方向。500字内；至少引用3个具体统计数字；不得虚构任何未给定的数据。'
   },
   drivers: {
-    name: '动因分析', maxTokens: 2000,
+    name: '动因分析', maxTokens: 2600,
     system: '你是资深情报分析师，专注事件动因与驱动因素剖析。你的推断必须从给定事件的类型聚集、关联簇、威胁组织、推演驱动因素中归纳，推断链路要能被数据支撑；数据不足时直说。全中文输出。',
-    task: '输出【动因分析】：剖析窗口内事件态势背后的驱动因素——从事件类型聚集结构、关联簇、威胁组织活动、八维推演驱动因素四个维度归纳，指出最主要的1-3个动因及其数据依据。350字内；每个动因须注明依据（引用具体事件或数字）；无法从数据支撑的判断标注"（推测）"。'
+    task: '输出【动因分析】：剖析窗口内事件态势背后的驱动因素——从事件类型聚集结构、关联簇、威胁组织活动、八维推演驱动因素四个维度归纳，指出最主要的1-3个动因及其数据依据。500字内；每个动因须注明依据（引用具体事件或数字）；无法从数据支撑的判断标注"（推测）"。'
   },
   impact: {
-    name: '影响评估', maxTokens: 2000,
+    name: '影响评估', maxTokens: 2600,
     system: '你是资深情报分析师，专注评估海外安全态势对中国人员、项目、资产的影响。评估必须引用给定的项目暴露清单、涉华命中数与八维风险走势；不得虚构具体项目受损事实。全中文输出。',
-    task: '输出【影响评估】：评估当前态势对我国人员的威胁（结合涉华命中数）、对在册中资项目与资产的威胁（逐一引用项目暴露清单中的真实项目名）、对通道/供应链的潜在影响。350字内；区分"已显现的影响"（须有数据支撑）与"潜在影响（推测）"。'
+    task: '输出【影响评估】：评估当前态势对我国人员的威胁（结合涉华命中数）、对在册中资项目与资产的威胁（逐一引用项目暴露清单中的真实项目名）、对通道/供应链的潜在影响。500字内；区分"已显现的影响"（须有数据支撑）与"潜在影响（推测）"。'
   },
   scenario: {
-    name: '情景推演', maxTokens: 2200,
+    name: '情景推演', maxTokens: 2800,
     system: '你是资深情报分析师，擅长情景推演（Scenario Analysis）。概率须由给定数据（八维差值、红橙结构、事件增量）推导并说明理由，三情景概率合计100%；禁止拍脑袋给概率。全中文输出。',
-    task: '输出三情景推演，每情景含【概率】【触发条件】【态势描述与对我影响】：\n【乐观情景】…\n【基准情景】…\n【悲观情景】…\n概率给出推导理由（如：红橙占比X%、八维差值+Y，故悲观概率Z%）；若数据样本不足，明说概率无数据支撑、置信度低。总400字内。'
+    task: '输出三情景推演，每情景含【概率】【触发条件】【态势描述与对我影响】：\n【乐观情景】…\n【基准情景】…\n【悲观情景】…\n概率给出推导理由（如：红橙占比X%、八维差值+Y，故悲观概率Z%）；若数据样本不足，明说概率无数据支撑、置信度低。总550字内。'
   },
   case: {
-    name: '案例分析', maxTokens: 3000,
+    name: '案例分析', maxTokens: 3600,
     system: '你是情报机构的案例研究员（Case Analyst），擅长对典型事件做深度剖析。剖析只能基于给定事件的真实标题、摘要与统计数据：事件摘要没有的信息，如实写"系统未收录该细节"，禁止编造案情。全中文输出。',
-    task: '从【高价值事件】中选2-3个最具代表性的典型事件（优先涉华/红色/资产命中事件）逐一深度剖析，每个案例按四段输出：\n【案例N·事件标题】\n事件全貌：（何时何地何人发生了什么，据事件摘要）\n关联脉络：（与窗口内其他事件/关联簇/威胁组织的联系，据给定数据）\n影响分析：（对我人员/项目/资产的影响，引用项目清单与命中数据）\n启示：（可提炼的情报启示，一条即可）\n每个案例200字内。'
+    task: '从【高价值事件】中选2-3个最具代表性的典型事件（优先涉华/红色/资产命中事件）逐一深度剖析，每个案例按四段输出：\n【案例N·事件标题】\n事件全貌：（何时何地何人发生了什么，据事件摘要）\n关联脉络：（与窗口内其他事件/关联簇/威胁组织的联系，据给定数据）\n影响分析：（对我人员/项目/资产的影响，引用项目清单与命中数据）\n启示：（可提炼的情报启示，一条即可）\n每个案例300字内。'
   },
   advice: {
-    name: '对策建议', maxTokens: 2200,
-    system: '你是服务于部委与央企领导的对策参谋，建议必须可落地、分对象、有时限感。建议要结合给定的项目清单、COSRI行动指引与预警态势；不得空喊口号。全中文输出。',
-    task: '输出对策建议，严格分四类对象，每类2-3条可操作措施：\n【外交】（领事保护、驻在国交涉、提醒发布）\n【商务】（合规排查、合同风险、结算通道）\n【企业】（须引用项目清单中的真实项目名逐一或分类给出安保/运营措施）\n【人员安全】（外出管控、撤离预案、应急通信）\n总350字内；若数据样本不足，明说建议置信度受限。'
+    name: '对策建议', maxTokens: 3800,
+    system: '你是服务于外交部、商务部、公安部、国家安全部与中央企业领导的资深对策参谋，深谙党政机关公文写作与对策建议规范。建议必须可落地、分对象、有时限、可验收：每条建议须包含形势判断→战略目标→具体行动→资源保障→风险成效五段式微观结构；要结合给定的项目清单、COSRI行动指引与预警态势提出具体行动，不得空喊口号，不得虚构数据。全中文输出。',
+    task: '输出【对策建议】，严格按四类对象组织，每类内按时序分级（近期：0至6个月；中期：6至24个月；远期：2至5年）给出建议：\n【外交】（领事保护、驻在国交涉、提醒发布）\n【商务】（合规排查、合同风险、结算通道）\n【企业】（须引用项目清单中的真实项目名，逐一或分类给出安保/运营/撤离措施）\n【人员安全】（外出管控、撤离预案、应急通信）\n硬性要求：一、每条具体行动必须使用关键句式「由【牵头单位】会同【配合单位】，于【时间】前，通过【手段】，完成【可验收成果】，预计【成效或风险】。」；二、牵头单位从外交部、商务部、公安部、国家安全部、国务院国资委、中央企业、驻外使领馆中按职责选定；三、每条建议前先以一句话概括形势判断（须引用给定数据）；四、一事一议、动宾结构、成果可验收；五、总800至1200字；若数据样本不足，明说建议置信度受限。'
   }
 };
+/* #532：公文语体规范注入全部七段 system；对策建议手册规范追加注入 advice 段（两处与 reports-engine.js 同源） */
+Object.keys(_DEEP_SEGS).forEach(k => { _DEEP_SEGS[k].system += '\n' + _DEEP_GOV_SPEC; });
+_DEEP_SEGS.advice.system += '\n' + _DEEP_REC_SPEC;
 /* 各段本地降级引擎：只引用传入真实数字，绝不编造 */
 function _segLocalFact(p) {
   const st = p.stats || {}, fs = p.foresee || {}, ev = (p.events || []);
@@ -3473,12 +3483,22 @@ function _segLocalCase(p) {
 }
 function _segLocalAdvice(p) {
   const st = p.stats || {}, co = p.cosri || {};
-  const ast = (p.assets || []).slice(0, 4);
+  const ast = (p.assets || []).slice(0, 3);
   const ro = (st.red || 0) + (st.orange || 0);
-  return '【外交】建议使馆领事部门预置领事保护联络渠道，评估安全提醒发布级别' + (ro ? '（红/橙预警在库，建议发布级别从紧）' : '') + '；推动驻在国强化对中方机构与人员的保护。' + ((co.guide || []).length ? '\n【商务】参考COSRI行动指引：' + co.guide.slice(0, 3).join('；') + '。对在执行合同评估中断与不可抗力条款，预审替代结算路径。' : '\n【商务】对高风险国别业务开展合规敞口排查，核查制裁/出口管制与资金汇出通道。') + '\n' +
-    '【企业】' + (ast.length ? '对在册中资项目逐一复核安保等级、保险覆盖与应急联络机制：' + ast.join('、') + (p.assets.length > 4 ? ' 等' : '') + '。' : '核查我在当地资产与人员台账，建立每日安全报告制度。') + '\n' +
-    '【人员安全】' + (ro ? '红/橙预警在库，立即核实在事人员安全、压缩非必要外出、明确集结点与撤离路线，确需外出配备安保。' : '保持常态警戒，全员掌握应急通信方式与撤离路线。') + '\n' +
-    '（以上为本地规则引擎结合真实数据与COSRI指引的降级建议）';
+  const hi = ro > 0 || Number((p.foresee || {}).pred) >= 6.5;
+  const L = [];
+  L.push('【外交】（近期，0至6个月）形势：窗口内涉华命中 ' + (st.china || 0) + ' 条、红橙预警 ' + ro + ' 条。由驻外使领馆会同外交部领事保护中心，于7日内，通过发布或复核安全提醒、预置领保联络渠道，完成在事中方人员安全核查，预计可实现在册人员联络全覆盖。中期由外交部会同驻在国主管部门，于12个月内，通过双边领事磋商机制，完成对中方机构与人员保护责任的书面确认，预计驻在国安保响应时效可量化改善。');
+  L.push('【商务】（近期）' + ((co.guide || []).length
+    ? '形势：COSRI 行动指引要求' + co.guide.slice(0, 2).join('；') + '。由商务部会同相关进出口商会，于30日内，通过在执行合同风险排查，完成不可抗力与中断条款复核、替代结算路径预审，预计可识别并缓释主要合同风险。'
+    : '形势：当前国别合规敞口待全面排查。由商务部会同相关商会，于30日内，通过合规敞口专项排查，完成制裁与出口管制风险核查、资金汇出通道评估，预计形成可追溯的风险台账。') + '中期于18个月内，通过国别风险评估制度化，完成高风险业务准入负面清单更新，预计年度合规损失实现可度量压降。');
+  L.push('【企业】' + (ast.length
+    ? '（近期）形势：在册中资项目 ' + p.assets.length + ' 个暴露于当前风险环境（' + ast.join('、') + (p.assets.length > 3 ? ' 等' : '') + '），资产命中预警 ' + (st.assetHit || 0) + ' 条。由国务院国资委会同相关中央企业，于15日内，通过安保等级复核与保险覆盖核查，完成全部在册项目安保台账更新，预计风险敞口实现账面可核。'
+    : '（近期）由相关中央企业，于15日内，通过人员与资产台账专项核查，完成属地每日安全报告制度建立，预计实现底数清、情况明。') + '（中期，6至24个月）由相关中央企业会同属地安保力量，于12个月内，通过撤离预案演练与安保资源整合，完成重点项目应急撤离与业务连续性双预案，预计突发事件响应时限压缩至可验收水平。');
+  L.push('【人员安全】（近期）' + (hi
+    ? '形势：红橙预警在库且八维风险预判处于高位。由驻外使领馆会同相关中央企业，于48小时内，通过外出管控升级与集结点明确，完成非必要外出压缩、撤离路线全员告知，预计可消除暴露面失控风险。'
+    : '形势：当前以常态警戒为主。由驻外使领馆，于7日内，通过全员应急通信演练，完成应急联络方式与撤离路线全员掌握，预计应急联络可达率提升至全覆盖。') + '（远期，2至5年）由公安部会同驻外使领馆，通过海外利益保护体系建设，完成常态化安保培训与危机响应机制定型，预计形成可持续的境外人员安全保障能力。');
+  L.push('（以上为本地规则引擎按《对策建议撰写规范手册》关键句式生成的降级建议，牵头单位与时限为规则默认值，供决策参考）');
+  return L.join('\n');
 }
 const _segLocal = { fact: _segLocalFact, trend: _segLocalTrend, drivers: _segLocalDrivers, impact: _segLocalImpact, scenario: _segLocalScenario, case: _segLocalCase, advice: _segLocalAdvice };
 const _segCache = {};
@@ -4455,6 +4475,40 @@ app.post('/api/org-watch/run', async (req, res) => {
 /* 哨兵状态查询：配合异步触发，前端/运维轮询结果 */
 app.get('/api/org-watch/status', (req, res) => {
   res.json({ ok: true, busy: Date.now() < _orgWatchBusyUntil, lastStats: _orgWatchLastStats });
+});
+
+/* ===== 专项采集矩阵手动触发端点（2026-09-03 任务 #531） =====
+ * 五类专项（涉华/项目/组织/咽喉/制裁）48h 深度补捞；异步触发立即返回，
+ * 结果查询走 GET /api/special-matrix/status。 */
+app.post('/api/special-matrix/run', async (req, res) => {
+  try {
+    if (Date.now() < _specialMatrixBusyUntil) return res.json({ ok: false, error: '上一轮专项矩阵尚未结束，请稍候', stats: _specialMatrixLastStats });
+    _specialMatrixBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+    res.json({ ok: true, started: true, note: '专项采集矩阵已触发（五类 48h 深度补捞，约 5-10 分钟），结果请查 GET /api/special-matrix/status' });
+    (async () => {
+      try {
+        const r = await specialMatrix.runSpecialMatrix({});
+        const items = r.items || [];
+        let inserted = 0;
+        if (items.length) {
+          try { await _translateListToZhParallel(items, 4); } catch (e) {}
+          items.forEach(it => {
+            it.interestLinked = true;
+            it._forceDataType = true;
+            try { ENTITY.enrich(it); } catch (e) {}
+          });
+          const res2 = await _ingestLinkedItems(items, 'SPECIAL-MATRIX-MANUAL', '（手动触发）');
+          inserted = (res2 && res2.inserted) || 0;
+        }
+        _specialMatrixLastStats = Object.assign({}, r.stats, { inserted, manualAt: new Date().toISOString() });
+        console.log('[SPECIAL-MATRIX] 手动轮完成: 过闸 ' + items.length + ' / 入库 ' + inserted);
+      } catch (e) { console.warn('[SPECIAL-MATRIX] 手动轮失败:', e.message); }
+      finally { _specialMatrixBusyUntil = 0; }
+    })();
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.get('/api/special-matrix/status', (req, res) => {
+  res.json({ ok: true, busy: Date.now() < _specialMatrixBusyUntil, lastStats: _specialMatrixLastStats });
 });
 
 /* ===== WorldMonitor 数据接入哨兵手动触发端点（2026-08-31 Task #506） ===== */
@@ -5805,7 +5859,11 @@ const FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
  * URL/标题/事件签名去重闸仍在——库中已有的条目不会因窗口放宽重复入库。 */
 const SOCMINT_FRESH_WINDOW_MS = 60 * 60 * 60 * 1000;
 function _freshWindowFor(it) {
-  return (it && it._sourceType === 'socmint_watch') ? SOCMINT_FRESH_WINDOW_MS : FRESH_WINDOW_MS;
+  if (it && it._sourceType === 'socmint_watch') return SOCMINT_FRESH_WINDOW_MS;
+  /* 2026-09-03 专项采集矩阵（任务 #531）：48h 回看窗（用户铁指令"48h 时限"）——
+   * 30min 哨兵管 24h 增量面，矩阵管 24-48h 跨日边界深度补捞 */
+  if (it && it._sourceType === 'special_matrix') return 48 * 60 * 60 * 1000;
+  return FRESH_WINDOW_MS;
 }
 const CORROBORATION_WINDOW_MS = 6 * 60 * 60 * 1000; /* 6小时内单源可放行；超过6小时需多源印证
 
@@ -6177,8 +6235,10 @@ async function _catStructRefresh() {
 async function _catStructureOk(it) {
   /* 2026-08-30 退役：永远放行。结构均衡由 GAP-SCHED 补弱实现，绝不砍强。
    * 2026-09-02 威胁组织专项哨兵：org_watch 显式豁免锚点（用户指令"不受采集限度影响"）——
-   * 本闸已退役为恒真，此行为将来若恢复结构帽时保留 org_watch 豁免，现行行为不变。 */
+   * 本闸已退役为恒真，此行为将来若恢复结构帽时保留 org_watch 豁免，现行行为不变。
+   * 2026-09-03 专项采集矩阵（任务 #531）：special_matrix 同样保留豁免锚点。 */
   if (it && it._sourceType === 'org_watch') return true;
+  if (it && it._sourceType === 'special_matrix') return true;
   return true;
 }
 
@@ -6406,8 +6466,10 @@ function _eventClusterOk(it) {
    * 核心中的核心"）——同国同事件多版本入库供报告整合，不适用防刷屏簇帽 */
   if (it._sourceType === 'threatroom') return true;
   /* 2026-09-02 威胁组织专项哨兵豁免：org_watch 定向采集不受簇帽限（用户指令"不受采集限度影响，
-   * 采集数据越多越好"）；去重/时效/标题质量等其他闸门照常 */
+   * 采集数据越多越好"）；去重/时效/标题质量等其他闸门照常。
+   * 2026-09-03 专项采集矩阵豁免（任务 #531）：special_matrix 48h 深度补捞不受簇帽限（用户指令"采集无上限"） */
   if (it._sourceType === 'org_watch') return true;
+  if (it._sourceType === 'special_matrix') return true;
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   if (t.trim().length < 8) return true;
   const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
@@ -7076,7 +7138,8 @@ async function _ingestLinkedItems(items, tag, note) {
       'CONSULAR-WATCH': 'consular_watch', 'CT-SENTINEL': 'core_threat_sentinel', 'PROJECT-WATCH': 'project_watch',
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
       'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler',
-      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom', 'ORG-WATCH': 'org_watch', 'ORG-WATCH-MANUAL': 'org_watch'
+      'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom', 'ORG-WATCH': 'org_watch', 'ORG-WATCH-MANUAL': 'org_watch',
+      'SPECIAL-MATRIX': 'special_matrix', 'SPECIAL-MATRIX-MANUAL': 'special_matrix'
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
@@ -8876,6 +8939,40 @@ async function _runOrgWatch() {
   finally { _orgWatchBusyUntil = 0; }
 }
 
+/* ===== 专项采集矩阵调度（2026-09-03 任务 #531 用户铁指令）=====
+ * 每 60 分钟一轮：五类专项（涉华情报/中资项目安全/威胁组织活动/海上咽喉要道/制裁合规动态）
+ * 48h 回看窗深度补捞——与既有五路 30min 哨兵（24h 增量面）错峰互补，不打爆外网。
+ * 体积豁免：_sourceType='special_matrix' 豁免事件簇帽/类别结构帽/预警国别帽（用户指令"采集无上限"）；
+ * 48h 时效窗（_freshWindowFor 专项放宽）；去重/墓碑/历史旧案/翻译等质量闸全站一致。 */
+let _specialMatrixBusyUntil = 0;
+let _specialMatrixLastStats = null;
+async function _runSpecialMatrix(manual) {
+  if (Date.now() < _specialMatrixBusyUntil) return { ok: false, error: '上一轮专项矩阵尚未结束' };
+  _specialMatrixBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
+  try {
+    const r = await specialMatrix.runSpecialMatrix({});
+    const items = r.items || [];
+    _specialMatrixLastStats = Object.assign({ manual: !!manual, at: new Date().toISOString() }, r.stats || {});
+    let inserted = 0;
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[SPECIAL-MATRIX] 翻译异常:', e.message); }
+      items.forEach(it => {
+        it.interestLinked = true;
+        it._forceDataType = true;   /* 分类由矩阵按类别锁定，不被通用分类器覆盖 */
+        try { ENTITY.enrich(it); } catch (e) {}
+      });
+      const res = await _ingestLinkedItems(items, manual ? 'SPECIAL-MATRIX-MANUAL' : 'SPECIAL-MATRIX', '');
+      inserted = (res && res.inserted) || 0;
+      if (inserted) console.log('[SPECIAL-MATRIX] ✅ 新入库专项情报 ' + inserted + ' 条');
+    }
+    _specialMatrixLastStats.inserted = inserted;
+    return { ok: true, passed: items.length, inserted };
+  } catch (e) {
+    console.warn('[SPECIAL-MATRIX] 采集失败:', e.message);
+    return { ok: false, error: e.message };
+  } finally { _specialMatrixBusyUntil = 0; }
+}
+
 /* ===== 海上战略通道哨兵调度（维度⑤，2026-08-28 官方框架六维补全）=====
  * 每 30 分钟：八大咽喉点（马六甲/霍尔木兹/红海/苏伊士/巴拿马/台海/几内亚湾/亚丁湾）
  * 通航·封锁·海盗·袭击油轮事件 + 海运专业源。 */
@@ -9178,6 +9275,9 @@ function startGlobalMediaCron() {
   // 威胁组织专项采集哨兵（2026-09-02 用户铁指令：threats.js 组织库定向采集，豁免体积限度），启动10分钟后首跑
   setTimeout(_runOrgWatch, 10 * 60 * 1000);
   setInterval(_runOrgWatch, 30 * 60 * 1000);
+  // 专项采集矩阵（2026-09-03 任务 #531：涉华/项目/组织/咽喉/制裁五类 48h 深度补捞，采集无上限），启动12分钟后首跑
+  setTimeout(() => { _runSpecialMatrix(false); }, 12 * 60 * 1000);
+  setInterval(() => { _runSpecialMatrix(false); }, 60 * 60 * 1000);
   // 涉华人员安全专项哨兵：每30分钟一轮（2026-08-25 用户铁指令），启动3分钟后首跑
   setTimeout(_runCnSecurityWatch, 3 * 60 * 1000);
   setInterval(_runCnSecurityWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min */

@@ -67,12 +67,14 @@ var AIREPORT = {
   },
 
   _updateBadge() {
-    var badge = document.getElementById('sb-aireport-count');
-    if (badge) {
-      var n = this._materialCart ? this._materialCart.length : 0;
-      badge.textContent = n;
-      badge.classList.toggle('zero', n === 0);
-    }
+    var n = this._materialCart ? this._materialCart.length : 0;
+    ['sb-aireport-count', 'sb-aireport-nav-count'].forEach(function (id) {
+      var badge = document.getElementById(id);
+      if (badge) {
+        badge.textContent = n;
+        badge.classList.toggle('zero', n === 0);
+      }
+    });
   },
 
   /* ===== 全局入口: 从任意页面添加素材 ===== */
@@ -325,7 +327,7 @@ var AIREPORT = {
 
     /* 报告列表 */
     html += '<div class="card mt-12"><div class="card-tt"><span class="ic">🤖</span>AI情报分析报告';
-    html += '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 深度分层研判：客观事实+主观分析+数据支撑+案例分析，四分析师七段生成</span>';
+    html += '<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">— 平台核心竞争力：基于系统真实数据的分层专业研判（客观事实 + 分析判断 + 公文表达），四分析师七段生成</span>';
     html += '</div>';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
     html += '<span style="font-size:12px;color:var(--text3)">共 ' + reports.length + ' 份报告 | 管理员和注册用户均可使用</span>';

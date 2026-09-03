@@ -32,13 +32,15 @@
     { id: 'model-export', name: '专题分析模型报告', freq: 'manual', ic: '🧮', desc: '专题分析模型成果报告（组织行为 / 恐袭预测 / 绑架风险 / 地缘风险），仅手动生成。' }
   ];
 
-  /* 频率徽标：中文 + 主色 + 「当期」判定窗口（天） */
+  /* 频率徽标：中文 + 主色 + 「当期」判定窗口（天）——2026-09-03 #528：六频全周期体系（与后端 FREQ_ALL 对齐） */
   var FREQ = {
-    daily:     { n: '每日', c: '#00ff9f', win: 1 },
-    weekly:    { n: '每周', c: '#00d4ff', win: 7 },
-    monthly:   { n: '每月', c: '#ffcc00', win: 31 },
-    quarterly: { n: '每季', c: '#ff8800', win: 92 },
-    manual:    { n: '手动', c: '#b366ff', win: 0 }
+    daily:      { n: '每日', c: '#00ff9f', win: 1 },
+    weekly:     { n: '每周', c: '#00d4ff', win: 7 },
+    monthly:    { n: '每月', c: '#ffcc00', win: 31 },
+    quarterly:  { n: '每季', c: '#ff8800', win: 92 },
+    semiannual: { n: '每半年', c: '#ff5f9e', win: 183 },
+    yearly:     { n: '每年', c: '#b366ff', win: 366 },
+    manual:     { n: '手动', c: '#b366ff', win: 0 }
   };
 
   /* ===== 状态 ===== */
@@ -54,6 +56,7 @@
     ver: 'std',              /* std=标准版 html / gov=公文版 gov_html */
     generating: false,       /* 生成中（本地状态机） */
     genType: null, genId: null,
+    genFreq: null,           /* #528：本次生成所选周期（null=按类型默认） */
     pollTimer: null, tickTimer: null,
     pollStart: 0, pollBase: null
   };
@@ -165,6 +168,28 @@
     '.rc-ta{width:100%;height:46vh;background:#08101e;border:1px solid rgba(0,212,255,0.25);border-radius:8px;color:#cfe0f5;font:12px/1.6 Consolas,monospace;padding:12px;box-sizing:border-box;outline:none;resize:vertical;}',
     '.rc-ta:focus{border-color:var(--cyan);}',
     '.rc-editbox .ft{padding:10px 16px;border-top:1px solid rgba(0,212,255,0.15);display:flex;gap:10px;align-items:center;}',
+    /* —— 周期选择器（#528 六频） —— */
+    '.rc-sel{background:rgba(8,16,32,0.9);border:1px solid rgba(0,212,255,0.35);border-radius:6px;color:#00e5ff;font-size:11.5px;padding:6px 10px;cursor:pointer;outline:none;letter-spacing:1px;}',
+    '.rc-sel option{background:#0a1628;color:#cfe0f5;}',
+    /* —— 专题选题弹窗（#533 交互选题矩阵） —— */
+    '.rc-optbox{width:min(720px,94vw);max-height:88vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(10,22,40,0.97),rgba(6,14,28,0.98));border:1px solid rgba(0,212,255,0.3);border-radius:10px;overflow:hidden;}',
+    '.rc-optbox .bd{padding:14px 18px;overflow-y:auto;flex:1;min-height:0;}',
+    '.rc-optbox .ft{padding:10px 18px;border-top:1px solid rgba(0,212,255,0.15);display:flex;gap:10px;align-items:center;}',
+    '.rc-ogrp{font-size:12px;font-weight:700;color:#9fe8ff;letter-spacing:1px;margin:12px 0 6px;padding-left:7px;border-left:2px solid rgba(0,212,255,0.45);}',
+    '.rc-ogrp:first-child{margin-top:0;}',
+    '.rc-ogrp small{color:var(--text3);font-weight:400;letter-spacing:0;margin-left:6px;}',
+    '.rc-ckgrid{display:flex;flex-wrap:wrap;gap:6px;}',
+    '.rc-ck{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text);padding:5px 11px;border-radius:6px;border:1px solid rgba(0,212,255,0.18);background:rgba(0,212,255,0.03);cursor:pointer;transition:all .15s;user-select:none;}',
+    '.rc-ck:hover{border-color:rgba(0,212,255,0.45);}',
+    '.rc-ck.on{border-color:rgba(0,212,255,0.6);background:rgba(0,212,255,0.14);color:#00e5ff;box-shadow:0 0 8px rgba(0,212,255,0.18);}',
+    '.rc-ck .bx{font-size:11px;color:var(--text3);}',
+    '.rc-ck.on .bx{color:#00ff9f;}',
+    '.rc-cksmall{font-size:10.5px;padding:4px 9px;}',
+    '.rc-cgwrap{max-height:168px;overflow-y:auto;border:1px solid rgba(0,212,255,0.14);border-radius:7px;padding:8px;background:rgba(0,212,255,0.02);}',
+    '.rc-cgwrap .rc-ckgrid{gap:5px;}',
+    '.rc-tin{width:100%;box-sizing:border-box;background:#08101e;border:1px solid rgba(0,212,255,0.25);border-radius:7px;color:#cfe0f5;font:12px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;padding:8px 11px;outline:none;}',
+    '.rc-tin:focus{border-color:var(--cyan);}',
+    '.rc-opt-tip{font-size:10.5px;color:var(--text3);line-height:1.7;margin-top:10px;border-top:1px dashed rgba(0,212,255,0.14);padding-top:8px;}',
     /* —— 响应式 —— */
     '@media(max-width:1200px){.rc-wrap{grid-template-columns:200px minmax(0,1fr) 260px;}}',
     '@media(max-width:1000px){.rc-wrap{grid-template-columns:1fr;height:auto;}.rc-nav{max-height:220px;}.rc-side{flex-direction:row;}.rc-side .rc-card{flex:1;}.rc-hlist,.rc-summary{max-height:200px;}.rc-reader{min-height:520px;}}',
@@ -202,6 +227,14 @@
             '<div class="bd"><div class="rc-dim" style="margin-bottom:8px">直接修订当前版本的 HTML 源码（标准版保存至 html 字段 / 公文版保存至 gov_html 字段），保存后立即生效。</div>' +
             '<textarea class="rc-ta" id="rc-edit-ta" spellcheck="false"></textarea></div>' +
             '<div class="ft"><button class="rc-btn primary" data-act="edit-save">💾 保存修订</button><span class="rc-dim" id="rc-edit-tip"></span></div>' +
+          '</div>' +
+        '</div>' +
+        /* #533 专题分析模型报告 · 交互选题弹窗 */
+        '<div class="rc-mask" id="rc-topic-mask">' +
+          '<div class="rc-optbox">' +
+            '<div class="hd">🧮 专题分析模型报告 · 交互选题<button class="rc-btn ghost rc-no-print" data-act="topic-close" style="margin-left:auto;padding:4px 12px">✕ 关闭</button></div>' +
+            '<div class="bd" id="rc-topic-body"></div>' +
+            '<div class="ft"><button class="rc-btn primary" data-act="topic-go">⚡ 按选题生成深度报告</button><span class="rc-dim" id="rc-topic-tip">生成约 2–4 分钟（900–1400 字深度分析 · 七维模型矩阵）</span></div>' +
           '</div>' +
         '</div>';
       bindShell();
@@ -255,6 +288,34 @@
         if (b && b.getAttribute('data-act') === 'edit-close') closeEdit();
         if (b && b.getAttribute('data-act') === 'edit-save') saveEdit();
         if (ev.target === mask) closeEdit();
+      });
+    }
+    /* #528：周期选择器 change 事件（委托到工具条容器） */
+    tb.addEventListener('change', function (ev) {
+      if (ev.target && ev.target.id === 'rc-freq') {
+        S.genFreq = ev.target.value || null;
+      }
+    });
+    /* #533：专题选题弹窗（按钮 + 选项卡切换委托） */
+    var tmask = $('rc-topic-mask');
+    if (tmask) {
+      tmask.addEventListener('click', function (ev) {
+        var b = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
+        if (!b) return;
+        var act = b.getAttribute('data-act');
+        if (act === 'topic-close') closeTopic();
+        else if (act === 'topic-go') submitTopic();
+        else if (act === 'ck') { b.classList.toggle('on'); }
+        else if (act === 'ck-all') {
+          var wrap = b.closest('.rc-cgwrap');
+          if (wrap) {
+            var cks = wrap.querySelectorAll('.rc-ck[data-act="ck"]');
+            var allOn = true;
+            for (var i = 0; i < cks.length; i++) if (!cks[i].classList.contains('on')) { allOn = false; break; }
+            for (var j = 0; j < cks.length; j++) cks[j].classList.toggle('on', !allOn);
+          }
+        }
+        if (ev.target === tmask) closeTopic();
       });
     }
   }
@@ -339,7 +400,7 @@
 
   function selectType(id) {
     if (!id || S.cur === id) return;
-    S.cur = id; S.detail = null; S.list = []; S.ver = 'std';
+    S.cur = id; S.detail = null; S.list = []; S.ver = 'std'; S.genFreq = null;
     renderNav(); renderToolbar(); renderHistory(); renderSummary();
     loadList();
   }
@@ -411,8 +472,21 @@
     var f = freqOf(t);
     var d = S.detail;
     var busy = genBusy();
-    var genLabel = t.freq === 'manual' ? '⚙️ 生成专题报告' : '⚡ 生成当期';
+    var genLabel = t.freq === 'manual' ? '⚙️ 配置选题并生成' : '⚡ 生成当期';
     var regenLabel = '🔄 重新生成';
+    /* #528：全周期选择器——任意报告类型可按 日/周/月/季/半年/年 六频生成（manual 类型除外） */
+    var freqSel = '';
+    if (t.freq !== 'manual' && !S.svcDown) {
+      var fopts = ['daily', 'weekly', 'monthly', 'quarterly', 'semiannual', 'yearly'];
+      freqSel = '<span class="rc-sel-wrap" style="display:inline-flex;align-items:center;gap:5px">' +
+        '<span class="rc-dim" style="font-size:10.5px">生成周期</span>' +
+        '<select class="rc-sel" id="rc-freq" title="选择本次生成的统计周期（默认按产品线频率）">' +
+        '<option value="">按类型默认（' + f.n + '）</option>' +
+        fopts.map(function (fk) {
+          return '<option value="' + fk + '"' + (S.genFreq === fk ? ' selected' : '') + '>' + FREQ[fk].n + '</option>';
+        }).join('') +
+        '</select></span>';
+    }
     var genBtn = busy
       ? '<button class="rc-btn busy" disabled><span class="rc-spin"></span>' + (t.freq === 'manual' ? '生成中' : '当期生成中') + '</button>'
       : '<button class="rc-btn primary" data-act="gen"' + (S.svcDown ? ' disabled' : '') + '>' + genLabel + '</button>';
@@ -438,7 +512,7 @@
         '<span class="rc-badge llm" title="本报告由 LLM 生成">🤖 ' + esc((d && d.llm_model) || 'kimi-k2.7') + '</span>' +
       '</div>' +
       '<div class="rc-tb-row2">' +
-        genBtn + regenBtn + printBtn + editBtn + seg + state +
+        freqSel + genBtn + regenBtn + printBtn + editBtn + seg + state +
       '</div>';
   }
 
@@ -572,13 +646,17 @@
     if (!S.cur || genBusy()) return;
     var t = typeOf(S.cur);
     if (!t) return;
+    /* #533：专题分析模型报告——先弹交互选题矩阵（维度/国家/组织/时间窗），再生成 */
+    if (!regen && S.cur === 'model-export') { openTopic(); return; }
     var body = { type: S.cur };
+    /* #528：携带用户所选周期（重新生成按当前期次窗口，不带 freq） */
+    if (!regen && S.genFreq) body.freq = S.genFreq;
     if (regen && S.detail && S.detail.period) body.period = S.detail.period;
     api('POST', '/generate', body).then(function (r) {
       if (r.ok) {
         S.generating = true; S.genType = S.cur;
         S.genId = (r.data && r.data.id) || null;
-        toast('已提交生成任务：' + (t.name || '') + ' · LLM 撰写中（约 1–3 分钟）');
+        toast('已提交生成任务：' + (t.name || '') + (S.genFreq ? '（' + FREQ[S.genFreq].n + '）' : '') + ' · LLM 撰写中（约 1–3 分钟）');
         startPoll();
       } else if (r.status === 429) {
         /* 另一生成任务进行中（本会话或他端）：同样进入轮询等待其完成 */
@@ -616,9 +694,9 @@
           return;
         }
       }
-      if (Date.now() - S.pollStart > 5 * 60 * 1000) {
+      if (Date.now() - S.pollStart > (S.genType === 'model-export' ? 9 : 5) * 60 * 1000) {
         finishPoll(false);
-        toast('生成超时（超过 5 分钟）：请稍后刷新期次历史查看结果');
+        toast('生成超时（超过 ' + (S.genType === 'model-export' ? 9 : 5) + ' 分钟）：请稍后刷新期次历史查看结果');
         return;
       }
       S.pollTimer = setTimeout(pollOnce, 15000);
@@ -691,6 +769,83 @@
     });
   }
 
+  /* ===== #533 专题分析模型报告 · 交互选题矩阵 ===== */
+  var TOPIC_DIMS = [
+    { k: 'org', n: '组织行为模式' },
+    { k: 'trend', n: '趋势拐点研判' },
+    { k: 'country', n: '国别风险聚焦' },
+    { k: 'china', n: '涉华信号专项' },
+    { k: 'project', n: '中资项目暴露' },
+    { k: 'chokepoint', n: '海上咽喉要道' },
+    { k: 'sanction', n: '制裁合规影响' }
+  ];
+  var TOPIC_WINS = [
+    { v: 7, n: '近 7 天' }, { v: 14, n: '近 14 天' }, { v: 30, n: '近 30 天' },
+    { v: 60, n: '近 60 天' }, { v: 90, n: '近 90 天' }, { v: 180, n: '近半年' }, { v: 365, n: '近一年' }
+  ];
+  function countryList() {
+    try {
+      var arr = (typeof COUNTRIES !== 'undefined' && COUNTRIES) || [];
+      return arr.map(function (c) { return { name: c.name || '', flag: c.flag || '' }; }).filter(function (c) { return c.name; });
+    } catch (e) { return []; }
+  }
+  function _ck(v, n) {
+    return '<span class="rc-ck" data-act="ck" data-k="' + esc(v) + '"><span class="bx">☑</span>' + esc(n) + '</span>';
+  }
+  function openTopic() {
+    var mask = $('rc-topic-mask'), body = $('rc-topic-body');
+    if (!mask || !body) return;
+    var cls = countryList();
+    body.innerHTML =
+      '<div class="rc-ogrp">① 专题名称<small>（选填——不填则按所选维度自动拟定）</small></div>' +
+      '<input class="rc-tin" id="rc-tp-topic" maxlength="60" placeholder="例：俾路支省中资项目安全暴露与 BLA 组织行为深度分析">' +
+      '<div class="rc-ogrp">② 分析维度<small>（七维模型矩阵，多选——不选则七维全开）</small></div>' +
+      '<div class="rc-ckgrid" id="rc-tp-dims">' + TOPIC_DIMS.map(function (d) { return _ck(d.k, d.n); }).join('') + '</div>' +
+      '<div class="rc-ogrp">③ 国别聚焦<small>（多选——不选则全球视野）</small></div>' +
+      '<div class="rc-cgwrap"><div style="margin-bottom:6px"><span class="rc-ck rc-cksmall" data-act="ck-all">全选 / 全不选</span></div>' +
+      '<div class="rc-ckgrid" id="rc-tp-countries">' + cls.map(function (c) { return _ck(c.name, (c.flag ? c.flag + ' ' : '') + c.name); }).join('') + '</div></div>' +
+      '<div class="rc-ogrp">④ 威胁组织聚焦<small>（选填，逗号分隔，至多 8 个）</small></div>' +
+      '<input class="rc-tin" id="rc-tp-orgs" placeholder="例：Balochistan Liberation Army, TTP, 胡塞武装">' +
+      '<div class="rc-ogrp">⑤ 统计时间窗<small>（数据聚合范围）</small></div>' +
+      '<select class="rc-sel" id="rc-tp-win">' + TOPIC_WINS.map(function (w) {
+        return '<option value="' + w.v + '"' + (w.v === 30 ? ' selected' : '') + '>' + w.n + '</option>';
+      }).join('') + '</select>' +
+      '<div class="rc-opt-tip">深度分析要求（后端模型化差异化）：组织行为模式归纳 / 趋势拐点识别 / 风险传导链（事件→通道→项目→人员）/ 影响量化评估 / 三级确定性表述（已证实 · 研判认为 · 需持续关注）。自定义选题生成独立期次存档（互不覆盖），可在期次历史中长期查阅。</div>';
+    mask.classList.add('show');
+  }
+  function closeTopic() {
+    var m = $('rc-topic-mask');
+    if (m) m.classList.remove('show');
+  }
+  function submitTopic() {
+    if (genBusy()) { toast('当前已有报告在生成中，请稍候'); return; }
+    var dims = [], countries = [];
+    var dm = $('rc-tp-dims'), cm = $('rc-tp-countries');
+    if (dm) Array.prototype.forEach.call(dm.querySelectorAll('.rc-ck.on'), function (el) { dims.push(el.getAttribute('data-k')); });
+    if (cm) Array.prototype.forEach.call(cm.querySelectorAll('.rc-ck.on'), function (el) { countries.push(el.getAttribute('data-k')); });
+    var topic = ($('rc-tp-topic') && $('rc-tp-topic').value.trim()) || '';
+    var orgsRaw = ($('rc-tp-orgs') && $('rc-tp-orgs').value.trim()) || '';
+    var orgs = orgsRaw ? orgsRaw.split(/[,，;；]+/).map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 8) : [];
+    var win = parseInt(($('rc-tp-win') && $('rc-tp-win').value) || '30', 10) || 30;
+    var options = { windowDays: win };
+    if (topic) options.topic = topic;
+    if (dims.length) options.dims = dims;
+    if (countries.length) options.countries = countries;
+    if (orgs.length) options.orgs = orgs;
+    var label = topic || (countries.length ? countries.slice(0, 3).join('、') + (countries.length > 3 ? ' 等' + countries.length + ' 国' : '') : '七维全矩阵');
+    closeTopic();
+    api('POST', '/generate', { type: 'model-export', options: options }).then(function (r) {
+      if (r.ok || r.status === 429) {
+        S.generating = true; S.genType = 'model-export';
+        S.genId = (r.ok && r.data && r.data.id) || null;
+        toast('已提交专题生成：' + label + ' · 深度分析撰写中（约 2–4 分钟）');
+        startPoll();
+      } else {
+        toast('生成失败：' + ((r.data && r.data.error) || ('HTTP ' + r.status)));
+      }
+    });
+  }
+
   /* ===== 导出（window.REPORTS） ===== */
   var RC = {
     render: render,
@@ -700,6 +855,7 @@
     setVer: setVer,
     printReport: printReport,
     openEdit: openEdit,
+    openTopic: openTopic,              /* #533 专题交互选题 */
     state: S
   };
 
