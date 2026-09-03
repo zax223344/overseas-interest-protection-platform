@@ -947,12 +947,22 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
   };
   /* 排除规则（一票否决，红色不豁免——用户指令优先于 DB severity）：
    * 本地治安词命中 且 非涉华主体（china/negative 标志与标题涉华词均无）；
-   * 涉华治安案（如曼谷华人团伙案）保留。每主题最多2件，>30字/空泛词跳过，宁缺毋滥。 */
+   * 涉华治安案（如曼谷华人团伙案）保留。每主题最多2件，空泛词跳过，超长截断保留，宁缺毋滥。 */
+  /* 标题截断（26字内取整句）：2026-09-03 用户铁律「研判必须点名具体事件，让领导看到威胁样态」——
+   * 原 ≤22 字整条丢弃导致译题普遍超长的方向代表事件全灭（缅甸/韩国方向研判段只剩数量统计） */
+  const _cutTitle = t => {
+    const s = String(t || '');
+    if (s.length <= 26) return s;
+    const cut = s.slice(0, 26);
+    const p = Math.max(cut.lastIndexOf('，'), cut.lastIndexOf('、'), cut.lastIndexOf('；'), cut.lastIndexOf('：'), cut.lastIndexOf(' '));
+    return (p >= 12 ? cut.slice(0, p) : cut).replace(/[，、；：\s]+$/, '');
+  };
   const _pickRepr = arr => arr
     .filter(i => !(_LOCAL_SEC.test(String(i.title || '')) && !(i.china || i.negative) && !_CN_SUBJ.test(String(i.title || ''))))
     .filter(i => !_isPositiveDip(i))
     .map(i => ({ i: i, t: _govTitle(i) }))
-    .filter(x => x.t && x.t.length <= 22 && !_VAGUE_T.test(x.t))
+    .filter(x => x.t && !_VAGUE_T.test(x.t))
+    .map(x => ({ i: x.i, t: _cutTitle(x.t) }))
     .sort((a, b) => _repScore(b.i) - _repScore(a.i))
     .slice(0, 2);
   /* ===== 09-02 返工：案例性质按条目真实类型映射（标题词优先于 type——数据侧 type 有错标，
@@ -1040,24 +1050,41 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
       g.arr.forEach(i => { lvCnt[i.severity] = (lvCnt[i.severity] || 0) + 1; });
       const lvStr = ['red', 'orange', 'yellow', 'blue'].filter(k => lvCnt[k]).map(k => ({ red: '红色', orange: '橙色', yellow: '黄色', blue: '蓝色' }[k]) + lvCnt[k] + '件').join('、');
       const pct = list.length ? Math.round(g.arr.length / list.length * 100) : 0;
-      const repr = _pickRepr(g.arr).map(x => x.t);
+      /* 2026-09-03 用户铁律「没有具体事件是不够的」：代表事件必须点名——严格筛选
+       * （空泛词/正向外交/非涉华治安剔除）一无所获时，降级取级别最高前2件，代表事件名永不为空 */
+      let repr = _pickRepr(g.arr).map(x => x.t);
+      if (!repr.length) {
+        repr = g.arr.slice()
+          .sort((a, b) => (_lvW2[b.severity] || 0) - (_lvW2[a.severity] || 0) || _repScore(b) - _repScore(a))
+          .slice(0, 2).map(i => _cutTitle(_govTitle(i))).filter(Boolean);
+      }
+      const reprQ = repr.map(t => '“' + t + '”');
       /* 开门见山（指南四）：二级标题句先给结论（金钩子），再展开定量事实 */
       const leadP = g.red >= 2 ? '红色事件集中，威胁等级高' : (g.red === 1 ? '出现红色事件，需重点关注' : (g.orange >= 2 ? '橙色事件多发，存在升级可能' : '以一般性动态为主'));
       let p1 = '（' + '一二三四'[n] + '）' + g.c + '方向' + (chinaSide ? '涉华安全事件' : '重大安全事件') + '：' + leadP + '。当日监测到' + g.arr.length + '件（' + lvStr + '，占比' + pct + '%）'
-        + (repr.length ? '，代表性事件为' + repr.join('、') + (g.arr.length > repr.length ? '等' : '') : '')
+        + (reprQ.length ? '，代表性事件为' + reprQ.join('、') + (g.arr.length > reprQ.length ? '等' : '') : '')
         + '。';
       if (n < (csN || 3)) { const cs = _caseStudy(g); if (cs) p1 += cs; }
       paras.push(p1);
-      /* 趋势研判（智库视角，由级别构成/类型/资产关联/国别环比推导演化方向） */
+      /* 趋势研判（智库视角，由级别构成/类型/资产关联/国别环比推导演化方向）
+       * 2026-09-03 用户铁律：研判句必须落到具体事件样态——嵌入该方向最高级别事件标题（“”引注），
+       * 杜绝「该方向涉我人员与机构安全面临现实直接威胁」式无事件实体的纯模板句 */
+      const _topEvTs = lv => g.arr.filter(i => i.severity === lv)
+        .sort((a, b) => _repScore(b) - _repScore(a)).slice(0, 2)
+        .map(i => _cutTitle(_govTitle(i))).filter(Boolean);
+      const redTs = _topEvTs('red');
+      const orangeTs = _topEvTs('orange');
+      const redLead = redTs.length ? '“' + redTs.join('”、“') + '”等事件显示，' : '';
+      const orangeLead = orangeTs.length ? '从“' + orangeTs.join('”、“') + '”等事件看，' : '';
       const parts = [];
       if (chinaSide) {
-        if (g.red) parts.push('该方向涉我人员与机构安全面临现实直接威胁，后续演化与外溢效应需高度关注');
-        else if (g.orange) parts.push('事件以橙色为主，存在升级可能，态势走向需持续观察');
+        if (g.red) parts.push(redLead + '该方向涉我人员与机构安全面临现实直接威胁，后续演化与外溢效应需高度关注');
+        else if (g.orange) parts.push(orangeLead + '事件以橙色为主，存在升级可能，态势走向需持续观察');
         const gAssets = g.arr.filter(i => i.assets && i.assets.length);
         if (gAssets.length) parts.push('其中' + gAssets.length + '件与我当地资产关联，项目运营面临潜在扰动');
         if (g.arr.filter(i => /terror_events|military_conflicts/.test(i.type)).length) parts.push('事件类型以恐怖袭击与武装冲突为主，暴力外溢风险上升');
       } else {
-        if (g.red) parts.push('红色级别事件已对地区安全格局产生现实冲击，安全环境呈恶化趋势');
+        if (g.red) parts.push((redTs.length ? '“' + redTs.join('”、“') + '”等红色事件' : '红色级别事件') + '已对地区安全格局产生现实冲击，安全环境呈恶化趋势');
         const conflictN = g.arr.filter(i => /military_conflicts/.test(i.type)).length;
         const terrorN = g.arr.filter(i => /terror_events/.test(i.type)).length;
         if (conflictN) parts.push('武装冲突持续将推高地区安全成本，波及我周边项目布局与撤离通道');
@@ -1081,7 +1108,15 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
       const restRed = rest.reduce((s, g) => s + g.red, 0);
       const restOrange = rest.reduce((s, g) => s + g.orange, 0);
       const lvDesc = restRed ? '（含红色' + restRed + '件）' : (restOrange ? '，以橙色及以下级别为主' : '，以黄色及以下级别为主');
-      paras.push('此外，' + rest.slice(0, 3).map(g => g.c).join('、') + (rest.length > 3 ? '等' : '') + '方向另有相关事件' + restN + '件' + lvDesc + '，暂未形成集中态势。');
+      /* rest 中红色事件同样点名（用户铁律：威胁样态可见，不因未展开而隐去） */
+      const restRedTs = [];
+      rest.forEach(g2 => {
+        const r2 = g2.arr.filter(i => i.severity === 'red').sort((a, b) => _repScore(b) - _repScore(a))[0];
+        if (r2) restRedTs.push(_cutTitle(_govTitle(r2)));
+      });
+      paras.push('此外，' + rest.slice(0, 3).map(g => g.c).join('、') + (rest.length > 3 ? '等' : '') + '方向另有相关事件' + restN + '件' + lvDesc
+        + (restRedTs.length ? '，其中“' + restRedTs.slice(0, 2).join('”、“') + '”需关注' : '')
+        + '，暂未形成集中态势。');
     }
     return paras;
   };
@@ -3364,7 +3399,7 @@ const _DEEP_SEGS = {
   trend: {
     name: '趋势研判', maxTokens: 2600,
     system: '你是服务于外交部/商务部/公安部等多部门的资深情报分析师，专注态势趋势研判。你的分析必须区分"确定信号"与"推测"：确定判断锚定给定数字，推测判断明确标注"（推测）"；数据不足时直说置信度低。全中文输出。',
-    task: '输出【趋势研判】：对比窗口内数据变化——预警总量与红橙结构、八维风险 cur→pred 走势、近72h与前72h事件数对比、系统驱动因素增减——给出趋势判断与未来72小时发展方向。500字内；至少引用3个具体统计数字；不得虚构任何未给定的数据。'
+    task: '输出【趋势研判】：对比窗口内数据变化——预警总量与红橙结构、八维风险 cur→pred 走势、近72h与前72h事件数对比、系统驱动因素增减——给出趋势判断与未来72小时发展方向。500字内；至少引用3个具体统计数字，并点名至少2件具体事件（以“”引注其标题，取自高价值事件列表，说明该事件的威胁样态）；不得虚构任何未给定的数据。'
   },
   drivers: {
     name: '动因分析', maxTokens: 2600,

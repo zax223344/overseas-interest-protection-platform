@@ -595,6 +595,10 @@ function buildUserPrompt(def, periodKey, win, data) {
   });
   if (data.extraPrompt) lines.push('', data.extraPrompt);
   lines.push('', '【写作要求】' + def.promptBrief);
+  /* 2026-09-03 用户铁律「没有具体事件是不够的」：所有研判必须点名具体事件——
+   * 读者必须能从研判文字直接看出威胁或风险的样态（谁、何地、发生了什么、何种影响），
+   * 杜绝「该方向面临现实直接威胁」式只有数量统计与泛化定性的空转研判 */
+  lines.push('', '【点名铁律】综合研判与对策建议中，每一个方向、要道、组织或专题的研判，必须点名1至3件具体事件（以“”引注其标题，事件取自上方分节数据，禁止虚构），并说明该事件的威胁样态（事件性质、针对对象、影响范围）；严禁只写事件数量与泛化定性表述。对策建议亦须回指所针对的具体事件。');
   lines.push('', RECOMMENDATION_SPEC);
   return lines.join('\n');
 }
@@ -1211,8 +1215,13 @@ async function assembleModelExport(q, win, periodKey, opts) {
     if (orgRanked.length) {
       const sec = section(MODEL_DIMS.org + '（模型输出）', orgRanked.map(g => {
         const tacs = Object.entries(g.tactics).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + x[1] + '次').join('、');
+        /* 2026-09-03 点名铁律配套：聚合行附带 2 件真实代表事件标题（同要道维度模式），
+         * 供 LLM 研判点名引用，杜绝"只有数字无事件"的空转研判 */
+        const reprEv = g.list.slice().sort((a, b) => (a.severity === 'red' ? -1 : 1) - (b.severity === 'red' ? -1 : 1)).slice(0, 2)
+          .map(x => String(x.title || '').replace(/[\r\n]+/g, ' ').slice(0, 40)).join('；');
         return {
-          title: g.org.name + '：窗口内关联情报 ' + g.list.length + ' 条（' + Object.entries(g.countries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + x[1] + '条').join('、') + '）',
+          title: g.org.name + '：窗口内关联情报 ' + g.list.length + ' 条（' + Object.entries(g.countries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + x[1] + '条').join('、') + '）'
+            + (reprEv ? '｜代表事件：' + reprEv : ''),
           level: g.org.threatLevel >= 8 ? 'red' : g.org.threatLevel >= 6 ? 'orange' : 'yellow',
           country: Object.keys(g.countries)[0] || '—', time: _cnTime(g.list[0] && g.list[0].time) || '—', url: '',
           digest: (g.org.type || '') + '；状态：' + (g.org.status || '—') + '；手法关键词：' + (tacs || '标题未含典型手法词')
@@ -1269,13 +1278,18 @@ async function assembleModelExport(q, win, periodKey, opts) {
       const text = i.title + ' ' + i.digest;
       projs.forEach(p => {
         if ((i.assets && i.assets.indexOf(p.name) >= 0) || p.re.test(text)) {
-          byP[p.name] = (byP[p.name] || 0) + 1;
+          if (!byP[p.name]) byP[p.name] = { n: 0, list: [] };
+          byP[p.name].n++;
+          byP[p.name].list.push(i);
         }
       });
     });
-    const ranked = Object.entries(byP).sort((a, b) => b[1] - a[1]).slice(0, 12);
+    const ranked = Object.entries(byP).sort((a, b) => b[1].n - a[1].n).slice(0, 12);
+    /* 2026-09-03 点名铁律配套：项目聚合行附带真实代表事件标题，供 LLM 研判点名 */
     const prSec = section(MODEL_DIMS.project + '（模型输出）', ranked.map(x => ({
-      title: x[0] + '：窗口内命中情报 ' + x[1] + ' 条', level: x[1] >= 5 ? 'orange' : 'yellow', country: '—', time: '—', url: '', digest: ''
+      title: x[0] + '：窗口内命中情报 ' + x[1].n + ' 条'
+        + (x[1].list.length ? '｜代表事件：' + x[1].list.slice(0, 2).map(i => String(i.title || '').replace(/[\r\n]+/g, ' ').slice(0, 40)).join('；') : ''),
+      level: x[1].n >= 5 ? 'orange' : 'yellow', country: '—', time: '—', url: '', digest: ''
     })), 12);
     prSec.note = '命中口径：asset_tags 或标题/摘要命中项目识别正则。在册项目 ' + projs.length + ' 个，命中 ' + Object.keys(byP).length + ' 个。';
     sections.push(prSec);
@@ -1303,6 +1317,17 @@ async function assembleModelExport(q, win, periodKey, opts) {
     sections.push(scSec);
   }
   const st = lvStat(items);
+  /* 2026-09-03 用户铁律「研判必须点名具体事件」：组织/趋势/国别/项目/要道维度输出的都是
+   * 聚合行（"XX组织：53条"），LLM 无真实事件可点名 → 追加"高价值真实事件"数据节，
+   * 红橙优先、涉华/资产命中加权 TOP14，作为点名铁律的引用源 */
+  const _hotScore = i => ({ red: 40, orange: 25, yellow: 10, blue: 4 }[i.severity] || 5)
+    + ((i.china || i.negative) ? 8 : 0) + ((i.assets && i.assets.length) ? 6 : 0);
+  const hot = items.slice().sort((a, b) => _hotScore(b) - _hotScore(a)).slice(0, 14);
+  if (hot.length) {
+    const hotSec = section('高价值真实事件（点名引用源）', hot.map(toItem), 14);
+    hotSec.note = '选材口径：级别（红橙优先）+涉华/项目命中加权 TOP14，全部为窗口内真实采集事件；综合研判点名具体事件时，须从此节或各维度真实条目中选取，禁止虚构。';
+    sections.push(hotSec);
+  }
   const dimNames = dims.map(d => MODEL_DIMS[d]).join('、');
   const topicLine = o.topic ? '专题主题：「' + o.topic + '」。' : '';
   const countryLine = (Array.isArray(o.countries) && o.countries.length) ? '国别聚焦：' + o.countries.map(_iso2cn).join('、') + '。' : '';
