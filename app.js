@@ -322,6 +322,65 @@ function _lsDel(k){
   if(window.IDBStore&&IDBStore.ready()){IDBStore.removeItem(k);return;}
   try{localStorage.removeItem(k);}catch(e){}
 }
+/* ===== 分类体系 v2.0 前端标准（#627，2026-09-05 用户指令统一修订）=====
+ * 5 风险域 × 18 事件子类 + 4 组交叉标签（涉华关联/情报来源/紧急程度/影响范围）。
+ * 单一事实源 = server/category-standard.js，经 /api/category/standard.js 先于本文件加载；
+ * 本处仅保留结构等价的兜底镜像（离线/接口异常时可用），两处禁止各自演化和词表漂移。 */
+var CATV2=(typeof window!=='undefined'&&window.CAT_STD&&window.CAT_STD.v===2)?window.CAT_STD:{
+  v:2,
+  domains:[{key:'violence',label:'暴力与安全'},{key:'governance',label:'政治与治理'},{key:'economy',label:'经济与金融'},{key:'society',label:'社会与运营'},{key:'nature',label:'自然与基础设施'}],
+  subcats:[
+    {key:'terror_events',label:'恐怖袭击',icon:'💥',domain:'violence',alertType:'安全风险'},
+    {key:'military_conflicts',label:'武装冲突',icon:'⚔️',domain:'violence',alertType:'安全风险'},
+    {key:'mass_violence',label:'群体性暴力',icon:'👥',domain:'violence',alertType:'安全风险'},
+    {key:'crime_events',label:'社会治安事件',icon:'🚨',domain:'violence',alertType:'安全风险'},
+    {key:'regime_change',label:'政权变动',icon:'🏛️',domain:'governance',alertType:'政治风险'},
+    {key:'election_events',label:'选举事件',icon:'🗳️',domain:'governance',alertType:'政治风险'},
+    {key:'geopolitical_intel',label:'地缘外交',icon:'🌐',domain:'governance',alertType:'地缘战略风险'},
+    {key:'policy_shift',label:'政策法规突变',icon:'📜',domain:'governance',alertType:'政治风险'},
+    {key:'sanctions_data',label:'制裁与合规',icon:'🚫',domain:'economy',alertType:'经济风险'},
+    {key:'financial_market',label:'金融市场风险',icon:'📉',domain:'economy',alertType:'经济风险'},
+    {key:'business_climate',label:'营商环境恶化',icon:'💼',domain:'economy',alertType:'经济风险'},
+    {key:'social_unrest',label:'社会动荡',icon:'💬',domain:'society',alertType:'社会文化风险'},
+    {key:'public_health',label:'公共卫生',icon:'🧬',domain:'society',alertType:'安全风险'},
+    {key:'cyber_security',label:'网络与信息安全',icon:'💻',domain:'society',alertType:'网络安全'},
+    {key:'industrial_accident',label:'生产安全事故',icon:'⚠️',domain:'society',alertType:'运营风险'},
+    {key:'environmental_event',label:'环境生态事件',icon:'🌿',domain:'society',alertType:'自然环境风险'},
+    {key:'natural_disasters',label:'自然灾害',icon:'🌊',domain:'nature',alertType:'自然环境风险'},
+    {key:'infrastructure',label:'基础设施中断',icon:'🚧',domain:'nature',alertType:'运营风险'}
+  ],
+  legacyMap:{terror_events:'terror_events',military_conflicts:'military_conflicts',security_events:'crime_events',political_events:'regime_change',osint_intel:'geopolitical_intel',economic_risk:'financial_market',sanctions_data:'sanctions_data',legal_compliance:'sanctions_data',public_health:'public_health',cyber_security:'cyber_security',social_unrest:'social_unrest',natural_disasters:'natural_disasters',infrastructure:'infrastructure',geopolitical_intel:'geopolitical_intel'},
+  splitRules:[
+    {from:'political_events',to:'election_events',re:'选举|大选|公投|投票|计票|当选|election|ballot|referendum|polling',flags:'i'},
+    {from:'economic_risk',to:'business_climate',re:'营商环境|外资|国有化|征收|评级|劳工|税|投资审查|经营|business|expropriat|nationaliz|rating|labor|tax|investment screen',flags:'i'},
+    {from:'legal_compliance',to:'business_climate',re:'诉讼|仲裁|罚款|监管|处罚|起诉|lawsuit|litigation|arbitration|fine|penalt|regulat|indict|sued|court',flags:'i'},
+    {from:'social_unrest',to:'mass_violence',re:'骚乱|暴动|打砸|械斗|暴徒|riot|lynch|mob attack|communal violence',flags:'i'},
+    {from:'infrastructure',to:'industrial_accident',re:'矿难|火灾|爆炸|坍塌|泄漏|工亡|安全事故|fire|explosion|collapse|leak|accident',flags:'i'},
+    {from:'infrastructure',to:'environmental_event',re:'污染|原油|化学|有毒|排放|生态|pollution|oil spill|chemical|toxic|emission|ecological',flags:'i'}
+  ],
+  scopeLabels:{project:'项目级',national:'国家级',regional:'区域级',country:'国别级'}
+};
+CATV2.keys=CATV2.subcats.map(function(s){return s.key;});
+CATV2.labelOf={};CATV2.iconOf={};CATV2.alertOf={};CATV2.domainOf={};
+CATV2.subcats.forEach(function(s){CATV2.labelOf[s.key]=s.label;CATV2.iconOf[s.key]=s.icon;CATV2.alertOf[s.key]=s.alertType;CATV2.domainOf[s.key]=s.domain;});
+CATV2.domColors={violence:'var(--red)',governance:'var(--orange)',economy:'var(--yellow)',society:'var(--green)',nature:'var(--cyan)'};
+CATV2.colorOf=function(k){return this.domColors[this.domainOf[k]||'governance'];};
+/* 全库扫描列表：18 新类 + 5 退役旧键（旧键迁移后为空，保留兼容直读/清洗路径） */
+var CATV2_SCAN=CATV2.keys.concat(['security_events','political_events','osint_intel','economic_risk','legal_compliance']);
+/* 旧 key 归一（含关键词拆分）——本地存量迁移 / DBCenter 集合名归一 / 未知类别兜底共用 */
+var CATV2_SPLIT=(CATV2.splitRules||[]).map(function(r){return {from:r.from,to:r.to,re:new RegExp(r.re,r.flags||'i')};});
+function catv2MapKey(oldKey,text){
+  if(!oldKey)return null;
+  if(CATV2.keys.indexOf(oldKey)>=0)return oldKey;
+  var base=CATV2.legacyMap[oldKey];
+  if(!base)return null;
+  var t=String(text||'');
+  for(var i=0;i<CATV2_SPLIT.length;i++){
+    var r=CATV2_SPLIT[i];
+    if(r.from===oldKey&&t&&r.re.test(t))return r.to;
+  }
+  return base;
+}
 const DBCenter={
   _prefix:'orps_',
   _listeners:[],
@@ -332,20 +391,25 @@ const DBCenter={
     }
   },
   init(){
-    // === 数据库版本控制：版本不匹配时自动重建 ===
-    var DB_VERSION='22.0';
+    // === 数据库版本控制：版本不匹配时自动迁移/重建 ===
+    var DB_VERSION='23.0';
     var storedVersion='';
     try{storedVersion=localStorage.getItem('orps_db_version')||'';}catch(e){}
     if(storedVersion!==DB_VERSION){
-      // 版本不匹配，清空所有旧数据，重建数据库（本次升级：修复情报枢纽实时索引重复条目）
-      console.log('[DBCenter] 版本变更: '+storedVersion+' → '+DB_VERSION+'，重建数据库');
-      ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs','economic_data','news_articles','diplomatic_events'].forEach(function(s){
-        try{localStorage.setItem('orps_'+s,'[]');}catch(e){}
-      });
+      if(storedVersion==='22.0'){
+        /* #627 分类体系 v2.0：旧 11 库按映射+关键词拆分迁入新 18 库（不丢数据、不清库） */
+        this._migrateCatV2();
+      }else{
+        // 更早版本：清空旧数据重建（无可迁移结构）
+        console.log('[DBCenter] 版本变更: '+storedVersion+' → '+DB_VERSION+'，重建数据库');
+        CATV2.keys.concat(['collect_logs']).forEach(function(s){
+          try{localStorage.setItem('orps_'+s,'[]');}catch(e){}
+        });
+      }
       try{localStorage.setItem('orps_db_version',DB_VERSION);}catch(e){}
     }
-    // 11类情报数据 + 日志 — 匹配"海外利益安全风险监测情报预警平台"定位
-    ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs'].forEach(function(s){
+    // 18 类情报数据（分类体系 v2.0：5 风险域 × 18 事件子类）+ 日志
+    CATV2.keys.concat(['collect_logs']).forEach(function(s){
       try{if(localStorage.getItem('orps_'+s)===null)localStorage.setItem('orps_'+s,'[]');}catch(e){}
     });
     // 兼容旧数据：economic_data/news_articles/diplomatic_events 不再作为独立分类，合并到地缘情报
@@ -353,7 +417,7 @@ const DBCenter={
       if(localStorage.getItem('orps_'+k)===null)localStorage.setItem('orps_'+k,'[]');
     });
     // === 迁移：确保所有已有数据都有 audit_status 字段 ===
-    ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(s){
+    CATV2.keys.forEach(function(s){
       var data=DBCenter._r(s);
       var changed=false;
       for(var i=0;i<data.length;i++){
@@ -375,14 +439,14 @@ const DBCenter={
     if(this.count('terror_events')===0&&typeof TERROR_EVENTS!=='undefined'){
       this.addBatch('terror_events',TERROR_EVENTS.map(function(e){var o={};for(var k in e)o[k]=e[k];o.data_type='terror';return o;}));
     }
-    if(this.count('security_events')===0&&typeof CHINA_SECURITY!=='undefined'){
-      this.addBatch('security_events',CHINA_SECURITY.map(function(e){var o={};for(var k in e)o[k]=e[k];o.data_type='china_security';return o;}));
+    if(this.count('crime_events')===0&&typeof CHINA_SECURITY!=='undefined'){
+      this.addBatch('crime_events',CHINA_SECURITY.map(function(e){var o={};for(var k in e)o[k]=e[k];o.data_type='crime';return o;}));
     }
     // 启动时清理各分类重复条目（同一新闻经多通道入库导致重复）
     var me=this;
-    ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs'].forEach(function(c){ me.cleanupDuplicates(c); });
+    CATV2.keys.concat(['collect_logs']).forEach(function(c){ me.cleanupDuplicates(c); });
     /* 启动存量瘦身（2026-08-12 配额事故）：各库超 800 条即裁最新 800，防 localStorage 爆配额 */
-    ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs'].forEach(function(c){
+    CATV2.keys.concat(['collect_logs']).forEach(function(c){
       try{var arr=me._r(c);if(arr.length>800){me._w(c,arr.slice(-800));console.log('[DBCenter] 存量瘦身 '+c+': '+arr.length+' → 800');}}catch(e){}
     });
     /* DataHub 集合同样瘦身（头插型，保头部最新） */
@@ -394,7 +458,47 @@ const DBCenter={
     });
     // 启动即对已入库外文情报触发自动翻译（清洗后→翻译，无需手动点击）
     var me0=this;
-    ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(c){ me0.scheduleAutoTranslate(c); });
+    CATV2.keys.forEach(function(c){ me0.scheduleAutoTranslate(c); });
+  },
+  /* ===== #627 分类体系 v2.0 本地库迁移（22.0 → 23.0，一次性）=====
+   * 旧 11 库 → 新 18 库：基础映射 + 关键词拆分（与服务端 mapType 同源规则）；
+   * orps_ 主库与 orps_collected_ 采集库同步迁移，按 国家+归一化标题 去重合入，旧键清空。 */
+  _migrateCatV2(){
+    try{
+      var LEGACY=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','economic_risk','legal_compliance'];
+      var stat={moved:0,dropped:0};
+      ['','orps_collected_'].forEach(function(pre){
+        LEGACY.forEach(function(oldKey){
+          var raw=null;
+          try{raw=localStorage.getItem(pre+'orps_'+oldKey);}catch(e){}
+          if(!raw)return;
+          var arr=[];
+          try{arr=JSON.parse(raw)||[];}catch(e){}
+          if(!Array.isArray(arr)||!arr.length)return;
+          var targets={};
+          arr.forEach(function(o){
+            if(!o)return;
+            var t=catv2MapKey(oldKey,(o.title||'')+' '+(o.title_zh||'')+' '+(o.content||o.desc||''))||catv2MapKey(oldKey)||'geopolitical_intel';
+            (targets[t]=targets[t]||[]).push(o);
+          });
+          Object.keys(targets).forEach(function(tk){
+            var key=pre+'orps_'+tk;
+            var cur=[];
+            try{cur=JSON.parse(localStorage.getItem(key)||'[]')||[];}catch(e){}
+            var seen={};
+            cur.forEach(function(o){seen[(o.country||'')+'|'+_normTitle(o.title||'')]=1;});
+            var add=targets[tk].filter(function(o){
+              var k=(o.country||'')+'|'+_normTitle(o.title||'');
+              if(seen[k])return false;
+              seen[k]=1;return true;
+            });
+            try{localStorage.setItem(key,JSON.stringify(cur.concat(add)));stat.moved+=add.length;}catch(e){stat.dropped+=add.length;}
+          });
+          try{localStorage.setItem(pre+'orps_'+oldKey,'[]');}catch(e){}
+        });
+      });
+      console.log('[DBCenter] 分类体系 v2.0 迁移完成: 迁入 '+stat.moved+' 条（拆分丢弃 '+stat.dropped+'）');
+    }catch(e){console.warn('[DBCenter] v2.0 迁移异常:',e);}
   },
   _r(k){try{return JSON.parse(_lsGet(this._prefix+k)||'[]');}catch(e){return[];}},
   _w(k,v){
@@ -443,13 +547,15 @@ const DBCenter={
   /* 集合名归一（2026-08-14）：上游偶尔把中文类型标签（'安全风险'等）当集合名传入，
    * 导致 POST /api/intel/安全风险 400 且数据落进无人读取的孤儿集合。
    * 统一在唯一写入口 add/addBatch 归一到 11 类英文集合。 */
-  _ZH2COL:{'安全风险':'security_events','恐怖袭击':'terror_events','恐怖活动':'terror_events','军事冲突':'military_conflicts','武装冲突':'military_conflicts','政治风险':'political_events','自然环境风险':'natural_disasters','自然灾害':'natural_disasters','公共卫生':'public_health','制裁合规':'sanctions_data','经济风险':'sanctions_data','社会文化风险':'social_unrest','社会动荡':'social_unrest','运营风险':'infrastructure','基础设施':'infrastructure','地缘战略风险':'geopolitical_intel','网络安全':'osint_intel','法律风险':'osint_intel','开源情报':'osint_intel'},
+  /* 集合名归一（#627 分类体系 v2.0）：中文类型标签/旧英文 key 统一归一到新 18 类。
+   * 中文标签按 v2 语义重映射（涉华安全→交叉标签不占类别，其数据归社会治安事件）。 */
+  _ZH2COL:{'安全风险':'crime_events','恐怖袭击':'terror_events','恐怖活动':'terror_events','军事冲突':'military_conflicts','武装冲突':'military_conflicts','政治风险':'regime_change','自然环境风险':'natural_disasters','自然灾害':'natural_disasters','公共卫生':'public_health','制裁合规':'sanctions_data','经济风险':'financial_market','社会文化风险':'social_unrest','社会动荡':'social_unrest','运营风险':'infrastructure','基础设施':'infrastructure','地缘战略风险':'geopolitical_intel','网络安全':'cyber_security','法律风险':'sanctions_data','开源情报':'geopolitical_intel'},
   _coerceCol(s){
     if(this._INTEL_COLS[s]||s==='collect_logs') return s;
-    var mapped=this._ZH2COL[s];
+    var mapped=this._ZH2COL[s]||catv2MapKey(s);
     if(mapped){ console.warn('[DBCenter] 集合名归一: '+s+' → '+mapped); return mapped; }
-    if(s&&typeof s==='string'){ console.warn('[DBCenter] 未知集合 '+s+' → osint_intel'); }
-    return 'osint_intel';
+    if(s&&typeof s==='string'){ console.warn('[DBCenter] 未知集合 '+s+' → geopolitical_intel'); }
+    return 'geopolitical_intel';
   },
   add(s,o){
     if(!o)return null;
@@ -538,7 +644,7 @@ const DBCenter={
    * 逻辑：采集入库前已由 chinaOverseasGate 完成"数据清洗"（剔除纯国内/体育娱乐等无关项），
    * 此处对入库后的外文情报自动翻译（标题+正文），回写 title_zh/content_zh 持久化。
    * 防抖：同类合并，1.5s 后统一跑；配额耗尽自动停止并提示配百度密钥。 */
-  _INTEL_COLS:{'terror_events':1,'security_events':1,'military_conflicts':1,'political_events':1,'natural_disasters':1,'public_health':1,'sanctions_data':1,'social_unrest':1,'infrastructure':1,'geopolitical_intel':1,'osint_intel':1},
+  _INTEL_COLS:(function(){var m={};CATV2.keys.forEach(function(k){m[k]=1;});return m;})(),
   _autoTrTimer:null,
   _autoTrBusy:false,
   _autoTrPend:{},
@@ -641,7 +747,7 @@ const DBCenter={
    * 返回清理条数（按分类）。 */
   purgeNonOverseas(){
     if(typeof GATE==='undefined'||!GATE.chinaOverseasGate) return {total:0,byCat:{}};
-    var cols=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+    var cols=CATV2.keys.concat(['security_events','political_events','osint_intel','economic_risk','legal_compliance']);
     var byCat={}, total=0;
     var me=this;
     cols.forEach(function(cat){
@@ -667,9 +773,9 @@ const DBCenter={
     if(total>0) console.log('[DBCenter.purgeNonOverseas] 清理非海外利益数据 '+total+' 条：', byCat);
     return {total:total, byCat:byCat};
   },
-  deleteAll(){if(!PERM.guard('\u6e05\u7a7a\u6240\u6709\u6570\u636e'))return;['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs','economic_data','news_articles','diplomatic_events'].forEach(function(s){try{localStorage.setItem('orps_'+s,'[]');}catch(e){}});try{localStorage.removeItem('orps_db_version');}catch(e){}},
+  deleteAll(){if(!PERM.guard('\u6e05\u7a7a\u6240\u6709\u6570\u636e'))return;CATV2.keys.concat(['collect_logs','security_events','political_events','osint_intel','economic_risk','legal_compliance','economic_data','news_articles','diplomatic_events']).forEach(function(s){try{localStorage.setItem('orps_'+s,'[]');}catch(e){}});try{localStorage.removeItem('orps_db_version');}catch(e){}},
   getStats(){
-    var cols=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs'];
+    var cols=CATV2.keys.concat(['collect_logs']);
     var stats={};
     cols.forEach(function(s){stats[s]=DBCenter.count(s);});
     stats.total=Object.values(stats).reduce(function(a,b){return a+b;},0);
@@ -908,54 +1014,41 @@ var DATACENTER={
   // 审核状态的中文标签和颜色
   AUDIT_LABELS:{pending:'🟡 待审核',approved:'🟢 已审核',rejected:'🔴 已驳回'},
   AUDIT_COLORS:{pending:'var(--orange)',approved:'var(--green)',rejected:'var(--red)'},
-  tabs:[
-    {key:'terror_events',label:'💥 恐袭事件',ic:'💥',bg:'var(--red-bg)',c:'var(--red)'},
-    {key:'security_events',label:'🛡️ 涉华安全',ic:'🛡️',bg:'var(--orange-bg)',c:'var(--orange)'},
-    {key:'military_conflicts',label:'⚔️ 武装冲突',ic:'⚔️',bg:'var(--red-bg)',c:'var(--red)'},
-    {key:'political_events',label:'🏛️ 政治风险',ic:'🏛️',bg:'var(--orange-bg)',c:'var(--orange)'},
-    {key:'economic_risk',label:'💰 经济风险',ic:'💰',bg:'var(--yellow-bg)',c:'var(--yellow)',virtual:true},
-    {key:'sanctions_data',label:'🚫 制裁合规',ic:'🚫',bg:'var(--yellow-bg)',c:'var(--yellow)'},
-    {key:'legal_compliance',label:'⚖️ 法律合规',ic:'⚖️',bg:'var(--yellow-bg)',c:'var(--yellow)',virtual:true},
-    {key:'cyber_security',label:'💻 网络安全',ic:'💻',bg:'var(--purple-bg)',c:'#c084fc',virtual:true},
-    {key:'social_unrest',label:'💬 社会动荡',ic:'💬',bg:'var(--orange-bg)',c:'var(--orange)'},
-    {key:'infrastructure',label:'🚧 基础设施',ic:'🚧',bg:'var(--blue-bg)',c:'var(--cyan)'},
-    {key:'natural_disasters',label:'🌊 自然灾害',ic:'🌊',bg:'var(--blue-bg)',c:'var(--cyan)'},
-    {key:'public_health',label:'🧧 公共卫生',ic:'🧧',bg:'var(--green-bg)',c:'var(--green)'},
-    {key:'geopolitical_intel',label:'🌐 地缘战略',ic:'🌐',bg:'var(--purple-bg)',c:'#c084fc'},
-    {key:'collect_logs',label:'📝 采集日志',ic:'📝',bg:'var(--green-bg)',c:'var(--green)'}
-  ],
-  /* ===== 数据要素分类体系（2026-08-11 重设计，取消"开源情报"泛类） =====
-   * 所有采集数据按数据要素归入以下类别；osint_intel 物理存储保留，但展示层按要素重分类。
-   * 虚拟分类（virtual:true）跨库按关键词归类，不单独建表。 */
-  VIRTUAL_CLASSIFIERS:{
-    economic_risk:/经济|金融|汇率|债务|违约|通胀|通货膨胀|衰退|萧条|股市|货币|央行|利率|投资|贸易|关税|出口|进口|赤字|破产|economic|economy|financial|debt|default|inflation|recession|market|stock|currency|central bank|interest rate|investment|trade|tariff|export|import|deficit|bankruptcy|gdp|imf|world bank/i,
-    legal_compliance:/法律|法规|合规|诉讼|仲裁|罚款|处罚|监管|审查|调查|起诉|引渡|制裁合规|反垄断|反倾销|反补贴|legal|lawsuit|litigation|arbitration|regulation|regulatory|compliance|fine|penalty|antitrust|anti-dumping|countervailing|extradition|prosecution|indictment/i,
-    cyber_security:/网络安全|黑客|数据泄露|数据安全|勒索软件|勒索攻击|漏洞|网络攻击|钓鱼|恶意软件|间谍软件|cyber|cyberattack|cybersecurity|hack|hacker|breach|data leak|ransomware|malware|phishing|ddos|vulnerability|spyware|apt\d*/i
+  /* ===== 分类体系 v2.0 tabs（#627，2026-09-05）：5 风险域 × 18 事件子类 + 涉华关联交叉视图 + 采集日志 =====
+   * tabs 从 CATV2 单一来源生成；dom 字段 = 风险域 key（renderTabs 按域分组渲染）；
+   * china_related 为交叉标签视图（涉华关联，方案要求涉华降为标签不占类别席位）。 */
+  tabs:(function(){
+    var DOM_STYLE={violence:['var(--red-bg)','var(--red)'],governance:['var(--orange-bg)','var(--orange)'],
+      economy:['var(--yellow-bg)','var(--yellow)'],society:['var(--green-bg)','var(--green)'],
+      nature:['var(--blue-bg)','var(--cyan)']};
+    var out=CATV2.subcats.map(function(s){
+      var st=DOM_STYLE[s.domain]||['var(--purple-bg)','#c084fc'];
+      return {key:s.key,label:s.icon+' '+s.label,ic:s.icon,bg:st[0],c:st[1],dom:s.domain};
+    });
+    out.unshift({key:'china_related',label:'🛡️ 涉华关联',ic:'🛡️',bg:'var(--red-bg)',c:'var(--red)',special:'china'});
+    out.push({key:'collect_logs',label:'📝 采集日志',ic:'📝',bg:'var(--green-bg)',c:'var(--green)'});
+    return out;
+  })(),
+  /* ===== 涉华关联交叉标签判定（#627：涉华安全降为交叉标签后的数据视图）===== */
+  _isChinaRow(r){
+    if(!r)return false;
+    if(r.chinaRelated===true||r.interestLinked===true)return true;
+    return /中国|中资|中企|中方|华人|华侨|一带一路|Chinese|China[- ]owned/i.test(String((r.title||'')+' '+(r.title_zh||'')));
   },
-  /* 汇总全部情报库数据（物理库） */
+  /* 汇总全部情报库数据（物理库，18 类） */
   _allIntelRows(){
-    var stores=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
     var all=[];
-    stores.forEach(function(s){
+    CATV2.keys.forEach(function(s){
       try{(DBCenter.getAll(s)||[]).forEach(function(r){r._store=s;all.push(r);});}catch(e){}
     });
     return all;
   },
-  /* 按数据要素分类单条记录（虚拟分类判定） */
-  _classifyElement(row){
-    var text=String((row.title||'')+' '+(row.title_zh||'')+' '+(row.content||row.desc||'')+' '+(row.content_zh||'')).toLowerCase();
-    if(this.VIRTUAL_CLASSIFIERS.cyber_security.test(text))return 'cyber_security';
-    if(this.VIRTUAL_CLASSIFIERS.economic_risk.test(text))return 'economic_risk';
-    if(this.VIRTUAL_CLASSIFIERS.legal_compliance.test(text))return 'legal_compliance';
-    return '';
-  },
-  /* 取当前 tab 数据：物理库直取，虚拟库跨库要素归类 */
+  /* 取当前 tab 数据：物理库直取；涉华关联 = 跨库交叉标签视图 */
   _getTabRows(tab){
     var t=null;
     for(var i=0;i<this.tabs.length;i++){if(this.tabs[i].key===tab){t=this.tabs[i];break;}}
-    if(t&&t.virtual){
-      var me=this;
-      return this._allIntelRows().filter(function(r){return me._classifyElement(r)===tab;});
+    if(t&&t.special==='china'){
+      return this._allIntelRows().filter(function(r){return DATACENTER._isChinaRow(r);});
     }
     try{return DBCenter.getAll(tab)||[];}catch(e){return [];}
   },
@@ -1000,62 +1093,29 @@ var DATACENTER={
     }
   },
   computeLiveStats(){
-    var catList=[
-      {key:'terror_events',label:'恐袭事件',ic:'💥',bg:'var(--red-bg)',c:'var(--red)'},
-      {key:'security_events',label:'涉华安全',ic:'🛡️',bg:'var(--orange-bg)',c:'var(--orange)'},
-      {key:'military_conflicts',label:'武装冲突',ic:'⚔️',bg:'var(--red-bg)',c:'var(--red)'},
-      {key:'political_events',label:'政治风险',ic:'🏛️',bg:'var(--orange-bg)',c:'var(--orange)'},
-      {key:'economic_risk',label:'经济风险',ic:'💰',bg:'var(--yellow-bg)',c:'var(--yellow)'},
-      {key:'sanctions_data',label:'制裁合规',ic:'🚫',bg:'var(--yellow-bg)',c:'var(--yellow)'},
-      {key:'legal_compliance',label:'法律合规',ic:'⚖️',bg:'var(--yellow-bg)',c:'var(--yellow)'},
-      {key:'cyber_security',label:'网络安全',ic:'💻',bg:'var(--purple-bg)',c:'#c084fc'},
-      {key:'social_unrest',label:'社会动荡',ic:'💬',bg:'var(--orange-bg)',c:'var(--orange)'},
-      {key:'infrastructure',label:'基础设施',ic:'🚧',bg:'var(--blue-bg)',c:'var(--cyan)'},
-      {key:'natural_disasters',label:'自然灾害',ic:'🌊',bg:'var(--blue-bg)',c:'var(--cyan)'},
-      {key:'public_health',label:'公共卫生',ic:'🧧',bg:'var(--purple-bg)',c:'#c084fc'},
-      {key:'geopolitical_intel',label:'地缘战略',ic:'🌐',bg:'var(--purple-bg)',c:'#c084fc'}
-    ];
+    /* #627 分类体系 v2.0：统计卡从 CATV2 单一来源生成（18 子类 + 涉华关联交叉卡） */
+    var DOM_STYLE={violence:['var(--red-bg)','var(--red)'],governance:['var(--orange-bg)','var(--orange)'],
+      economy:['var(--yellow-bg)','var(--yellow)'],society:['var(--green-bg)','var(--green)'],
+      nature:['var(--blue-bg)','var(--cyan)']};
+    var catList=CATV2.subcats.map(function(s){
+      var st=DOM_STYLE[s.domain]||['var(--purple-bg)','#c084fc'];
+      return {key:s.key,label:s.label,ic:s.icon,bg:st[0],c:st[1]};
+    });
+    catList.unshift({key:'china_related',label:'涉华关联',ic:'🛡️',bg:'var(--red-bg)',c:'var(--red)'});
     var counts={};
     catList.forEach(function(c){counts[c.key]={total:0,approved:0,pending:0,rejected:0};});
-    var keywordMap={
-      terror_events:['terror','terrorist','terrorism','attack','attacks','explosion','bomb','bombing','suicide','kidnap','kidnapping','hostage','killed','dead','deaths','gunmen','militants','militia','rebels','insurgents','airstrike','shelling','isis','taliban','al-qaeda','blf','bla','ttp','is-kp','恐袭','袭击','爆炸','绑架','人质','枪击','武装分子'],
-      security_events:['chinese','china','embassy','consulate','consul','worker','workers','project','enterprise','overseas chinese','citizen','nationals','consular','中国','中资企业','中方人员','使领馆','领事','华人','华侨','海外公民'],
-      military_conflicts:['conflict','war','clashes','clash','coup','rebel','rebels','army','military','soldiers','civilians','invasion','ceasefire','troops','冲突','战争','政变','叛军','军方','军队','交火','空袭'],
-      political_events:['political','politics','government','election','parliament','president','regime','policy','diplomatic','diplomat','relations','政治','政府','选举','议会','总统','政权','外交','关系'],
-      natural_disasters:['earthquake','tsunami','flood','floods','hurricane','typhoon','volcano','landslide','drought','natural disaster','地震','海啸','洪水','飓风','台风','火山','滑坡','干旱','自然灾害'],
-      public_health:['outbreak','epidemic','pandemic','virus','disease','cholera','ebola','malaria','covid','health','疫情','病毒','疾病','霍乱','埃博拉','公共卫生','传染'],
-      sanctions_data:['sanction','sanctions','embargo','blacklist','export control','entity list','tariff','trade war','制裁','禁运','出口管制','实体清单','关税','贸易战'],
-      social_unrest:['protest','protests','riot','riots','unrest','strike','strikes','demonstration','demonstrations','mob','抗议','骚乱','动荡','罢工','示威','游行'],
-      infrastructure:['infrastructure','pipeline','power grid','port','railway','rail','mine','mining','refinery','power plant','dam','bridge','road','能源','管道','电网','港口','铁路','矿山','炼油厂','基础设施','大坝'],
-      geopolitical_intel:['geopolitical','geopolitics','strategic','alliance','treaty','regional','diplomacy','foreign policy','地缘政治','地缘战略','外交','联盟','条约','战略'],
-      cyber_security:['cyber','hack','hacker','breach','ransomware','malware','phishing','ddos','vulnerability','spyware','data leak','网络安全','黑客','数据泄露','勒索','漏洞','网络攻击','恶意软件','数据安全'],
-      economic_risk:['economic','economy','financial','debt','default','inflation','recession','market','stock','currency','central bank','interest rate','investment','trade','tariff','export','import','deficit','bankruptcy','gdp','imf','经济','金融','汇率','债务','违约','通胀','衰退','股市','货币','央行','利率','投资','贸易','关税','出口','进口','破产'],
-      legal_compliance:['legal','lawsuit','litigation','arbitration','regulation','regulatory','compliance','fine','penalty','antitrust','anti-dumping','countervailing','extradition','prosecution','indictment','法律','法规','合规','诉讼','仲裁','罚款','处罚','监管','审查','起诉','引渡','反垄断','反倾销','反补贴']
-    };
     var me0=this;
-    function _classify(item,store){
-      /* 数据要素重分类：osint_intel/geopolitical_intel 泛库按要素归入具体类别 */
-      if(store!=='osint_intel' && store!=='geopolitical_intel' && counts[store]!==undefined) return store;
-      var text=String((item.title||'')+' '+(item.title_zh||'')+' '+(item.content||item.desc||item.detail||item.summary||'')+' '+(item.content_zh||'')).toLowerCase();
-      var priority=['terror_events','security_events','cyber_security','economic_risk','legal_compliance','military_conflicts','political_events','sanctions_data','social_unrest','infrastructure','natural_disasters','public_health'];
-      for(var p=0;p<priority.length;p++){
-        var k=priority[p], arr=keywordMap[k];
-        if(!arr)continue;
-        for(var i=0;i<arr.length;i++){ if(text.indexOf(arr[i])>=0) return k; }
-      }
-      return store==='geopolitical_intel'?'geopolitical_intel':'political_events';
-    }
     var total=0;
-    var stores=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','collect_logs'];
-    stores.forEach(function(s){
+    CATV2.keys.concat(['collect_logs']).forEach(function(s){
       var rows=DBCenter.getAll(s)||[];
       rows.forEach(function(row){
-        var cat=_classify(row,s);
+        var cat=catv2MapKey(s)||s;
         if(counts[cat]!==undefined){
           counts[cat].total++;
           var as=row.audit_status||'approved';
           if(counts[cat][as]!==undefined) counts[cat][as]++;
         }
+        if(me0._isChinaRow(row)) counts.china_related.total++;
         total++;
       });
     });
@@ -1064,23 +1124,18 @@ var DATACENTER={
     var cards=catList.map(function(c){ return {ic:c.ic,bg:c.bg,c:c.c,l:c.label,v:counts[c.key].total||0,audit:counts[c.key]}; });
     cards.push({ic:'🗄️',bg:'var(--cyan-bg)',c:'var(--cyan)',l:'总记录数',v:total,audit:totalAudit});
     if(this._serverStats){ total= this._serverStats.total; }
-    /* 缓存虚拟分类计数供 tab 角标使用 */
-    this._vcounts={economic_risk:counts.economic_risk?counts.economic_risk.total:0,cyber_security:counts.cyber_security?counts.cyber_security.total:0,legal_compliance:counts.legal_compliance?counts.legal_compliance.total:0};
     return {counts:counts,total:total,cards:cards,totalAudit:totalAudit,_serverTotal:this._serverStats?this._serverStats.total:null,_serverChina:this._serverStats?this._serverStats.chinaTotal:null,_serverToday:this._serverStats?this._serverStats.today:null};
   },
   renderStats(){
     var stats=this.computeLiveStats();
-    /* 服务端权威数字覆盖（分类计数按服务端 data_type 映射，涉华安全卡=涉华总量） */
+    /* 服务端权威数字覆盖（#627：分类计数按服务端 data_type 直读，涉华关联卡=涉华总量） */
     if(this._serverStats){
       var bt=this._serverStats.byType||{};
-      /* 逐卡覆盖：按卡片标签对应服务端类型 */
-      var labelMap={'恐袭事件':'terror_events','涉华安全':'__china__','武装冲突':'military_conflicts','政治风险':'political_events',
-        '经济风险':'economic_risk','制裁合规':'sanctions_data','法律合规':'legal_compliance','网络安全':'cyber_security',
-        '社会动荡':'social_unrest','基础设施':'infrastructure','自然灾害':'natural_disasters','公共卫生':'public_health','地缘战略':'geopolitical_intel'};
+      var _keyByLabel={};CATV2.subcats.forEach(function(s){_keyByLabel[s.label]=s.key;});
       stats.cards.forEach(function(c){
-        var t=labelMap[c.l];
-        if(t==='__china__'){ c.v=stats._serverChina||0; }
-        else if(t){ c.v=bt[t]||0; }
+        var key=_keyByLabel[c.l];
+        if(c.l==='涉华关联'){ c.v=stats._serverChina||0; }
+        else if(key){ c.v=bt[key]||0; }
         else if(c.l==='总记录数'){ c.v=stats._serverTotal||c.v; }
       });
       stats._serverApplied=true;
@@ -1108,27 +1163,41 @@ var DATACENTER={
     var el=document.getElementById('dc-tabs');
     if(!el)return;
     var me=this;
-    /* 虚拟分类计数缓存（renderStats 周期刷新） */
-    if(!me._vcounts)me._vcounts={};
-    /* 服务端权威计数覆盖（2026-08-14 用户指令：分类标签数字必须与 PG 实数一致） */
+    /* 服务端权威计数覆盖（2026-08-14 用户指令：分类标签数字必须与 PG 实数一致）
+     * v2.0（#627）：tab key 即服务端 data_type，直读 bt[key]；涉华关联交叉视图用 chinaTotal；
+     * 按风险域分组渲染（5 域小标题 chip），域配色沿用 tabs 定义里的 bg/c。 */
     var bt=(me._serverStats&&me._serverStats.byType)||null;
     var cnTotal=(me._serverStats&&me._serverStats.chinaTotal)||0;
-    var srvMap={terror_events:'terror_events',security_events:'__china__',military_conflicts:'military_conflicts',
-      political_events:'political_events',economic_risk:'economic_risk',sanctions_data:'sanctions_data',
-      legal_compliance:'legal_compliance',cyber_security:'cyber_security',social_unrest:'social_unrest',
-      infrastructure:'infrastructure',natural_disasters:'natural_disasters',public_health:'public_health',
-      geopolitical_intel:'geopolitical_intel'};
-    el.innerHTML=this.tabs.map(function(t){
-      var cnt='';
-      if(t.analysis)cnt='';
-      else if(bt&&srvMap[t.key]){
-        var sk=srvMap[t.key];
-        cnt=' ('+(sk==='__china__'?cnTotal:(bt[sk]||0))+')';
+    var DOM_NAMES={violence:'暴力与安全',governance:'政治与治理',economy:'经济与金融',society:'社会与运营',nature:'自然与基础设施'};
+    function cntOf(t){
+      if(t.analysis)return '';
+      if(t.special==='china')return ' ('+(bt?(me._serverStats.chinaTotal||0):DBCenter.count(t.key))+')';
+      if(t.key==='collect_logs')return ' ('+DBCenter.count('collect_logs')+')';
+      if(bt)return ' ('+(bt[t.key]||0)+')';
+      return ' ('+DBCenter.count(t.key)+')';
+    }
+    var html='';
+    /* 涉华关联交叉视图置顶（不占类别席位） */
+    this.tabs.forEach(function(t){
+      if(t.special!=='china')return;
+      html+='<div class="dc-tab '+(me.currentTab===t.key?'active':'')+'" style="background:'+t.bg+';color:'+t.c+';font-weight:700" onclick="DATACENTER.switchTab(\''+t.key+'\')">'+t.label+cntOf(t)+'</div>';
+    });
+    /* 18 事件子类按 5 风险域分组 */
+    var lastDom=null;
+    this.tabs.forEach(function(t){
+      if(t.special==='china'||t.key==='collect_logs')return;
+      if(t.dom&&t.dom!==lastDom){
+        lastDom=t.dom;
+        html+='<div class="dc-dom-chip" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;margin:2px 4px 2px 10px;border-radius:10px;background:'+t.bg+';color:'+t.c+';font-size:11px;font-weight:700;letter-spacing:1px">'+(DOM_NAMES[t.dom]||t.dom)+'</div>';
       }
-      else if(t.virtual)cnt=' ('+(me._vcounts[t.key]||0)+')';
-      else cnt=' ('+DBCenter.count(t.key)+')';
-      return '<div class="dc-tab '+(me.currentTab===t.key?'active':'')+'" onclick="DATACENTER.switchTab(\''+t.key+'\')">'+t.label+cnt+'</div>';
-    }).join('');
+      html+='<div class="dc-tab '+(me.currentTab===t.key?'active':'')+'" onclick="DATACENTER.switchTab(\''+t.key+'\')">'+t.label+cntOf(t)+'</div>';
+    });
+    /* 采集日志垫底 */
+    this.tabs.forEach(function(t){
+      if(t.key!=='collect_logs')return;
+      html+='<div class="dc-tab '+(me.currentTab===t.key?'active':'')+'" style="background:'+t.bg+';color:'+t.c+'" onclick="DATACENTER.switchTab(\''+t.key+'\')">'+t.label+cntOf(t)+'</div>';
+    });
+    el.innerHTML=html;
   },
   switchTab(t){
     this.currentTab=t;this.page=1;this.search='';
@@ -1238,8 +1307,8 @@ var DATACENTER={
       var d=me._rowDate(r);
       return d&&d>=range.start&&d<=range.end;
     });
-    /* 类别聚合（按数据要素分类） */
-    var catNames={terror_events:'恐袭事件',security_events:'涉华安全',military_conflicts:'武装冲突',political_events:'政治风险',economic_risk:'经济风险',sanctions_data:'制裁合规',legal_compliance:'法律合规',cyber_security:'网络安全',social_unrest:'社会动荡',infrastructure:'基础设施',natural_disasters:'自然灾害',public_health:'公共卫生',geopolitical_intel:'地缘战略'};
+    /* 类别聚合（v2.0：18 子类直取标签，_store 即新 key） */
+    var catNames={};CATV2.subcats.forEach(function(s){catNames[s.key]=s.label;});
     var byCat={};Object.keys(catNames).forEach(function(k){byCat[k]=0;});
     var byCountry={},byDay={},byRegion={},byOrg={},chinaCnt=0,negCnt=0,redCnt=0;
     var REGION_MAP={'巴基斯坦':'南亚','印度':'南亚','孟加拉国':'南亚','斯里兰卡':'南亚','尼泊尔':'南亚','阿富汗':'中亚','哈萨克斯坦':'中亚','乌兹别克斯坦':'中亚','吉尔吉斯斯坦':'中亚','塔吉克斯坦':'中亚','土库曼斯坦':'中亚','尼日利亚':'非洲','马里':'非洲','尼日尔':'非洲','刚果':'非洲','索马里':'非洲','肯尼亚':'非洲','埃塞俄比亚':'非洲','南非':'非洲','埃及':'非洲','利比亚':'非洲','苏丹':'非洲','加纳':'非洲','坦桑尼亚':'非洲','乌干达':'非洲','赞比亚':'非洲','津巴布韦':'非洲','莫桑比克':'非洲','安哥拉':'非洲','喀麦隆':'非洲','乍得':'非洲','阿尔及利亚':'非洲','摩洛哥':'非洲','突尼斯':'非洲','布基纳法索':'非洲','科特迪瓦':'非洲','塞内加尔':'非洲','卢旺达':'非洲','伊朗':'中东','伊拉克':'中东','叙利亚':'中东','也门':'中东','黎巴嫩':'中东','约旦':'中东','以色列':'中东','巴勒斯坦':'中东','沙特':'中东','阿联酋':'中东','卡塔尔':'中东','科威特':'中东','巴林':'中东','阿曼':'中东','土耳其':'中东','缅甸':'东南亚','菲律宾':'东南亚','印尼':'东南亚','印度尼西亚':'东南亚','马来西亚':'东南亚','泰国':'东南亚','越南':'东南亚','柬埔寨':'东南亚','老挝':'东南亚','乌克兰':'欧洲','俄罗斯':'欧洲','英国':'欧洲','法国':'欧洲','德国':'欧洲','希腊':'欧洲','波兰':'欧洲','罗马尼亚':'欧洲','匈牙利':'欧洲','捷克':'欧洲','塞尔维亚':'欧洲','墨西哥':'拉美','阿根廷':'拉美','智利':'拉美','秘鲁':'拉美','哥伦比亚':'拉美','委内瑞拉':'拉美','巴西':'拉美','美国':'北美','加拿大':'北美','澳大利亚':'大洋洲','新西兰':'大洋洲','日本':'东亚','韩国':'东亚'};
@@ -1248,11 +1317,7 @@ var DATACENTER={
     var ORG_CN={'BLA':'俾路支解放军','BLF':'俾路支解放阵线','TTP':'巴基斯坦塔利班','TALIBAN':'塔利班','ISIS':'伊斯兰国','ISIL':'伊斯兰国','IS-KP':'伊斯兰国呼罗珊省','BOKO HARAM':'博科圣地','AL-SHABAAB':'索马里青年党','AL-QAEDA':'基地组织','AQIM':'伊斯兰马格里布基地组织','HTS':'沙姆解放组织','HOUTHI':'胡塞武装','胡塞':'胡塞武装','HAMAS':'哈马斯','HEZBOLLAH':'真主党','LET':'虔诚军','JEM':'穆罕默德军','AL-BADR':'巴德尔组织'};
     rows.forEach(function(r){
       var text=String((r.title||'')+' '+(r.title_zh||'')+' '+(r.content||r.desc||'')+' '+(r.content_zh||''));
-      var cat=r._store;
-      if(r._store==='osint_intel'||r._store==='geopolitical_intel'){
-        var vc=me._classifyElement(r);
-        if(vc)cat=vc;
-      }
+      var cat=r._store||'geopolitical_intel';
       if(byCat[cat]!==undefined)byCat[cat]++;else byCat[cat]=1;
       var c=r.country||r.country_cn||'';
       if(c&&c!=='未知'){
@@ -1287,8 +1352,8 @@ var DATACENTER={
       this._analysisCache={};this._analysisCache[ck]=agg;
     }
     var periodNames={daily:'日报',weekly:'周报',monthly:'月报',quarterly:'季报'};
-    var catNames={terror_events:'恐袭事件',security_events:'涉华安全',military_conflicts:'武装冲突',political_events:'政治风险',economic_risk:'经济风险',sanctions_data:'制裁合规',legal_compliance:'法律合规',cyber_security:'网络安全',social_unrest:'社会动荡',infrastructure:'基础设施',natural_disasters:'自然灾害',public_health:'公共卫生',geopolitical_intel:'地缘战略'};
-    var catColors={terror_events:'var(--red)',security_events:'var(--orange)',military_conflicts:'var(--red)',political_events:'var(--orange)',economic_risk:'var(--yellow)',sanctions_data:'var(--yellow)',legal_compliance:'var(--yellow)',cyber_security:'#c084fc',social_unrest:'var(--orange)',infrastructure:'var(--cyan)',natural_disasters:'var(--cyan)',public_health:'var(--green)',geopolitical_intel:'#c084fc'};
+    var catNames={};CATV2.subcats.forEach(function(s){catNames[s.key]=s.label;});
+    var catColors={};CATV2.subcats.forEach(function(s){catColors[s.key]=CATV2.colorOf(s.key);});
     function fmtD(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
     var html='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
     ['daily','weekly','monthly','quarterly'].forEach(function(p){
@@ -1412,12 +1477,8 @@ var DATACENTER={
     // ---- 统计栏（系统自动审核，仅展示数据概览） ----
     var auditBar=document.getElementById('dc-audit-bar');
     if(auditBar&&!isLogs){
-      var summary=DBCenter.getAuditSummary(this.currentTab);
+      var summary=(this.currentTab==='china_related')?{total:allData.length}:DBCenter.getAuditSummary(this.currentTab);
       var totalN=summary.total||0;
-      /* 虚拟要素分类：以归类后的实际行数为准 */
-      var curTabDef=null;
-      for(var _ti=0;_ti<this.tabs.length;_ti++){if(this.tabs[_ti].key===this.currentTab){curTabDef=this.tabs[_ti];break;}}
-      if(curTabDef&&curTabDef.virtual)totalN=allData.length;
       auditBar.style.display='block';
       auditBar.innerHTML='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px;background:rgba(0,200,83,0.05);border-radius:8px;margin-bottom:10px">'+
         '<span style="font-size:11px;color:var(--text3);font-weight:600">📊 数据中心（唯一真实源）</span>'+
@@ -1650,7 +1711,7 @@ var DATACENTER={
     if(!PERM.guard('同步数据'))return;
     // 统计所有数据集中已审核的数量
     var totalApproved=0;
-    var collections=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel'];
+    var collections=CATV2.keys.concat(['security_events','political_events']);
     collections.forEach(function(k){totalApproved+=DBCenter.getAuditSummary(k).approved;});
     if(totalApproved===0){showToast('⚠ 没有已审核的数据可同步，请先在数据库浏览中审核数据');return;}
     var confirmMsg='确认将 '+totalApproved+' 条已审核数据同步到全域态势感知和实时风险监测？\n\n⚠ 请确保数据来源可靠、内容真实，已审核的数据将立即在态势感知和监测中心显示。';
@@ -1701,13 +1762,8 @@ var DATACENTER={
     var pipeStats=SCRAPER.getPipelineStats?SCRAPER.getPipelineStats():null;
     var hasPipeStats=pipeStats&&pipeStats.raw>0;
 
-    // 11类情报的数据源信息
-    var catIcons={
-      'terror_events':'💥','security_events':'🛡️','military_conflicts':'⚔️',
-      'political_events':'🏛️','natural_disasters':'🌊','public_health':'🧧',
-      'sanctions_data':'🚫','social_unrest':'💬','infrastructure':'🚧',
-      'geopolitical_intel':'🌐','osint_intel':'🔍'
-    };
+    // 18类情报的数据源信息（v2.0，CATV2 单一来源）
+    var catIcons=CATV2.iconOf;
 
     // 构建数据源展示
     var sourceCardsHtml='';
@@ -1837,12 +1893,9 @@ var DATACENTER={
     var el=document.getElementById('dc-scraper-progress');
     if(!el)return;
     el.style.display='block';
-    var labels={
-      'terror_events':'💥 恐袭','security_events':'🛡️ 涉华安全','military_conflicts':'⚔️ 武装冲突',
-      'political_events':'🏛️ 政治风险','natural_disasters':'🌊 自然灾害','public_health':'🧧 公共卫生',
-      'sanctions_data':'🚫 制裁合规','social_unrest':'💬 社会动荡','infrastructure':'🚧 基础设施',
-      'geopolitical_intel':'🌐 地缘情报','osint_intel':'🌐 综合动态'
-    };
+    var labels={};
+    CATV2.subcats.forEach(function(s){labels[s.key]=s.icon+' '+s.label;});
+    labels.osint_intel='🌐 综合动态'; labels.security_events='🛡️ 涉华安全';
     var icon=state==='done'?'✅':state==='error'?'❌':state==='collecting'?'⏳':'⬜';
     var text=state==='done'?'+ '+count+'条':state==='error'?'失败: '+(error||''):'采集中...';
     var color=state==='done'?'var(--green)':state==='error'?'var(--red)':'var(--orange)';
@@ -2458,7 +2511,7 @@ var DATACENTER={
 
   _fusionApprove(idx){
     var m=RISK_FUSION.getResults()[idx]; if(!m)return;
-    var cat=m.event_type||'osint_intel';
+    var cat=catv2MapKey(m.event_type)||'geopolitical_intel';
     var id=m.event_id;
     if(!id){ showToast('⚠ 无法定位原始记录'); return; }
     DBCenter.setAuditStatus(cat, Number(id), 'approved');
@@ -2474,7 +2527,7 @@ var DATACENTER={
   },
   _fusionReject(idx){
     var m=RISK_FUSION.getResults()[idx]; if(!m)return;
-    var cat=m.event_type||'osint_intel';
+    var cat=catv2MapKey(m.event_type)||'geopolitical_intel';
     var id=m.event_id;
     if(!id){ showToast('⚠ 无法定位原始记录'); return; }
     DBCenter.setAuditStatus(cat, Number(id), 'rejected');
@@ -2554,13 +2607,13 @@ var DATACENTER={
       '<span style="font-size:10px;color:var(--green);margin-left:auto">✅ 自动审核通过 · 实时分发全系统</span>'+
     '</div>';
 
-    // Tab 栏
+    // Tab 栏（分类体系 v2.0：只渲染 18 个新子类；CATV2_SCAN 里的 5 个退役旧 key 仅为全库扫描兜底，不显示）
+    var _cats=(typeof CATV2!=='undefined'&&CATV2.keys)?CATV2.keys:COLLECTED_DB.CATEGORIES.filter(function(c){return c!=='security_events'&&c!=='political_events'&&c!=='osint_intel'&&c!=='economic_risk'&&c!=='legal_compliance';});
     var tabsHtml='<div class="dc-tabs" style="margin:0 0 10px 0">'+
-      COLLECTED_DB.CATEGORIES.map(function(cat){
+      _cats.map(function(cat){
         var tabInfo=me.tabs.find(function(t){return t.key===cat;});
-        var label=tabInfo?tabInfo.label:cat;
+        var label=tabInfo?tabInfo.label:((typeof CATV2!=='undefined'&&CATV2.labelOf)?(CATV2.labelOf(cat)||cat):cat);
         var count=COLLECTED_DB.count(cat);
-        var audit=COLLECTED_DB.getAuditSummary(cat);
         return '<div class="dc-tab '+(me._collectedTab===cat?'active':'')+'" onclick="DATACENTER.switchCollectedTab(\''+cat+'\')" style="font-size:11px">'+label+' ['+count+']</div>';
       }).join('')+
     '</div>';
@@ -3412,7 +3465,7 @@ var DATACENTER={
   /* 统计全系统所有情报分类下待翻译外文条目数 */
   _pendingTransAll(){
     try{
-      var cols=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+      var cols=CATV2_SCAN;
       var n=0;
       cols.forEach(function(c){
         var d=DBCenter.getAll(c)||[];
@@ -3440,7 +3493,7 @@ var DATACENTER={
   /* 全系统跨分类批量翻译：把所有采集到的外文情报全部翻译成中文 */
   translateAll(){
     var me=this;
-    var cols=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+    var cols=CATV2_SCAN;
     var btn=document.getElementById('dc-trans-all-btn');
     var totals={target:0,done:0,ok:0,off:0};
     cols.forEach(function(c){ var d=DBCenter.getAll(c)||[]; d.forEach(function(r){ if(!_hasOnlineZh(r) && TRANSLATOR.isForeign((r.title||'')+' '+(r.content||r.desc||r.detail||r.summary||'')))totals.target++; }); });
@@ -3900,8 +3953,8 @@ var DataHub={
         }
       });
     }
-    // 2. 涉华安全事件 → CHINA_SECURITY 和 EVENTS
-    var secData=DBCenter.getAll('security_events');
+    // 2. 涉华安全事件 → CHINA_SECURITY 和 EVENTS（v2.0：crime_events 为主库，security_events 兼容旧残留）
+    var secData=DBCenter.getAll('crime_events').concat(DBCenter.getAll('security_events')||[]);
     if(secData&&secData.length){
       var existingIds=new Set();
       if(typeof CHINA_SECURITY!=='undefined')CHINA_SECURITY.forEach(function(e){if(e.id)existingIds.add(String(e.id));});
@@ -3926,8 +3979,8 @@ var DataHub={
         }
       });
     }
-    // 3. 政治事件 → EVENTS
-    var polData=DBCenter.getAll('political_events');
+    // 3. 政治事件 → EVENTS（v2.0：regime_change + election_events）
+    var polData=DBCenter.getAll('regime_change').concat(DBCenter.getAll('election_events')||[],DBCenter.getAll('political_events')||[]);
     if(polData&&polData.length){
       var existingEvtIds=new Set();
       if(typeof EVENTS!=='undefined')EVENTS.forEach(function(e){if(e.id)existingEvtIds.add(String(e.id));});
@@ -4123,6 +4176,7 @@ const VIEW_MAP={
   aireport:{t:'AI智能研判',b:'分析研判 / AI智能研判（深度分层研判 · BLUF · 情景推演 · 对策建议）'},
   datagov:{t:'数据治理',b:'数据管理 / 数据治理（数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
   'manual-entry':{t:'情报录入',b:'数据管理 / 情报录入（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
+  thinktank:{t:'智库报告库',b:'数据管理 / 智库报告库（PDF加密馆藏 · 密级分级可见 · 多维检索 · 全程审计）'},
   settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
   threatorgs:{t:'威胁组织图谱',b:'监测中心 / 威胁组织图谱'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
@@ -4297,6 +4351,7 @@ function runViewInit(v){
       else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
       else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
       else if(v==='manual-entry'){ if(typeof MANUALENTRY!=='undefined')MANUALENTRY.init(); }
+      else if(v==='thinktank'){ if(typeof THINKTANK!=='undefined')THINKTANK.init(); }
       else if(v==='models'){ if(typeof MODELS_ANALYSIS!=='undefined')MODELS_ANALYSIS.init(); }
       else if(v==='reportsc'){ if(typeof REPORTS!=='undefined')REPORTS.render(); }
       else if(v==='role'){ if(typeof ROLE_UI!=='undefined')ROLE_UI.render(); }
@@ -4958,9 +5013,9 @@ const ARCHIVE_VIEW={
     var self=this;
     var host=document.getElementById('archive-content');
     if(!host) return;
-    var typeOpts=['','terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','economic_risk','legal_compliance','cyber_security'].map(function(t){
-      var n={terror_events:'恐怖事件',security_events:'安全事件',military_conflicts:'武装冲突',political_events:'政治事件',natural_disasters:'自然灾害',public_health:'公共卫生',sanctions_data:'制裁措施',social_unrest:'社会动荡',infrastructure:'基础设施',geopolitical_intel:'地缘情报',economic_risk:'经济风险',legal_compliance:'法律合规',cyber_security:'网络安全'}[t];
-      return '<option value="'+t+'"'+(self._type===t?' selected':'')+'>'+(t?(n||t):'全类别')+'</option>';
+    var typeOpts=[''].concat(CATV2.keys).map(function(t){
+      var n=CATV2.labelOf[t]||t;
+      return '<option value="'+t+'"'+(self._type===t?' selected':'')+'>'+(t?n:'全类别')+'</option>';
     }).join('');
     host.innerHTML=
       '<div class="card"><div class="card-tt"><span class="ic">📚</span>归档库检索 · 滚动归档（活跃库仅留 7 天，更早数据可查不丢）</div>'+
@@ -5095,12 +5150,47 @@ const AUTH={
     this._enableLoginUi();
   },
   _enableLoginUi(){
-    var ids = ['li-user','li-pass'];
+    var ids = ['li-user','li-pass','li-captcha'];
     ids.forEach(function(id){ var el = document.getElementById(id); if (el) { el.disabled = false; el.removeAttribute('aria-disabled'); } });
     var btns = document.querySelectorAll('#auth-card-login button.auth-btn');
     btns.forEach(function(b){ b.disabled = false; b.removeAttribute('aria-disabled'); b.style.opacity = ''; b.style.pointerEvents = ''; });
     var hint = document.getElementById('login-hint');
     if (hint) hint.style.display = 'none';
+    this._loadCaptcha();
+  },
+  /* ===== 图形验证码（2026-09-04：答案只存服务端，一次性核销，任何登录失败后必须换新图）===== */
+  _captchaId:null,
+  _loadCaptcha(manual){
+    var box=document.getElementById('li-captcha-img');
+    if(!box)return;
+    var self=this;
+    if(manual)this._capRetries=0;
+    /* 服务端在线才加载真实验证码；探测是异步的——登录卡激活时探测往往未完成，
+       限次重试（1.5s×20≈30s）而非立即误判本地模式 */
+    if(typeof APIClient==='undefined'||!APIClient.isOnline()||!APIClient.isDBOnline()){
+      if((this._capRetries||0)<20){
+        this._capRetries=(this._capRetries||0)+1;
+        box.innerHTML='<span class="cap-loading">验证码加载中…</span>';
+        clearTimeout(this._capRetryT);
+        this._capRetryT=setTimeout(function(){self._loadCaptcha();},1500);
+      }else{
+        box.innerHTML='<span class="cap-loading">本地模式<br>无需验证码</span>';
+        this._captchaId=null;
+      }
+      return;
+    }
+    this._capRetries=0;
+    if(manual){var inp=document.getElementById('li-captcha');if(inp)inp.value='';}
+    box.innerHTML='<span class="cap-loading">…</span>';
+    var self=this;
+    fetch((APIClient._baseUrl||'')+'/api/auth/captcha',{cache:'no-store'}).then(function(r){
+      if(r.status===429){box.innerHTML='<span class="cap-loading">刷新过频<br>稍后再试</span>';self._captchaId=null;return 'RATE_LIMITED';}
+      return r.json();
+    }).then(function(d){
+      if(d==='RATE_LIMITED')return;
+      if(d&&d.captchaId&&d.svg){self._captchaId=d.captchaId;box.innerHTML=d.svg;}
+      else{box.innerHTML='<span class="cap-loading">点击重试</span>';self._captchaId=null;}
+    }).catch(function(){box.innerHTML='<span class="cap-loading">加载失败<br>点击重试</span>';self._captchaId=null;});
   },
   _countAccounts(){
     var n=0;
@@ -5357,16 +5447,24 @@ const AUTH={
   login(){
     const u=document.getElementById('li-user').value.trim();
     const p=document.getElementById('li-pass').value.trim();
+    const cEl=document.getElementById('li-captcha');
+    const c=cEl?cEl.value.trim():'';
     if(!u||!p){showToast('请输入用户名和密码');return;}
     var self=this;
     // 优先尝试 API 登录（仅当数据库在线时；DB 离线则直接本地登录，避免 500 后闪错）
     if(typeof APIClient!=='undefined' && APIClient.isOnline() && APIClient.isDBOnline()){
-      APIClient.login(u,p).then(function(data){
+      if(!this._captchaId){showToast('验证码未加载，请点击图片刷新');this._loadCaptcha();return;}
+      if(!c){showToast('请输入图形验证码');return;}
+      APIClient.login(u,p,{captchaId:this._captchaId,captchaText:c}).then(function(data){
         self.user={name:data.user.name,role:data.user.role,isTrial:data.user.trial||false,expireTime:data.user.expireTime||null};
         localStorage.setItem('orps_user',JSON.stringify(self.user));
         self.showApp();
       }).catch(function(err){
-        if(err.status===401||err.status===404){showToast(err.message||'用户名或密码错误');}
+        /* 验证码一次性核销：任何失败后都必须换新图才能再试 */
+        self._loadCaptcha(true);
+        if(err.status===400){showToast(err.message||'验证码校验失败，请重新输入');}
+        else if(err.status===429){showToast(err.message||'失败次数过多，已临时锁定');}
+        else if(err.status===401||err.status===404){showToast(err.message||'用户名或密码错误');}
         else if(err.status===403){showToast(err.message||'账号未审核或已过期');}
         else{
           console.warn('[AUTH.login] API 登录失败，状态:',err&&err.status,'降级本地登录');
@@ -7035,7 +7133,7 @@ var INTELCENTER={
   switch(t){
     this.tab=t;
     document.querySelectorAll('#intel-tabs .dc-tab').forEach(function(el,i){
-      el.classList.toggle('active',['gallery','osint','analysis','aireport','timeline','geoint'][i]===t);
+      el.classList.toggle('active',['gallery','osint','analysis','timeline','geoint'][i]===t);
     });
     this.render();
   },
@@ -9420,7 +9518,7 @@ const SITUATION={
     const rA=ALERTS.filter(a=>a.level==='red'&&a.status!=='resolved').length;
     /* 真实数据源计数（防御式，库未就绪不抛错） */
     let chinaSecN=0,terrorN=0,threatN=0;
-    try{chinaSecN=DBCenter.count('security_events')||0;}catch(e){}
+    try{chinaSecN=(DBCenter.count('crime_events')||0)+(DBCenter.count('security_events')||0);}catch(e){}
     try{terrorN=DBCenter.count('terror_events')||0;}catch(e){}
     try{threatN=(typeof THREAT_DATA!=='undefined'&&THREAT_DATA)?(Array.isArray(THREAT_DATA)?THREAT_DATA.length:((THREAT_DATA.organizations||[]).length)):0;}catch(e){}
     document.getElementById('sit-stats').innerHTML=[
@@ -9548,7 +9646,7 @@ const SITUATION={
       var cards=ss.querySelectorAll('.stat-card');
       /* 卡序：0企业 1国家 2投资 3人员 4活跃预警 5追踪事件 6涉华安全库 7威胁组织库 */
       if(cards[6]){
-        var v6=cards[6].querySelector('.stat-val'); if(v6)v6.textContent=st.byType.security_events||0;
+        var v6=cards[6].querySelector('.stat-val'); if(v6)v6.textContent=(st.byType.crime_events||0)+(st.byType.security_events||0);
         var s6=cards[6].querySelector('.stat-sub'); if(s6)s6.textContent='恐袭库'+(st.byType.terror_events||0)+'条';
       }
     }catch(e){}
@@ -9558,23 +9656,27 @@ const SITUATION={
     try{
       var ds=this._dailyStats||{};
       var total=ds.total||0, china=ds.china||0, neg=ds.chinaNegative||0;
-      var totalPct=Math.min(100,Math.round(total/500*100));
-      var chinaPct=Math.min(100,Math.round(china/80*100));
-      var negPct=Math.min(100,Math.round(neg/50*100));
+      var totalPct=Math.min(100,Math.round(total/4000*100));
+      var chinaPct=Math.min(100,Math.round(china/150*100));
+      var negPct=Math.min(100,Math.round(neg/100*100));
       var bar=function(p,c){return '<div style="flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden"><div style="width:'+p+'%;height:100%;background:'+c+'"></div></div>';};
-      /* 哨兵状态（2026-08-15）：30分钟巡检，断粮自动加速，状态对用户透明 */
+      /* 哨兵状态（2026-08-15）：30分钟巡检，断粮自动加速，状态对用户透明；
+       * 2026-09-04 「最近动作」僵死根修：改读真实动作流 feed（带时间戳），不再取 actions 末条 */
       var patrolTxt='';
       if(ds.patrol&&ds.patrol.gear){
-        var actTxt=(ds.patrol.actions&&ds.patrol.actions.length)?' · 最近动作: '+ds.patrol.actions[ds.patrol.actions.length-1]:'';
-        patrolTxt='<span style="color:var(--text3)" title="30分钟巡检哨兵：采集落后自动升档加速，空转自动修复">🛡️哨兵 '+ds.patrol.gear+actTxt+'</span>';
+        var feed=(ds.patrol.feed||[]).slice();
+        var lastAct=feed.length?feed[feed.length-1]:null;
+        var feedTitle=feed.length?feed.map(function(f){return f.t+' '+f.act;}).join('\n'):'今日暂无补跑动作';
+        var actTxt=lastAct?' · 最近动作: '+lastAct.t+' '+lastAct.act:' · 今日无补跑动作';
+        patrolTxt='<span style="color:var(--text3)" title="30分钟巡检哨兵：采集落后自动升档加速，空转自动修复\n最近动作流：\n'+feedTitle+'">🛡️哨兵 '+ds.patrol.gear+actTxt+'</span>';
       }
       /* 采集漏斗（#521）已迁至「数据治理 → 采集漏斗」页签（2026-09-01 用户指令：态势总览瘦身）：
        * 拒收分桶可视化见 FUNNEL_VIEW._renderReject，本页仅保留今日采集指标 KPI 横条。 */
       var html='<div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 10px;margin-bottom:4px;background:linear-gradient(90deg,rgba(0,212,255,0.08),rgba(255,51,85,0.06));border:1px solid rgba(0,212,255,0.15);border-radius:8px;font-size:11px">'+
         '<span style="font-weight:700;color:var(--text1)">📈 今日采集指标</span>'+
-        '<span style="color:var(--text3)" title="全库口径：今日全类型实际入库，与顶栏「今日+N」同源">总量(全库) '+total+'/500 '+bar(totalPct,total>=500?'var(--green)':'var(--cyan)')+'</span>'+
-        '<span style="color:var(--text3)">涉华 '+china+'/80 '+bar(chinaPct,china>=80?'var(--green)':'var(--orange)')+'</span>'+
-        '<span style="color:var(--text3)">境外涉华负面 '+neg+'/50 '+bar(negPct,neg>=50?'var(--green)':'var(--red)')+'</span>'+
+        '<span style="color:var(--text3)" title="全库口径：今日全类型实际入库，与顶栏「今日+N」同源">总量(全库) '+total+'/4000 '+bar(totalPct,total>=4000?'var(--green)':'var(--cyan)')+'</span>'+
+        '<span style="color:var(--text3)">涉华 '+china+'/150 '+bar(chinaPct,china>=150?'var(--green)':'var(--orange)')+'</span>'+
+        '<span style="color:var(--text3)">境外涉华负面 '+neg+'/100 '+bar(negPct,neg>=100?'var(--green)':'var(--red)')+'</span>'+
         (ds.bri?'<span style="color:var(--text3)" title="一带一路/中巴经济走廊/中欧班列专项采集（每5分钟一轮）">🛤️BRI '+(ds.bri.total||0)+'/100 '+bar(Math.min(100,(ds.bri.total||0)),'var(--cyan)')+' 巴 '+(ds.bri.pakistan||0)+'/40</span>':'')+
         patrolTxt+
         '<span style="color:var(--text3);margin-left:auto">已跑 '+ds.rounds+' 轮 · 下轮 '+ds.nextRoundSec+'s</span>'+
@@ -10181,7 +10283,7 @@ const SITUATION={
     // 行业脆弱性矩阵 (12行业 x 11事件类型)
     var sectors=Object.keys(m);
     var eventTypes=['恐袭','涉华安全','军事冲突','政治事件','自然灾害','公共卫生','制裁','社会动荡','基础设施','地缘情报','开源情报'];
-    var eventKeys=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+    var eventKeys=CATV2_SCAN;
     var vulnData=typeof RISK_FUSION!=='undefined'?RISK_FUSION.SECTOR_VULNERABILITY:{};
     var html='<div style="font-size:11px;font-weight:700;color:var(--cyan);margin-bottom:6px">🔥 行业脆弱性矩阵 (行业 × 事件类型)</div>';
     html+='<div style="overflow-x:auto;max-height:200px;overflow-y:auto"><table style="width:100%;font-size:9px;border-collapse:collapse;white-space:nowrap">';
@@ -10804,27 +10906,23 @@ const MONITOR={
     var totalAlerts=ALERTS.filter(function(a){return a.status!=='resolved';}).length;
     var activeEvents=EVENTS.filter(function(e){return e.status==='active';}).length;
     var redAlerts=ALERTS.filter(function(a){return a.level==='red'&&a.status!=='resolved';}).length;
-    this._mapLayers={risk:true,enterprise:true,event:true,chokepoint:true,corridor:true,project:true,flight:false,vessel:false};
-    this._mapRegion='all';
+    /* 2026-09-05 修复：图层勾选与区域筛选在每次 renderMap 重渲染时被强制重置。
+     * 改为仅首次初始化默认值，后续保留用户选择；勾选框/区域按钮按当前状态渲染。 */
+    if(!this._mapLayers)this._mapLayers={risk:true,enterprise:true,event:true,chokepoint:true,corridor:true,project:true,flight:false,vessel:false};
+    if(!this._mapRegion)this._mapRegion='all';
+    var _L=this._mapLayers,_RG=this._mapRegion;
+    var _layerDefs=[['risk','🔴 风险热力'],['enterprise','🏢 企业分布'],['event','📋 事件标记'],['chokepoint','⚓ 战略咽喉'],['corridor','🛤️ 一带一路'],['project','🏗️ 项目风险'],['flight','✈️ 实时航班'],['vessel','🚢 船舶AIS']];
+    var layerHtml=_layerDefs.map(function(d){var on=!!_L[d[0]];return '<label class="risk-map-ck'+(on?' active':'')+'" data-l="'+d[0]+'"><input type="checkbox"'+(on?' checked':'')+' onchange="MONITOR.toggleLayer(\''+d[0]+'\')">'+d[1]+'</label>';}).join('');
+    var _regDefs=[['all','reg-all','全部'],['中东','reg-mid','中东'],['非洲','reg-afr','非洲'],['南亚','reg-sas','南亚'],['南美','reg-sam','南美']];
+    var regionHtml=_regDefs.map(function(d){var on=_RG===d[0];return '<button class="btn sm" onclick="MONITOR.filterRegion(\''+d[0]+'\')" id="'+d[1]+'" style="font-size:10px;padding:3px 8px'+(on?';background:rgba(0,212,255,0.15);color:var(--cyan)':'')+'">'+d[2]+'</button>';}).join('');
     el.innerHTML='<div class="risk-map-layout">'+
       '<div class="risk-map-main">'+
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">'+
       '<div class="risk-map-layers">'+
-      '<label class="risk-map-ck active" data-l="risk"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'risk\')">🔴 风险热力</label>'+
-      '<label class="risk-map-ck active" data-l="enterprise"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'enterprise\')">🏢 企业分布</label>'+
-      '<label class="risk-map-ck active" data-l="event"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'event\')">📋 事件标记</label>'+
-      '<label class="risk-map-ck active" data-l="chokepoint"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'chokepoint\')">⚓ 战略咽喉</label>'+
-      '<label class="risk-map-ck active" data-l="corridor"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'corridor\')">🛤️ 一带一路</label>'+
-      '<label class="risk-map-ck active" data-l="project"><input type="checkbox" checked onchange="MONITOR.toggleLayer(\'project\')">🏗️ 项目风险</label>'+
-      '<label class="risk-map-ck" data-l="flight"><input type="checkbox" onchange="MONITOR.toggleLayer(\'flight\')">✈️ 实时航班</label>'+
-      '<label class="risk-map-ck" data-l="vessel"><input type="checkbox" onchange="MONITOR.toggleLayer(\'vessel\')">🚢 船舶AIS</label>'+
+      layerHtml+
       '</div>'+
       '<div style="display:flex;gap:4px">'+
-      '<button class="btn sm" onclick="MONITOR.filterRegion(\'all\')" id="reg-all" style="font-size:10px;padding:3px 8px;background:rgba(0,212,255,0.15);color:var(--cyan)">全部</button>'+
-      '<button class="btn sm" onclick="MONITOR.filterRegion(\'中东\')" id="reg-mid" style="font-size:10px;padding:3px 8px">中东</button>'+
-      '<button class="btn sm" onclick="MONITOR.filterRegion(\'非洲\')" id="reg-afr" style="font-size:10px;padding:3px 8px">非洲</button>'+
-      '<button class="btn sm" onclick="MONITOR.filterRegion(\'南亚\')" id="reg-sas" style="font-size:10px;padding:3px 8px">南亚</button>'+
-      '<button class="btn sm" onclick="MONITOR.filterRegion(\'南美\')" id="reg-sam" style="font-size:10px;padding:3px 8px">南美</button>'+
+      regionHtml+
       '</div></div>'+
       '<div class="risk-map-svg-wrap" id="mon-map-svg" style="min-height:450px"></div>'+
       '<div class="risk-map-legend" id="mon-map-legend"></div>'+
@@ -12675,16 +12773,16 @@ const AVIEW={
     var violent=/袭击|绑架|劫持|遇袭|撤离|疏散|炮击|枪击|爆炸|身亡|遇难|attack|kidnap|evacuat|hostage|blast|killed/i.test(t);
     /* 2. 人员与项目安全：中资资产命中 / 涉华严重事件 / 恐袭治安类（标题级判定，前端预警无 data_type 字段） */
     if((a.asset_tags&&a.asset_tags.length)||(cn&&violent))return 'personnel';
-    if(dt==='terror_events'||dt==='security_events'||tp.indexOf('恐怖')>=0)return 'personnel';
+    if(dt==='terror_events'||dt==='security_events'||dt==='crime_events'||dt==='mass_violence'||tp.indexOf('恐怖')>=0)return 'personnel';
     if(/恐袭|恐怖|爆炸|绑架|劫持|人质|自杀式|枪手|武装分子|伏击|枪击|抢劫|谋杀|terror|bomb|blast|explosion|kidnap|hostage|gunmen|militant|suicide|ambush|shooting|murder/i.test(t))return 'personnel';
     /* 3. 制裁与合规（商务部视角） */
-    if(dt==='sanctions_data'||dt==='legal_compliance'||dt==='economic_risk')return 'sanctions';
+    if(dt==='sanctions_data'||dt==='legal_compliance'||dt==='economic_risk'||dt==='financial_market'||dt==='business_climate'||dt==='policy_shift')return 'sanctions';
     if(/制裁|关税|出口管制|实体清单|反倾销|反补贴|禁运|合规|安全审查|法案|诉讼|仲裁|罚款|债务危机|通胀|衰退|sanction|tariff|export control|entity list|anti-dumping|embargo|compliance|lawsuit|arbitration|sanctions bill/i.test(t))return 'sanctions';
     /* 4. 通道与供应链（央国企视角） */
     if((a.chokepoint_tags&&a.chokepoint_tags.length)||dt==='infrastructure')return 'channel';
     if(/海盗|劫持商船|航运|海峡|运河|港口|班列|走廊|铁路|矿山|管道|供应链|关键矿产|稀土|piracy|hijack|strait|canal|shipping|port|railway|pipeline|supply chain|critical mineral/i.test(t))return 'channel';
     /* 5. 冲突与政局 */
-    if(dt==='military_conflicts'||dt==='political_events'||dt==='social_unrest')return 'conflict';
+    if(dt==='military_conflicts'||dt==='political_events'||dt==='social_unrest'||dt==='regime_change'||dt==='election_events')return 'conflict';
     if(/战争|空袭|导弹|交火|停火|炮击|无人机|政变|军政府|选举|抗议|示威|骚乱|罢工|\bwar\b|airstrike|missile|ceasefire|coup|junta|election|protest|riot|unrest/i.test(t))return 'conflict';
     /* 6. 灾害与卫生 */
     if(dt==='natural_disasters'||dt==='public_health')return 'disaster';
@@ -12790,7 +12888,7 @@ const AVIEW={
             if(_dbid)APIClient.deleteIntel(_dbid).catch(function(){});
           }
           if(typeof DBCenter!=='undefined'&&DBCenter._r){
-            ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(c){
+            CATV2_SCAN.forEach(function(c){
               try{
                 var arr=DBCenter._r(c),before=arr.length;
                 arr=arr.filter(function(x){
@@ -15497,7 +15595,7 @@ const AVIEW={
       }).catch(function(){});
     }
     var all=[];
-    var stores=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+    var stores=CATV2_SCAN;
     stores.forEach(function(s){
       try{
         (DBCenter.getAll(s)||[]).forEach(function(it){
@@ -16576,6 +16674,7 @@ const FORECAST={
   },
   init(){this.switch(this.tab||'foresee');}, /* 2026-08-30 修复：保持当前页签——此前 init() 无条件 switch('foresee')，
     实时数据自动重绘（app.js 2714/18799 两处 FORECAST.init()）会把用户切到"风险预测/情景推演"等的页签弹回"未来预判"，预测中心五个页签实际只能用第一个（用户实测"不能用"的 root cause） */
+  refresh(){ this.loadModel(true); this.render(); }, /* #626：强制跳过缓存重新拉取服务端统一引擎并重绘 */
   render(){
     const el=document.getElementById('fc-content');
     if(this.tab==='foresee'){
@@ -16635,7 +16734,7 @@ const FORECAST={
       }catch(e){}
       try{
         if(typeof DBCenter!=='undefined'&&DBCenter.getAll){
-          var cats=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+          var cats=CATV2_SCAN;
           var tmap={terror_events:'安全风险',security_events:'安全风险',military_conflicts:'安全风险',political_events:'政治风险',natural_disasters:'自然环境风险',public_health:'安全风险',sanctions_data:'经济风险',social_unrest:'社会文化风险',infrastructure:'运营风险',geopolitical_intel:'地缘战略风险',osint_intel:'安全风险'};
           cats.forEach(function(c){
             var rows=[]; try{rows=DBCenter.getAll(c)||[];}catch(e){}
@@ -16761,8 +16860,53 @@ const FORECAST={
       return t.join('；');
     }
   },
+  /* ============================================================
+   * #626 统一预测引擎接入：优先消费服务端 GET /api/forecast/countries
+   * （intel_data 审核通过真实数据 60 天窗 → 与后端同一算法源输出），
+   * API 不可达时降级本地 ENGINE.build()——双保险，算法两端同构。
+   * 缓存 5 分钟；AbortController 8 秒超时（无超时的挂起请求会卡死 loading 态）。
+   * ============================================================ */
+  _fcModel:null,_fcModelAt:0,
+  loadModel(force){
+    var self=this;
+    if(force){this._fcModel=null;this._fcModelAt=0;}
+    if(!force&&this._fcModel&&Date.now()-this._fcModelAt<5*60*1000){
+      return Promise.resolve(this._fcModel);
+    }
+    if(this._fcModelP)return this._fcModelP;
+    var ac=('AbortController'in window)?new AbortController():null;
+    var timer=ac?setTimeout(function(){ac.abort();},8000):null;
+    var tok=''; try{ tok=(typeof APIClient!=='undefined'&&APIClient.getToken)?APIClient.getToken():(localStorage.getItem('orps_api_token')||''); }catch(e){}
+    this._fcModelP=fetch('/api/forecast/countries',{headers:{'Authorization':'Bearer '+tok},signal:ac?ac.signal:undefined})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        self._fcModelP=null;
+        if(d&&d.ok&&Array.isArray(d.rows)){
+          d.src='server';
+          self._fcModel=d;self._fcModelAt=Date.now();
+          return d;
+        }
+        throw new Error('bad payload');
+      })
+      .catch(function(){
+        self._fcModelP=null;
+        var M=self.ENGINE.build();M.src='local';
+        self._fcModel=M;self._fcModelAt=Date.now();
+        return M;
+      })
+      .then(function(M){ if(timer)clearTimeout(timer); return M; });
+    return this._fcModelP;
+  },
   renderPrediction(el){
-    var M=this.ENGINE.build();
+    /* #626：异步加载统一引擎（服务端优先）——过期渲染丢弃，防止页签快速切换时旧结果覆盖新页签 */
+    var self=this,seq=(this._fcSeq=(this._fcSeq||0)+1);
+    el.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)"><div style="font-size:34px">🔮</div><div style="font-size:12px;margin-top:8px">统一预测引擎计算中（intel_data 审核通过样本 · 60 天窗）…</div></div>';
+    this.loadModel().then(function(M){
+      if(seq!==self._fcSeq)return;
+      self._renderPrediction(el,M);
+    });
+  },
+  _renderPrediction(el,M){
     var rows=M.rows;
     /* 手工录入的预测（CRUD）与引擎推导结果合并展示，手工项标注来源 */
     var manual=[];
@@ -16784,7 +16928,7 @@ const FORECAST={
     var all=rows.concat(manual);
     if(!all.length){
       var apCnt=0;
-      try{['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(k){apCnt+=(DBCenter.getAuditSummary(k)||{}).approved||0;});}catch(e){}
+      try{CATV2_SCAN.forEach(function(k){apCnt+=(DBCenter.getAuditSummary(k)||{}).approved||0;});}catch(e){}
       el.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)"><div style="font-size:40px;margin-bottom:10px">🔮</div>'+
         '<div style="font-size:14px;font-weight:600;color:var(--text1)">预测模型暂无可用样本</div>'+
         '<div style="font-size:11px;margin-top:6px;line-height:1.6">实战模式：预测仅由「审核通过且可归属到国家」的真实情报推导。<br>'+
@@ -16840,12 +16984,13 @@ const FORECAST={
     html+='<div class="card mb-12" style="padding:10px 12px;background:linear-gradient(90deg,rgba(0,212,255,.06),transparent);border-left:3px solid var(--cyan)">'+
       '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text2)">'+
       '<span style="font-weight:700;color:var(--cyan)">⚙️ 模型输入</span>'+
+      '<span class="badge '+(M.src==='server'?'b-green':'b-yellow')+'" title="'+(M.src==='server'?'服务端统一引擎：intel_data 审核通过真实数据（60 天窗），与后端 API 同一算法源':'服务端不可达，本地降级引擎：预警中心+数据中心审核通过样本（算法与服务端同构）')+'">'+(M.src==='server'?'☁️ 统一引擎':'🏠 本地降级')+'</span>'+
       '<span>审核通过样本 <strong style="color:var(--text1)">'+M.total+'</strong> 条</span>'+
       '<span>可归属国家 <strong style="color:var(--text1)">'+rows.length+'</strong> 国</span>'+
       '<span>含正文/要素细节 <strong style="color:'+(detRate>=50?'var(--green)':'var(--yellow)')+'">'+detRate+'%</strong></span>'+
       '<span>时间跨度 <strong style="color:var(--text1)">'+M.span+'</strong> 天</span>'+
       (manual.length?'<span>人工研判 <strong style="color:var(--text1)">'+manual.length+'</strong> 条</span>':'')+
-      '<span style="margin-left:auto"><button class="btn sm" style="font-size:10px;padding:2px 8px" onclick="FORECAST.render()">🔄 重算</button></span>'+
+      '<span style="margin-left:auto"><button class="btn sm" style="font-size:10px;padding:2px 8px" onclick="FORECAST.refresh()">🔄 重算</button></span>'+
       '</div></div>';
     html+=CRUD.toolbar('共 '+all.length+' 国预测（'+rows.length+' 国由真实情报推导）','FORECAST.showPredForm()','FORECAST.exportData()',null)+
       '<div class="grid mb-12" style="grid-template-columns:1fr 320px;gap:12px">'+
@@ -16917,11 +17062,17 @@ const FORECAST={
   },
   /* 预测依据溯源：展示该国全部计算输入，做到每个数字都可回溯 */
   explain(country){
-    var M=this.ENGINE.build();
+    /* #626：溯源与预测同一数据源——优先服务端统一引擎返回的计算样本 */
+    var self=this;
+    this.loadModel().then(function(M){ self._explain(country,M); });
+  },
+  _explain(country,M){
     var r=M.rows.find(function(x){return x.country===country;});
     if(!r){showToast('未找到该国预测记录');return;}
-    var S=this.ENGINE.samples().filter(function(s){return s.country===country;})
-      .sort(function(a,b){return (b.ts||0)-(a.ts||0);});
+    var S=(r.samples&&r.samples.length)
+      ?r.samples
+      :this.ENGINE.samples().filter(function(s){return s.country===country;})
+        .sort(function(a,b){return (b.ts||0)-(a.ts||0);});
     var lvName={red:'红色',orange:'橙色',yellow:'黄色',blue:'蓝色'};
     var h='<div style="font-size:12px;line-height:1.8">'+
       '<div style="padding:10px;background:var(--bg2);border-radius:8px;margin-bottom:10px">'+
@@ -17120,7 +17271,7 @@ const FORECAST={
     var secEvents=0, geoN=0, sanN=0, fusionN=0;
     try{
       COLS_LOOP: {
-        var cols=['terror_events','security_events','military_conflicts'];
+        var cols=['terror_events','crime_events','mass_violence','military_conflicts'];
         var now=Date.now();
         cols.forEach(function(cat){ (DBCenter.getAll(cat)||[]).forEach(function(it){ var t=Date.parse(String(it.collect_time||'').replace(' ','T')); if(t&&(now-t)<=72*3600*1000) secEvents++; }); });
         (DBCenter.getAll('geopolitical_intel')||[]).forEach(function(it){ var t=Date.parse(String(it.collect_time||'').replace(' ','T')); if(t&&(now-t)<=24*3600*1000) geoN++; });
@@ -17605,6 +17756,7 @@ function showAlertDetail(id){
       else if(/疫情|病毒|传染病/i.test(text)) dt='public_health';
       else if(/港口|矿山|管道|铁路|供应链|稀土|矿产/i.test(text)) dt='infrastructure';
       else dt='osint_intel';
+      dt=catv2MapKey(dt,text)||dt; /* v2.0 归一（political_events→regime_change 等） */
     }
     var china=/中资|中企|中方|华人|华侨|华裔|中国公民|留学生|一带一路|中国|Chinese|China/i.test(text);
     var assets=(a.asset_tags&&a.asset_tags.length?a.asset_tags:null);
@@ -17640,6 +17792,11 @@ function showAlertDetail(id){
       geopolitical_intel: '跟踪该动态对双边经贸、项目审批与人员往来的中长期影响，纳入国别风险研判',
       osint_intel: '持续跟踪事态发展，纳入对应国别与专题监测清单'
     };
+    /* v2.0 新 key 别名（响应文案复用同域旧 key） */
+    RESP.regime_change=RESP.political_events; RESP.election_events=RESP.political_events; RESP.policy_shift=RESP.political_events;
+    RESP.crime_events=RESP.security_events; RESP.mass_violence=RESP.security_events;
+    RESP.financial_market=RESP.sanctions_data; RESP.business_climate=RESP.sanctions_data;
+    RESP.industrial_accident=RESP.infrastructure; RESP.environmental_event=RESP.natural_disasters;
     /* 报告/研判类识别（2026-08-13 用户指令：\"美国报告称…\"这类是二手研判，不给处置动作） */
     var isReport=/报告称|报告指出|报告显示|报告认为|据.{0,12}报告|评估显示|研究报告|智库.{0,6}(报告|评估|认为)|report (says|said|finds|claims|warns)|according to .{0,24}report/i.test(text);
     var chinaEquip=/歼|J-?10|J-?20|枭龙|JF-?17|翼龙|彩虹|红旗|HQ-|VT-?4|中国产|中国制|Chinese-made|Chinese drone|Chinese fighter|Chinese missile/i.test(text);
@@ -17650,7 +17807,7 @@ function showAlertDetail(id){
       impact: (isReport?'（研判/报告类信息，非即时事件）':'')+ip.join('；'),
       response: a.response || (isReport ? reportResp : (a.level==='blue'
         ? '提示级信息，无需即时处置；纳入'+(a.country||'相关')+'方向国别/专题监测，持续跟踪事态发展'
-        : (RESP[dt] || RESP.osint_intel))) };
+        : (RESP[dt] || RESP[catv2MapKey(dt,text)] || RESP.geopolitical_intel))) };
   }
   var _gi=_genAlertIntel(a);
   /* 影响评估：显式 impact 优先，否则用个体化推导 */
@@ -18189,7 +18346,7 @@ var SETTINGS={
     html+='<div class="card">';
     html+='<div class="mb-12"><div class="text-sm text-muted mb-8">\u7cfb\u7edf\u7248\u672c</div><div class="text-sm font-bold" style="color:var(--cyan)">v20.0 \u5b9e\u6218\u6307\u6325\u7248</div></div>';
     html+='<div class="mb-12"><div class="text-sm text-muted mb-8">\u6570\u636e\u5b58\u50a8</div><div class="text-sm">PostgreSQL \u6743\u5a01\u5e93\uff08\u670d\u52a1\u7aef\uff09+ \u6d4f\u89c8\u5668\u672c\u5730\u7f13\u5b58</div></div>';
-    var _lvC=0,_lvE=0,_lvA=0,_lvV=0,_lvI=0;try{_lvC=COUNTRIES.length;}catch(e){}try{_lvE=ENTERPRISES.length;}catch(e){}try{_lvA=ALERTS.length;}catch(e){}try{_lvV=EVENTS.length;}catch(e){}try{['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(_s){_lvI+=DBCenter.count(_s)||0;});}catch(e){}html+='<div class="mb-12"><div class="text-sm text-muted mb-8">\u76d1\u6d4b\u8303\u56f4\uff08\u5b9e\u65f6\uff09</div><div class="text-sm">'+_lvC+'\u4e2a\u56fd\u5bb6 | '+_lvE+'\u5bb6\u4f01\u4e1a | '+_lvA+'\u6761\u9884\u8b66 | '+_lvV+'\u8d77\u4e8b\u4ef6 | 11\u7c7b\u6570\u636e\u91c7\u96c6\uff08\u5e93\u5185'+_lvI+'\u6761\uff09</div></div>';
+    var _lvC=0,_lvE=0,_lvA=0,_lvV=0,_lvI=0;try{_lvC=COUNTRIES.length;}catch(e){}try{_lvE=ENTERPRISES.length;}catch(e){}try{_lvA=ALERTS.length;}catch(e){}try{_lvV=EVENTS.length;}catch(e){}try{CATV2_SCAN.forEach(function(_s){_lvI+=DBCenter.count(_s)||0;});}catch(e){}html+='<div class="mb-12"><div class="text-sm text-muted mb-8">\u76d1\u6d4b\u8303\u56f4\uff08\u5b9e\u65f6\uff09</div><div class="text-sm">'+_lvC+'\u4e2a\u56fd\u5bb6 | '+_lvE+'\u5bb6\u4f01\u4e1a | '+_lvA+'\u6761\u9884\u8b66 | '+_lvV+'\u8d77\u4e8b\u4ef6 | 18\u7c7b\u6570\u636e\u91c7\u96c6\uff08\u5e93\u5185'+_lvI+'\u6761\uff09</div></div>';
     html+='<div class="mb-12"><div class="text-sm text-muted mb-8">\u5f53\u524d\u7528\u6237</div><div class="text-sm"><span style="color:var(--cyan);font-weight:700">'+(AUTH.user?AUTH.user.name:'-')+'</span> <span class="badge '+(isAdmin?'b-red':'b-blue')+'" style="margin-left:8px">'+(isAdmin?'\u7ba1\u7406\u5458':'\u666e\u901a\u7528\u6237')+'</span></div></div>';
     html+='<div class="mb-12"><div class="text-sm text-muted mb-8">质量哨兵（每30分钟自检自愈）</div><div id="quality-guardian-card" class="text-sm" style="line-height:1.7;color:var(--text3)">加载中…</div></div>';
     /* 拦截审计面板（2026-08-17 用户指令：闸门拦了什么必须可见） */
@@ -18497,7 +18654,7 @@ var SETTINGS={
     }
     if(pending.length>0){
       html+='<div style="padding:10px 14px;background:rgba(255,170,0,0.08);border:1px solid rgba(255,170,0,0.3);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--orange)">\u26a0\ufe0f \u6709 '+pending.length+' \u6761\u6570\u636e\u7b49\u5f85\u60a8\u5ba1\u6838</div>';
-      var tLabel={'terror_events':'\u6050\u88ad\u4e8b\u4ef6','security_events':'\u6d89\u534e\u5b89\u5168','military_conflicts':'\u6b66\u88c5\u51b2\u7a81','political_events':'\u653f\u6cbb\u98ce\u9669','geopolitical_intel':'\u5730\u7f18\u60c5\u62a5','natural_disasters':'\u81ea\u7136\u707e\u5bb3','public_health':'\u516c\u5171\u536b\u751f','sanctions_data':'\u5236\u88c1\u5408\u89c4','social_unrest':'\u793e\u4f1a\u52a8\u8361','infrastructure':'\u57fa\u7840\u8bbe\u65bd'};
+      var tLabel=CATV2.labelOf; tLabel.security_events='涉华安全'; tLabel.osint_intel='综合动态';
       pending.forEach(function(r,i){
         html+='<div style="padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">';
         html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
@@ -18824,7 +18981,7 @@ function _initIntelBus(){
   INTELBUS.subscribe('threatorgs', function(evt){
     try{
       if(typeof THREAT_ORGS_DB==='undefined' || !THREAT_ORGS_DB.getByRegion) return;
-      var secType = (evt.cat && ['terror_events','military_conflicts','security_events'].indexOf(evt.cat)>=0) || evt.type==='安全风险';
+      var secType = (evt.cat && ['terror_events','military_conflicts','security_events','crime_events','mass_violence'].indexOf(evt.cat)>=0) || evt.type==='安全风险';
       if(!secType || !evt.country) return;
       var orgs=THREAT_ORGS_DB.getByRegion(evt.country);
       orgs.forEach(function(o){
@@ -18851,7 +19008,7 @@ function _seedIntelIndex(){
   try{ (ALERTS||[]).forEach(function(a){ INTELINDEX.add(normalizeLiveAlert(a)); }); }catch(e){}
   try{
     if(typeof DBCenter!=='undefined'){
-      ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'].forEach(function(cat){
+      CATV2_SCAN.forEach(function(cat){
         DBCenter.getAll(cat).forEach(function(it){
           INTELINDEX.add({id:'DC-'+cat+'-'+(it.id||it.title), ts:it.date||it.time||'', level: it.audit_status==='approved'?'orange':'blue', type: it.intel_type||it.category||cat, country: it.country||'', enterprise: it.enterprise||'', title: it.title||it.content||'', actors:_extractActors((it.title||'')+' '+(it.content||''))});
         });
@@ -19293,8 +19450,8 @@ function _ingestApproved(item, cat){
       return;
     }
   }
-  var typeMap = { terror_events:'安全风险', security_events:'安全风险', military_conflicts:'安全风险', political_events:'政治风险', natural_disasters:'自然环境风险', public_health:'安全风险', sanctions_data:'经济风险', social_unrest:'社会文化风险', infrastructure:'运营风险', geopolitical_intel:'地缘战略风险', osint_intel:'安全风险' };
-  var type = typeMap[cat] || '安全风险';
+  /* v2.0：预警类型 = 18 子类 → 9 类中文风险类型（CATV2.alertOf 单一来源） */
+  var type = CATV2.alertOf[cat] || CATV2.alertOf[catv2MapKey(cat)] || '安全风险';
   var rawTitle = item.title || item.content || '审核通过情报';
   var title = String(rawTitle).replace(/^(?:\[审核通过\]\s*)+/,'');
   var rawContent = item.content || item.desc || title;
@@ -19365,7 +19522,7 @@ function _ingestApproved(item, cat){
 var _approvedSyncStarted=false;
 function _approvedSyncScan(){
   try{
-    var collections=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+    var collections=CATV2_SCAN;
     var budget=20; /* 每次最多分发20条，避免突发洪峰 */
     var mirrored=0, distributed=0;
     collections.forEach(function(cat){
@@ -19459,7 +19616,7 @@ function _migratePendingReviewsToCollected(){
 function _migrateCollectedToDBCenter(){
   try{
     if(localStorage.getItem('orps_migrated_v1')) return;
-    var cats=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+    var cats=CATV2_SCAN;
     var total=0;
     cats.forEach(function(cat){
       var items=COLLECTED_DB.getAll(cat);
@@ -19504,13 +19661,13 @@ var _CLASSIFY_RULES=[
   {cat:'geopolitical_intel', kw:['地缘','联盟','军演','边界争端','北约','联合国','峰会','外交','geopolit','alliance','military exercise','border dispute','nato','united nations','summit','diplomat']}
 ];
 function _classifyCat(txt){
-  if(!txt) return 'osint_intel';
+  if(!txt) return 'geopolitical_intel';
   var low=String(txt).toLowerCase();
   for(var i=0;i<_CLASSIFY_RULES.length;i++){
     var r=_CLASSIFY_RULES[i];
-    for(var j=0;j<r.kw.length;j++){ if(low.indexOf(r.kw[j].toLowerCase())>=0) return r.cat; }
+    for(var j=0;j<r.kw.length;j++){ if(low.indexOf(r.kw[j].toLowerCase())>=0) return catv2MapKey(r.cat,txt)||r.cat; }
   }
-  return 'osint_intel';
+  return 'geopolitical_intel';
 }
 /* ===== 公开态势通道数据 → 数据中心（真实抓取数据的统一入库口）=====
  * 铁律：采集数据先入数据中心(pending)，审核通过后才分发预警中心；此处绝不直注预警。
@@ -20171,7 +20328,7 @@ function initApp(){
     fetch('/api/intel/ids').then(function(r){return r.ok?r.json():null;}).then(function(d){
       if(!d||!d.ids||!d.ids.length)return;
       var set={}; d.ids.forEach(function(i){set[i]=1;});
-      var stores=['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel'];
+      var stores=CATV2_SCAN;
       var removed=0;
       stores.forEach(function(s){
         var rows=[]; try{rows=DBCenter.getAll(s)||[];}catch(e){}

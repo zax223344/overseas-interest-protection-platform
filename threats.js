@@ -429,15 +429,41 @@ const THREATS={
 
   tabAssess(o){
     const tl=o.threatLevel||5;
+    /* 2026-09-05 真实化改造：六维指标由组织档案真实字段（类别/武器/资金/状态/国际列名/网络能力）确定性推导，
+     * 取代原 threatLevel±常数 换算；区域威胁值 = 组织威胁度×0.55 + 国别综合风险(COUNTRIES 实算)×0.45，
+     * 取代原 Math.random() 随机数。 */
+    const clamp=v=>Math.max(1,Math.min(10,v));
+    const cat=(o.category||'');
+    const ideMap={'宗教极端':9,'极端组织':7.5,'民族分离':7,'民族武装':6,'准军事力量':6,'国家军事力量':5};
+    const ide=clamp(ideMap[cat]!=null?ideMap[cat]:(tl>=7?6.5:5));
+    const wep=(o.weaponLevel||'');
+    const mil=clamp(!wep?5:(/导弹|火箭炮|重武器|装甲|无人机|迫击炮|海军|防空/.test(wep)?9:(/IED|伏击|自杀|火箭弹/.test(wep)?7:(/轻武器|刀械|棍棒|无重型/.test(wep)?5:6))));
+    const fun=(o.fundingEstimate||'');
+    const fin=clamp(/亿/.test(fun)?9:(/数千万|千万/.test(fun)?7.5:(/数百万|中等/.test(fun)?6.5:(/较小/.test(fun)?4.5:5.5))));
+    const st=(o.status||'');
+    const coh=clamp(/覆灭|消亡/.test(st)?2:(/分裂|衰落|重创|瓦解|取缔/.test(st)?4.5:(/停火|和平|签约|转型|解散|并入/.test(st)?6:8)));
+    const desig=(o.designation||[]).length;
+    const intl=clamp(3.5+desig*1.4);
+    const cyber=(o.cyberCapability||'');
+    const net=clamp(/高/.test(cyber)?9:(/中/.test(cyber)?6.5:(/低/.test(cyber)?3.5:5)));
     const metrics=[
-      {label:'意识形态影响力',val:Math.min(10,tl+0.5),desc:'极端思想传播与招募能力'},
-      {label:'军事/行动能力',val:tl,desc:'武装力量与作战能力'},
-      {label:'资金实力',val:Math.min(10,tl-1),desc:'资金获取与运作规模'},
-      {label:'组织凝聚力',val:Math.min(10,tl+1),desc:'内部团结与执行力'},
-      {label:'国际威胁度',val:tl,desc:'对国际安全的威胁程度'},
-      {label:'网络/宣传能力',val:Math.min(10,tl-2),desc:'网络宣传与社交媒体运用'}
+      {label:'意识形态影响力',val:ide,desc:'依据组织类别：'+(cat||'未分类')},
+      {label:'军事/行动能力',val:mil,desc:'依据武器水平：'+(wep||'未公开')},
+      {label:'资金实力',val:fin,desc:'依据资金规模：'+(fun||'未公开')},
+      {label:'组织凝聚力',val:coh,desc:'依据组织状态：'+(st||'未公开')},
+      {label:'国际威胁度',val:intl,desc:'依据国际列名数量：'+desig+' 项制裁/列名'},
+      {label:'网络/宣传能力',val:net,desc:'依据网络能力评级：'+(cyber||'未公开')}
     ];
-    const regions=(o.operatingRegions||[]).map(r=>({name:r,threat:tl*(0.7+Math.random()*0.3)}));
+    const regions=(o.operatingRegions||[]).map(r=>{
+      let cr=null;
+      try{
+        if(typeof COUNTRIES!=='undefined'&&typeof calcOverall==='function'){
+          const c=COUNTRIES.find(x=>x.name===r);
+          if(c&&c.scores)cr=calcOverall(c.scores);
+        }
+      }catch(e){}
+      return {name:r,threat:cr!=null?clamp(tl*0.55+cr*0.45):tl};
+    });
     return '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px;font-size:12px;line-height:1.7;color:var(--text2)">'+
       '综合威胁评估指数：<span style="font-size:18px;font-weight:800;color:'+this.threatColor(tl)+'">'+tl+'</span>/10.0 — <span style="color:'+this.threatColor(tl)+';font-weight:600">'+this.threatLabel(tl)+'</span>'+
     '</div>'+

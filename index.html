@@ -100,7 +100,7 @@ body{font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif;background:va
 .hud-ticker .tk-in{white-space:nowrap;display:inline-block;animation:hudScroll 38s linear infinite;font-size:11px;letter-spacing:1.5px;color:#6e93b8}
 .hud-ticker .tk-in b{color:#9fe6ff;font-weight:700}
 @keyframes hudScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-.auth-box{position:relative;width:460px;max-width:calc(100vw - 48px);z-index:2}
+.auth-box{position:relative;width:500px;max-width:calc(100vw - 48px);z-index:2}
 .auth-logo,.auth-card{position:relative;z-index:1}
 .auth-logo{text-align:center;margin-bottom:26px}
 /* 自主设计动图徽标：双环旋转 + 六边形盾 + 雷达扫描 */
@@ -112,13 +112,19 @@ body{font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif;background:va
 @keyframes embSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 @keyframes embSpinR{from{transform:rotate(360deg)}to{transform:rotate(0)}}
 @keyframes embPulse{0%,100%{opacity:.85}50%{opacity:1}}
-.auth-logo h1{font-size:21px;font-weight:700;letter-spacing:3px;margin-top:12px;background:linear-gradient(120deg,#ffffff 15%,#bfe0ff 55%,#7fd8ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 10px rgba(0,180,255,.3))}
+.auth-logo h1{font-size:27px;font-weight:700;letter-spacing:3px;margin-top:12px;background:linear-gradient(120deg,#ffffff 15%,#bfe0ff 55%,#7fd8ff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 10px rgba(0,180,255,.3))}
 .auth-logo p{font-size:10px;color:#5f7490;letter-spacing:4.5px;margin-top:8px;font-family:Consolas,monospace}
 .auth-card{background:rgba(10,18,35,0.55);border:1px solid rgba(0,212,255,0.15);border-radius:16px;padding:28px;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 8px 32px rgba(0,0,0,0.4),0 0 60px rgba(0,212,255,0.08),inset 0 1px 0 rgba(255,255,255,0.05)}
 .auth-card::before{content:'';position:absolute;top:0;left:24px;right:24px;height:1px;background:linear-gradient(90deg,transparent,rgba(0,229,255,.7),transparent)}
 .auth-card h3{font-size:14px;margin-bottom:16px;color:var(--cyan);letter-spacing:1px}
 .auth-input{width:100%;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:12px;transition:.2s}
 .auth-input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,212,255,0.1)}
+.captcha-row{display:flex;gap:8px;margin-bottom:12px;align-items:stretch}
+.captcha-row .auth-input{flex:1;margin-bottom:0;letter-spacing:6px;text-transform:uppercase;font-weight:700}
+.captcha-img{width:132px;height:42px;border:1px solid var(--border);border-radius:8px;cursor:pointer;overflow:hidden;flex-shrink:0;background:#0a1223;display:flex;align-items:center;justify-content:center;transition:.2s;user-select:none}
+.captcha-img:hover{border-color:var(--cyan);box-shadow:0 0 12px rgba(0,212,255,0.25)}
+.captcha-img svg{display:block;pointer-events:none}
+.captcha-img .cap-loading{font-size:11px;color:#7a8aa5;padding:0 6px;text-align:center;line-height:1.4}
 select.auth-input{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%2300d4ff' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px;cursor:pointer}
 select.auth-input option{background:var(--bg2);color:var(--text)}
 .auth-reg-scroll{max-height:calc(100vh - 280px);overflow-y:auto;padding-right:4px}
@@ -141,11 +147,12 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 .sidebar{width:200px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s}
 .sidebar.collapsed{width:56px}
 .sb-brand{padding:16px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);min-height:56px}
-.sb-brand img{width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 0 6px rgba(0,212,255,0.3));flex-shrink:0}
-.sb-brand .ic{font-size:24px;filter:drop-shadow(0 0 8px rgba(0,212,255,0.4));flex-shrink:0}
-.sb-brand .tt{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden}
+.sb-brand .tt{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden}
 .sb-brand .tt span{display:block;font-size:9px;color:var(--cyan);letter-spacing:1px;font-weight:400}
+.sb-brand .tt-mini{display:none;font-size:17px;font-weight:700;color:var(--cyan);text-shadow:0 0 8px rgba(0,212,255,.4)}
+.sidebar.collapsed .sb-brand{justify-content:center}
 .sidebar.collapsed .sb-brand .tt{display:none}
+.sidebar.collapsed .sb-brand .tt-mini{display:block}
 .sb-nav{flex:1;overflow-y:auto;padding:8px 0}
 .sb-group{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:2px;padding:12px 16px 4px;font-weight:600}
 .sidebar.collapsed .sb-group{display:none}
@@ -249,6 +256,58 @@ select.auth-input option{background:var(--bg2);color:var(--text)}
 .stat-val{font-size:22px;font-weight:800;font-family:'Courier New',monospace}
 .stat-sub{font-size:10px;color:var(--text3);margin-top:2px}
 
+/* ===== 指挥调度中心（2026-09-05 补齐缺失样式 + 未来指挥环境） ===== */
+@keyframes cmdPulse{0%{transform:scale(.6);opacity:.5}80%{transform:scale(2.2);opacity:0}100%{opacity:0}}
+.cmd-modal-overlay{position:fixed;inset:0;background:rgba(4,8,14,.72);z-index:9600;display:flex;align-items:center;justify-content:center;padding:22px}
+.cmd-modal{background:var(--bg);border:1px solid var(--border2);border-radius:12px;width:100%;max-width:760px;max-height:84vh;overflow-y:auto;box-shadow:0 22px 70px rgba(0,0,0,.65)}
+.cmd-modal-hd{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:2}
+.cmd-modal-hd h3{margin:0;font-size:14.5px;color:var(--text)}
+.cmd-modal-close{background:none;border:1px solid var(--border2);color:var(--text2);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:15px;line-height:1}
+.cmd-modal-close:hover{border-color:var(--red);color:var(--red)}
+.cmd-table-panel .table-wrap{max-height:420px;overflow-y:auto}
+.cmd-table{width:100%;border-collapse:collapse;font-size:12px}
+.cmd-table th{position:sticky;top:0;background:var(--bg2);color:var(--text3);font-weight:600;font-size:10.5px;letter-spacing:1px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);z-index:1}
+.cmd-table td{padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:middle}
+.cmd-table tbody tr{cursor:pointer;transition:background .15s}
+.cmd-table tbody tr:hover{background:rgba(0,212,255,.05)}
+.cmd-empty{color:var(--text3);font-size:12px;text-align:center;padding:12px}
+/* ── 指挥事件详情内部样式（2026-09-05 补齐：cmd-section/info-grid/desc/playbook/wo-table/timeline 此前全项目无定义=文字墙根因） ── */
+.cmd-modal-bd{padding:16px 18px 20px}
+.cmd-section{margin-bottom:20px}
+.cmd-section:last-child{margin-bottom:4px}
+.cmd-section>h4{margin:0 0 10px;font-size:12.5px;color:var(--cyan);letter-spacing:.5px;padding-bottom:7px;border-bottom:1px solid var(--border)}
+.cmd-info-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.cmd-info-item{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;min-width:0}
+.cmd-info-item.wide{grid-column:1/-1}
+.cmd-info-item .lb{font-size:10px;color:var(--text3);letter-spacing:1px;margin-bottom:4px}
+.cmd-info-item .vl{font-size:12.5px;color:var(--text);line-height:1.55;word-break:break-word}
+.cmd-desc{margin-top:12px;background:rgba(0,212,255,.03);border-left:2px solid var(--cyan-d);border-radius:0 8px 8px 0;padding:10px 13px;font-size:12.5px;color:var(--text2);line-height:1.9}
+.cmd-desc-lead{color:var(--text)}
+.cmd-samples{margin:9px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.cmd-samples li{position:relative;padding:6px 10px 6px 27px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:11.8px;line-height:1.65;color:var(--text2)}
+.cmd-samples li::before{content:attr(data-i);position:absolute;left:9px;top:7px;font-size:9.5px;color:var(--cyan);font-family:'Courier New',monospace}
+.cmd-actions-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+.mt-12{margin-top:12px}
+.cmd-playbook-card{background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:11px 13px;margin-bottom:9px}
+.cmd-playbook-card h5{margin:0 0 5px;font-size:12.8px;color:var(--text)}
+.cmd-playbook-meta{font-size:10.5px;color:var(--text3);margin-bottom:8px}
+.cmd-playbook-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cmd-playbook-list li{display:flex;gap:10px;font-size:11.8px;line-height:1.6;color:var(--text2)}
+.cmd-playbook-label{flex:0 0 52px;color:var(--text3);font-size:10.5px;letter-spacing:1px;padding-top:2px}
+.cmd-tags{display:flex;flex-wrap:wrap;gap:4px;flex:1}
+.cmd-tag{font-size:10px;color:var(--cyan);border:1px solid var(--border2);border-radius:10px;padding:1px 7px;background:rgba(0,212,255,.05)}
+.cmd-pb-steps{margin-top:8px;border-top:1px dashed var(--border);padding-top:7px}
+.cmd-pb-steps summary{cursor:pointer;font-size:11px;color:var(--cyan);outline:none}
+.cmd-pb-steps ol{margin:7px 0 0;padding-left:19px;font-size:11.8px;color:var(--text2);line-height:1.75}
+.cmd-wo-table{width:100%;border-collapse:collapse;font-size:12px}
+.cmd-wo-table th{background:var(--bg2);color:var(--text3);font-weight:600;font-size:10.5px;letter-spacing:1px;text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+.cmd-wo-table td{padding:7px 9px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+.cmd-timeline{position:relative;padding-left:16px;border-left:1px solid var(--border2);margin-left:4px;display:flex;flex-direction:column;gap:9px}
+.cmd-timeline-item{position:relative;font-size:11.8px;color:var(--text2);line-height:1.55}
+.cmd-timeline-dot{position:absolute;left:-20.5px;top:4px;width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 6px rgba(0,212,255,.6)}
+.cmd-timeline-time{font-family:'Courier New',monospace;font-size:10px;color:var(--text3);margin-right:8px}
+.cmd-timeline-action{color:var(--text2)}
+
 .table-wrap{overflow-x:auto;border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{background:var(--bg2);padding:8px 10px;text-align:left;font-weight:600;color:var(--text2);font-size:11px;border-bottom:1px solid var(--border2);white-space:nowrap;position:sticky;top:0}
@@ -338,8 +397,7 @@ tr:hover{background:rgba(0,212,255,0.04)}
 
 /* Globe bottom ticker */
 .globe-ticker{position:absolute;bottom:0;left:0;right:0;height:36px;background:rgba(4,8,16,0.92);border-top:1px solid rgba(0,212,255,0.15);overflow:hidden;display:flex;align-items:center;z-index:6}
-.globe-watermark{position:absolute;bottom:42px;right:12px;z-index:5;opacity:0.35;pointer-events:none}
-.globe-watermark img{width:40px;height:40px;object-fit:contain}
+/* globe-watermark 已删除（2026-09-04 用户指令：态势总览 SWUPL 校徽全部移除） */
 .globe-ticker-label{flex-shrink:0;padding:0 12px;height:100%;display:flex;align-items:center;background:rgba(255,51,85,0.12);border-right:1px solid rgba(255,51,85,0.25);font-size:10px;color:var(--red);font-weight:700;letter-spacing:1px;gap:4px}
 .globe-ticker-label .dot{width:6px;height:6px;background:var(--red);border-radius:50%;animation:blink 1s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
@@ -662,13 +720,7 @@ select.intel-input{cursor:pointer}
 .btn.escalate-btn{background:linear-gradient(135deg,rgba(255,136,0,0.25),rgba(255,51,85,0.15));border:1px solid rgba(255,136,0,0.4);color:var(--orange);font-weight:600}
 .btn.escalate-btn:hover{box-shadow:0 0 12px rgba(255,136,0,0.3)}
 
-/* ===== SWUPL 校徽图片 ===== */
-.swupl-shield-glow{animation:swuplGlow 3s ease-in-out infinite}
-@keyframes swuplGlow{0%,100%{filter:drop-shadow(0 0 3px rgba(0,212,255,0.3))}50%{filter:drop-shadow(0 0 10px rgba(0,212,255,0.6))}}
-.swupl-globe-pulse{animation:swuplPulse 2.5s ease-in-out infinite}
-@keyframes swuplPulse{0%,100%{opacity:0.8}50%{opacity:1}}
-.swupl-scan-line{animation:swuplScan 3s ease-in-out infinite}
-@keyframes swuplScan{0%,100%{opacity:0;transform:translateY(-8px)}50%{opacity:0.6;transform:translateY(8px)}}
+/* SWUPL 校徽样式已随校徽一并移除（2026-09-04 用户指令） */
 
 /* ===== 态势总览：风险等级面板（可拖拽/可收起） ===== */
 .sit-level-panel{min-width:190px;max-width:230px}
@@ -853,7 +905,7 @@ select.intel-input{cursor:pointer}
 <text class="tag" x="100" y="528" fill="#4d7fa8" font-size="10" letter-spacing="2" font-family="Consolas,monospace">A1 · A2 · A3 · A4 · B1 · B2 · C1</text>
 </g>
 <!-- 右面板：SIGNAL MATRIX -->
-<g>
+<g opacity=".34">
 <rect x="1520" y="180" width="320" height="360" fill="rgba(2,16,36,.35)" stroke="rgba(0,212,255,.22)" stroke-width="1.5"/>
 <g stroke="rgba(0,212,255,.8)" stroke-width="2" fill="none">
 <path d="M1520 180 h22 M1520 180 v22"/><path d="M1840 180 h-22 M1840 180 v22"/>
@@ -877,9 +929,6 @@ select.intel-input{cursor:pointer}
 </g>
 <circle class="tag" cx="400" cy="360" r="4" fill="#00e5ff"/>
 <circle class="tag2" cx="1520" cy="360" r="4" fill="#00e5ff"/>
-<!-- 侧边装饰标签 -->
-<text class="tag" x="80" y="600" fill="#4d7fa8" font-size="11" letter-spacing="3" font-family="Consolas,monospace">GRID 34.51N 108.93E · SECTOR-07</text>
-<text class="tag2" x="1840" y="600" fill="#4d7fa8" font-size="11" letter-spacing="3" text-anchor="end" font-family="Consolas,monospace">UPLINK STABLE · SYNC 10Hz</text>
 </svg>
 <div class="hud-top">
 <div class="ht-l"><span class="dia">◈</span>ORPS COMMAND CENTER</div>
@@ -940,9 +989,14 @@ select.intel-input{cursor:pointer}
 </div>
 <div class="auth-card">
 <div id="auth-card-login">
-<h3>🔐 安全登录</h3>
+<div class="auth-access-bar"><span class="aab-dot"></span>AUTHORIZED ACCESS ONLY · 授权人员接入<span class="aab-cls">内部系统</span></div>
+<h3>身份核验 · SECURE LOGIN</h3>
 <input class="auth-input" id="li-user" placeholder="用户名" disabled aria-disabled="true">
 <input class="auth-input" id="li-pass" type="password" placeholder="密码" disabled aria-disabled="true">
+<div class="captcha-row">
+<input class="auth-input" id="li-captcha" placeholder="验证码" maxlength="4" autocomplete="off" disabled aria-disabled="true">
+<span class="captcha-img" id="li-captcha-img" title="看不清？点击刷新验证码" onclick="if(typeof AUTH!=='undefined'&&AUTH._ready){AUTH._loadCaptcha(true);}"><span class="cap-loading">验证码加载中…</span></span>
+</div>
 <!-- 2026-08-31 修竞态：app.js 加载完成前 AUTH 可能未定义，守卫后调用；输入框默认 disabled，
      AUTH._enableLoginUi() 在 _localInit 末尾激活 -->
 <button class="auth-btn" id="btn-login" disabled aria-disabled="true" onclick="if(typeof AUTH==='undefined'||!AUTH._ready){showToast&&showToast('⏳ 正在加载，请稍候…');return;} AUTH.login()">登 录</button>
@@ -1008,7 +1062,7 @@ select.intel-input{cursor:pointer}
 <div id="app" style="display:none">
 <!-- SIDEBAR -->
 <div class="sidebar" id="sidebar">
-<div class="sb-brand"><img src="swupl-logo.png" alt="SWUPL"><div class="tt">海安情报预警平台<span>v6.0 INTELLIGENCE</span></div></div>
+<div class="sb-brand"><div class="tt">海安情报感知平台<span>v6.0 INTELLIGENCE</span></div><div class="tt-mini">海</div></div>
 <div class="sb-nav">
 <div class="sb-group">态势感知</div>
 <div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">全域态势感知</span></div>
@@ -1032,6 +1086,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
 <div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
 <div class="sb-item" data-view="manual-entry" onclick="navigateTo('manual-entry')"><span class="ic">✍️</span><span class="lb">情报录入</span></div>
+<div class="sb-item" data-view="thinktank" onclick="navigateTo('thinktank')"><span class="ic">📚</span><span class="lb">智库报告库</span></div>
 <div class="sb-group">系统</div>
 <div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
 <!-- 合并后保留的隐藏徽章（代码仍会更新计数，避免空指针） -->
@@ -1077,7 +1132,6 @@ select.intel-input{cursor:pointer}
 <div class="globe-ticker-label"><div class="dot"></div>情报实时</div>
 <div class="globe-ticker-track"><div class="globe-ticker-content" id="globe-ticker-content"></div></div>
 </div>
-<div class="globe-watermark"><img src="swupl-logo.png" alt="SWUPL"></div>
 <div class="globe-intel-panel sit-level-panel" id="sit-level-panel" style="bottom:52px;right:12px">
 <div class="legend-tt" id="sit-level-tt">📊 风险等级速览<span class="legend-toggle">−</span></div>
 <div id="sit-level-content"></div>
@@ -1333,6 +1387,7 @@ select.intel-input{cursor:pointer}
 
 <!-- VIEW: MANUAL ENTRY WORKSPACE (manual-entry.js 整视图渲染) -->
 <div class="view" id="view-manual-entry"><div id="manual-entry-root"></div></div>
+<div class="view" id="view-thinktank"><div id="thinktank-root"></div></div>
 
 <!-- VIEW: SETTINGS -->
 <div class="view" id="view-settings">
@@ -1395,7 +1450,7 @@ function closeMobileMenu(){
 }
 </script>
 
-<script src="api-client.js?v=6"></script>
+<script src="api-client.js?v=9"></script>
 <script src="gate.js?v=17"></script>
 <script src="entities.js?v=10"></script>
 <script src="project-emergency.js?v=1"></script>
@@ -1404,35 +1459,43 @@ function closeMobileMenu(){
 <script src="global-media-registry.js?v=1"></script>
 <!-- IndexedDB 持久层（同步外观）：必须在 app.js 之前加载 -->
 <script src="idb-store.js?v=1"></script>
-<script src="scraper.js?v=53"></script>
+<!-- 分类体系 v2.0 单一事实源（#627）：服务端下发 18 子类标准，先于业务脚本加载 -->
+<script src="/api/category/standard.js?v=1" onerror="console.warn('[CAT_STD] 服务端标准未加载，前端使用 app.js 内置兜底镜像')"></script>
+<script src="scraper.js?v=54"></script>
 <!-- 天地图/本地矢量底图统一封装，所有 Leaflet 地图共用 -->
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=278"></script>
-<script src="workbench.js?v=4"></script>
-<script src="threatroom.js?v=10"></script>
-<script src="foresee.js?v=2"></script>
-<script src="distribute.js?v=2"></script>
-<script src="datasources.js?v=26"></script>
-<script src="threats.js?v=11"></script>
+<script src="app.js?v=285"></script>
+<script src="workbench.js?v=5"></script>
+<script src="threatroom.js?v=12"></script>
+<script src="foresee.js?v=3"></script>
+<script src="distribute.js?v=3"></script>
+<script src="datasources.js?v=27"></script>
+<script src="threats.js?v=12"></script>
 <script src="aireport.js?v=5"></script>
 <script src="autoalert-v3.js?v=8"></script>
-<script src="geoint_live.js?v=5"></script>
+<script src="geoint_live.js?v=6"></script>
 <script src="gate-admin.js?v=2"></script>
 <script src="deepsearch.js?v=2"></script>
 <script src="socmint.js?v=4"></script>
-<script src="manual-entry.js?v=2"></script>
-<script src="command-center.js?v=4"></script>
+<script src="manual-entry.js?v=3"></script>
+<script src="thinktank.js?v=1"></script>
+<script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=7"></script>
+<script src="role-ui.js?v=8"></script>
 <script src="model-analysis.js?v=5"></script>
-<script src="govdoc.js?v=3"></script>
-<script src="dailyreport.js?v=7"></script>
+<script src="vendor/html2canvas.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="govdoc.js?v=7"></script>
+<script src="dailyreport.js?v=9"></script>
+<!-- 2026-09-05 接回从未加载的战略咽喉/一带一路沉浸图与航班AIS引擎（app.js 以 typeof 守卫消费） -->
+<script src="strat-viz.js?v=1"></script>
+<script src="flight-ais.js?v=1"></script>
 <script src="wechat.js?v=4"></script>
-<script src="reports-center.js?v=1"></script>
+<script src="reports-center.js?v=3"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
-<script src="linkgraph.js?v=5"></script>
+<script src="linkgraph.js?v=6"></script>
 
 <!-- ===== 世界地图 + AI分析交互（新增，不修改原有逻辑） ===== -->
 <script>
