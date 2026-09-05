@@ -45,11 +45,19 @@ const complianceWatch = require('./compliance-watch'); /* 制裁合规哨兵（�
 const customsWatch = require('./customs-watch'); /* 海关动态及海外合规监管哨兵（2026-09-04：关税/贸易救济/通关查扣/出口管制/外资审查，15分钟一轮） */
 const mineralsWatch = require('./minerals-watch'); /* 关键矿产资源哨兵（2026-09-05：锂/钴/铜/稀土/镍/石墨/铀×非洲/拉美，资源国有化/矿权/中资矿企/矿区风险，15分钟一轮） */
 const consularWatch = require('./consular-watch'); /* 领事保护哨兵（维度②：外交部安全提醒/撤侨/领保案件，30分钟一轮） */
+/* ===== 2026-09-05 用户指令二：分类 v2.0 缺口类新增哨兵×6（只增不改，已有哨兵/矩阵不动）===== */
+const policyWatch = require('./policy-watch'); /* 政策法规突变哨兵（policy_shift：国有化/紧急状态/新法规/出口资本管制，15分钟一轮） */
+const cyberWatch = require('./cyber-watch'); /* 网络与信息安全哨兵（cyber_security：勒索软件/APT/数据泄露/海底光缆，15分钟一轮） */
+const safetyWatch = require('./safety-watch'); /* 生产安全事故哨兵（industrial_accident：工厂火灾爆炸/坍塌/危化品/矿难，15分钟一轮） */
+const envWatch = require('./env-watch'); /* 环境生态事件哨兵（environmental_event：原油泄漏/化学污染/尾矿坝/生态破坏，15分钟一轮） */
+const unrestWatch = require('./unrest-watch'); /* 群体性暴力哨兵（mass_violence：骚乱暴动/族群械斗/私刑/团伙屠杀，15分钟一轮） */
+const businessWatch = require('./business-watch'); /* 营商环境恶化哨兵（business_climate：外资撤离/资产扣押/执照吊销/强制本地化，15分钟一轮） */
 const coreThreatSentinel = require('./core-threat-sentinel'); /* 核心威胁专项哨兵（2026-08-28：涉华受害/政变/外资审查等弱类补强，10分钟一轮） */
 const sourcesCollector = require('./sources-collector'); /* 94源工程包采集器（2026-08-28：11活源直采+死源GNews site:复活，stance立场标签供证据链交叉验证） */
 const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
 const specialMatrix = require('./special-matrix'); /* 专项采集矩阵（2026-09-03 任务 #531：涉华/项目/组织/咽喉/制裁五类 48h 深度补捞，无体积上限，60分钟一轮） */
 const reportsEngine = require('./reports-engine'); /* 智库报告产品线引擎（2026-09-03：9类专业分析报告统一后端，自注册路由+定时器） */
+const intelInsight = require('./intel-insight'); /* 情报洞察服务（2026-09-05 用户指令三：领导要报速览/生命周期时间线/相似历史事件匹配） */
 const wmFeed = require('./wm-feed'); /* WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO领事警示/断网/疫情/新闻摘要，30分钟一轮） */
 const manualEntryApi = require('./manual-entry'); /* 手动录入工作区 API（2026-09-01：结构化录入+并发安全+铁律入预警中心，挂载见 DataHub API 段） */
 const modelsAnalysis = require('./models-analysis'); /* 专题分析模型 API（2026-09-02：四模型只读分析计算层，挂载见 manual-entries 挂载点之后） */
@@ -1496,7 +1504,7 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     s5: '五、综合研判：' + overallWord,
     s6: '六、对策建议：按重要性与紧迫性排序'
   };
-  return '<style>'
+  let _govOut = '<style>'
     /* #625 统一公文版式引擎：核心版式类由 report-standard.js paperCss('drg') 单一来源供给，
      * 以下仅保留日报专属扩展类（提要框/表格/图表）。GB/T 9704 版心与字体规范见该模块。 */
     + RS.paperCss('drg')
@@ -1545,6 +1553,38 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
     + '<div class="drg-sign"><div class="drg-org">海外利益保护情报中心</div><div class="drg-date">' + issueDate + '</div></div>'
     + '<div class="drg-footer"><div class="drg-fline"></div><div class="drg-frow"><span>抄送：中心领导，相关业务部门。</span></div><div class="drg-fline thin"></div><div class="drg-frow"><span>海外利益保护情报中心办公室</span><span>' + issueDate + '印发</span></div><div class="drg-fline"></div></div>'
     + '</div>';
+  /* ===== 2026-09-06 公文字数硬指标下限护栏（日报 3999~45555 字，report-standard WORD_TARGETS 单一来源）：
+   * 轻数据日正文不足下限时，追加「七、当日情报补充详单」扩容——按级别/涉华加权排序取真实条目
+   * （标题+清洗后摘要），零虚构；数据充足时不渲染，版式不变。 ===== */
+  try {
+    const _chars = RS.govCharCount(_govOut);
+    if (_chars < RS.WORD_TARGETS.daily.min) {
+      const _lvW3 = { red: 4, orange: 3, yellow: 2, blue: 1 };
+      const _pool = items.slice().sort((a, b) =>
+        ((_lvW3[b.severity] || 0) + ((b.china || b.negative) ? 2 : 0)) - ((_lvW3[a.severity] || 0) + ((a.china || a.negative) ? 2 : 0)));
+      const _rows = [];
+      const _seenT = new Set();
+      for (const it of _pool) {
+        if (_rows.length >= 40) break;
+        const t = _govTitle(it);
+        if (!t || _seenT.has(t)) continue;
+        _seenT.add(t);
+        let d = String(it.digest || '').replace(/<[^>]*>/g, ' ')
+          .replace(/(?:在|从|据|由|至|到|来源|源自)?\s*(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/gi, '')
+          .replace(/\s+/g, ' ').trim();
+        if (d.length > 100) { d = d.slice(0, 100); const p = Math.max(d.lastIndexOf('。'), d.lastIndexOf('！'), d.lastIndexOf('？')); d = p > 25 ? d.slice(0, p + 1) : d.replace(/[,，、：:\s]+$/, ''); }
+        _rows.push('<p class="drg-p">' + (_rows.length + 1) + '.' + _escapeHtml(t) + '。' + (d ? '摘要：' + _escapeHtml(d) : '') + '</p>');
+      }
+      if (_rows.length) {
+        const _appx = '<div class="drg-h1">七、当日情报补充详单（按级别与涉华关联排序）</div>'
+          + '<p class="drg-p">以下为当日采集入库的真实情报条目节选（共' + total + '个独立事件，此处列示' + _rows.length + '条），供全貌备查。</p>'
+          + _rows.join('');
+        _govOut = _govOut.replace('<div class="drg-sign">', _appx + '<div class="drg-sign">');
+        console.log('[DAILY-GOV] 字数下限护栏生效：' + _chars + ' → ' + RS.govCharCount(_govOut) + ' 字（追加补充详单' + _rows.length + '条）');
+      }
+    }
+  } catch (e) { console.warn('[DAILY-GOV] 字数护栏异常（不影响成文）：', e.message); }
+  return _govOut;
 }
 async function _generateDailyReport(dateKey) {
   const parts = dateKey.split('-').map(Number);
@@ -5102,6 +5142,22 @@ app.post('/api/org-watch/run', async (req, res) => {
 /* 哨兵状态查询：配合异步触发，前端/运维轮询结果 */
 app.get('/api/org-watch/status', (req, res) => {
   res.json({ ok: true, busy: Date.now() < _orgWatchBusyUntil, lastStats: _orgWatchLastStats });
+});
+
+/* ===== 采集重点学习信号端点（2026-09-05 用户指令五）=====
+ * 自动采集学习手动录入：近 60 天手动录入的类别/国别分布即采集重点信号，
+ * 缺口调度器据此加权。本端点透出当前学习结果供前端展示与核查。 */
+app.get('/api/collection/priorities', async (req, res) => {
+  try {
+    const cat = await query(`SELECT data_type, COUNT(*) n, MAX(updated_at) last FROM manual_entries WHERE created_at >= NOW() - INTERVAL '60 days' AND COALESCE(deleted,false)=false GROUP BY 1 ORDER BY 2 DESC`);
+    const country = await query(`SELECT country, COUNT(*) n, MAX(updated_at) last FROM manual_entries WHERE created_at >= NOW() - INTERVAL '60 days' AND COALESCE(deleted,false)=false GROUP BY 1 ORDER BY 2 DESC`);
+    res.json({
+      ok: true, window: '60d', source: 'manual_entries',
+      note: '手动录入代表采集重点：缺口调度器按对数加权上调对应类别/国别的补采优先级',
+      categories: cat.rows.map(r => ({ key: r.data_type, count: parseInt(r.n, 10), last: r.last })),
+      countries: country.rows.map(r => ({ name: r.country, count: parseInt(r.n, 10), last: r.last }))
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
 /* ===== 专项采集矩阵手动触发端点（2026-09-03 任务 #531） =====
@@ -9382,6 +9438,27 @@ async function _runGapScheduler() {
       if (n < GAP_CAT_TARGET) catGaps.push({ ct, n, target: GAP_CAT_TARGET, rate: (GAP_CAT_TARGET - n) / GAP_CAT_TARGET });
     }
     catGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
+    /* 2026-09-05 用户指令五：自动采集学习手动录入重点——手动录入代表采集重点。
+     * 近 60 天 manual_entries 的类别/国别分布作为优先级信号：对数加权上调缺口率
+     * （只加不减，不改变既有缺口率下限语义），越被人工录入的类别/国别越优先补采。
+     * 例：恐袭 17 条手动 → rate×(1+0.15×log2(18))≈×1.63；巴基斯坦 8 条 → ×1.48。 */
+    try {
+      const mCat = {}, mCountry = {};
+      (await query(`SELECT data_type, COUNT(*) n FROM manual_entries WHERE created_at >= NOW() - INTERVAL '60 days' AND COALESCE(deleted,false)=false GROUP BY 1`)).rows
+        .forEach(r => { if (r.data_type) mCat[r.data_type] = parseInt(r.n, 10) || 0; });
+      (await query(`SELECT country, COUNT(*) n FROM manual_entries WHERE created_at >= NOW() - INTERVAL '60 days' AND COALESCE(deleted,false)=false GROUP BY 1`)).rows
+        .forEach(r => { const c = String(r.country || '').trim(); if (c) mCountry[c] = parseInt(r.n, 10) || 0; });
+      const _mb = (m) => 1 + Math.min(0.6, 0.15 * Math.log2(1 + m));   /* 手动权重 → 缺口率乘数，封顶 1.6 */
+      let boostedC = 0, boostedN = 0;
+      catGaps.forEach(g => { const m = mCat[g.ct] || 0; if (m > 0) { g.manualFocus = m; g.rate *= _mb(m); boostedC++; } });
+      catGaps.sort((a, b) => b.rate - a.rate || a.n - b.n);
+      countryGaps.forEach(g => {
+        const m = Object.keys(mCountry).reduce((s, k) => (k === g.cn || k.indexOf(g.cn) >= 0 || g.cn.indexOf(k) >= 0 ? s + mCountry[k] : s), 0);
+        if (m > 0) { g.manualFocus = m; g.rate *= _mb(m); boostedN++; }
+      });
+      countryGaps.sort((a, b) => (b.rate * _GAP_TIER_W[b.tier]) - (a.rate * _GAP_TIER_W[a.tier]) || a.n - b.n);
+      if (boostedC || boostedN) console.log('[GAP-SCHED] 手动录入重点学习：' + boostedC + ' 类别 / ' + boostedN + ' 国别获优先加权');
+    } catch (e) { /* manual_entries 表缺失或异常时静默降级——学习信号是增益不是依赖 */ }
     /* 2026-08-30 用户铁律「采集的数据不设上限，设下限，500 目标是下限」；
      * 2026-09-01 扩容：地板 500→2000（用户指令日几千条），加力参数同步放大：
      * ① 总量未达 2000 地板 → 调度器自动加力：补国 6→12、补类 6→12、单轮回填 14→40；
@@ -9765,6 +9842,43 @@ async function _runMineralsWatch() {
   finally { _mineralsWatchBusyUntil = 0; }
 }
 
+/* ===== 2026-09-05 用户指令二：分类 v2.0 缺口类六哨兵调度（只增不改）=====
+ * 每类一条专用采集腿，data_type 定向落对应分类库（用户指令一：恐袭数据落到恐怖
+ * 袭库——同理政策→政策库、网安→网安库、事故→事故库、环境→环境库、群暴→群暴
+ * 库、营商→营商库）。全部走既有翻译/实体/入库闸门链。 */
+const _GAP_WATCHES = [
+  { name: 'POLICY-WATCH', run: (o) => policyWatch.runPolicyWatch(o), dt: 'policy_shift' },
+  { name: 'CYBER-WATCH', run: (o) => cyberWatch.runCyberWatch(o), dt: 'cyber_security' },
+  { name: 'SAFETY-WATCH', run: (o) => safetyWatch.runSafetyWatch(o), dt: 'industrial_accident' },
+  { name: 'ENV-WATCH', run: (o) => envWatch.runEnvWatch(o), dt: 'environmental_event' },
+  { name: 'UNREST-WATCH', run: (o) => unrestWatch.runUnrestWatch(o), dt: 'mass_violence' },
+  { name: 'BUSINESS-WATCH', run: (o) => businessWatch.runBusinessWatch(o), dt: 'business_climate' }
+];
+const _gapWatchBusy = {};
+async function _runGapWatches() {
+  for (const w of _GAP_WATCHES) {
+    if (_gapWatchBusy[w.name]) continue;
+    _gapWatchBusy[w.name] = true;
+    (async () => {
+      try {
+        const r = await w.run({ maxPerQuery: 30 });
+        const items = r.items || [];
+        if (!items.length) { console.log('[' + w.name + '] 本轮无合格条目（抓取 ' + (r.stats || {}).fetched + '）'); return; }
+        try { await _translateListToZhParallel(items, 4); } catch (e) {}
+        items.forEach(it => {
+          it.interestLinked = true;
+          it._forceDataType = true;                 /* 模块统一 data_type → 定向落库 */
+          it.data_type = w.dt;
+          try { ENTITY.enrich(it); } catch (e) {}
+        });
+        const res = await _ingestLinkedItems(items, w.name, '');
+        if (res && res.inserted) console.log('[' + w.name + '] ✅ 新入库 ' + w.dt + ' 情报 ' + res.inserted + ' 条（候选 ' + items.length + '）');
+      } catch (e) { console.warn('[' + w.name + '] 采集失败:', e.message); }
+      finally { _gapWatchBusy[w.name] = false; }
+    })();
+  }
+}
+
 /* ===== 领事保护哨兵调度（维度②，2026-08-28 官方框架六维补全）=====
  * 每 30 分钟：外交部领事直击安全提醒直采 + 撤侨/领保案件/使领馆动态全球检索。 */
 let _consularWatchBusyUntil = 0;
@@ -10019,6 +10133,7 @@ function startGlobalMediaCron() {
   setInterval(_runCustomsWatch, 15 * 60 * 1000); /* 15min 一轮，宽查询面补总量+合规类缺口 */
   setTimeout(_runMineralsWatch, 350000);      // 关键矿产资源哨兵，启动350s后首跑（与海关哨兵错峰60s）
   setInterval(_runMineralsWatch, 15 * 60 * 1000); /* 15min 一轮，非洲/拉美关键矿产定向采集 */
+  setInterval(_runGapWatches, 15 * 60 * 1000); /* 2026-09-05 用户指令二：分类 v2.0 六缺口类哨兵（政策/网安/事故/环境/群暴/营商），15min 一轮 */
   setTimeout(_runConsularWatch, 320000);      // 领事保护哨兵（维度②：MFA安全提醒/撤侨/领保），启动320s后首跑
   setInterval(_runConsularWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min（用户指令：涉华受害是采集核心） */
   setTimeout(_runCoreThreatSentinel, 350000);  // 核心威胁专项哨兵（弱类补强），启动350s后首跑
@@ -12545,6 +12660,9 @@ app.use('/api/manual-entries', manualEntryApi({
 
 /* ===== 专题分析模型 API（2026-09-02：/api/models/* 四模型端点，只读分析计算层）===== */
 app.use('/api/models', modelsAnalysis({ query }));
+
+/* ===== 情报洞察 API（2026-09-05 用户指令三：领导要报速览/事件全生命周期时间线/相似历史事件匹配）===== */
+app.use('/api/insight', intelInsight({ query, isChinaRelated: scrapers.isChinaRelatedStrict }));
 
 /* ===== 智库报告产品线引擎（2026-09-03：9类专业报告 数据装配+Kimi研判+公文渲染+定时生成，铁律见 reports-engine.js 头注）===== */
 reportsEngine.init({

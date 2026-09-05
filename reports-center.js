@@ -680,7 +680,7 @@
 
   /* ===== 摘要面板（summary JSONB 结构化展示） ===== */
   function smLabel(k) {
-    var CN = { sections: '报告章节', red: '红色信号', orange: '橙色信号', yellow: '黄色信号', events: '事件条数', countries: '涉及国家', orgs: '威胁组织', projects: '涉及项目', sources: '信源数', highlights: '核心要点', recommendations: '行动建议', period: '期次', model: '模型' };
+    var CN = { sections: '报告章节', red: '红色信号', orange: '橙色信号', yellow: '黄色信号', events: '事件条数', countries: '涉及国家', orgs: '威胁组织', projects: '涉及项目', sources: '信源数', highlights: '核心要点', recommendations: '行动建议', period: '期次', model: '模型', govChars: '公文版字数', wordTarget: '字数指标', llmOk: '研判生成' };
     return CN[k] || k;
   }
   function smColor(k) {

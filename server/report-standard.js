@@ -163,4 +163,38 @@ function qcLog(tag, text) {
   return issues;
 }
 
-module.exports = { MANUAL_SPEC, GOV_STYLE_SPEC, REC_SPEC, SYSTEM_PROMPT, paperCss, paperHead, paperTail, qcCheck, qcLog };
+/* ============================================================
+ * 四、公文版字数硬指标（2026-09-06 用户指令，马上试用前的标准化+深度化）
+ * ------------------------------------------------------------
+ * 每日简报 3999～45555 字；月报 2 万字；季报 4 万字。
+ * min/max 为公文版正文总字数（去标签去空白口径，govCharCount）；
+ * judgeMin/judgeMax 为 LLM「综合研判与对策建议」字数（研判深度化随周期放大）；
+ * perSec 为公文版每节条目展示数基线；digest 为是否附事件摘要（真实采集内容，扩容主杠杆）。
+ * 铁律：字数缺口只能用真实条目/真实摘要扩，数据不足时如实成文并告警，禁止注水虚构。
+ * ============================================================ */
+const WORD_TARGETS = {
+  daily:      { min: 3999,  max: 45555, judgeMin: 600,  judgeMax: 900,  perSec: 6,  digest: false },
+  weekly:     { min: 4500,  max: 45555, judgeMin: 1000, judgeMax: 1500, perSec: 8,  digest: false },
+  monthly:    { min: 20000, max: 45555, judgeMin: 2500, judgeMax: 3500, perSec: 12, digest: true },
+  quarterly:  { min: 40000, max: 45555, judgeMin: 4000, judgeMax: 6000, perSec: 16, digest: true },
+  semiannual: { min: 45000, max: 60000, judgeMin: 5000, judgeMax: 7000, perSec: 20, digest: true },
+  yearly:     { min: 45000, max: 60000, judgeMin: 5000, judgeMax: 7000, perSec: 24, digest: true }
+};
+/* 公文版正文字数（去 style/标签/空白口径——与试用验收口径一致） */
+function govCharCount(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, '')
+    .length;
+}
+/* 字数达标校验：返回告警文案（达标返回空串） */
+function wordCountIssue(freq, chars) {
+  const t = WORD_TARGETS[freq];
+  if (!t) return '';
+  if (chars < t.min) return '公文版字数 ' + chars + ' 低于' + freq + '硬指标下限 ' + t.min + '（真实数据量所限，已如实成文）';
+  if (chars > t.max) return '公文版字数 ' + chars + ' 超出' + freq + '硬指标上限 ' + t.max;
+  return '';
+}
+
+module.exports = { MANUAL_SPEC, GOV_STYLE_SPEC, REC_SPEC, SYSTEM_PROMPT, paperCss, paperHead, paperTail, qcCheck, qcLog, WORD_TARGETS, govCharCount, wordCountIssue };
