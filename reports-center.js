@@ -21,6 +21,7 @@
 
   /* ===== 9 类报告静态配置（类型卡降级展示 + 徽标渲染辅助，与服务端 types 对齐） ===== */
   var TYPES = [
+    { id: 'situation-brief', name: '综合态势简报', freq: 'daily', ic: '📋', desc: '全库综合态势：红橙预警/涉华要情/国别热点/伤亡事件归集。可选 每日/每周/每月/年度 生成，均支持公文版导出。' },
     { id: 'cn-negative-weekly', name: '涉华负面情报', freq: 'weekly', ic: '🇨🇳', desc: '聚合全球涉华负面情报动态（安全事件、舆情发酵、经贸摩擦），按所选周期汇总涉华负面信号并给出等级研判与建议。' },
     { id: 'country-risk-monthly', name: '国别风险评估', freq: 'monthly', ic: '🌏', desc: '重点国家 / 地区政治、安全、社会、经济四维风险综合评估，含风险值变化、趋势研判与周期展望。' },
     { id: 'project-exposure-quarterly', name: '中资项目安全暴露分析', freq: 'quarterly', ic: '🏗️', desc: '海外中资重点项目安全暴露面、所在国威胁态势、安保薄弱环节与防护建议分析。' },

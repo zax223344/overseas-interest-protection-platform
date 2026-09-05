@@ -28,7 +28,7 @@
 
   const VIEW_LABELS = {
     situation:'全域态势感知', workbench:'智能协同作业台', threatroom:'专项情报作战室', myfocus:'重点目标监测', command:'指挥调度中心', monitor:'实时风险监测', threatorgs:'威胁组织图谱',
-    intel:'影像情报中心', alerts:'智能预警中心', country:'国别风险研判', countryfile:'国别档案总表', reports:'周期简报中心',
+    intel:'影像情报中心', alerts:'智能预警中心', brief:'领导要报速览', country:'国别风险研判', countryfile:'国别档案总表', reports:'周期简报中心',
     models:'风险预测模型', reportsc:'专题分析中心', aireport:'AI智能研判',
     datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
     'manual-entry':'情报录入', thinktank:'智库报告库',
@@ -44,7 +44,7 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','country','countryfile','reports','reportsc','aireport','models','datapool','datagov','manual-entry','thinktank','settings']
+    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','brief','country','countryfile','reports','reportsc','aireport','models','datapool','datagov','manual-entry','thinktank','settings']
   };
 
   const PERMISSION_MATRIX = [
@@ -53,6 +53,7 @@
     { key: 'threatroom', label: '专项情报作战室（实体专项采集+态势预警分析报告+预警图）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'myfocus', label: '重点目标监测（订阅国家+项目+企业，定向预警流）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'alerts', label: '智能预警中心（实时队列+智能联动+异动信号）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'brief', label: '领导要报速览（30秒一页纸+事件时间线+相似历史事件匹配）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'country', label: '国别风险研判（单国下钻：矩阵+推演+企业资产）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'countryfile', label: '国别档案总表（风险值+预警+项目+人员）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'command', label: '指挥调度', roles: ['mfa','mofcom','mps','enterprise'] },

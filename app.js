@@ -4168,6 +4168,7 @@ const VIEW_MAP={
   intel:{t:'影像情报中心',b:'监测中心 / 影像情报中心（影像图库 · 社媒监测 · 影像分析 · 地理空间情报）'},
   monitor:{t:'实时风险监测',b:'监测中心 / 实时风险监测'},
   alerts:{t:'智能预警中心',b:'监测中心 / 智能预警中心（实时队列 · 智能联动 · 异动信号）'},
+  brief:{t:'领导要报速览',b:'分析研判 / 领导要报速览（30秒一页纸 · 红橙置顶 · 涉华优先）'},
   country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · 企业资产）'},
   countryfile:{t:'国别档案总表',b:'分析研判 / 国别档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报）'},
@@ -4348,6 +4349,7 @@ function runViewInit(v){
       else if(v==='datasources'){ if(typeof DATASOURCES!=='undefined')DATASOURCES.init(); }
       else if(v==='wechat'){ if(typeof WECHAT!=='undefined')WECHAT.init(); }
       else if(v==='command'){ if(typeof COMMAND!=='undefined'){ if(!COMMAND._incidents)COMMAND.init(); else COMMAND.render(); } }
+      else if(v==='brief'){ if(typeof LEADERBRIEF!=='undefined')LEADERBRIEF.init(); }
       else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
       else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
       else if(v==='manual-entry'){ if(typeof MANUALENTRY!=='undefined')MANUALENTRY.init(); }
@@ -17981,6 +17983,7 @@ function showAlertDetail(id){
     (canResolve?'<button class="btn sm" style="font-size:11px;padding:5px 12px" onclick="setAlertStatus(\''+_akey+'\',\'resolved\')">✅ 解除预警</button>':'')+
     (canEsc?'<button class="btn sm" style="font-size:11px;padding:5px 12px;background:var(--red-bg);color:var(--red);border-color:var(--red)" onclick="escalateAlert(\''+_akey+'\')">⬆️ 升级</button>':'')+
     (canDeEsc?'<button class="btn sm" style="font-size:11px;padding:5px 12px;background:var(--blue-bg);color:var(--cyan);border-color:var(--cyan)" onclick="deEscalateAlert(\''+_akey+'\')">⬇️ 降级</button>':'')+
+    (typeof INSIGHT!=='undefined'?'<button class="btn sm" style="font-size:11px;padding:5px 12px;background:rgba(0,212,255,0.08);color:var(--cyan);border-color:rgba(0,212,255,0.3)" title="该事件从首次采集到归档的全链路时间线（真实库检索）" onclick="INSIGHT.openLifecycle(window._curAlertDetail)">⏱ 时间线</button><button class="btn sm" style="font-size:11px;padding:5px 12px;background:rgba(0,212,255,0.08);color:var(--cyan);border-color:rgba(0,212,255,0.3)" title="库内同类别相似历史事件匹配（近90天）" onclick="INSIGHT.openSimilar(window._curAlertDetail)">🔍 相似事件</button>':'')+
     '<button class="btn sm" style="font-size:11px;padding:5px 12px;background:linear-gradient(90deg,#7c3aed,#2563eb);color:#fff;border:none" onclick="convertAlertToIncident(\''+_akey+'\')">🎯 转指挥事件</button>'+
     '</div>';
   /* 管理操作按钮 */

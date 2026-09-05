@@ -618,9 +618,19 @@
       '</div>';
   }
 
+  /* 2026-09-05 用户指令五：类别数不得写死旧口径（12 已过时）——动态取真实数。
+   * 优先服务端 CAT_STD（分类体系 v2.0 唯一事实源），回落本地 CATS 数组。 */
+  function _catCount() {
+    try {
+      if (typeof CAT_STD !== 'undefined' && CAT_STD && CAT_STD.keys && CAT_STD.keys.length) return CAT_STD.keys.length;
+    } catch (e) {}
+    return CATS.length;
+  }
+  function _catCountLabel() { return _catCount(); }
+
   function renderSingleArea() {
     return '<div class="me-panel">' +
-      '<div class="me-ptt"><span class="ic">◈</span>第一步 · 选择情报类别（12 类情报体系）<span class="cnt" id="me-cat-hint"></span></div>' +
+      '<div class="me-ptt"><span class="ic">◈</span>第一步 · 选择情报类别（' + _catCountLabel() + ' 类情报体系）<span class="cnt" id="me-cat-hint"></span></div>' +
       '<div class="me-cats" id="me-cats"></div>' +
       '</div>' +
       '<div class="me-panel" id="me-form-panel"></div>';

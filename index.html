@@ -1076,6 +1076,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="threatorgs" onclick="navigateTo('threatorgs')"><span class="ic">🎯</span><span class="lb">威胁组织图谱</span><span class="badge zero" id="sb-threat-count">0</span></div>
 <div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">智能预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
 <div class="sb-group">分析研判</div>
+<div class="sb-item" data-view="brief" onclick="navigateTo('brief')"><span class="ic">🔴</span><span class="lb">领导要报速览</span></div>
 <div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别风险研判</span></div>
 <div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国别档案总表</span></div>
 <div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">周期简报中心</span></div>
@@ -1397,6 +1398,9 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: COMMAND CENTER (command-center.js 整视图渲染) -->
 <div class="view" id="view-command"></div>
 
+<!-- VIEW: LEADER BRIEF（brief-center.js 整视图渲染：领导要报速览 + 情报洞察弹窗） -->
+<div class="view" id="view-brief"><div id="brief-root"></div></div>
+
 <!-- VIEW: ANALYSIS (研判简报：周期研判 + 每日简报 合并视图) -->
 <div class="view" id="view-analysis">
 <div class="dc-tabs" id="ana-tabs">
@@ -1466,7 +1470,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=285"></script>
+<script src="app.js?v=286"></script>
 <script src="workbench.js?v=5"></script>
 <script src="threatroom.js?v=12"></script>
 <script src="foresee.js?v=3"></script>
@@ -1479,11 +1483,11 @@ function closeMobileMenu(){
 <script src="gate-admin.js?v=2"></script>
 <script src="deepsearch.js?v=2"></script>
 <script src="socmint.js?v=4"></script>
-<script src="manual-entry.js?v=3"></script>
+<script src="manual-entry.js?v=4"></script>
 <script src="thinktank.js?v=1"></script>
 <script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=8"></script>
+<script src="role-ui.js?v=9"></script>
 <script src="model-analysis.js?v=5"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
@@ -1493,7 +1497,8 @@ function closeMobileMenu(){
 <script src="strat-viz.js?v=1"></script>
 <script src="flight-ais.js?v=1"></script>
 <script src="wechat.js?v=4"></script>
-<script src="reports-center.js?v=3"></script>
+<script src="reports-center.js?v=4"></script>
+<script src="brief-center.js?v=1"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
 <script src="linkgraph.js?v=6"></script>
 
