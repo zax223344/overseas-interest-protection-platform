@@ -1505,24 +1505,28 @@ async function assembleModelExport(q, win, periodKey, opts) {
  * 与每日简报（daily_reports 体系）互补：本产品走 report_products 体系，
  * 周期可任选（日/周/月/季/半年/年），标准版+公文版由统一引擎渲染，
  * 满足「研判简报不只每日可出公文版」的指令。 */
-async function assembleSituationBrief(q, win) {
+async function assembleSituationBrief(q, win, periodKey, opts) {
   const items = dedupeEvents(cleanItems(await fetchItems(q, win[0], win[1])));
+  /* 2026-09-06 装配帽提到 60（与 reports-engine 扩容最高档 perSec=60 对齐）：
+   *   月报/季报/半年报/年报扩到 4-6 万字档须保证 sections 有足量真实条目；renderGovHtml
+   *   收缩档按需减展示数（最高档 perSec=60 即用尽），弹药不足如实成文并告警，禁止注水 */
+  const CAP = 60;
   const take = makeTake(items);
   const reds = items.filter(i => i.severity === 'red');
   const oranges = items.filter(i => i.severity === 'orange');
   const chinas = items.filter(i => i.china);
   const casualty = items.filter(i => CASUALTY_RE.test(i.title));
-  /* 国别 TOP10（按事件量） */
+  /* 国别 TOP（按事件量，月/季/半年/年扩档更需多国） */
   const byC = {};
   items.forEach(i => { const c = i.country || '未标注'; byC[c] = (byC[c] || 0) + 1; });
-  const topCountries = Object.entries(byC).sort((a, b) => b[1] - a[1]).slice(0, 10).map(x => x[0]);
+  const topCountries = Object.entries(byC).sort((a, b) => b[1] - a[1]).slice(0, Math.min(20, Math.max(10, CAP / 3))).map(x => x[0]);
   const sections = [];
-  sections.push(section('红色预警事件', take(reds, 20), 20));
-  sections.push(section('橙色预警事件', take(oranges, 20), 20));
-  const cSec = section('涉华关联要情', take(chinas, 20), 20);
+  sections.push(section('红色预警事件', take(reds, CAP), CAP));
+  sections.push(section('橙色预警事件', take(oranges, CAP), CAP));
+  const cSec = section('涉华关联要情', take(chinas, CAP), CAP);
   cSec.note = '口径：涉华严格口径（isChinaRelatedStrict）复核后的关联情报。';
   sections.push(cSec);
-  /* 国别热点节：TOP10 国每国一行聚合 + 各自首条代表事件 */
+  /* 国别热点节：TOP 国每国一行聚合 + 各自首条代表事件 */
   sections.push(section('国别热点', topCountries.map(c => {
     const list = items.filter(i => (i.country || '未标注') === c);
     const red = list.filter(i => i.severity === 'red').length;
@@ -1532,8 +1536,8 @@ async function assembleSituationBrief(q, win) {
       title: c + '：窗口内事件 ' + list.length + ' 条（红 ' + red + ' / 橙 ' + orange + ' / 涉华 ' + chin + '）；代表事件：' + String((list[0] || {}).title || '—').slice(0, 60),
       severity: red ? 'red' : (orange ? 'orange' : 'yellow'), country: c, time: win[1], url: '', digest: ''
     };
-  }), 10));
-  sections.push(section('人员伤亡类事件', take(casualty, 20), 20));
+  }), CAP));
+  sections.push(section('人员伤亡类事件', take(casualty, CAP), CAP));
   const st = lvStat(items);
   return {
     title: '综合态势简报',

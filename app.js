@@ -4171,7 +4171,11 @@ const VIEW_MAP={
   brief:{t:'领导要报速览',b:'分析研判 / 领导要报速览（30秒一页纸 · 红橙置顶 · 涉华优先）'},
   country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · 企业资产）'},
   countryfile:{t:'国别档案总表',b:'分析研判 / 国别档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
-  reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报）'},
+  reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报 · 每月/每季/半年/全年简报）'},
+  'pb-monthly':{t:'每月简报',b:'分析研判 / 周期简报中心 / 每月简报（月度综合态势 · 公文版导出）'},
+  'pb-quarterly':{t:'每季简报',b:'分析研判 / 周期简报中心 / 每季简报（季度综合态势 · 公文版导出）'},
+  'pb-semiannual':{t:'半年简报',b:'分析研判 / 周期简报中心 / 半年简报（半年度综合态势 · 公文版导出）'},
+  'pb-yearly':{t:'全年简报',b:'分析研判 / 周期简报中心 / 全年简报（年度综合态势 · 公文版导出）'},
   models:{t:'风险预测模型',b:'分析研判 / 风险预测模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
   reportsc:{t:'专题分析中心',b:'分析研判 / 专题分析中心（9类专业分析报告 · 全周期生成 / 阅读 / 修订 / 公文版导出）'},
   aireport:{t:'AI智能研判',b:'分析研判 / AI智能研判（深度分层研判 · BLUF · 情景推演 · 对策建议）'},
@@ -4211,6 +4215,7 @@ const VIEW_MAP={
 const VIEW_MERGE_ALIAS={
   autoalert:'alerts', anomaly:'alerts',
   analysis:'reports',
+  'pb-monthly':'reports', 'pb-quarterly':'reports', 'pb-semiannual':'reports', 'pb-yearly':'reports',
   matrix:'country', forecast:'country', assets:'country', cosri:'country',
   datasources:'datapool', wechat:'datapool',
   datacenter:'datagov', sidepool:'datagov', funnel:'datagov', archive:'datagov', explain:'datagov',
@@ -4223,7 +4228,11 @@ const VIEW_MERGE_TABS={
     {k:'anomaly',label:'📈 异动信号'}
   ],
   reports:[
-    {k:'analysis',label:'📋 研判简报'}
+    {k:'analysis',label:'📋 研判简报'},
+    {k:'pb-monthly',label:'🗓️ 每月简报'},
+    {k:'pb-quarterly',label:'📆 每季简报'},
+    {k:'pb-semiannual',label:'📅 半年简报'},
+    {k:'pb-yearly',label:'📕 全年简报'}
   ],
   country:[
     {k:'matrix',label:'📊 风险矩阵'},
@@ -4356,6 +4365,7 @@ function runViewInit(v){
       else if(v==='thinktank'){ if(typeof THINKTANK!=='undefined')THINKTANK.init(); }
       else if(v==='models'){ if(typeof MODELS_ANALYSIS!=='undefined')MODELS_ANALYSIS.init(); }
       else if(v==='reportsc'){ if(typeof REPORTS!=='undefined')REPORTS.render(); }
+      else if(v==='pb-monthly'||v==='pb-quarterly'||v==='pb-semiannual'||v==='pb-yearly'){ if(typeof PERIOD_BRIEFS!=='undefined')PERIOD_BRIEFS.render(v.slice(3)); }
       else if(v==='role'){ if(typeof ROLE_UI!=='undefined')ROLE_UI.render(); }
     }catch(e){ console.error('runViewInit('+v+')错误:',e); }
   },0);

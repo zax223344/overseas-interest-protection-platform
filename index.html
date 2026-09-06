@@ -1414,6 +1414,12 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: EXPLAINABILITY (explanability.js 整视图渲染) -->
 <div class="view" id="view-explain"></div>
 
+<!-- VIEW: PERIOD BRIEFS (period-briefs.js 整视图渲染：月/季/半年/全年简报面板，installViewMerge 并入周期简报中心伞形) -->
+<div class="view" id="view-pb-monthly"><div id="pb-root-monthly"></div></div>
+<div class="view" id="view-pb-quarterly"><div id="pb-root-quarterly"></div></div>
+<div class="view" id="view-pb-semiannual"><div id="pb-root-semiannual"></div></div>
+<div class="view" id="view-pb-yearly"><div id="pb-root-yearly"></div></div>
+
 <!-- VIEW: ROLE (role-ui.js 整视图渲染) -->
 <div class="view" id="view-role"></div>
 
@@ -1470,7 +1476,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=289"></script>
+<script src="app.js?v=290"></script>
 <script src="workbench.js?v=5"></script>
 <script src="threatroom.js?v=12"></script>
 <script src="foresee.js?v=3"></script>
@@ -1487,12 +1493,13 @@ function closeMobileMenu(){
 <script src="thinktank.js?v=1"></script>
 <script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=9"></script>
+<script src="role-ui.js?v=10"></script>
 <script src="model-analysis.js?v=5"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
 <script src="govdoc.js?v=7"></script>
 <script src="dailyreport.js?v=9"></script>
+<script src="period-briefs.js?v=1"></script>
 <!-- 2026-09-05 接回从未加载的战略咽喉/一带一路沉浸图与航班AIS引擎（app.js 以 typeof 守卫消费） -->
 <script src="strat-viz.js?v=1"></script>
 <script src="flight-ais.js?v=1"></script>

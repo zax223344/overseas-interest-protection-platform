@@ -18,6 +18,7 @@ const netx = require('./netx'); /* 出网出口层统一 smartFetch（2026-08-29
 const scrapers = require('./scrapers');
 const crawler = require('./crawler');
 const zhPolish = require('./zh-polish'); /* L1 中文译文抛光（2026-08-29 翻译质量改造：尾部媒体/URL/作者残留剥离+缩写全称+标点硬伤） */
+const _TRMT = require('./translation-terms'); /* 术语库归一+数字本地化（2026-09-06 手册落地：译文残留英文术语→权威译名、50百万美元→5000万美元） */
 const zhRewrite = require('./title-rewrite');
 const fieldcrypt = require('./fieldcrypt'); /* P1-3 敏感字段级加密 AES-256-GCM */ /* L2 标题句式重写（2026-08-29 翻译质量改造：欧化语序/插入语/框架句重组，病句检测命中才动手） */
 const captcha = require('./captcha'); /* 登录图形验证码（2026-09-04 用户指令：验证码要发挥真正作用——服务端答案/一次性核销/5分钟过期/失败锁定联动） */
@@ -6496,6 +6497,22 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   const code = [];
   if (!it) return { ok: false, code: ['no-item'] };
   _stripHtmlFields(it); /* 2026-08-25：入库前去标签（见上） */
+  /* [object Promise] 终线防御（2026-09-06）：Promise 未 await 被 String() 化的脏值
+   * 曾两度穿透入库（content_zh 字段 30872/30873）。翻译链已逐点修复，此处入库咽喉
+   * 再做全字段深扫：发现即剥离该字段值（置空待重译），绝不让脏字符串落库。 */
+  {
+    let _poisoned = 0;
+    for (const _k of Object.keys(it)) {
+      const _v = it[_k];
+      if (typeof _v === 'string' && _v.indexOf('[object Promise]') !== -1) {
+        if (_k === 'content_zh' || _k === 'content') { it.content_zh = ''; it.content = it.content_en || ''; it._untranslated_body = true; }
+        else if (_k === 'title_zh' || _k === 'title') { it.title_zh = ''; it.title = it.title_en || ''; it._untranslated = true; }
+        else it[_k] = '';
+        _poisoned++;
+      }
+    }
+    if (_poisoned) console.warn('[GATE] [object Promise] 脏值拦截 ' + _poisoned + ' 字段: ' + String(it.title || it.title_en || '').slice(0, 50));
+  }
   /* 社媒灌水/标签云闸（2026-09-05，见函数注释）：须在国别回填/质量闸之前——
    * 灌水帖含国名+暴力词，晚判会被国别回填和类别捕获"洗白"成正常条目。 */
   {
@@ -11256,6 +11273,10 @@ function _trZhDominated(s) {
 async function _translateAny(text) {
   const src = String(text || '');
   let zh = await _translateAnyRaw(src);
+  /* 2026-09-06 术语归一（手册落地）：引擎不译的领域缩写（VBIED/RSF/TTP 残留英文）
+   * 与非标准变体（"青年党"→"索马里青年党"）统一为权威译名；含数字本地化。
+   * 先于 _fixMixedZh——术语库免费命中后，片段二次翻译的外部调用量显著下降。 */
+  zh = _TRMT.normalizeZh(zh);
   /* 2026-08-30 排雷：_fixMixedZh 是 async 函数，漏 await 会把 Promise 传给 polish →
    * String(Promise) = "[object Promise]" 被当译文入库+污染缓存（624 条）。必须 await。 */
   zh = await _fixMixedZh(zh);
@@ -11274,6 +11295,8 @@ async function _translateAny(text) {
       }
     }
   } catch (e) { /* 兜底失败保留首轮译文 */ }
+  /* 2026-09-06 数字本地化收尾（pivot 重译可能引入"50百万美元"式直译腔，幂等再过一遍） */
+  zh = _TRMT.localizeNums(zh);
   return zhPolish.polish(zh);
 }
 async function _translateAnyRaw(text) {
@@ -11323,17 +11346,28 @@ async function _translateAnyRaw(text) {
   /* 4) MyMemory（2026-09-01：额度耗尽/429 触发 12h 熔断，期间整段跳过） */
   if (!_trFuseOpen('MyMemory')) {
     try {
-      const tr = await _myMemoryOne(src.slice(0, 500), MYMEMORY_KEY);
-      if (tr === '__QUOTA__') _trFuseTrip('MyMemory', '免费额度耗尽');
-      else if (_translationOk(src, tr)) return tr.trim();
+      /* 2026-09-06 分块根治"译文简短"：旧版 slice(0,500) 静默截断长正文，
+       * 500 字译文 vs 1391 字原文长度比 0.36 仍过质检 → 半篇落库。改分块全译。 */
+      const chunks = _chunkText(src, 480);
+      const parts = [];
+      let quotaHit = false;
+      for (const ch of chunks) {
+        const tr = await _myMemoryOne(ch, MYMEMORY_KEY);
+        if (tr === '__QUOTA__') { _trFuseTrip('MyMemory', '免费额度耗尽'); quotaHit = true; break; }
+        if (!_translationOk(ch, tr)) { parts.length = 0; break; }
+        parts.push(tr.trim());
+      }
+      if (!quotaHit && parts.length === chunks.length && parts.length) return parts.join('\n');
     } catch (e) { _trErrFused('MyMemory', e); }
   }
   /* 5) LibreTranslate（2026-09-01：公共实例全部不可达/网络错 → 熔断 2min） */
   if (!_trFuseOpen('LibreTranslate')) {
     try {
-      const lr = await _tryLibreTranslate([src.slice(0, 500)]);
+      /* 2026-09-06 分块根治"译文简短"：批量接口直接收分块数组，拼接成全译文 */
+      const chunks = _chunkText(src, 480);
+      const lr = await _tryLibreTranslate(chunks);
       if (!lr) _trFuseTrip('LibreTranslate', '公共实例全部不可达');
-      else if (lr[0] && _translationOk(src, lr[0])) return lr[0].trim();
+      else if (Array.isArray(lr) && lr.length === chunks.length && lr.every(function (x, i) { return x && _translationOk(chunks[i], x); })) return lr.map(function (x) { return x.trim(); }).join('\n');
     } catch (e) { _trFuseTrip('LibreTranslate', e.message); }
   }
   /* 6) 小语种 pivot（2026-08-17 用户指令：小语种先译英文再译中文）：
@@ -11352,9 +11386,11 @@ async function _translateAnyRaw(text) {
   /* 7) Edge 微软翻译（2026-09-01：不可达/网络错 → 外层熔断 2min，配合通道内原有 30min 长熔断） */
   if (!_trFuseOpen('Edge')) {
     try {
-      const er = await _tryEdge([src.slice(0, 500)]);
+      /* 2026-09-06 分块根治"译文简短"：批量接口收分块数组，全量质检后拼接 */
+      const chunks = _chunkText(src, 480);
+      const er = await _tryEdge(chunks);
       if (!er) _trFuseTrip('Edge', '不可达/认证失败');
-      else if (er[0] && _translationOk(src, er[0])) return er[0].trim();
+      else if (Array.isArray(er) && er.length === chunks.length && er.every(function (x, i) { return x && _translationOk(chunks[i], x); })) return er.map(function (x) { return x.trim(); }).join('\n');
     } catch (e) { _trFuseTrip('Edge', e.message); }
   }
   /* 8) Google 翻译网页接口兜底（2026-08-28 翻译三问题整治实测：
@@ -11363,9 +11399,19 @@ async function _translateAnyRaw(text) {
    * netx 代理可达，实测质量好："据报道，15名NYSC成员在从营地返回时在科吉被绑架"） */
   if (!_trFuseOpen('Google web')) { /* 2026-09-01：接口不可达/网络错 → 熔断 2min */
     try {
-      const gr = await _tryGoogleWebTranslate(src.slice(0, 450));
-      if (!gr) _trFuseTrip('Google web', '接口不可达');
-      else if (_translationOk(src, gr)) return gr.trim();
+      /* 2026-09-06 分块根治"译文简短"：单条接口逐块翻译拼接，任一块不合格即弃通道；
+       * 首块即空 → 通道级不可达，熔断。 */
+      const chunks = _chunkText(src, 440);
+      const parts = [];
+      let firstEmpty = false;
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const gr = await _tryGoogleWebTranslate(chunks[ci]);
+        if (!gr) { if (ci === 0) firstEmpty = true; parts.length = 0; break; }
+        if (!_translationOk(chunks[ci], gr)) { parts.length = 0; break; }
+        parts.push(gr.trim());
+      }
+      if (firstEmpty) _trFuseTrip('Google web', '接口不可达');
+      else if (parts.length === chunks.length && parts.length) return parts.join('\n');
     } catch (e) { _trFuseTrip('Google web', e.message); }
   }
   return ''; /* 全部不合格 → 返回空，调用方保留原文并打 _untranslated 标记，绝不入库乱码 */
@@ -13302,6 +13348,12 @@ const _server = app.listen(PORT, async () => {
   AUTO_ENGINE.start();
   /* 启动全球多国媒体真实情报采集（20秒后首跑；直连 RSS 真实数据快速进缓存） */
   startGlobalMediaCron();
+  /* 隧道兜底监督（2026-09-06 关机/睡眠断链事故根治）：隧道正常由 PM2 orps-tunnel
+   * 托管；若其未被托管（ecosystem 未更新/人工 pm2 delete/PM2 数据丢失），server 作为
+   * 开机自启链必活成员每 10 分钟检查 keepalive 锁，锁死/锁缺则兜底拉起。
+   * keepalive 内置单实例锁，幂等安全，绝不双开隧道。首次延迟 90s（让 PM2 先拿锁）。 */
+  setTimeout(_ensureTunnelKeepalive, 90000);
+  setInterval(_ensureTunnelKeepalive, 600000);
 });
 /* 端口被占用时必须立刻退出：
  * 上面的 uncaughtException 守卫会吞掉 EADDRINUSE，导致每次重启都残留一个
@@ -13314,6 +13366,30 @@ _server.on('error', (err) => {
   console.error('[FATAL] 服务器监听失败:', err && err.message);
   process.exit(1);
 });
+
+/* ===== 隧道兜底监督 =====
+ * 检查 tunnel-keepalive 单实例锁：锁文件缺失或持锁进程已死 → detached 拉起 keepalive。
+ * keepalive 启动时自抢锁，多实例场景由锁互斥（PM2 托管实例优先，此处仅兜底）。 */
+function _ensureTunnelKeepalive() {
+  try {
+    const { execFileSync, spawn } = require('child_process');
+    const fs = require('fs');
+    const LOCK = 'C:\\Users\\28737\\.workbuddy\\tools\\tunnel-keepalive.lock';
+    let owner = 0;
+    try { owner = JSON.parse(fs.readFileSync(LOCK, 'utf8')).pid || 0; } catch (e) {}
+    if (owner) {
+      try {
+        const out = execFileSync('tasklist', ['/FI', 'PID eq ' + owner, '/NH'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+        if (out.indexOf(String(owner)) !== -1) return; /* keepalive 存活，无需动作 */
+      } catch (e) {}
+    }
+    const env = Object.assign({}, process.env);
+    ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NODE_OPTIONS'].forEach(k => delete env[k]);
+    const child = spawn(process.execPath, ['C:\\Users\\28737\\.workbuddy\\orps-boot\\tunnel-keepalive.js'], { env, detached: true, stdio: 'ignore' });
+    child.unref();
+    console.log('[TUNNEL] keepalive 未在运行，已兜底拉起 pid=' + child.pid);
+  } catch (e) { console.warn('[TUNNEL] 兜底监督失败:', e.message); }
+}
 
 /* ===== 实时情报生成器（已停用 · 实战模式零模拟数据） =====
  * 原实现以模板国家/事件/企业 + Math.random() 每30秒合成 [实时] 假预警并写入

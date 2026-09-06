@@ -65,6 +65,39 @@ module.exports = {
       error_file: path.join(__dirname, '..', 'logs', 'git-keepalive-err.log'),
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true
+    },
+    {
+      // cloudflared 隧道保活（2026-09-06 引导链断链事故后并入 PM2 托管）：
+      // 原由 start-orps.js detached spawn，但从 AI 工具沙箱/PowerShell 拉起的
+      // detached 进程会被会话回收连坐杀死，且睡眠唤醒后 cloudflared 僵尸态
+      // （进程活、隧道死、无 exit 事件）无人自愈。PM2 God 常驻，crash 自动重启。
+      // 脚本自带：断线 5s 重连 + 新域名 API 优先更新 gh-pages 引导页 + 5min 僵尸态看门狗。
+      // 注意防重入：cloudflared 已在跑时脚本会 process.exit(0)（PM2 视为正常退出，
+      // 30s 后 min_uptime 内不重启——需 start-orps.js 不再重复拉起旧版 keepalive）。
+      name: 'orps-tunnel',
+      script: 'C:/Users/28737/.workbuddy/orps-boot/tunnel-keepalive.js',
+      interpreter: 'C:/Users/28737/.workbuddy/binaries/node/versions/22.22.2-2/node.exe',
+      cwd: 'C:/Users/28737/.workbuddy/orps-boot',
+      instances: 1,
+      exec_mode: 'fork',
+      max_memory_restart: '300M',
+      restart_delay: 10000,
+      autorestart: true,
+      watch: false,
+      min_uptime: '30s',
+      max_restarts: 10,
+      env: {
+        // 清代理：cloudflared 边缘连接与 api.github.com 均须直连
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        http_proxy: '',
+        https_proxy: ''
+      },
+      log_file: 'C:/Users/28737/.workbuddy/tools/tunnel.log',
+      out_file: 'C:/Users/28737/.workbuddy/tools/tunnel.log',
+      error_file: 'C:/Users/28737/.workbuddy/tools/tunnel.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true
     }
   ]
 };

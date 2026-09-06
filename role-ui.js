@@ -36,7 +36,8 @@
     autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报',
     explain:'可解释审计', role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池',
     dailyreport:'每日简报', wechat:'公众号采集', assets:'企业资产',
-    anomaly:'异动信号', funnel:'采集漏斗', archive:'归档检索'
+    anomaly:'异动信号', funnel:'采集漏斗', archive:'归档检索',
+    'pb-monthly':'每月简报', 'pb-quarterly':'每季简报', 'pb-semiannual':'半年简报', 'pb-yearly':'全年简报'
   };
 
   /* 各角色可见的侧边栏入口；未列出者默认按角色最大权限显示 */
