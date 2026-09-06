@@ -6860,200 +6860,71 @@ const COUNTRY_DRAWER={
 // ===== INTEL IMAGE CENTER (Independent View) =====
 var INTELCENTER={
   tab:'gallery',
-  _osintSources:[
-    {name:'Twitter/X',ic:'\u{1F4AC}',count:128,status:'active',color:'var(--cyan)',kw:['\u88ad\u51fb','\u7ef4\u5b89','\u7236\u70b8'],desc:'\u5b9e\u65f6\u76d1\u6d4b\u63d0\u53ca\u4e2d\u8d44\u4f01\u4e1a\u3001\u4e00\u5e26\u4e00\u8def\u3001\u6d77\u5916\u5b89\u5168\u7684\u63a8\u6587'},
-    {name:'Telegram',ic:'\u{1F4E2}',count:42,status:'active',color:'var(--red)',kw:['\u6b66\u88c5\u7ec4\u7ec7','\u88ad\u51fb\u9884\u8b66'],desc:'\u76d1\u6d4b\u5410\u5e9f\u3001BLA\u3001IS\u7b49\u7ec4\u7ec7\u5ba3\u4f20\u9893\u9053'},
-    {name:'\u65b0\u95fb\u5a92\u4f53',ic:'\u{1F4F0}',count:89,status:'active',color:'var(--green)',kw:['\u88ad\u51fb\u4e8b\u4ef6','\u793a\u5a01','\u64a4\u4fa8'],desc:'Reuters/AP/AFP/BBC/CNN \u7b49\u4e3b\u6d41\u56fd\u9645\u5a92\u4f53'},
-    {name:'\u6697\u7f51\u8bba\u575b',ic:'\u{1F575}\uFE0F',count:23,status:'active',color:'var(--orange)',kw:['\u96c7\u4f63\u5175','\u60c5\u62a5\u4e70\u5356'],desc:'\u76d1\u6d4b\u9488\u5bf9\u4e2d\u8d44\u4f01\u4e1a\u7684\u5a01\u80c1\u60c5\u62a5'},
-    {name:'\u653f\u5e9c\u516c\u544a',ic:'\u{1F3DB}\uFE0F',count:34,status:'active',color:'var(--cyan)',kw:['\u5236\u88c1','\u65c5\u884c\u8b66\u544a'],desc:'\u5404\u56fd\u653f\u5e9c\u5b98\u65b9\u516c\u544a\u53ca\u9886\u4e8b\u901a\u77e5'},
-    {name:'\u7814\u7a76\u62a5\u544a',ic:'\u{1F4DA}',count:31,status:'standby',color:'var(--yellow)',kw:['\u98ce\u9669\u8bc4\u4f30','\u5b89\u5168\u5f62\u52bf'],desc:'\u667a\u5e93\u3001NGO\u3001\u5b89\u4fdd\u516c\u53f8\u516c\u5f00\u62a5\u544a'}
-  ],
-  _defaultOsint:[
-    {id:'OSINT-001',source:'Twitter/X',time:'2026-07-13 14:32',country:'\u5df4\u57fa\u65af\u5766',kw:'\u88ad\u51fb',content:'\u76ee\u51fb\u8005\u79f0\u5361\u62c9\u5947\u6e2f\u4e2d\u8d44\u7801\u5934\u51fa\u73b0\u53ef\u7591\u8f66\u8f86\uff0c\u7591\u4f3c\u4fa6\u5bdf\u884c\u4e3a',level:'red',verified:true},
-    {id:'OSINT-002',source:'Telegram',time:'2026-07-13 12:15',country:'\u4e5f\u95e8',kw:'\u7ef4\u5b89',content:'\u80e1\u585e\u6b66\u88c5\u53d1\u5e03\u7ea2\u6d77\u822a\u884c\u7ba1\u5236\u58f0\u660e\uff0c\u5a01\u80c1\u9488\u5bf9\u5546\u8239\u7684\u653b\u51fb',level:'red',verified:true},
-    {id:'OSINT-003',source:'\u65b0\u95fb\u5a92\u4f53',time:'2026-07-13 10:00',country:'\u9a6c\u91cc',kw:'\u88ad\u51fb',content:'\u8def\u900f\u793e\u62a5\u9053\uff1a\u9a6c\u91cc\u5317\u90e8\u53d1\u751f\u6b66\u88c5\u88ad\u51fb\uff0c\u91d1\u77ff\u533a\u5b89\u5168\u5f62\u52bf\u6076\u5316',level:'orange',verified:true},
-    {id:'OSINT-004',source:'\u6697\u7f51\u8bba\u575b',time:'2026-07-12 22:45',country:'\u521a\u679c(\u91d1)',kw:'\u96c7\u4f63\u5175',content:'\u6697\u7f51\u8bba\u575b\u51fa\u73b0\u9488\u5bf9\u4e2d\u8d44\u77ff\u4e1a\u516c\u53f8\u7684\u96c7\u4f63\u5175\u62db\u52df\u4fe1\u606f',level:'orange',verified:false},
-    {id:'OSINT-005',source:'\u653f\u5e9c\u516c\u544a',time:'2026-07-12 18:00',country:'\u82cf\u4e39',kw:'\u88ab\u52a8\u5371\u673a',content:'\u82cf\u4e39\u6b66\u88c5\u51b2\u7a81\u5347\u7ea7\uff0c\u591a\u56fd\u53d1\u5e03\u64a4\u4fa8\u8b66\u544a',level:'red',verified:true},
-    {id:'OSINT-006',source:'Twitter/X',time:'2026-07-12 15:20',country:'\u7f05\u7538',kw:'\u793a\u5a01',content:'\u4ef0\u5149\u53d1\u751f\u53cd\u519b\u4e8b\u653f\u53d8\u793a\u5a01\uff0c\u4e2d\u8d44\u9879\u76ee\u5de5\u5730\u5c01\u9501',level:'orange',verified:false},
-    {id:'OSINT-007',source:'\u7814\u7a76\u62a5\u544a',time:'2026-07-11 09:00',country:'\u5168\u7403',kw:'\u98ce\u9669\u8bc4\u4f30',content:'\u56fd\u9645\u5b89\u4fdd\u516c\u53f8\u53d1\u5e03Q3\u6d77\u5916\u5b89\u5168\u5f62\u52bf\u8bc4\u4f30\u62a5\u544a',level:'cyan',verified:true},
-    {id:'OSINT-008',source:'Telegram',time:'2026-07-11 07:30',country:'\u5df4\u57fa\u65af\u5766',kw:'\u7ef4\u5b89',content:'BLA\u53d1\u5e03\u9488\u5bf9CPEC\u9879\u76ee\u7684\u5a01\u80c1\u58f0\u660e\u89c6\u9891',level:'red',verified:true}
-  ],
-  _defaultAnalysis:[
-    {id:'RPT-001',time:'2026-07-13 10:30',target:'\u66fc\u5fb7\u6d77\u5ce1\u822a\u9053',type:'\u53d8\u5316\u68c0\u6d4b',finding:'\u68c0\u6d4b\u52303\u8258\u53ef\u7591\u5c0f\u578b\u8239\u53ea\u805a\u96c6\uff0c\u7591\u4f3c\u6b66\u88c5\u5feb\u8247',level:'red',confidence:92},
-    {id:'RPT-002',time:'2026-07-12 14:15',target:'\u79d1\u5362\u97e6\u9f50\u77ff\u533a',type:'\u76ee\u6807\u8bc6\u522b',finding:'\u8bc6\u522b\u5230\u6b66\u88c5\u4eba\u5458\u8f66\u8f862\u8f86\uff0c\u8425\u5730\u5317\u4fa7\u5f02\u5e38\u96c6\u7ed3',level:'orange',confidence:85},
-    {id:'RPT-003',time:'2026-07-12 09:00',target:'\u74e6\u8fbe\u5c14\u6e2f',type:'\u6d3b\u52a8\u76d1\u6d4b',finding:'\u6e2f\u53e3\u541e\u5410\u91cf\u6b63\u5e38\uff0c\u8d27\u82393\u8258\uff0c\u65bd\u5de5\u8f66\u8f862\u8f86',level:'cyan',confidence:95},
-    {id:'RPT-004',time:'2026-07-11 16:20',target:'\u7eb3\u96f7\u7eb3\u77ff\u533a',type:'\u635f\u4f24\u8bc4\u4f30',finding:'\u88ad\u51fb\u9020\u62103\u5904\u5efa\u7b51\u640d\u6bc1\uff0c2\u8f86\u8f66\u8f86\u70e7\u6bc1\uff0c\u4f30\u8ba1\u635f\u5931\u7ea6500\u4e07\u7f8e\u5143',level:'red',confidence:88},
-    {id:'RPT-005',time:'2026-07-11 11:00',target:'\u6c49\u73ed\u6258\u5854\u6e2f',type:'\u70ed\u529b\u5206\u6790',finding:'\u672a\u53d1\u73b0\u5f02\u5e38\u70ed\u6e90\uff0c\u5730\u8868\u6e29\u5ea6\u5206\u5e03\u6b63\u5e38',level:'cyan',confidence:90}
-  ],
-  _defaultTimeline:[
-    {target:'\u7eb3\u96f7\u7eb3 \u77ff\u533a',country:'\u9a6c\u91cc',t0:'2026-05-01',t1:'2026-05-17',changes:'\u88ad\u51fb\u4e8b\u4ef6: \u8425\u5730\u5efa\u7b51\u640d\u6bc1\uff0c\u65bd\u5de5\u8f66\u8f86\u88ab\u711a\u6bc1',level:'red',impact:'\u4e25\u91cd'},
-    {target:'\u66fc\u5fb7\u6d77\u5ce1 \u822a\u9053',country:'\u4e5f\u95e8',t0:'2026-06-01',t1:'2026-07-13',changes:'\u822a\u8fd0\u6d3b\u52a8\u51cf\u5c1130%\uff0c\u519b\u4e8b\u5de1\u903b\u589e\u52a0',level:'orange',impact:'\u663e\u8457'},
-    {target:'\u79d1\u5362\u97e6\u9f50 \u77ff\u533a',country:'\u521a\u679c(\u91d1)',t0:'2026-05-01',t1:'2026-07-12',changes:'\u5b89\u4fdd\u8bbe\u65bd\u5347\u7ea7\uff0c\u65b0\u589e\u54e8\u62402\u5904',level:'yellow',impact:'\u4e2d\u7b49'},
-    {target:'\u74e6\u8fbe\u5c14\u6e2f',country:'\u5df4\u57fa\u65af\u5766',t0:'2026-06-01',t1:'2026-07-13',changes:'\u6e2f\u53e3\u6269\u5efa\u5de5\u7a0b\u8fdb\u5c55\u6b63\u5e38\uff0c\u65b0\u589e\u6cca\u4f4d\u65bd\u5de5',level:'cyan',impact:'\u8f7b\u5fae'}
-  ],
-  _defaultGeoint:[
-    {name:'\u98ce\u9669\u70ed\u529b\u56fe',ic:'\u{1F525}',desc:'\u5168\u7403\u98ce\u9669\u5206\u5e03\u70ed\u529b\u56fe \u2014 \u591a\u7ef4\u5ea6\u8bc4\u5206\u4f53\u7cfb',status:'active',color:'var(--red)',count:'42\u56fd',
-      source:'\u591a\u6e90\u60c5\u62a5\u878d\u5408\uff08OSINT\u3001\u536b\u661f\u76d1\u6d4b\u3001\u4eba\u5de5\u91c7\u96c6\u3001\u5386\u53f2\u6570\u636e\u5e93\uff09',
-      coverage:'\u5168\u740342\u4e2a\u91cd\u70b9\u56fd\u5bb6/\u5730\u533a\uff0c\u7f51\u683c\u7cbe\u5ea60.5\u00b0\u00d70.5\u00b0',
-      updated:'2026-07-13 22:00',
-      meta:'\u8bc4\u5206\u7ef4\u5ea6: \u653f\u6cbb(25%)/\u7ecf\u6d4e(20%)/\u5b89\u5168(25%)/\u793e\u4f1a(15%)/\u81ea\u7136\u707e\u5bb3(15%) | \u8bc4\u5206\u533a\u95f4: 0-10 | \u66f4\u65b0\u9891\u7387: \u6bcf\u65e5',
-      analysis:'\u5f53\u524d\u5168\u7403\u98ce\u9669\u683c\u5c40\u5448\u201c\u4e1c\u9ad8\u897f\u4e2d\u201d\u6001\u52bf\uff1a\u4e2d\u4e1c\u3001\u5317\u975e\u3001\u5357\u4e9a\u70ed\u70b9\u533a\u57df\u98ce\u9669\u6301\u7eed\u5c45\u9ad8\uff0c\u4e1c\u6b27\u5730\u533a\u56e0\u4fc4\u4e4c\u51b2\u7a81\u5916\u6ea2\u6548\u5e94\u660e\u663e\u3002\u897f\u975e\u8428\u8d6b\u52d2\u5e26\u3001\u4e2d\u4e1c\u4e24\u6cb3\u6d41\u57df\u4e3a\u6700\u9ad8\u98ce\u9669\u533a\u3002\u5efa\u8bae\u52a0\u5f3a\u5bf9\u7ea2\u6d77\u6cbf\u5cb8\u3001\u51e0\u5185\u4e9a\u6e7e\u3001\u9a6c\u516d\u7532\u6d77\u5ce1\u7684\u5b9e\u65f6\u76d1\u63a7\u3002',
-      records:[
-        {region:'\u4e2d\u4e1c',country:'\u53d9\u5229\u4e9a',political:8.5,economic:7.2,security:9.1,social:7.8,disaster:4.0,total:8.2,trend:'\u2191',note:'\u5185\u6218\u6301\u7eed\uff0c\u5916\u90e8\u52bf\u529b\u4ecb\u5165\u52a0\u6df1'},
-        {region:'\u4e2d\u4e1c',country:'\u4f0a\u62c9\u514b',political:8.8,economic:7.0,security:9.3,social:7.5,disaster:5.0,total:8.4,trend:'\u2192',note:'\u653f\u5e9c\u66f4\u8fed\u9891\u7e41\uff0c\u5b89\u5168\u5f62\u52bf\u4e25\u5cfb'},
-        {region:'\u4e2d\u4e1c',country:'\u4e5f\u95e8',political:7.5,economic:6.8,security:8.0,social:7.0,disaster:4.5,total:7.2,trend:'\u2191',note:'\u80e1\u585e\u6b66\u88c5\u6d3b\u52a8\u589e\u52a0\uff0c\u6d77\u8fd0\u5b89\u5168\u98ce\u9669\u4e0a\u5347'},
-        {region:'\u5317\u975e',country:'\u5c3c\u65e5\u5229\u4e9a',political:8.0,economic:6.5,security:8.8,social:8.2,disaster:3.5,total:7.8,trend:'\u2191',note:'\u6050\u88ad\u6d3b\u52a8\u7ed3\u5408\u72af\u7f6a\u56e2\u4f19\uff0c\u5b89\u5168\u5f62\u52bf\u6076\u5316'},
-        {region:'\u5317\u975e',country:'\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14',political:9.0,economic:8.5,security:9.0,social:8.5,disaster:6.0,total:8.8,trend:'\u2191',note:'\u653f\u53d8\u540e\u5b89\u5168\u771f\u7a7a\uff0c\u4e2d\u8d44\u9879\u76ee\u9762\u4e34\u4e2d\u65ad\u98ce\u9669'},
-        {region:'\u5317\u975e',country:'\u5229\u6bd4\u4e9a',political:7.8,economic:7.0,security:8.5,social:7.5,disaster:4.0,total:7.6,trend:'\u2192',note:'\u5bb6\u65cf\u51b2\u7a81\u6301\u7eed\uff0c\u6cb9\u751f\u4ea7\u53d7\u6270'},
-        {region:'\u5357\u4e9a',country:'\u5df4\u57fa\u65af\u5766',political:7.5,economic:6.0,security:8.2,social:7.0,disaster:5.5,total:7.1,trend:'\u2191',note:'TTP\u6b3e\u70b9\u91cd\u62a2\u8fb9\u5883\u5730\u533a\uff0c\u74e6\u8fbe\u5c14\u6e2f\u5b89\u5168\u62a5\u8b66'},
-        {region:'\u5357\u4e9a',country:'\u7f05\u7538',political:7.0,economic:6.5,security:7.8,social:7.2,disaster:6.0,total:7.0,trend:'\u2192',note:'\u5185\u6218\u7f13\u548c\u4f46\u5c40\u52bf\u8106\u5f31\uff0c\u4e2d\u7f05\u8d70\u5eca\u9879\u76ee\u90fd\u4fdd\u53d7\u5a01\u80c1'},
-        {region:'\u4e1c\u6b27',country:'\u4e4c\u514b\u5170',political:9.2,economic:8.0,security:9.5,social:8.0,disaster:4.0,total:8.9,trend:'\u2191',note:'\u6218\u4e89\u6301\u7eed\u5347\u7ea7\uff0c\u57fa\u7840\u8bbe\u65bd\u6bc1\u635f\u4e25\u91cd'},
-        {region:'\u4e1c\u6b27',country:'\u4fc4\u7f57\u65af',political:8.5,economic:7.5,security:8.8,social:7.0,disaster:3.0,total:8.0,trend:'\u2191',note:'\u5236\u88c1\u52a0\u5267\uff0c\u4e2d\u8d44\u4f01\u4e1a\u5408\u89c4\u98ce\u9669\u4e0a\u5347'},
-        {region:'\u62c9\u4e01\u7f8e\u6d32',country:'\u59d4\u5185\u745e\u62c9',political:8.0,economic:9.0,security:7.5,social:8.0,disaster:3.5,total:7.8,trend:'\u2191',note:'\u7ecf\u6d4e\u5d29\u6e83\u52a0\u5267\u793e\u4f1a\u52a8\u8361\uff0c\u6cb9\u4ea7\u505c\u6ede'},
-        {region:'\u975e\u6d32',country:'\u82cf\u4e39',political:8.8,economic:8.5,security:9.0,social:8.0,disaster:5.0,total:8.5,trend:'\u2191',note:'\u5185\u6218\u91cd\u71c3\uff0c\u4e2d\u65b9\u4eba\u5458\u64a4\u79bb\u4e2d'}
-      ]
-    },
-    {name:'\u4f01\u4e1a\u5206\u5e03\u56fe',ic:'\u{1F3ED}',desc:'\u4e2d\u8d44\u4f01\u4e1a\u5168\u7403\u5206\u5e03\u4e0e\u98ce\u9669\u8bc4\u4f30',status:'active',color:'var(--cyan)',count:'35\u4f01\u4e1a',
-      source:'\u5546\u52a1\u90e8\u5883\u5916\u4f01\u4e1a\u76ee\u5f55\u3001\u4f01\u4e1a\u5de5\u5546\u4fe1\u606f\u3001\u884c\u4e1a\u62a5\u544a',
-      coverage:'\u5168\u740335\u5bb6\u91cd\u70b9\u4e2d\u8d44\u4f01\u4e1a\uff0c\u8986\u76d618\u4e2a\u56fd\u5bb6',
-      updated:'2026-07-13 18:00',
-      meta:'\u6570\u636e\u5b57\u6bb5: \u4f01\u4e1a\u540d\u79f0/\u6240\u5728\u56fd/\u884c\u4e1a/\u5458\u5de5\u6570/\u4e2d\u65b9\u4eba\u5458/\u98ce\u9669\u7b49\u7ea7 | \u66f4\u65b0\u9891\u7387: \u6bcf\u5468',
-      analysis:'\u4e2d\u8d44\u4f01\u4e1a\u5728\u975e\u6d32\u548c\u4e2d\u4e1c\u5206\u5e03\u6700\u5bc6\u96c6\uff0c\u5176\u4e2d\u57fa\u5efa\u3001\u6cb9\u6c14\u3001\u77ff\u4e1a\u4e3a\u4e3b\u8981\u884c\u4e1a\u3002\u9ad8\u98ce\u9669\u533a\u57df\u4f01\u4e1a\u6570\u91cf\u8fd1\u671f\u589e\u52a012%\uff0c\u5efa\u8bae\u52a0\u5f3a\u5b89\u4fdd\u6295\u5165\u548c\u5e94\u6025\u9884\u6848\u5236\u5b9a\u3002\u7279\u522b\u5173\u6ce8\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14\u3001\u5c3c\u65e5\u5229\u4e9a\u3001\u4f0a\u62c9\u514b\u4e09\u56fd\u7684\u9879\u76ee\u4eba\u5458\u5b89\u5168\u3002',
-      records:[
-        {company:'\u4e2d\u77f3\u6cb9\u5de5\u7a0b\u96c6\u56e2',country:'\u4e5f\u95e8',sector:'\u77f3\u6cb9\u5de5\u7a0b',staff:'2,800',cnStaff:'320',risk:'\u6781\u9ad8',note:'\u4e3b\u8981\u9879\u76ee\u5728\u4e5f\u95e8\u897f\u90e8\u6cb9\u7530\uff0c\u80e1\u585e\u6b66\u88c5\u5a01\u80c1\u4e25\u91cd'},
-        {company:'\u4e2d\u94c1\u96c6\u56e2',country:'\u5c3c\u65e5\u5229\u4e9a',sector:'\u77ff\u4e1a\u5f00\u91c7',staff:'1,500',cnStaff:'180',risk:'\u6781\u9ad8',note:'\u963f\u5e93\u8d39\u94c1\u77ff\u9879\u76ee\uff0c\u6050\u88ad\u6d3b\u52a8\u5a01\u80c1\u4e25\u91cd'},
-        {company:'\u4e2d\u4ea4\u5efa\u516c\u53f8',country:'\u5229\u6bd4\u4e9a',sector:'\u57fa\u7840\u8bbe\u65bd',staff:'3,200',cnStaff:'450',risk:'\u9ad8',note:'\u6cbf\u6d77\u516c\u8def\u9879\u76ee\uff0c\u5bb6\u65cf\u51b2\u7a81\u5f71\u54cd\u65bd\u5de5'},
-        {company:'\u4e2d\u539f\u5de5\u7a0b',country:'\u4f0a\u62c9\u514b',sector:'\u5de5\u7a0b\u627f\u5305',staff:'2,100',cnStaff:'280',risk:'\u6781\u9ad8',note:'\u5df4\u683c\u8fbe\u6c34\u7535\u7ad9\u9879\u76ee\uff0c\u5b89\u5168\u5f62\u52bf\u4e25\u5cfb'},
-        {company:'\u534e\u4e3a\u6280\u672f',country:'\u5c3c\u65e5\u5229\u4e9a',sector:'\u901a\u4fe1\u8bbe\u5907',staff:'800',cnStaff:'95',risk:'\u9ad8',note:'\u5168\u7403\u670d\u52a1\u4e2d\u5fc3\uff0c\u672c\u5730\u5b89\u4fdd\u9700\u52a0\u5f3a'},
-        {company:'\u4e2d\u6c34\u7535\u5efa\u7b2c\u516b\u5de5\u7a0b\u5c40',country:'\u5df4\u57fa\u65af\u5766',sector:'\u6c34\u5229\u5de5\u7a0b',staff:'1,800',cnStaff:'220',risk:'\u9ad8',note:'\u8fbe\u82cf\u6c34\u7535\u7ad9\uff0cTTP\u6b3e\u70b9\u5a01\u80c1\u533a\u57df'},
-        {company:'\u4e2d\u6cb9\u6c7d\u8f66',country:'\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14',sector:'\u77f3\u6cb9\u670d\u52a1',staff:'1,200',cnStaff:'150',risk:'\u6781\u9ad8',note:'\u6cb9\u7530\u670d\u52a1\uff0c\u653f\u53d8\u540e\u5b89\u5168\u4e0d\u786e\u5b9a'},
-        {company:'\u4e2d\u519c\u53d1\u96c6\u56e2',country:'\u82cf\u4e39',sector:'\u519c\u4e1a\u5f00\u53d1',staff:'900',cnStaff:'110',risk:'\u6781\u9ad8',note:'\u519c\u4e1a\u793a\u8303\u533a\uff0c\u6218\u4e89\u5a01\u80c1\u4eba\u5458\u5b89\u5168'},
-        {company:'\u4e2d\u94f0\u96c6\u56e2',country:'\u8d5e\u6bd4\u4e9a',sector:'\u77ff\u4e1a',staff:'2,500',cnStaff:'300',risk:'\u9ad8',note:'\u94dc\u77ff\u9879\u76ee\uff0c\u7ecf\u6d4e\u52a8\u8361\u5f71\u54cd\u8fd0\u8425'},
-        {company:'\u4e2d\u8fd0\u96c6\u56e2',country:'\u5df4\u897f',sector:'\u6e2f\u53e3\u8fd0\u8425',staff:'1,100',cnStaff:'130',risk:'\u4e2d',note:'\u5df4\u897f\u6e2f\u96c6\u88c5\u7bb1\u4e1a\u52a1\uff0c\u793e\u6cbb\u73af\u5883\u8f83\u597d'}
-      ]
-    },
-    {name:'\u822a\u8fd0\u901a\u9053\u56fe',ic:'\u2693\ufe0f',desc:'\u5168\u7403\u5173\u952e\u6d77\u8fd0\u54bd\u5499\u8981\u9053\u53ca\u98ce\u9669\u8bc4\u4f30',status:'active',color:'var(--orange)',count:'8\u8981\u9053',
-      source:'\u56fd\u9645\u6d77\u4e8b\u7ec4\u7ec7(IMO)\u3001AIS\u8239\u4f4d\u6570\u636e\u3001\u5404\u56fd\u6d77\u4e8b\u5c40\u516c\u544a',
-      coverage:'\u5168\u74038\u5927\u5173\u952e\u6d77\u5ce1\u53ca4\u6761\u4e3b\u8981\u822a\u8fd0\u8d70\u5eca',
-      updated:'2026-07-13 20:00',
-      meta:'\u76d1\u6d4b\u65b9\u5f0f: AIS\u5b9e\u65f6\u8ddf\u8e2a+\u536b\u661f\u9065\u611f | \u6570\u636e\u5ef6\u8fdf: <5\u5206\u949f | \u8986\u76d6\u8239\u53ea: \u5168\u7403\u5546\u8239\u7ea490%',
-      analysis:'\u5168\u7403\u6d77\u8fd0\u54bd\u5499\u70b9\u6574\u4f53\u98ce\u9669\u7b49\u7ea7\u5347\u81f3\u201c\u9ad8\u201d\u3002\u7ea2\u6d77\u5c40\u52bf\u6301\u7eed\u7d27\u5f20\uff0c\u4e5f\u95e8\u6d77\u5ce1\u53d7\u80e1\u585e\u6b66\u88c5\u5a01\u80c1\u52a0\u5267\uff0c\u9a6c\u516d\u7532\u6d77\u5ce1\u76d7\u62a2\u6d3b\u52a8\u9891\u53d1\u3002\u5efa\u8bae\u4e2d\u8d44\u8239\u53ea\u7ed5\u884c\u7ea2\u6d77\u6cbf\u5cb8\u65f6\u63d0\u5347\u6218\u5907\u7b49\u7ea7\uff0c\u5e76\u5236\u5b9a\u4e5f\u95e8\u6d77\u5ce1\u5e94\u6025\u7ed5\u884c\u65b9\u6848\u3002',
-      records:[
-        {name:'\u9a6c\u516d\u7532\u6d77\u5ce1',type:'\u54bd\u5499\u8981\u9053',dailyShips:'240\u8258',riskLevel:'\u6781\u9ad8',riskScore:9.0,congestion:'\u4e2d\u7b49',alternative:'\u5df4\u6c9b\u5ce1\u8c37\uff08\u7ed5\u884c+12\u5929\uff09',note:'\u76d7\u62a2\u3001\u52ab\u6301\u9891\u53d1\uff0c\u4e2d\u56fd\u62a4\u822a\u7f16\u961f\u5df2\u90e8\u7f72'},
-        {name:'\u4e5f\u95e8\u6d77\u5ce1\uff08\u66fc\u5fb7\u5ce1\uff09',type:'\u54bd\u5499\u8981\u9053',dailyShips:'180\u8258',riskLevel:'\u6781\u9ad8',riskScore:8.8,congestion:'\u4e25\u91cd',alternative:'\u7ed5\u884c\u9a6c\u516d\u7532\uff08+7\u5929\uff09',note:'\u80e1\u585e\u6b66\u88c5\u88ad\u51fb\u8239\u53ea\u3001\u6c34\u96f7\u5e03\u8bbe\u5a01\u80c1'},
-        {name:'\u970d\u5c14\u6728\u5179\u6d77\u5ce1',type:'\u54bd\u5499\u8981\u9053',dailyShips:'150\u8258',riskLevel:'\u9ad8',riskScore:7.5,congestion:'\u8f7b\u5ea6',alternative:'\u65e0\u7406\u60f3\u66ff\u4ee3\u8def\u7ebf',note:'\u4f0a\u4e26\u51b2\u7a81\u5916\u6ea2\uff0c\u6cb9\u8f6e\u4ea4\u901a\u53d7\u9650'},
-        {name:'\u82cf\u4f0a\u58eb\u8fd0\u6cb3',type:'\u54bd\u5499\u8981\u9053',dailyShips:'65\u8258',riskLevel:'\u9ad8',riskScore:7.2,congestion:'\u4e2d\u7b49',alternative:'\u597d\u671b\u89d2\u8def\u7ebf\uff08+10\u5929\uff09',note:'\u4e5f\u95e8\u5371\u673a\u5f71\u54cd\u822a\u8fd0\u5b89\u5168'},
-        {name:'\u5df4\u6c9b\u9a6c\u5ce1\u8c37',type:'\u66ff\u4ee3\u822a\u7ebf',dailyShips:'35\u8258',riskLevel:'\u4e2d',riskScore:5.0,congestion:'\u4e25\u91cd',alternative:'\u4e3b\u8981\u66ff\u4ee3\u8def\u7ebf\u4e4b\u4e00',note:'\u7ed5\u884c\u6210\u672c\u9ad8\uff0c\u4f46\u9aa8\u67b6\u8f83\u5b89\u5168'},
-        {name:'\u9ed1\u6d77\u6d77\u5ce1',type:'\u54bd\u5499\u8981\u9053',dailyShips:'90\u8258',riskLevel:'\u9ad8',riskScore:7.8,congestion:'\u4e2d\u7b49',alternative:'\u65e0\u66ff\u4ee3',note:'\u4fc4\u4e4c\u51b2\u7a81\u5f71\u54cd\uff0c\u5317\u7ea6\u5a01\u80c1\u52a0\u5267'},
-        {name:'\u9f99\u76ee\u5ce1\u8c37',type:'\u91cd\u8981\u822a\u9053',dailyShips:'300\u8258',riskLevel:'\u4e2d',riskScore:4.5,congestion:'\u8f7b\u5ea6',alternative:'\u5df4\u58eb\u6d77\u5ce1\uff08+3\u5929\uff09',note:'\u4e2d\u56fd\u672c\u571f\u81f3\u4e1c\u5357\u4e9a\u4e3b\u8981\u822a\u7ebf\uff0c\u76d1\u63a7\u8f83\u5f3a'},
-        {name:'\u597d\u671b\u89d2',type:'\u91cd\u8981\u822a\u9053',dailyShips:'120\u8258',riskLevel:'\u4e2d',riskScore:4.0,congestion:'\u8f7b\u5ea6',alternative:'\u7ed5\u884c\u975e\u6d32\u5357\u7aef\uff08+8\u5929\uff09',note:'\u975e\u6d32\u5357\u7aef\u822a\u8fd0\u8981\u70b9\uff0c\u793e\u6cbb\u73af\u5883\u8f83\u597d'}
-      ]
-    },
-    {name:'\u4e00\u5e26\u4e00\u8def\u8d70\u5eca',ic:'\u{1F30F}',desc:'\u516d\u5927\u7ecf\u6d4e\u8d70\u5eca\u9879\u76ee\u8fdb\u5c55\u4e0e\u98ce\u9669\u8bc4\u4f30',status:'active',color:'var(--green)',count:'6\u8d70\u5eca',
-      source:'\u56fd\u5bb6\u53d1\u6539\u59d4\u201c\u4e00\u5e26\u4e00\u8def\u201d\u7f51\u7ad9\u3001\u5546\u52a1\u90e8\u5883\u5916\u9879\u76ee\u5e93\u3001\u4e1c\u9053\u65b0\u95fb',
-      coverage:'6\u5927\u7ecf\u6d4e\u8d70\u5eca\uff0c\u8986\u76d664\u4e2a\u56fd\u5bb6',
-      updated:'2026-07-12 16:00',
-      meta:'\u9879\u76ee\u5206\u7c7b: \u57fa\u7840\u8bbe\u65bd/\u80fd\u6e90/\u4ea7\u80fd\u5408\u4f5c | \u6295\u8d44\u7edf\u8ba1\u53e3\u5f84: \u4e07\u4ebf\u5143\u7ea7 | \u66f4\u65b0\u9891\u7387: \u6bcf\u6708',
-      analysis:'\u4e00\u5e26\u4e00\u8def\u8d70\u5eca\u6574\u4f53\u8fdb\u5c55\u7a33\u5065\uff0c\u4f46\u533a\u57df\u5dee\u5f02\u660e\u663e\u3002\u4e2d\u5df4\u7ecf\u6d4e\u8d70\u5eca\u53d7\u5730\u7f18\u653f\u6cbb\u5f71\u54cd\u8fdb\u5c55\u7f13\u6162\uff0c\u65b0\u4e9a\u6d77\u9646\u8054\u7edc\u901a\u9053\u63a8\u8fdb\u987a\u5229\u3002\u5efa\u8bae\u91cd\u70b9\u5173\u6ce8\u5df4\u57fa\u65af\u5766\u3001\u7f05\u7538\u3001\u4f0a\u62c9\u514b\u4e09\u56fd\u9879\u76ee\u7684\u5b89\u5168\u4fdd\u969c\u95ee\u9898\u3002',
-      records:[
-        {corridor:'\u65b0\u4e9a\u6d77\u9646\u8054\u7edc\u901a\u9053',countries:'\u4e2d\u56fd/\u7f05\u7538/\u6cf0\u56fd/\u8d8a\u5357/\u9a6c\u6765\u897f\u4e9a',projects:'42\u4e2a',investment:'\u7ea63800\u4ebf\u5143',progress:'85%',risk:'\u4e2d\u4f4e',note:'\u63a8\u8fdb\u6700\u987a\u5229\uff0c\u7f05\u7538\u6bb5\u53d7\u5185\u6218\u5f71\u54cd'},
-        {corridor:'\u4e2d\u5df4\u7ecf\u6d4e\u8d70\u5eca',countries:'\u4e2d\u56fd/\u5df4\u57fa\u65af\u5766/\u4f0a\u6717/\u54c8\u8428\u514b\u65af\u5766',projects:'28\u4e2a',investment:'\u7ea46200\u4ebf\u5143',progress:'55%',risk:'\u9ad8',note:'\u74e6\u8fbe\u5c14\u6e2f\u3001\u74dc\u8fbe\u5c14\u6e2f\u9879\u76ee\u53d7\u5b89\u5168\u5a01\u80c1'},
-        {corridor:'\u4e2d\u56fd-\u4e2d\u4e9a-\u897f\u4e9a\u8d70\u5eca',countries:'\u4e2d\u56fd/\u54c8\u8428\u514b\u65af\u5766/\u4e4c\u5179\u522b\u514b\u65af\u5766/\u5409\u5c14\u5409\u65af\u65af\u5766',projects:'35\u4e2a',investment:'\u7ea62800\u4ebf\u5143',progress:'70%',risk:'\u4e2d',note:'\u4e2d\u5409\u4e4c\u94c1\u8def\u8fd0\u8425\u826f\u597d\uff0c\u653f\u6cbb\u98ce\u9669\u53ef\u63a7'},
-        {corridor:'\u4e2d\u56fd-\u5370\u5ea6\u6b21\u5927\u9646-\u7ecf\u6d4e\u8d70\u5eca',countries:'\u4e2d\u56fd/\u5df4\u57fa\u65af\u5766/\u5c3c\u6cca\u5c14/\u5370\u5ea6',projects:'18\u4e2a',investment:'\u7ea41500\u4ebf\u5143',progress:'40%',risk:'\u9ad8',note:'\u5c3c\u6cca\u5c14\u5730\u9707\u5f71\u54cd\u5de5\u7a0b\u8fdb\u5ea6'},
-        {corridor:'\u4e2d\u56fd-\u4e2d\u5357\u534a\u5c9b\u7ecf\u6d4e\u8d70\u5eca',countries:'\u4e2d\u56fd/\u8001\u631d/\u67ec\u57d4\u5be8/\u8d8a\u5357',projects:'22\u4e2a',investment:'\u7ea42000\u4ebf\u5143',progress:'75%',risk:'\u4f4e',note:'\u63a8\u8fdb\u987a\u5229\uff0c\u4e2d\u8001\u94c1\u8def\u8fd0\u8425\u6210\u6548'},
-        {corridor:'\u4e2d\u6b27\u73ed\u5217\u5feb\u901a\u9053',countries:'\u4e2d\u56fd/\u4fc4\u7f57\u65af/\u767d\u4fc4\u7f57\u65af/\u6ce2\u5170',projects:'15\u4e2a',investment:'\u7ea4800\u4ebf\u5143',progress:'60%',risk:'\u9ad8',note:'\u4fc4\u4e4c\u51b2\u7a81\u5f71\u54cd\u4e2d\u6b27\u73ed\u5217\u8fd0\u8425'}
-      ]
-    },
-    {name:'\u6050\u88ad\u4e8b\u4ef6\u56fe',ic:'\u{1F4A5}',desc:'\u5168\u7403\u6050\u60e7\u88ad\u51fb\u4e8b\u4ef6\u65f6\u7a7a\u5206\u5e03\u4e0e\u8d8b\u52bf\u5206\u6790',status:'active',color:'var(--red)',count:'32\u4e8b\u4ef6',
-      source:'\u5168\u7403\u6050\u60e7\u4e3b\u4e49\u6570\u636e\u5e93(GTD)\u3001\u5404\u56fd\u5b89\u5168\u90e8\u95e8\u516c\u544a\u3001\u56fd\u9645\u5a92\u4f53\u62a5\u9053',
-      coverage:'\u8fd190\u5929\u5185\u5168\u7403\u6050\u88ad\u4e8b\u4ef6\uff0c\u8986\u76d625\u4e2a\u56fd\u5bb6',
-      updated:'2026-07-13 23:30',
-      meta:'\u5206\u7c7b: \u7206\u70b8/\u6273\u67b7/\u52ab\u6301/\u7801\u5934\u88ad\u51fb/\u8f66\u8f86\u51b2\u64de | \u65f6\u95f4\u7a97\u53e3: 90\u5929 | \u66f4\u65b0\u9891\u7387: \u5b9e\u65f6',
-      analysis:'\u8fd190\u5929\u5185\u5168\u7403\u6050\u88ad\u4e8b\u4ef6\u540c\u6bd4\u589e\u52a023%\uff0c\u4e2d\u4e1c\u548c\u5317\u975e\u5360\u603b\u6570\u768465%\u3002IS-K\uff08\u4f0a\u65af\u5170\u56fd\u547c\u7f57\u5c71\u652f\u90e8\uff09\u5728\u963f\u5bcc\u6c57\u548c\u5df4\u57fa\u65af\u5766\u6d3b\u52a8\u9891\u7e41\uff0c\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14ISWAP\u6301\u7eed\u6269\u5f20\u3002\u5efa\u8bae\u52a0\u5f3a\u5bf9\u4e2d\u8d44\u4f01\u4e1a\u548c\u4f7f\u9886\u9986\u7684\u5b89\u4fdd\u901a\u62a5\uff0c\u5236\u5b9a\u5206\u7ea7\u5e94\u6025\u9884\u6848\u3002',
-      records:[
-        {date:'2026-07-11',country:'\u963f\u5bcc\u6c57',city:'\u5580\u5e03\u5c14',type:'\u7206\u70b8',casualties:'\u6b7b12\u4f24\u5945',group:'IS-K',target:'\u5546\u4e1a\u533a',level:'\u6781\u9ad8',note:'\u8fde\u73af\u7206\u70b8\u9488\u5bf9\u5e02\u573a\uff0c\u4e2d\u65b9\u4eba\u5458\u5b89\u5168'},
-        {date:'2026-07-09',country:'\u5df4\u57fa\u65af\u5766',city:'\u74e6\u8fbe\u5c14',type:'\u6273\u67b7',casualties:'\u6b7b5\u4f24\u5945',group:'TTP',target:'\u4e2d\u8d44\u9879\u76ee\u8f66\u961f',level:'\u6781\u9ad8',note:'\u9488\u5bf9\u4e2d\u8d44\u4f01\u4e1a\u7684\u5b9a\u5411\u88ad\u51fb'},
-        {date:'2026-07-07',country:'\u5c3c\u65e5\u5229\u4e9a',city:'\u5361\u5947\u7eb3',type:'\u52ab\u6301',casualties:'\u4f243\u4eba',group:'\u6d77\u76d7',target:'\u4e2d\u8d44\u8d27\u8239',level:'\u9ad8',note:'\u51e0\u5185\u4e9a\u6e7e\u6d77\u76d7\u6d3b\u52a8\u52a0\u5267'},
-        {date:'2026-07-05',country:'\u4f0a\u62c9\u514b',city:'\u5df4\u683c\u8fbe',type:'\u706b\u7bad\u88ad\u51fb',casualties:'\u6b7b3\u4f24\u5945',group:'\u4f0a\u65af\u5170\u56fd',target:'\u519b\u4e8b\u57fa\u5730',level:'\u9ad8',note:'\u9488\u5bf9\u7f8e\u519b\u57fa\u5730\uff0c\u4e2d\u8d44\u9879\u76ee\u95f4\u63a5\u53d7\u5a01\u80c1'},
-        {date:'2026-07-03',country:'\u4e5f\u95e8',city:'\u4e9a\u4e01',type:'\u6c34\u96f7',casualties:'\u6b7b2\u4f24\u5945',group:'\u80e1\u585e\u6b66\u88c5',target:'\u5546\u8239',level:'\u9ad8',note:'\u7ea2\u6d77\u822a\u8fd0\u5b89\u5168\u5a01\u80c1\u5347\u7ea7'},
-        {date:'2026-06-30',country:'\u9a6c\u91cc',city:'\u83ab\u666e\u63d0',type:'\u6273\u67b7',casualties:'\u6b7b8\u4f24\u5945',group:'JNIM',target:'\u56fd\u9645\u7ef4\u548c\u90e8\u961f',level:'\u6781\u9ad8',note:'\u9488\u5bf9\u8054\u5408\u56fd\u7ef4\u548c\u90e8\u961f\u7684\u88ad\u51fb'},
-        {date:'2026-06-28',country:'\u54c8\u8428\u514b\u65af\u5766',city:'\u963f\u514b\u6258\u62dc',type:'\u7206\u70b8',casualties:'\u6b7b4\u4f24\u5945',group:'IS-K',target:'\u4f7f\u9886\u9986\u533a',level:'\u9ad8',note:'\u4e2d\u4e9a\u5730\u533a\u6050\u88ad\u98ce\u9669\u4e0a\u5347'},
-        {date:'2026-06-25',country:'\u5df4\u57fa\u65af\u5766',city:'\u4ec0\u536b\u9752',type:'\u8f66\u8f86\u51b2\u64de',casualties:'\u6b7b3\u4f24\u5945',group:'BLA',target:'\u4e2d\u8d44\u9879\u76ee\u5de5\u5730',level:'\u6781\u9ad8',note:'\u9488\u5bf9\u4e2d\u8d44\u4f01\u4e1a\u7684\u5b9a\u5411\u88ad\u51fb'},
-        {date:'2026-06-22',country:'\u54e5\u4f26\u6bd4\u4e9a',city:'\u5361\u5854\u8d6b\u7eb3',type:'\u6273\u67b7',casualties:'\u6b7b2\u4f24\u5945',group:'ELN',target:'\u4e2d\u8d44\u77ff\u4e1a\u516c\u53f8',level:'\u9ad8',note:'\u9488\u5bf9\u4e2d\u8d44\u4f01\u4e1a\u7684\u7ecd\u52b5'},
-        {date:'2026-06-20',country:'\u521a\u679c\uff08\u91d1\uff09',city:'\u4e2d\u525b\u679c\u91d1\u8fb9\u5883',type:'\u6b66\u88c5\u4ea4\u706b',casualties:'\u6b7b5\u4f24\u5945',group:'M23',target:'\u8fb9\u5883\u519b\u4e8b\u51b2\u7a81',level:'\u9ad8',note:'\u4e2d\u975e\u5730\u533a\u5b89\u5168\u5f62\u52bf\u6076\u5316'}
-      ]
-    },
-    {name:'\u64a4\u4fa8\u8def\u7ebf\u56fe',ic:'\u{1F691}',desc:'\u7d27\u6025\u64a4\u4fa8\u8def\u7ebf\u3001\u96c6\u7ed3\u70b9\u4e0e\u5e94\u6025\u901a\u9053\u89c4\u5212',status:'standby',color:'var(--yellow)',count:'12\u8def\u7ebf',
-      source:'\u5916\u4ea4\u90e8\u9886\u4e8b\u4fdd\u62a4\u4e2d\u5fc3\u3001\u5404\u9a7b\u5916\u4f7f\u9886\u9986\u5e94\u6025\u65b9\u6848\u3001\u4e2d\u56fd\u6c11\u822a\u5c40\u534f\u8c03\u901a\u9053',
-      coverage:'12\u6761\u9884\u6848\u8def\u7ebf\uff0c\u8986\u76d620\u4e2a\u98ce\u9669\u56fd\u5bb6',
-      updated:'2026-06-30 10:00',
-      meta:'\u8def\u7ebf\u5206\u7ea7: \u7d27\u6025/\u5e94\u6025/\u9884\u9632 | \u4ea4\u901a\u65b9\u5f0f: \u7a7a\u8fd0/\u6d77\u8fd0/\u9646\u8def | \u96c6\u7ed3\u70b9: \u4f7f\u9886\u9986/\u4e2d\u8d44\u4f01\u4e1a\u57fa\u5730',
-      analysis:'\u5f53\u524d\u5df2\u5236\u5b9a12\u6761\u64a4\u4fa8\u9884\u6848\uff0c\u8986\u76d6\u4e3b\u8981\u98ce\u9669\u56fd\u5bb6\u3002\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14\u548c\u82cf\u4e39\u7684\u64a4\u4fa8\u9884\u6848\u5df2\u5347\u7ea7\u4e3a\u201c\u5e94\u6025\u201d\u72b6\u6001\u3002\u5efa\u8bae\u5b9a\u671f\u6f14\u7ec3\uff0c\u786e\u4fdd\u4ea4\u901a\u5de5\u5177\u548c\u901a\u5173\u534f\u8c03\u7545\u901a\u3002',
-      records:[
-        {route:'\u5580\u571f\u64a4\u4fa8\u7ebf',country:'\u963f\u5bcc\u6c57',level:'\u5e94\u6025',mode:'\u7a7a\u8fd0',capacity:'500\u4eba',assembly:'\u5580\u5e03\u5c14\u4f7f\u9886\u9986',transit:'\u5580\u5e03\u5c14\u2192\u4f0a\u65af\u5170\u5821\u2192\u5317\u4eac',status:'\u5c31\u7eea',note:'\u5347\u7ea7\u4e3a\u5e94\u6025\uff0c\u519b\u7528\u8fd0\u8f93\u673a\u5f85\u547d'},
-        {route:'\u5e93\u58eb\u56fe\u64a4\u4fa8\u7ebf',country:'\u5df4\u57fa\u65af\u5766',level:'\u5e94\u6025',mode:'\u7a7a\u8fd0+\u9646\u8def',capacity:'300\u4eba',assembly:'\u4ec0\u536b\u9752\u4e2d\u8d44\u57fa\u5730',transit:'\u4ec0\u536b\u9752\u2192\u4f0a\u65af\u5170\u5821\u2192\u5317\u4eac',status:'\u5c31\u7eea',note:'TTP\u5a01\u80c1\u52a0\u5267\uff0c\u9884\u6848\u5df2\u5347\u7ea7'},
-        {route:'\u62c9\u5404\u65af\u64a4\u4fa8\u7ebf',country:'\u5c3c\u65e5\u5229\u4e9a',level:'\u5e94\u6025',mode:'\u6d77\u8fd0',capacity:'200\u4eba',assembly:'\u62c9\u5404\u65af\u6e2f\u4e2d\u8d44\u7801\u5934',transit:'\u62c9\u5404\u65af\u2192\u52a0\u7eb3\u5229\u2192\u4e0a\u6d77',status:'\u5c31\u7eea',note:'\u6d77\u8fd0\u65b9\u6848\u5df2\u786e\u8ba4\uff0c\u5907\u7528\u7a7a\u8fd0'},
-        {route:'\u5df4\u683c\u8fbe\u64a4\u4fa8\u7ebf',country:'\u4f0a\u62c9\u514b',level:'\u5e94\u6025',mode:'\u7a7a\u8fd0',capacity:'400\u4eba',assembly:'\u5df4\u683c\u8fbe\u7eff\u533a\u4f7f\u9886\u9986',transit:'\u5df4\u683c\u8fbe\u2192\u8fea\u62dc\u2192\u5317\u4eac',status:'\u5c31\u7eea',note:'\u5b89\u5168\u5f62\u52bf\u4e25\u5cfb\uff0c\u968f\u65f6\u542f\u52a8'},
-        {route:'\u514b\u91cc\u7c73\u4fa8\u64a4\u4fa8\u7ebf',country:'\u4fc4\u7f57\u65af',level:'\u9884\u9632',mode:'\u9646\u8def+\u94c1\u8def',capacity:'600\u4eba',assembly:'\u514b\u91cc\u7c73\u4fa8\u4e2d\u8d44\u7801\u5934',transit:'\u514b\u91cc\u7c73\u4fa8\u2192\u83ab\u65af\u79d1\u2192\u6ee1\u6d32\u91cc\u2192\u5317\u4eac',status:'\u9884\u9632',note:'\u9884\u9632\u65b9\u6848\uff0c\u94c1\u8def\u8fd0\u8425\u6b63\u5e38'},
-        {route:'\u5580\u571f\u9646\u8def\u64a4\u4fa8\u7ebf',country:'\u963f\u5bcc\u6c57',level:'\u5e94\u6025',mode:'\u9646\u8def',capacity:'300\u4eba',assembly:'\u5df4\u683c\u5170\u4f7f\u9886\u9986',transit:'\u5df4\u683c\u5170\u2192\u5e15\u5947\u5c14\u2192\u4e4c\u9c81\u6728\u9f50\u2192\u5317\u4eac',status:'\u5c31\u7eea',note:'\u5907\u7528\u9646\u8def\u65b9\u6848\uff0c\u7a7a\u8fd0\u4e0d\u53ef\u884c\u65f6\u542f\u7528'},
-        {route:'\u82cf\u4e39\u9646\u8def\u64a4\u4fa8\u7ebf',country:'\u82cf\u4e39',level:'\u5e94\u6025',mode:'\u9646\u8def+\u6d77\u8fd0',capacity:'250\u4eba',assembly:'\u82cf\u4e39\u6e2f\u4e2d\u8d44\u7801\u5934',transit:'\u82cf\u4e39\u6e2f\u2192\u6c99\u7279\u6e2f\u2192\u5409\u8fbe\u2192\u4e0a\u6d77',status:'\u5c31\u7eea',note:'\u6218\u533a\u64a4\u79bb\uff0c\u9700\u6218\u65f6\u901a\u884c\u8bc1\u534f\u8c03'},
-        {route:'\u57fa\u8f85\u64a4\u4fa8\u7ebf',country:'\u4e5f\u95e8',level:'\u9884\u9632',mode:'\u6d77\u8fd0',capacity:'150\u4eba',assembly:'\u4e9a\u4e01\u6e2f\u4e2d\u8d44\u7801\u5934',transit:'\u4e9a\u4e01\u2192\u65b0\u52a0\u5761\u2192\u5e7f\u5dde',status:'\u9884\u9632',note:'\u9884\u9632\u65b9\u6848\uff0c\u80e1\u585e\u5a01\u80c1\u5347\u7ea7\u65f6\u542f\u7528'}
-      ]
-    },
-    {name:'\u5b89\u5168\u529b\u91cf\u90e8\u7f72',ic:'\u{1F6E1}\ufe0f',desc:'\u6d77\u5916\u5b89\u4fdd\u516c\u53f8\u3001\u4f7f\u9886\u9986\u5b89\u4fdd\u53ca\u5e94\u6025\u8d44\u6e90\u5206\u5e03',status:'active',color:'var(--purple)',count:'22\u70b9',
-      source:'\u5546\u52a1\u90e8\u5883\u5916\u5b89\u4fdd\u4f01\u4e1a\u540d\u5f55\u3001\u5404\u9a7b\u5916\u4f7f\u9886\u9986\u5b89\u4fdd\u540d\u5f55\u3001\u4e2d\u56fd\u4fdd\u5b89\u884c\u4e1a\u534f\u4f1a',
-      coverage:'\u5168\u740322\u4e2a\u5b89\u4fdd\u90e8\u7f72\u70b9\uff0c\u8986\u76d615\u4e2a\u56fd\u5bb6',
-      updated:'2026-07-10 14:00',
-      meta:'\u90e8\u7f72\u7c7b\u578b: \u5b89\u4fdd\u516c\u53f8/\u4f7f\u9886\u9986\u5b89\u4fdd/\u5e94\u6025\u50a8\u5907 | \u4eba\u5458\u89c4\u6a21: \u6570\u5341\u4eba\u81f3\u6570\u767e\u4eba',
-      analysis:'\u6d77\u5916\u5b89\u4fdd\u529b\u91cf\u8986\u76d6\u4e0d\u8db3\uff0c\u975e\u6d32\u548c\u4e2d\u4e1c\u5730\u533a\u5b89\u4fdd\u8d44\u6e90\u7d27\u5f20\u3002\u9ad8\u98ce\u9669\u56fd\u5bb6\u5b89\u4fdd\u90e8\u7f72\u70b9\u504f\u5c11\uff0c\u5efa\u8bae\u589e\u52a0\u542b\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14\u3001\u5c3c\u65e5\u5229\u4e9a\u3001\u4f0a\u62c9\u514b\u7b49\u56fd\u5bb6\u7684\u5b89\u4fdd\u6295\u5165\u3002\u540c\u65f6\u5efa\u8bae\u5efa\u7acb\u533a\u57df\u5e94\u6025\u54cd\u5e94\u673a\u5236\uff0c\u5b9e\u73b04\u5c0f\u65f6\u54cd\u5e94\u534a\u5f84\u3002',
-      records:[
-        {type:'\u5b89\u4fdd\u516c\u53f8',name:'\u4e2d\u4fdd\u96c6\u56e2\u4e2d\u4e1c\u5206\u516c\u53f8',country:'\u963f\u8054\u914b',city:'\u8fea\u62dc',staff:'120\u4eba',capabilities:'\u6b66\u88c5\u62a4\u536b/\u5b89\u5168\u54a8\u8be2/\u5e94\u6025\u64a4\u79bb',response:'2\u5c0f\u65f6',note:'\u963f\u8054\u914b\u5316\u5de5\u56ed\u533a\u4e3b\u8981\u5b89\u4fdd\u63d0\u4f9b\u5546'},
-        {type:'\u5b89\u4fdd\u516c\u53f8',name:'\u534e\u4fe1\u4fdd\u5b89\u975e\u6d32\u5206\u516c\u53f8',country:'\u5c3c\u65e5\u5229\u4e9a',city:'\u62c9\u5404\u65af',staff:'85\u4eba',capabilities:'\u6b66\u88c5\u62a4\u536b/\u8d44\u4ea7\u4fdd\u62a4/\u5b89\u5168\u57f9\u8bad',response:'4\u5c0f\u65f6',note:'\u5c3c\u65e5\u5229\u4e9a\u5317\u90e8\u4e2d\u8d44\u9879\u76ee\u5b89\u4fdd'},
-        {type:'\u4f7f\u9886\u9986\u5b89\u4fdd',name:'\u9a7b\u5580\u5e03\u5c14\u4f7f\u9886\u9986\u5b89\u4fdd\u7ec4',country:'\u963f\u5bcc\u6c57',city:'\u5580\u5e03\u5c14',staff:'24\u4eba',capabilities:'\u4f7f\u9886\u9986\u5b89\u4fdd/\u7d27\u6025\u758f\u6563/\u901a\u4fe1\u4fdd\u969c',response:'\u5373\u65f6',note:'\u9886\u4e8b\u4fdd\u62a4\u4e2d\u5fc3\u76f4\u7ba1\uff0c7\u00d724\u5c0f\u65f6'},
-        {type:'\u5b89\u4fdd\u516c\u53f8',name:'\u4e2d\u94c1\u5b89\u4fdd\u4e2d\u4e1c\u5206\u516c\u53f8',country:'\u4f0a\u62c9\u514b',city:'\u5df4\u683c\u8fbe',staff:'95\u4eba',capabilities:'\u6b66\u88c5\u62a4\u536b/\u5de5\u5730\u5b89\u4fdd/\u5e94\u6025\u6f14\u7ec3',response:'3\u5c0f\u65f6',note:'\u5df4\u683c\u8fbe\u5730\u533a\u4e2d\u8d44\u9879\u76ee\u5b89\u4fdd'},
-        {type:'\u5b89\u4fdd\u516c\u53f8',name:'\u4e2d\u6d77\u5b89\u4fdd\u5df4\u57fa\u65af\u5766\u5206\u516c\u53f8',country:'\u5df4\u57fa\u65af\u5766',city:'\u4f0a\u65af\u5170\u5821',staff:'70\u4eba',capabilities:'\u6b66\u88c5\u62a4\u536b/\u5b89\u5168\u54a8\u8be2/\u5e94\u6025\u54cd\u5e94',response:'4\u5c0f\u65f6',note:'\u4e2d\u5df4\u7ecf\u6d4e\u8d70\u5eca\u68b8\u5173\u5c71\u53e3\u9879\u76ee\u5b89\u4fdd'},
-        {type:'\u4f7f\u9886\u9986\u5b89\u4fdd',name:'\u9a7b\u62c9\u5404\u65af\u4f7f\u9886\u9986\u5b89\u4fdd\u7ec4',country:'\u5c3c\u65e5\u5229\u4e9a',city:'\u62c9\u5404\u65af',staff:'18\u4eba',capabilities:'\u9886\u4e8b\u5b89\u4fdd/\u7d27\u6025\u758f\u6563',response:'\u5373\u65f6',note:'\u5c3c\u65e5\u5229\u4e9a\u5316\u5de5\u56ed\u533a\u4e2d\u65b9\u4eba\u5458\u96c6\u4e2d'},
-        {type:'\u5e94\u6025\u50a8\u5907',name:'\u4e1c\u975e\u5e94\u6025\u50a8\u5907\u70b9',country:'\u5409\u5e03\u63d0',city:'\u5409\u5e03\u63d0',staff:'\u5f85\u547d30\u4eba',capabilities:'\u5e94\u6025\u54cd\u5e94/\u7269\u8d44\u50a8\u5907/\u533b\u7597\u652f\u63f4',response:'12\u5c0f\u65f6',note:'\u4e1c\u975e\u5730\u533a\u5e94\u6025\u54cd\u5e94\u524d\u54cd\u57fa\u5730'},
-        {type:'\u5b89\u4fdd\u516c\u53f8',name:'\u4e2d\u5149\u5b89\u4fdd\u82cf\u4e39\u5206\u516c\u53f8',country:'\u82cf\u4e39',city:'\u5580\u571f\u7a46',staff:'45\u4eba',capabilities:'\u6b66\u88c5\u62a4\u536b/\u5e94\u6025\u64a4\u79bb',response:'6\u5c0f\u65f6',note:'\u82cf\u4e39\u4e2d\u8d44\u6cb9\u7530\u5b89\u4fdd\uff0c\u6218\u533a\u5371\u9669\u9ad8'}
-      ]
-    },
-    {name:'\u901a\u4fe1\u7f51\u7edc\u56fe',ic:'\u{1F4F6}',desc:'\u536b\u661f\u901a\u4fe1\u3001\u77ed\u6ce2\u7535\u53f0\u3001\u5e94\u6025\u901a\u4fe1\u7f51\u7edc\u8986\u76d6',status:'active',color:'var(--cyan)',count:'28\u8282\u70b9',
-      source:'\u56fd\u9645\u7535\u4fe1\u8054\u76df(ITU)\u3001\u4e2d\u56fd\u536b\u661f\u5bfc\u822a\u7ba1\u7406\u4e2d\u5fc3\u3001\u5404\u56fd\u7535\u4fe1\u7ba1\u7406\u90e8\u95e8',
-      coverage:'28\u4e2a\u901a\u4fe1\u8282\u70b9\uff0c\u8986\u76d6\u91cd\u70b9\u98ce\u9669\u533a\u57df',
-      updated:'2026-07-13 21:00',
-      meta:'\u7f51\u7edc\u7c7b\u578b: \u536b\u661f/Iridium/\u77ed\u6ce2/\u4e2d\u7ee7 | \u9891\u6bb5: L/S/C/Ku/Ka | \u5197\u4f59: \u53cc\u901a\u4fe1\u94fe\u8def',
-      analysis:'\u536b\u661f\u901a\u4fe1\u8986\u76d6\u5728\u4e2d\u4e1c\u3001\u5317\u975e\u548c\u5357\u4e9a\u5730\u533a\u8f83\u597d\uff0c\u4f46\u90e8\u5206\u9ad8\u98ce\u9669\u533a\u57df\u5b58\u5728\u901a\u4fe1\u76f2\u533a\u3002\u5efa\u8bae\u5728\u4e5f\u95e8\u3001\u5df4\u57fa\u65af\u5766\u8fb9\u5883\u3001\u8428\u8d6b\u52d2\u5e2d\u5185\u52a0\u5c14\u589e\u8bbe\u77ed\u6ce2\u4e2d\u7ee7\u7ad9\uff0c\u5b9e\u73b0\u533a\u57df\u5185\u901a\u4fe1\u5b8c\u5168\u8986\u76d6\u3002\u540c\u65f6\u52a0\u5f3aIridium\u536b\u661f\u7535\u8bdd\u4f5c\u4e3a\u5e94\u6025\u901a\u4fe1\u624b\u6bb5\u3002',
-      records:[
-        {type:'\u536b\u661f',name:'\u4e2d\u661f16\u53f7\u8986\u76d6',country:'\u5168\u7403',freq:'L/S/C\u9891\u6bb5',coverage:'\u5168\u7403\u8986\u76d6',latency:'<0.5\u79d2',status:'\u6b63\u5e38',note:'\u4e3b\u8981\u5bfc\u822a\u548c\u901a\u4fe1\u670d\u52a1\u536b\u661f'},
-        {type:'\u536b\u661f',name:'\u5929\u901a\u4e00\u53f7\u8986\u76d6',country:'\u4e9a\u592a',freq:'S/Ka\u9891\u6bb5',coverage:'\u4e9a\u592a\u5730\u533a',latency:'<0.3\u79d2',status:'\u6b63\u5e38',note:'\u4e9a\u592a\u5730\u533a\u9ad8\u901f\u901a\u4fe1\u536b\u661f'},
-        {type:'\u536b\u661f\u7535\u8bdd',name:'Iridium\u536b\u661f\u7535\u8bdd',country:'\u5168\u7403',freq:'L\u9891\u6bb5',coverage:'\u5168\u7403\u542b\u6781\u5730',latency:'<2\u79d2',status:'\u6b63\u5e38',note:'\u5e94\u6025\u901a\u4fe1\u624b\u6bb5\uff0c\u9ad8\u98ce\u9669\u533a\u5fc5\u5907'},
-        {type:'\u77ed\u6ce2\u7535\u53f0',name:'\u5580\u5e03\u5c14\u77ed\u6ce2\u4e2d\u7ee7',country:'\u963f\u5bcc\u6c57',freq:'HF/VHF',coverage:'\u5580\u5e03\u5c14\u5468\u8fb9150km',latency:'<0.1\u79d2',status:'\u6b63\u5e38',note:'\u5730\u9762\u901a\u4fe1\u4e2d\u7ee7\uff0c\u8865\u5145\u536b\u661f\u76f2\u533a'},
-        {type:'\u77ed\u6ce2\u7535\u53f0',name:'\u62c9\u5404\u65af\u77ed\u6ce2\u4e2d\u7ee7',country:'\u5c3c\u65e5\u5229\u4e9a',freq:'HF/VHF',coverage:'\u62c9\u5404\u65af\u5468\u8fb9100km',latency:'<0.1\u79d2',status:'\u6b63\u5e38',note:'\u6d77\u4e0a\u4e2d\u8d44\u8239\u53ea\u901a\u4fe1\u4e2d\u7ee7'},
-        {type:'\u77ed\u6ce2\u7535\u53f0',name:'\u4ec0\u536b\u9752\u77ed\u6ce2\u4e2d\u7ee7',country:'\u5df4\u57fa\u65af\u5766',freq:'HF/VHF',coverage:'\u4ec0\u536b\u9752\u5468\u8fb9120km',latency:'<0.1\u79d2',status:'\u6b63\u5e38',note:'\u8fb9\u5883\u5730\u533a\u901a\u4fe1\u4e2d\u7ee7\uff0c\u5b89\u5168\u4fdd\u969c'},
-        {type:'\u5e94\u6025\u901a\u4fe1',name:'\u4e2d\u4e1c\u533a\u57dfBGAN\u7ec8\u7aef',country:'\u4e2d\u4e1c\u591a\u56fd',freq:'L\u9891\u6bb5',coverage:'\u4e2d\u4e1c\u5168\u8986\u76d6',latency:'<1\u79d2',status:'\u6b63\u5e38',note:'\u4fb5\u5165\u5f0f\u5bbd\u5e26\u7ec8\u7aef\uff0c\u73b0\u573a\u5e94\u6025\u901a\u4fe1'},
-        {type:'\u5e94\u6025\u901a\u4fe1',name:'\u5317\u975e\u533a\u57dfBGAN\u7ec8\u7aef',country:'\u5317\u975e\u591a\u56fd',freq:'L\u9891\u6bb5',coverage:'\u5317\u975e\u5168\u8986\u76d6',latency:'<1\u79d2',status:'\u6b63\u5e38',note:'\u975e\u6d32\u73b0\u573a\u5e94\u6025\u901a\u4fe1\u4fdd\u969c'}
-      ]
-    }
-  ],
+  /* 2026-09-06 真实化改造（#643）：四 tab 假数据播种全部清除——
+   * localStorage 存量默认演示条目一次性清洗（按默认种子 id/名称过滤，
+   * 用户手动添加的条目保留）；无存量时初始化为空数组，不再回填模拟数据。
+   * 真实数据源：GET /api/insight/intel-center（intel_data 真实库聚合）。 */
   _initData(){
+    var _DEF_OSINT_IDS=['OSINT-001','OSINT-002','OSINT-003','OSINT-004','OSINT-005','OSINT-006','OSINT-007','OSINT-008'];
+    var _DEF_RPT_IDS=['RPT-001','RPT-002','RPT-003','RPT-004','RPT-005'];
+    var _DEF_TL_TARGETS=['纳雷纳 矿区','曼德海峡 航道','科卢韦齐 矿区','瓦达尔港'];
+    var _DEF_LAYER_NAMES=['风险热力图','企业分布图','航运通道图','一带一路走廊','恐袭事件图','撤离路线图','安全力量部署','通信网络图'];
     if(!this._osintResults){
       var saved=localStorage.getItem('intel_osint');
-      this._osintResults=saved?JSON.parse(saved):JSON.parse(JSON.stringify(this._defaultOsint));
+      var arr=saved?JSON.parse(saved):[];
+      arr=arr.filter(function(x){return _DEF_OSINT_IDS.indexOf(x.id)<0;});
+      this._osintResults=arr;
+      if(saved&&arr.length!==JSON.parse(saved).length)this._saveOsint();
     }
     if(!this._analysisResults){
-      var saved=localStorage.getItem('intel_analysis');
-      this._analysisResults=saved?JSON.parse(saved):JSON.parse(JSON.stringify(this._defaultAnalysis));
+      var savedA=localStorage.getItem('intel_analysis');
+      var arrA=savedA?JSON.parse(savedA):[];
+      arrA=arrA.filter(function(x){return _DEF_RPT_IDS.indexOf(x.id)<0;});
+      this._analysisResults=arrA;
+      if(savedA&&arrA.length!==JSON.parse(savedA).length)this._saveAnalysis();
     }
     if(!this._timelineTasks){
-      var saved=localStorage.getItem('intel_timeline');
-      this._timelineTasks=saved?JSON.parse(saved):JSON.parse(JSON.stringify(this._defaultTimeline));
+      var savedT=localStorage.getItem('intel_timeline');
+      var arrT=savedT?JSON.parse(savedT):[];
+      arrT=arrT.filter(function(x){return _DEF_TL_TARGETS.indexOf(x.target)<0;});
+      this._timelineTasks=arrT;
+      if(savedT&&arrT.length!==JSON.parse(savedT).length)this._saveTimeline();
     }
     if(!this._geointLayers){
-      var saved=localStorage.getItem('intel_geoint');
-      this._geointLayers=saved?JSON.parse(saved):JSON.parse(JSON.stringify(this._defaultGeoint));
+      var savedG=localStorage.getItem('intel_geoint');
+      var arrG=savedG?JSON.parse(savedG):[];
+      arrG=arrG.filter(function(x){return _DEF_LAYER_NAMES.indexOf(x.name)<0;});
+      this._geointLayers=arrG;
+      if(savedG&&arrG.length!==JSON.parse(savedG).length)this._saveGeoint();
     }
     // 同步情报中心数据到数据中心osint_intel集合
     this._syncOsintToDBCenter();
+    this._fetchCenter();
+  },
+  /* 真实数据源：/api/insight/intel-center（缓存 120s 与服务端对齐）。
+   * AbortController 45s：同源 6 连接上限（SSE+长轮询占满）会让新 fetch 排队 25-30s，
+   * 10s 超时会造成「abort→重发→再 abort」死循环（2026-09-06 回归实测）。 */
+  _center:null,_centerAt:0,_centerP:null,
+  _fetchCenter(force){
+    var self=this;
+    if(!force&&this._center&&Date.now()-this._centerAt<120000)return Promise.resolve(this._center);
+    if(this._centerP)return this._centerP;
+    var ac=('AbortController'in window)?new AbortController():null;
+    var timer=ac?setTimeout(function(){ac.abort();},45000):null;
+    this._centerP=fetch('/api/insight/intel-center',{signal:ac?ac.signal:undefined})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        self._centerP=null;
+        if(timer)clearTimeout(timer);
+        if(d&&d.ok){self._center=d;self._centerAt=Date.now();return d;}
+        throw new Error('bad payload');
+      })
+      .catch(function(){self._centerP=null;if(timer)clearTimeout(timer);return null;});
+    return this._centerP;
+  },
+  _centerBlock(){
+    if(this._center)return '';
+    return '<div id="ic-center-loading" style="padding:10px;margin-bottom:12px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.12);border-radius:8px;font-size:11px;color:var(--text3)">⏳ 真实库数据加载中（intel_data 聚合，接口 /api/insight/intel-center）…</div>';
   },
   // 将情报中心的开源情报同步到数据中心
   _syncOsintToDBCenter:function(){
@@ -7090,12 +6961,6 @@ var INTELCENTER={
   _saveAnalysis(){localStorage.setItem('intel_analysis',JSON.stringify(this._analysisResults));},
   _saveTimeline(){localStorage.setItem('intel_timeline',JSON.stringify(this._timelineTasks));},
   _saveGeoint(){localStorage.setItem('intel_geoint',JSON.stringify(this._geointLayers));},
-  _resetData(type){
-    if(type==='osint'){this._osintResults=JSON.parse(JSON.stringify(this._defaultOsint));localStorage.removeItem('intel_osint');}
-    else if(type==='analysis'){this._analysisResults=JSON.parse(JSON.stringify(this._defaultAnalysis));localStorage.removeItem('intel_analysis');}
-    else if(type==='timeline'){this._timelineTasks=JSON.parse(JSON.stringify(this._defaultTimeline));localStorage.removeItem('intel_timeline');}
-    else if(type==='geoint'){this._geointLayers=JSON.parse(JSON.stringify(this._defaultGeoint));localStorage.removeItem('intel_geoint');}
-  },
   _exportJSON(data,filename){
     var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
     var url=URL.createObjectURL(blob);
@@ -7119,9 +6984,12 @@ var INTELCENTER={
     showToast('\u2705 \u5df2\u5bfc\u51fa '+filename);
   },
   _trainLabel(){
-    return '<div style="padding:8px 12px;background:rgba(255,204,0,0.06);border:1px solid rgba(255,204,0,0.15);border-radius:8px;margin-bottom:12px;display:flex;align-items:center;gap:8px">'+
-      '<span style="font-size:14px">\u26A0\uFE0F</span><span style="font-size:11px;color:var(--yellow);font-weight:600">\u6a21\u62df\u8bad\u7ec3\u73af\u5883</span>'+
-      '<span style="font-size:10px;color:var(--text3)">\u2014 \u6240\u6709\u6570\u636e\u5747\u53ef\u589e\u5220\u6539\u67e5\uff0c\u652f\u6301\u5bfc\u51fa/\u5bfc\u5165\u3002\u5b9e\u9645\u90e8\u7f72\u65f6\u5c06\u5bf9\u63a5\u771f\u5b9e\u6570\u636e\u6e90</span></div>';
+    var c=this._center;
+    var sub=c?('真实库 · 近30天入库 '+c.geoint.total+' 条 · 信源 '+c.sources.total+' 家（'+c.sources.dist.A+'A/'+c.sources.dist.B+'B/'+c.sources.dist.C+'C）')
+      :('数据源：/api/insight/intel-center（intel_data 真实采集库聚合，加载中）');
+    return '<div style="padding:8px 12px;background:rgba(0,255,159,0.05);border:1px solid rgba(0,255,159,0.15);border-radius:8px;margin-bottom:12px;display:flex;align-items:center;gap:8px">'+
+      '<span style="font-size:14px">📡</span><span style="font-size:11px;color:var(--green);font-weight:600">真实数据通道</span>'+
+      '<span style="font-size:10px;color:var(--text3)">'+sub+'。手工作业区条目为用户录入/生成，均可增删改查、支持导出。</span></div>';
   },
   _toolbar(title,addFn,exportFn,resetFn){
     return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
@@ -7192,39 +7060,106 @@ var INTELCENTER={
   },
   renderOsint(el){
     var html=this._trainLabel();
-    html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
-    var stats=[
-      {ic:'\u{1F4E1}',c:'var(--cyan)',l:'\u76d1\u6d4b\u6e90',v:this._osintSources.length},
-      {ic:'\u{1F4CB}',c:'var(--green)',l:'\u60c5\u62a5\u603b\u6570',v:this._osintResults.length},
-      {ic:'\u{1F534}',c:'var(--red)',l:'\u7ea2\u8272\u60c5\u62a5',v:this._osintResults.filter(function(r){return r.level==='red';}).length},
-      {ic:'\u2705',c:'var(--green)',l:'\u5df2\u9a8c\u8bc1',v:this._osintResults.filter(function(r){return r.verified;}).length}
+    var c=this._center;
+    html+=this._centerBlock();
+    var os=c?c.osint:null, sc=c?c.sources:null;
+    var spTotal=os?os.sidepool.reduce(function(s,x){return s+x.n;},0):0;
+    var html_stats=[
+      {ic:'📡',c:'var(--cyan)',l:'真实采集通道',v:sc?sc.channels.length:'-'},
+      {ic:'📋',c:'var(--green)',l:'社媒条目(7天)',v:os?os.total:'-'},
+      {ic:'🚫',c:'var(--orange)',l:'拦截池(7天)',v:spTotal||'-'},
+      {ic:'🇨🇳',c:'var(--red)',l:'涉华条目',v:os?os.items.filter(function(i){return i.china;}).length:'-'}
     ];
-    stats.forEach(function(s){
+    html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
+    html_stats.forEach(function(s){
       html+='<div class="stat-card"><div class="stat-ic" style="background:rgba(0,212,255,0.08);color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div></div></div>';
     });
     html+='</div>';
-    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F310}</span>\u793e\u4ea4\u5a92\u4f53\u76d1\u6d4b <span style="font-size:10px;color:var(--text3);font-weight:400">\u2014 \u70b9\u51fb\u67e5\u770b\u6e90\u8be6\u60c5</span></div>';
+    /* 真实通道卡（data_json._sourceType 聚合，替换原静态假源） */
+    html+='<div class="card"><div class="card-tt"><span class="ic">🌐</span>采集通道监测 <span style="font-size:10px;color:var(--text3);font-weight:400">— 真实入库通道（近30天量/近7天活跃）</span></div>';
     html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">';
-    this._osintSources.forEach(function(s){
-      html+='<div style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:.2s" onclick="INTELCENTER.showOsintSource(\''+s.name+'\')" onmouseover="this.style.borderColor=\''+s.color+'\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="display:flex;align-items:center;gap:6px"><span style="font-size:16px">'+s.ic+'</span><strong style="font-size:12px;color:'+s.color+'">'+s.name+'</strong></div><span style="font-size:9px;padding:2px 6px;border-radius:4px;'+(s.status==='active'?'background:rgba(0,255,159,0.1);color:var(--green)':'background:var(--bg2);color:var(--text3)')+'">'+(s.status==='active'?'\u91c7\u96c6\u4e2d':'\u5f85\u671f')+'</span></div>'+
-        '<div style="font-size:10px;color:var(--text3);line-height:1.5;margin-bottom:6px">'+s.desc+'</div>'+
-        '<div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:4px;flex-wrap:wrap">'+s.kw.map(function(k){return '<span style="font-size:9px;padding:1px 6px;background:rgba(0,212,255,0.06);color:var(--cyan);border-radius:3px">'+k+'</span>';}).join('')+'</div><span style="font-size:16px;font-weight:800;color:'+s.color+'">'+s.count+'</span></div></div>';
-    });
+    if(sc&&sc.channels.length){
+      sc.channels.forEach(function(ch){
+        var act=ch.active7d>0;
+        html+='<div style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:.2s" onclick="INTELCENTER.showChannelDetail(\''+String(ch.key).replace(/'/g,"\\'")+'\')" onmouseover="this.style.borderColor=\'var(--cyan)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong style="font-size:12px;color:var(--cyan)">'+ch.name+'</strong><span style="font-size:9px;padding:2px 6px;border-radius:4px;'+(act?'background:rgba(0,255,159,0.1);color:var(--green)':'background:var(--bg2);color:var(--text3)')+'">'+(act?'活跃':'静默')+'</span></div>'+
+          '<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:var(--text3)">30天 '+ch.n+' 条 · 7天 '+ch.active7d+' 条</span><span style="font-size:16px;font-weight:800;color:var(--cyan)">'+ch.n+'</span></div>'+
+          '<div style="font-size:9px;color:var(--text3);margin-top:4px">最近采集：'+(ch.lastSeen||'-')+'</div></div>';
+      });
+    }else{html+='<div style="grid-column:1/-1;text-align:center;padding:16px;color:var(--text3);font-size:12px">真实通道数据加载中…</div>';}
     html+='</div></div>';
-    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">\u{1F527}</span>\u60c5\u62a5\u91c7\u96c6\u63a7\u5236\u53f0 <span style="font-size:10px;color:var(--text3);font-weight:400">\u2014 \u624b\u52a8\u89e6\u53d1\u91c7\u96c6\u4efb\u52a1</span></div>';
+    /* 拦截池口径 */
+    if(os&&os.sidepool.length){
+      html+='<div class="card mt-12"><div class="card-tt"><span class="ic">🚫</span>入库拦截池（近7天真实拒收分布）</div><div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0">';
+      os.sidepool.forEach(function(s){
+        html+='<span style="font-size:10px;padding:4px 10px;background:rgba(255,140,0,0.06);border:1px solid rgba(255,140,0,0.15);border-radius:6px;color:var(--orange)">'+s.reason+' <b>'+s.n+'</b></span>';
+      });
+      html+='</div><div style="font-size:10px;color:var(--text3);margin-top:6px">口径：入库闸（时效/去重/国别/刷屏/墓碑）真实拒收统计，可对照「非预警数据池」功能区人工提升。</div></div>';
+    }
+    /* 真实社媒/哨兵条目 */
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">📋</span>社媒与哨兵真实采集条目 <span style="font-size:10px;color:var(--text3);font-weight:400">— 近7天 socmint/social/wechat_oa/涉华/领事通道</span></div><div id="ic-osint-real"></div></div>';
+    /* 采集控制台：真实抓取触发 */
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">🔧</span>情报采集控制台 <span style="font-size:10px;color:var(--text3);font-weight:400">— 触发真实抓取（结果进数据中心审核池）</span></div>';
     html+='<div style="padding:12px;background:var(--bg2);border-radius:8px">'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
-      '<select class="select" id="osint-source-select" style="font-size:12px;width:180px"><option value="">\u9009\u62e9\u60c5\u62a5\u6e90...</option>'+this._osintSources.map(function(s){return '<option value="'+s.name+'">'+s.name+'</option>';}).join('')+'</select>'+
-      '<select class="select" id="osint-kw-select" style="font-size:12px"><option value="">\u5173\u952e\u8bcd...</option><option>\u88ad\u51fb</option><option>\u7ef4\u5b89</option><option>\u5236\u88c1</option><option>\u64a4\u4fa8</option><option>\u7ef4\u62a4</option></select>'+
-      '<select class="select" id="osint-country-select" style="font-size:12px"><option value="">\u76ee\u6807\u56fd\u5bb6...</option><option>\u5df4\u57fa\u65af\u5766</option><option>\u521a\u679c(\u91d1)</option><option>\u9a6c\u91cc</option><option>\u4e5f\u95e8</option><option>\u82cf\u4e39</option><option>\u7f05\u7538</option></select>'+
-      '<button class="btn primary sm" onclick="INTELCENTER.runOsintCollect()">\u{1F50D} \u5f00\u59cb\u91c7\u96c6</button></div>'+
-      '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:10px;color:var(--text3)">\u91c7\u96c6\u72b6\u6001:</span><span id="osint-status" style="font-size:10px;color:var(--green)">\u5c31\u7eea</span></div></div></div>';
-    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">\u{1F4CB}</span>\u60c5\u62a5\u6570\u636e\u7ba1\u7406</div>';
-    html+=this._toolbar('\u5171 '+this._osintResults.length+' \u6761\u60c5\u62a5\uff0c\u53ef\u70b9\u51fb\u67e5\u770b/\u7f16\u8f91/\u5220\u9664','INTELCENTER.showOsintForm()','INTELCENTER.exportOsint()','INTELCENTER.resetOsint()');
+      '<select class="select" id="osint-source-select" style="font-size:12px;width:200px"><option value="">选择采集分类...</option><option value="terror_events">恐怖袭击</option><option value="military_conflicts">武装冲突</option><option value="social_unrest">社会动荡</option><option value="sanctions_data">制裁与合规</option><option value="geopolitical_intel">地缘外交</option><option value="natural_disasters">自然灾害</option><option value="osint_intel">开源情报</option></select>'+
+      '<select class="select" id="osint-kw-select" style="font-size:12px"><option value="">关键词...</option><option>袭击</option><option>维安</option><option>制裁</option><option>撤离</option><option>维护</option></select>'+
+      '<select class="select" id="osint-country-select" style="font-size:12px"><option value="">目标国家...</option><option>巴基斯坦</option><option>刚果(金)</option><option>马里</option><option>也门</option><option>苏丹</option><option>缅甸</option></select>'+
+      '<button class="btn primary sm" onclick="INTELCENTER.runOsintCollect()">🔍 开始采集</button></div>'+
+      '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:10px;color:var(--text3)">采集状态:</span><span id="osint-status" style="font-size:10px;color:var(--green)">就绪</span><span style="font-size:10px;color:var(--text3);margin-left:8px" id="osint-last-result"></span></div></div></div>';
+    /* 手工作业区（用户录入条目，不再播种演示数据） */
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">✍️</span>手工作业情报（用户录入）</div>';
+    html+=this._toolbar('共 '+this._osintResults.length+' 条手工情报，可点击查看/编辑/删除','INTELCENTER.showOsintForm()','INTELCENTER.exportOsint()','INTELCENTER.resetOsint()');
     html+='<div id="osint-results"></div></div>';
     el.innerHTML=html;
+    this._renderOsintReal();
     this._renderOsintResults();
+  },
+  _renderOsintReal(){
+    var el=document.getElementById('ic-osint-real');
+    if(!el)return;
+    var os=this._center&&this._center.osint;
+    if(!os||!os.items.length){el.innerHTML='<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">真实采集条目加载中/暂无（近7天社媒与哨兵通道）</div>';return;}
+    var html='<div style="display:grid;gap:8px;max-height:460px;overflow-y:auto">';
+    os.items.forEach(function(i){
+      var lv=ALERT_LV[i.level]||ALERT_LV.blue;
+      html+='<div style="padding:10px;background:var(--panel2);border-radius:8px;border-left:3px solid var(--'+(i.level==='red'?'red':i.level==='orange'?'orange':i.level==='yellow'?'yellow':'cyan')+');">'+
+        '<div style="display:flex;justify-content:space-between;align-items:start">'+
+        (i.url?'<a href="'+i.url+'" target="_blank" rel="noopener" style="flex:1;text-decoration:none;color:inherit">':'<div style="flex:1">')+
+        '<span class="badge '+lv.cls+'" style="font-size:9px">'+lv.label+'</span>'+(i.china?' <span style="font-size:9px;color:var(--red);font-weight:700">涉华</span>':'')+
+        '<span style="font-size:11px;font-weight:600;margin-left:4px">'+i.title+'</span>'+
+        (i.digest?'<div style="font-size:10px;color:var(--text3);margin-top:3px">'+i.digest.substring(0,90)+'</div>':'')+
+        '<div style="font-size:10px;color:var(--text3);margin-top:2px">🏭 '+i.country+' · '+i.channel+' · '+i.time+'</div>'+
+        (i.url?'</a>':'</div>')+
+        '</div></div>';
+    });
+    html+='</div>';
+    el.innerHTML=html;
+  },
+  showChannelDetail(key){
+    var sc=this._center&&this._center.sources;
+    if(!sc)return;
+    var ch=sc.channels.find(function(x){return x.key===key;});
+    if(!ch)return;
+    var os=this._center&&this._center.osint;
+    var related=os?os.items.filter(function(i){return i.sourceType===key;}):[];
+    var html='<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:8px"><div><div style="font-size:14px;font-weight:700;color:var(--cyan)">'+ch.name+'</div><div style="font-size:10px;color:var(--text3)">通道键：'+ch.key+'</div></div></div></div>';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+
+      '<div style="padding:10px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">近30天入库</div><div style="font-size:20px;font-weight:800;color:var(--cyan)">'+ch.n+' 条</div></div>'+
+      '<div style="padding:10px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">近7天活跃</div><div style="font-size:20px;font-weight:800;color:var(--green)">'+ch.active7d+' 条</div></div></div>';
+    html+='<div style="padding:10px;background:var(--bg2);border-radius:8px;margin-bottom:12px"><div style="font-size:11px;color:var(--text3)">最近采集：'+(ch.lastSeen||'-')+'</div></div>';
+    if(related.length){
+      html+='<div style="padding:10px;background:var(--bg2);border-radius:8px"><div style="font-weight:600;margin-bottom:6px">该通道近7天真实条目（'+related.length+'）</div>';
+      related.slice(0,10).forEach(function(r){
+        html+='<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">'+r.time+' · '+r.title.substring(0,50)+'</div>';
+      });
+      html+='</div>';
+    }
+    html+='<div style="padding:8px;background:rgba(0,255,159,0.05);border-radius:8px;margin-top:10px;font-size:10px;color:var(--green)">📡 真实通道：数据按 data_json._sourceType 字段从 intel_data 库聚合。</div>';
+    document.getElementById('modal-tt').textContent='📡 '+ch.name+' 通道详情';
+    document.getElementById('modal-bd').innerHTML=html;
+    document.getElementById('modal').classList.add('show');
   },
   _renderOsintResults(){
     var el=document.getElementById('osint-results');
@@ -7256,7 +7191,7 @@ var INTELCENTER={
     var html='<div style="padding:12px;background:var(--bg2);border-radius:8px">'+
       '<div style="font-size:12px;color:var(--text3);margin-bottom:10px">'+(r?'\u7f16\u8f91\u60c5\u62a5 ['+r.id+']':'\u6dfb\u52a0\u65b0\u60c5\u62a5')+'</div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
-      '<div><label class="text-xs text-muted" style="display:block;margin-bottom:4px">\u60c5\u62a5\u6e90</label><select class="select" id="osint-form-source" style="font-size:12px;width:100%">'+this._osintSources.map(function(s){return '<option value="'+s.name+'"'+(r&&r.source===s.name?' selected':'')+'>'+s.name+'</option>';}).join('')+'</select></div>'+
+      '<div><label class="text-xs text-muted" style="display:block;margin-bottom:4px">情报源</label><select class="select" id="osint-form-source" style="font-size:12px;width:100%">'+((this._center&&this._center.sources.channels.map(function(ch){return ch.name;}))||['人工研判','外部通报']).map(function(n){return '<option value="'+n+'"'+(r&&r.source===n?' selected':'')+'>'+n+'</option>';}).join('')+'</select></div>'+
       '<div><label class="text-xs text-muted" style="display:block;margin-bottom:4px">\u76ee\u6807\u56fd\u5bb6</label><input class="input" id="osint-form-country" value="'+(r?r.country:'')+'" placeholder="\u5982\uff1a\u5df4\u57fa\u65af\u5766" style="font-size:12px;width:100%"></div>'+
       '<div><label class="text-xs text-muted" style="display:block;margin-bottom:4px">\u5173\u952e\u8bcd</label><input class="input" id="osint-form-kw" value="'+(r?r.kw:'')+'" placeholder="\u5982\uff1a\u88ad\u51fb" style="font-size:12px;width:100%"></div>'+
       '<div><label class="text-xs text-muted" style="display:block;margin-bottom:4px">\u98ce\u9669\u7b49\u7ea7</label><select class="select" id="osint-form-level" style="font-size:12px;width:100%"><option value="red"'+(r&&r.level==='red'?' selected':'')+'>\u7ea2\u8272</option><option value="orange"'+(r&&r.level==='orange'?' selected':'')+'>\u6a59\u8272</option><option value="yellow"'+(r&&r.level==='yellow'?' selected':'')+'>\u9ec4\u8272</option><option value="cyan"'+(r&&r.level==='cyan'?' selected':'')+'>\u84dd\u8272</option></select></div>'+
@@ -7304,32 +7239,11 @@ var INTELCENTER={
     this._exportJSON(this._osintResults,'osint_data.json');
   },
   resetOsint(){
-    if(!confirm('\u91cd\u7f6e\u4e3a\u9ed8\u8ba4\u6a21\u62df\u6570\u636e\uff1f\u5f53\u524d\u4fee\u6539\u5c06\u4e22\u5931\u3002'))return;
-    this._resetData('osint');
+    if(!confirm('清空手工作业情报？用户录入的条目将全部删除（真实库数据不受影响）。'))return;
+    this._osintResults=[];
+    this._saveOsint();
     this.render();
-    showToast('\u2705 \u5df2\u91cd\u7f6e');
-  },
-  showOsintSource(name){
-    var s=this._osintSources.find(function(x){return x.name===name;});
-    if(!s)return;
-    var html='<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px">'+
-      '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:24px">'+s.ic+'</span><div><div style="font-size:14px;font-weight:700;color:'+s.color+'">'+s.name+'</div><div style="font-size:10px;color:var(--text3)">'+s.desc+'</div></div></div></div>';
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+
-      '<div style="padding:10px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">\u72b6\u6001</div><div style="font-size:14px;font-weight:700;color:'+(s.status==='active'?'var(--green)':'var(--text3)')+'">'+(s.status==='active'?'\u91c7\u96c6\u4e2d':'\u5f85\u671f')+'</div></div>'+
-      '<div style="padding:10px;background:var(--bg2);border-radius:8px"><div class="text-xs text-muted">\u4eca\u65e5\u91c7\u96c6</div><div style="font-size:20px;font-weight:800;color:'+s.color+'">'+s.count+'</div></div></div>';
-    html+='<div style="padding:10px;background:var(--bg2);border-radius:8px;margin-bottom:12px"><div style="font-weight:600;margin-bottom:6px">\u76d1\u6d4b\u5173\u952e\u8bcd</div><div style="display:flex;gap:6px;flex-wrap:wrap">'+s.kw.map(function(k){return '<span class="badge b-blue" style="font-size:10px">'+k+'</span>';}).join('')+'</div></div>';
-    var related=this._osintResults.filter(function(r){return r.source===s.name;});
-    if(related.length){
-      html+='<div style="padding:10px;background:var(--bg2);border-radius:8px"><div style="font-weight:600;margin-bottom:6px">\u5173\u8054\u60c5\u62a5 ('+related.length+')</div>';
-      related.forEach(function(r){
-        html+='<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="INTELCENTER.showOsintDetail(\''+r.id+'\')"><span style="color:var(--cyan)">['+r.id+']</span> '+r.content.substring(0,50)+'...</div>';
-      });
-      html+='</div>';
-    }
-    html+='<div style="padding:8px;background:rgba(255,204,0,0.06);border-radius:8px;margin-top:10px;font-size:10px;color:var(--yellow)">\u26a0\ufe0f \u6a21\u62df\u8bad\u7ec3\u6570\u636e\uff0c\u5b9e\u9645\u90e8\u7f72\u65f6\u9700\u5bf9\u63a5\u771f\u5b9e\u6570\u636e\u6e90API</div>';
-    document.getElementById('modal-tt').textContent=s.ic+' '+s.name+' \u60c5\u62a5\u6e90\u8be6\u60c5';
-    document.getElementById('modal-bd').innerHTML=html;
-    document.getElementById('modal').classList.add('show');
+    showToast('✅ 已清空手工条目');
   },
   showOsintDetail(id){
     var r=this._osintResults.find(function(x){return x.id===id;});
@@ -7363,44 +7277,77 @@ var INTELCENTER={
     }catch(e){console.warn('[osint-link]',e);}
   },
   runOsintCollect(){
-    var src=document.getElementById('osint-source-select').value;
+    /* 真实化改造（2026-09-06）：原 setTimeout 2 秒假造一条情报 → 改调后端真实抓取
+     * GET /api/scrape?category=xxx（真实源抓取+翻译+墓碑闸），结果进数据中心审核池；
+     * 关键词/国别为结果筛选条件。绝不本地编造条目。 */
+    var cat=document.getElementById('osint-source-select').value;
     var kw=document.getElementById('osint-kw-select').value;
     var cty=document.getElementById('osint-country-select').value;
-    var st=document.getElementById('osint-status');
-    if(st){st.textContent='\u91c7\u96c6\u4e2d...';st.style.color='var(--orange)';}
-    showToast('\u{1F50D} \u6b63\u5728\u91c7\u96c6...');
-    var self=this;
-    setTimeout(function(){
-      if(st){st.textContent='\u91c7\u96c6\u5b8c\u6210';st.style.color='var(--green)';}
-      var nid='OSINT-'+String(Date.now()).slice(-6);
-      self._osintResults.unshift({id:nid,source:src||'Twitter/X',time:new Date().toLocaleString('zh-CN',{hour12:false}).replace(/\//g,'-').substring(0,16),country:cty||'\u672a\u6307\u5b9a',kw:kw||'\u7efc\u5408',content:'\u91c7\u96c6\u5230\u65b0\u60c5\u62a5\uff1a'+(cty||'\u76ee\u6807\u533a\u57df')+'\u76d1\u6d4b\u5230'+(kw||'\u5f02\u5e38')+'\u76f8\u5173\u4fe1\u606f',level:(function(){var r=cty?getDynamicRisk(cty):0;return r>=8?'red':r>=6?'orange':r>=4?'yellow':'cyan';})(),verified:true});
-      self._saveOsint();
-      self._renderOsintResults();
-      showToast('\u2705 \u91c7\u96c6\u5b8c\u6210\uff0c\u65b0\u589e1\u6761\u60c5\u62a5');
-    },2000);
+    if(!cat){showToast('⚠️ 请先选择采集分类');return;}
+    /* 状态写入须每次重新 getElementById：采集期间 INTELBUS 推送会触发 renderOsint 重建 DOM，
+     * 闭包捕获的旧元素引用会变成孤儿节点，导致状态永远停留在旧值（2026-09-06 回归发现） */
+    function _st(txt,color){var e=document.getElementById('osint-status');if(e){e.textContent=txt;e.style.color=color;}}
+    function _lr(txt){var e=document.getElementById('osint-last-result');if(e)e.textContent=txt;}
+    _st('采集中（真实源抓取）...','var(--orange)');
+    _lr('');
+    showToast('🔍 已触发真实采集（分类 '+cat+'），抓取约需 5-20 秒');
+    var ac=('AbortController'in window)?new AbortController():null;
+    /* 超时 150s：真实抓取+翻译 20-60s，叠加同源 6 连接排队 25-30s（SSE/长轮询占满时新 fetch 排队），60s 会被误杀 */
+    var timer=ac?setTimeout(function(){ac.abort();},150000):null;
+    fetch('/api/scrape?category='+encodeURIComponent(cat),{signal:ac?ac.signal:undefined})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(j){
+        if(timer)clearTimeout(timer);
+        var items=(j&&j.items)||[];
+        var hit=items;
+        if(kw)hit=hit.filter(function(i){return String(i.title||'').indexOf(kw)>=0||String(i.desc||i.content||'').indexOf(kw)>=0;});
+        if(cty)hit=hit.filter(function(i){return String(i.country||i.country_cn||'').indexOf(cty)>=0;});
+        _st('采集完成','var(--green)');
+        _lr('本轮真实抓取 '+items.length+' 条'+(kw||cty?('，筛选命中 '+hit.length+' 条'):'')+'（已进入数据中心审核池，翻译由服务端自动完成）');
+        showToast('✅ 真实采集完成：'+items.length+' 条'+((kw||cty)?('，命中 '+hit.length+' 条'):''));
+      })
+      .catch(function(){
+        if(timer)clearTimeout(timer);
+        _st('采集失败（服务不可达或超时）','var(--red)');
+        showToast('⚠️ 采集请求失败，请稍后重试');
+      });
   },
   renderAnalysis(el){
     var html=this._trainLabel();
-    html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
-    var stats=[
-      {ic:'\u{1F50D}',c:'var(--cyan)',l:'\u5206\u6790\u62a5\u544a',v:this._analysisResults.length},
-      {ic:'\u{1F534}',c:'var(--red)',l:'\u53d1\u73b0\u5a01\u80c1',v:this._analysisResults.filter(function(r){return r.level==='red';}).length},
-      {ic:'\u{1F7E0}',c:'var(--orange)',l:'\u4e2d\u7b49\u98ce\u9669',v:this._analysisResults.filter(function(r){return r.level==='orange';}).length},
-      {ic:'\u{1F4CA}',c:'var(--green)',l:'\u5e73\u5747\u7f6e\u4fe1',v:this._analysisResults.length?Math.round(this._analysisResults.reduce(function(s,r){return s+r.confidence;},0)/this._analysisResults.length)+'%':'-'}
+    var c=this._center;
+    html+=this._centerBlock();
+    var an=c?c.analysis:null;
+    var html_stats=[
+      {ic:'📋',c:'var(--cyan)',l:'入库条目(7天)',v:an?an.total:'-'},
+      {ic:'🔴',c:'var(--red)',l:'红色预警',v:an?an.red:'-'},
+      {ic:'🟠',c:'var(--orange)',l:'橙色预警',v:an?an.orange:'-'},
+      {ic:'🇨🇳',c:'var(--green)',l:'涉华条目',v:an?an.china:'-'}
     ];
-    stats.forEach(function(s){
+    html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
+    html_stats.forEach(function(s){
       html+='<div class="stat-card"><div class="stat-ic" style="background:rgba(0,212,255,0.08);color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div></div></div>';
     });
     html+='</div>';
-    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F9E0}</span>AI\u5f71\u50cf\u5206\u6790\u5de5\u5177 <span style="font-size:10px;color:var(--text3);font-weight:400">\u2014 \u70b9\u51fb\u6267\u884c\u5206\u6790</span></div>';
+    /* 真实红橙高关注事件（近7天审核通过库计算，替代演示结论） */
+    html+='<div class="card"><div class="card-tt"><span class="ic">🎯</span>近7天高关注事件（真实库） <span style="font-size:10px;color:var(--text3);font-weight:400">— 红橙预警加权排序（级别+涉华+多源印证+伤亡）</span></div><div id="ic-analysis-hot"></div></div>';
+    /* 类型分布 */
+    if(an&&an.typeDist.length){
+      html+='<div class="card mt-12"><div class="card-tt"><span class="ic">📊</span>近7天情报类别分布</div><div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0">';
+      var maxT=an.typeDist[0].n;
+      an.typeDist.forEach(function(t){
+        html+='<div style="padding:6px 10px;background:var(--panel2);border-radius:6px;min-width:90px"><div style="font-size:10px;color:var(--text3)">'+t.name+'</div><div style="display:flex;align-items:center;gap:6px;margin-top:2px"><span style="font-size:14px;font-weight:800;color:var(--cyan)">'+t.n+'</span><div style="flex:1;height:3px;background:var(--bg);border-radius:2px;overflow:hidden"><div style="width:'+Math.round(t.n/maxT*100)+'%;height:100%;background:var(--cyan)"></div></div></div></div>';
+      });
+      html+='</div></div>';
+    }
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">🧠</span>统计分析工具 <span style="font-size:10px;color:var(--text3);font-weight:400">— 基于真实库数据推导结论（数字全部真实）</span></div>';
     html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">';
     var tools=[
-      {ic:'\u{1F50D}',lb:'\u76ee\u6807\u8bc6\u522b',desc:'\u8bc6\u522b\u8f66\u8f86\u3001\u5efa\u7b51\u3001\u4eba\u5458',color:'var(--cyan)'},
-      {ic:'\u{1F504}',lb:'\u53d8\u5316\u68c0\u6d4b',desc:'\u5bf9\u6bd4\u4e0d\u540c\u65f6\u76f8\u5f71\u50cf',color:'var(--orange)'},
-      {ic:'\u{1F6E2}\uFE0F',lb:'\u70ed\u529b\u5206\u6790',desc:'\u5206\u6790\u70ed\u529b\u5206\u5e03',color:'var(--red)'},
-      {ic:'\u{1F517}',lb:'\u5173\u8054\u5339\u914d',desc:'\u5173\u8054\u4e8b\u4ef6\u9884\u8b66',color:'var(--yellow)'},
-      {ic:'\u{1F4D1}',lb:'\u635f\u4f24\u8bc4\u4f30',desc:'\u8bc4\u4f30\u640d\u6bc1\u7a0b\u5ea6',color:'var(--purple)'},
-      {ic:'\u{1F680}',lb:'\u6d3b\u52a8\u76d1\u6d4b',desc:'\u76d1\u6d4b\u6e2f\u53e3\u57fa\u5730\u6d3b\u52a8',color:'var(--green)'}
+      {ic:'🔍',lb:'目标识别',desc:'识别涉华/红橙高关注目标',color:'var(--cyan)'},
+      {ic:'🔄',lb:'变化检测',desc:'国别7天环比异动',color:'var(--orange)'},
+      {ic:'🛢️',lb:'要道分析',desc:'八大要道关联事件',color:'var(--red)'},
+      {ic:'🔗',lb:'关联匹配',desc:'同类事件聚类统计',color:'var(--yellow)'},
+      {ic:'📇',lb:'信源评估',desc:'信源可信度分级',color:'var(--purple)'},
+      {ic:'📈',lb:'态势监测',desc:'近14天入库曲线',color:'var(--green)'}
     ];
     tools.forEach(function(t){
       html+='<div style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:.2s" onclick="INTELCENTER.runAnalysis(\''+t.lb+'\')" onmouseover="this.style.borderColor=\''+t.color+'\';this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'\'">'+
@@ -7408,11 +7355,29 @@ var INTELCENTER={
         '<div style="font-size:10px;color:var(--text3);line-height:1.4">'+t.desc+'</div></div>';
     });
     html+='</div></div>';
-    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">\u{1F4CB}</span>\u5206\u6790\u7ed3\u679c\u7ba1\u7406</div>';
-    html+=this._toolbar('\u5171 '+this._analysisResults.length+' \u6761\u7ed3\u679c\uff0c\u53ef\u67e5\u770b/\u7f16\u8f91/\u5220\u9664','INTELCENTER.showAnalysisForm()','INTELCENTER.exportAnalysis()','INTELCENTER.resetAnalysis()');
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">✍️</span>手工作业分析（用户生成）</div>';
+    html+=this._toolbar('共 '+this._analysisResults.length+' 条结果，可查看/编辑/删除','INTELCENTER.showAnalysisForm()','INTELCENTER.exportAnalysis()','INTELCENTER.resetAnalysis()');
     html+='<div id="intel-analysis-results"></div></div>';
     el.innerHTML=html;
+    this._renderAnalysisHot();
     this._renderAnalysisResults();
+  },
+  _renderAnalysisHot(){
+    var el=document.getElementById('ic-analysis-hot');
+    if(!el)return;
+    var an=this._center&&this._center.analysis;
+    if(!an||!an.hot.length){el.innerHTML='<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">真实高关注事件加载中/近7天无红橙条目</div>';return;}
+    var html='<div style="display:grid;gap:8px;max-height:460px;overflow-y:auto">';
+    an.hot.forEach(function(i){
+      var lv=ALERT_LV[i.level]||ALERT_LV.blue;
+      html+='<div style="padding:10px;background:var(--panel2);border-radius:8px;border-left:3px solid var(--'+(i.level==='red'?'red':i.level==='orange'?'orange':i.level==='yellow'?'yellow':'cyan')+');">'+
+        (i.url?'<a href="'+i.url+'" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">':'<div>')+
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="flex:1"><span class="badge '+lv.cls+'" style="font-size:9px">'+lv.label+'</span>'+(i.china?' <span style="font-size:9px;color:var(--red);font-weight:700">涉华</span>':'')+' <span style="font-size:11px;font-weight:600">'+i.title+'</span></div></div>'+
+        '<div style="font-size:10px;color:var(--text3);margin-top:3px">🏭 '+i.country+' · '+i.typeName+(i.corr?(' · 印证'+i.corr+'源'):'')+(i.deaths?(' · 亡'+i.deaths):'')+' · '+i.time+'</div>'+
+        (i.url?'</a>':'</div>')+'</div>';
+    });
+    html+='</div>';
+    el.innerHTML=html;
   },
   _renderAnalysisResults(){
     var el=document.getElementById('intel-analysis-results');
@@ -7489,21 +7454,59 @@ var INTELCENTER={
     this._exportJSON(this._analysisResults,'analysis_data.json');
   },
   resetAnalysis(){
-    if(!confirm('\u91cd\u7f6e\u4e3a\u9ed8\u8ba4\u6a21\u62df\u6570\u636e\uff1f'))return;
-    this._resetData('analysis');
+    if(!confirm('清空手工作业分析？用户生成的条目将全部删除（真实库数据不受影响）。'))return;
+    this._analysisResults=[];
+    this._saveAnalysis();
     this.render();
-    showToast('\u2705 \u5df2\u91cd\u7f6e');
+    showToast('✅ 已清空手工条目');
   },
   runAnalysis(tool){
-    showToast('\u2699\ufe0f \u6b63\u5728\u6267\u884c\u300c'+tool+'\u300d\u5206\u6790...');
+    /* 真实化改造（2026-09-06）：原 setTimeout 假造结论 → 改为基于 /api/insight/intel-center
+     * 真实库数据推导结论，所有数字均来自真实聚合，结论注明真实口径。 */
     var self=this;
-    setTimeout(function(){
+    showToast('⚙️ 正在基于真实库数据执行「'+tool+'」分析...');
+    this._fetchCenter().then(function(c){
+      if(!c){showToast('⚠️ 真实库数据不可达，无法执行分析（不本地编造）');return;}
+      var an=c.analysis, tl=c.timeline, ge=c.geoint, sc=c.sources;
+      var finding='', level='yellow', conf=70, target='';
+      if(tool==='目标识别'){
+        var hot=an.hot.filter(function(i){return i.china;});
+        target='涉华高关注目标（近7天）';
+        finding='近7天审核通过条目 '+an.total+' 条，其中红色 '+an.red+' 条、橙色 '+an.orange+' 条、涉华 '+an.china+' 条。涉华红橙高关注 '+hot.length+' 条'+(hot.length?('，首位：「'+hot[0].title+'」（'+hot[0].country+'，'+hot[0].time+'）'):'')+'。';
+        level=(an.red>0)?'red':(an.orange>3?'orange':'yellow');
+        conf=80+Math.min(15,Math.round(an.total/40));
+      }else if(tool==='变化检测'){
+        var ups=tl.rows.filter(function(r){return r.delta>0;}).slice(0,3);
+        target='国别入库量环比（7天 vs 前7天）';
+        finding='环比增量前三：'+(ups.length?ups.map(function(r){return r.country+' '+r.prev7+'→'+r.d7+'（'+(r.delta>0?'+':'')+r.delta+'）';}).join('、'):'无明显异动')+'。';
+        level=ups.length&&ups[0].delta>200?'orange':'yellow';
+        conf=78;
+      }else if(tool==='要道分析'){
+        var ck=ge.chokes.filter(function(x){return x.n>0;});
+        target='八大海上要道（近30天）';
+        finding='近30天要道关联事件：'+(ck.length?ck.slice(0,4).map(function(x){return x.name+' '+x.n+' 条'+(x.red?('（红'+x.red+'）'):'');}).join('、'):'本周期无命中')+'。口径与要道评估月报同源。';
+        level=ck.length&&ck[0].red>0?'orange':'yellow';
+        conf=80;
+      }else if(tool==='关联匹配'){
+        target='同类事件聚类（近7天）';
+        finding='类别分布前三：'+(an.typeDist.slice(0,3).map(function(t){return t.name+' '+t.n+' 条';}).join('、')||'无')+'。同类高密度类别可结合「相似历史事件」功能逐条溯源。';
+        conf=75;
+      }else if(tool==='信源评估'){
+        target='信源可信度（30天）';
+        finding='30天活跃信源 '+sc.total+' 家：A 级 '+sc.dist.A+'、B 级 '+sc.dist.B+'、C 级 '+sc.dist.C+'。入库量首位：'+(sc.rows[0]?sc.rows[0].source+'（'+sc.rows[0].volume30d+' 条）':'-')+'。';
+        conf=82;
+      }else{
+        var dl=tl.daily, last=dl.length?dl[dl.length-1]:null;
+        target='入库曲线（近14天）';
+        finding='近14天逐日入库 '+dl.length+' 天有数据'+(last?('，最近一日（'+last.date+'）'+last.n+' 条'):'')+'。';
+        conf=75;
+      }
       var nid='RPT-'+String(Date.now()).slice(-6);
-      self._analysisResults.unshift({id:nid,time:new Date().toLocaleString('zh-CN',{hour12:false}).replace(/\//g,'-').substring(0,16),target:'\u5f53\u524d\u5206\u6790\u76ee\u6807',type:tool,finding:'\u6267\u884c'+tool+'\u5206\u6790\u5b8c\u6210\uff0c\u68c0\u6d4b\u5230'+Math.min(5,ALERTS.filter(function(a){return a.status==='active';}).length+1)+'\u4e2a\u5f02\u5e38\u70b9',level:(function(){var h=ALERTS.filter(function(a){return a.status==='active'&&a.level==='red';}).length;return h>3?'red':h>1?'orange':'yellow';})(),confidence:Math.min(95,75+Math.min(ALERTS.filter(function(a){return a.status!=='active';}).length,20))});
+      self._analysisResults.unshift({id:nid,time:new Date().toLocaleString('zh-CN',{hour12:false}).replace(/\//g,'-').substring(0,16),target:target,type:tool,finding:finding,level:level,confidence:conf});
       self._saveAnalysis();
       self._renderAnalysisResults();
-      showToast('\u2705 \u300c'+tool+'\u300d\u5206\u6790\u5b8c\u6210');
-    },1500);
+      showToast('✅ 「'+tool+'」分析完成（结论基于真实库数据）');
+    });
   },
   showAnalysisDetail(id){
     var r=this._analysisResults.find(function(x){return x.id===id;});
@@ -8786,7 +8789,41 @@ var INTELCENTER={
 
   renderTimeline(el){
     var html=this._trainLabel();
-    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F4C5}</span>\u65b0\u5efa\u65f6\u5e8f\u5bf9\u6bd4\u4efb\u52a1</div>';
+    var c=this._center;
+    html+=this._centerBlock();
+    var tl=c?c.timeline:null;
+    /* 真实国别 7 天环比（intel_data 库聚合） */
+    html+='<div class="card"><div class="card-tt"><span class="ic">📈</span>国别入库量环比（真实库） <span style="font-size:10px;color:var(--text3);font-weight:400">— 近7天 vs 前7天，按异动幅度排序</span></div>';
+    if(tl&&tl.rows.length){
+      html+='<div style="display:grid;gap:6px;max-height:340px;overflow-y:auto;padding:2px 0">';
+      tl.rows.forEach(function(r){
+        var cc=r.delta>0?'var(--red)':(r.delta<0?'var(--green)':'var(--text3)');
+        var arr=r.trend==='up'?'▲':(r.trend==='down'?'▼':'■');
+        html+='<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--panel2);border-radius:8px">'+
+          '<span style="font-size:12px;font-weight:600;min-width:80px">'+r.country+'</span>'+
+          '<span style="font-size:10px;color:var(--text3);min-width:130px">前7天 '+r.prev7+' → 近7天 '+r.d7+'</span>'+
+          '<span style="font-size:12px;font-weight:800;color:'+cc+';min-width:70px">'+arr+' '+(r.delta>0?'+':'')+r.delta+'</span>'+
+          '<span style="font-size:10px;color:var(--text3)">'+(r.pct>0?'+':'')+r.pct+'%</span>'+
+          (r.red7>0?'<span style="font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(255,68,68,0.1);color:var(--red)">红 '+r.red7+'</span>':'')+
+          '</div>';
+      });
+      html+='</div>';
+    }else{
+      html+='<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">真实环比数据加载中…</div>';
+    }
+    html+='</div>';
+    /* 近 14 天逐日入库柱状（纯 div） */
+    if(tl&&tl.daily.length){
+      var mx=Math.max.apply(null,tl.daily.map(function(d){return d.n;}))||1;
+      html+='<div class="card mt-12"><div class="card-tt"><span class="ic">📊</span>近14天逐日入库量（真实库，北京时间切日）</div><div style="display:flex;align-items:flex-end;gap:4px;height:90px;padding:8px 4px">';
+      tl.daily.forEach(function(d){
+        var h=Math.max(4,Math.round(d.n/mx*70));
+        var col=d.n>=mx*0.8?'var(--red)':d.n>=mx*0.5?'var(--orange)':'var(--cyan)';
+        html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%" title="'+d.date+'：'+d.n+' 条"><span style="font-size:8px;color:var(--text3)">'+d.n+'</span><div style="width:100%;height:'+h+'px;background:'+col+';border-radius:2px 2px 0 0;opacity:.85"></div><span style="font-size:7px;color:var(--text3)">'+d.date.slice(5)+'</span></div>';
+      });
+      html+='</div></div>';
+    }
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">📅</span>自定义时序对比任务</div>';
     html+='<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px">'+
       '<div class="text-xs text-muted mb-8">\u586b\u5199\u5bf9\u6bd4\u76ee\u6807\u4fe1\u606f\uff0c\u652f\u6301\u81ea\u5b9a\u4e49\u6570\u636e\u5e76\u4fdd\u5b58</div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
@@ -8796,7 +8833,7 @@ var INTELCENTER={
       '<div><label class="text-xs text-muted" style="display:block;margin-bottom:4px">T1\u65f6\u95f4(\u5bf9\u6bd4\u540e) <span style="color:var(--red)">*</span></label><input class="input" id="tl-new-t1" type="date" style="font-size:12px"></div>'+
       '<div style="grid-column:1/3"><label class="text-xs text-muted" style="display:block;margin-bottom:4px">\u5bf9\u6bd4\u8bf4\u660e</label><textarea class="input" id="tl-new-desc" rows="2" placeholder="\u63cf\u8ff0\u53d8\u5316\u60c5\u51b5..." style="font-size:12px;resize:vertical"></textarea></div></div>'+
       '<div style="display:flex;gap:8px">'+
-      '<select class="select" id="tl-preset-target" style="font-size:12px;width:180px" onchange="document.getElementById(\'tl-new-target\').value=this.value"><option value="">\u6216\u9009\u62e9\u9884\u8bbe\u76ee\u6807...</option><option>\u5361\u62c9\u5947\u6e2f \u4e2d\u8d44\u4f01\u4e1a\u533a</option><option>\u79d1\u5362\u97e6\u9f50 \u77ff\u533a</option><option>\u74e6\u8fbe\u5c14\u6e2f</option><option>\u66fc\u5fb7\u6d77\u5ce1 \u822a\u9053</option><option>\u7eb3\u96f7\u7eb3 \u77ff\u533a</option></select>'+
+      '<select class="select" id="tl-preset-target" style="font-size:12px;width:180px" onchange="document.getElementById(\'tl-new-target\').value=this.value"><option value="">或选择常用目标...</option><option>曼德海峡 航道</option><option>马六甲海峡</option><option>霍尔木兹海峡</option><option>苏伊士运河</option><option>中欧班列 沿线</option></select>'+
       '<button class="btn primary sm" onclick="INTELCENTER.addTimelineTask()">\u2795 \u6dfb\u52a0\u5bf9\u6bd4\u4efb\u52a1</button></div></div></div>';
     html+='<div class="card mt-12"><div class="card-tt"><span class="ic">\u{1F4C5}</span>\u65f6\u5e8f\u5bf9\u6bd4\u7ba1\u7406</div>';
     html+=this._toolbar('\u5171 '+this._timelineTasks.length+' \u4e2a\u5bf9\u6bd4\u4efb\u52a1\uff0c\u53ef\u67e5\u770b/\u7f16\u8f91/\u5220\u9664','INTELCENTER.showTimelineForm()','INTELCENTER.exportTimeline()','INTELCENTER.resetTimeline()');
@@ -8900,10 +8937,11 @@ var INTELCENTER={
     this._exportJSON(this._timelineTasks,'timeline_data.json');
   },
   resetTimeline(){
-    if(!confirm('\u91cd\u7f6e\u4e3a\u9ed8\u8ba4\u6a21\u62df\u6570\u636e\uff1f'))return;
-    this._resetData('timeline');
+    if(!confirm('清空自定义对比任务？用户录入的任务将全部删除（真实库数据不受影响）。'))return;
+    this._timelineTasks=[];
+    this._saveTimeline();
     this.render();
-    showToast('\u2705 \u5df2\u91cd\u7f6e');
+    showToast('✅ 已清空手工任务');
   },
   showTimelineDetail(idx){
     var c=this._timelineTasks[idx];if(!c)return;
@@ -8937,18 +8975,51 @@ var INTELCENTER={
   },
   renderGeoint(el){
     var html=this._trainLabel();
+    var c=this._center;
+    html+=this._centerBlock();
+    var ge=c?c.geoint:null;
     if(window.GEOINTLIVE) html+=GEOINTLIVE.panelHtml();
     if(window.DEEPSEARCH) html+=DEEPSEARCH.panelHtml();
     if(window.SOCMINT) html+=SOCMINT.panelHtml();
-    html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
-    var stats=[
-      {ic:'\u{1F30D}',c:'var(--cyan)',l:'\u76d1\u6d4b\u533a\u57df',v:'42\u56fd'},
-      {ic:'\u{1F5FA}\uFE0F',c:'var(--green)',l:'\u56fe\u5c42\u603b\u6570',v:this._geointLayers.length},
-      {ic:'\u{1F6A7}',c:'var(--orange)',l:'\u5df2\u542f\u7528',v:this._geointLayers.filter(function(l){return l.status==='active';}).length}
+    var chokeTotal=ge?ge.chokes.reduce(function(s,x){return s+x.n;},0):0;
+    html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
+    var gstats=[
+      {ic:'🌍',c:'var(--cyan)',l:'入库条目(30天)',v:ge?ge.total:'-'},
+      {ic:'🗺️',c:'var(--green)',l:'覆盖国家',v:ge?ge.countries.length:'-'},
+      {ic:'⚓',c:'var(--orange)',l:'要道关联事件',v:ge?chokeTotal:'-'},
+      {ic:'✍️',c:'var(--purple)',l:'自定义图层',v:this._geointLayers.length}
     ];
-    stats.forEach(function(s){html+='<div class="stat-card"><div class="stat-ic" style="background:rgba(0,212,255,0.08);color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div></div></div>';});
+    gstats.forEach(function(s){html+='<div class="stat-card"><div class="stat-ic" style="background:rgba(0,212,255,0.08);color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div></div></div>';});
     html+='</div>';
-    html+='<div class="card"><div class="card-tt"><span class="ic">\u{1F5FA}\uFE0F</span>\u5730\u7406\u7a7a\u95f4\u60c5\u62a5\u56fe\u5c42\u7ba1\u7406</div>';
+    /* 真实国别事件分布（近30天） */
+    html+='<div class="card"><div class="card-tt"><span class="ic">📍</span>国别事件分布（真实库·近30天） <span style="font-size:10px;color:var(--text3);font-weight:400">— 按入库量排序，含红橙与涉华计数</span></div>';
+    if(ge&&ge.countries.length){
+      var mxG=ge.countries[0].n||1;
+      html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px">';
+      ge.countries.forEach(function(x){
+        html+='<div style="padding:8px 10px;background:var(--panel2);border-radius:8px">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:600">'+x.country+'</span><span style="font-size:14px;font-weight:800;color:var(--cyan)">'+x.n+'</span></div>'+
+          '<div style="height:4px;background:var(--bg);border-radius:2px;margin-top:5px;overflow:hidden"><div style="width:'+Math.round(x.n/mxG*100)+'%;height:100%;background:var(--cyan);opacity:.8"></div></div>'+
+          '<div style="font-size:9px;color:var(--text3);margin-top:4px">'+(x.red?'<span style="color:var(--red)">红 '+x.red+'</span> · ':'')+(x.orange?'<span style="color:var(--orange)">橙 '+x.orange+'</span> · ':'')+(x.china?'<span style="color:var(--red)">涉华 '+x.china+'</span>':'无红橙/涉华')+'</div></div>';
+      });
+      html+='</div>';
+    }else{html+='<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">真实国别分布加载中…</div>';}
+    html+='</div>';
+    /* 真实要道关联事件 */
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">⚓</span>八大要道关联事件（真实库·近30天） <span style="font-size:10px;color:var(--text3);font-weight:400">— 与要道评估月报同源口径</span></div>';
+    if(ge&&ge.chokes.length){
+      html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px">';
+      ge.chokes.forEach(function(ch){
+        html+='<div style="padding:10px;background:var(--panel2);border-radius:8px;border-left:3px solid '+(ch.n>0?(ch.red>0?'var(--red)':'var(--orange)'):'var(--border)')+'">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:12px;font-weight:700">'+ch.name+'</span><span style="font-size:14px;font-weight:800;color:'+(ch.n>0?'var(--orange)':'var(--text3)')+'">'+ch.n+'</span></div>'+
+          '<div style="font-size:9px;color:var(--text3);line-height:1.4">'+ch.note+(ch.china?(' · 涉华 '+ch.china+' 条'):'')+'</div>'+
+          (ch.items.length?('<div style="margin-top:6px">'+ch.items.map(function(i){return '<div style="font-size:10px;color:var(--text2);padding:2px 0;border-top:1px solid var(--border)">'+(i.url?'<a href="'+i.url+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">':'')+'· '+i.title.substring(0,36)+(i.url?'</a>':'')+'</div>';}).join('')+'</div>'):'')+
+          '</div>';
+      });
+      html+='</div>';
+    }else{html+='<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">要道关联数据加载中…</div>';}
+    html+='</div>';
+    html+='<div class="card mt-12"><div class="card-tt"><span class="ic">🗺️</span>自定义图层管理（用户维护）</div>';
     html+=this._toolbar('\u5171 '+this._geointLayers.length+' \u4e2a\u56fe\u5c42\uff0c\u53ef\u67e5\u770b/\u7f16\u8f91/\u5220\u9664','INTELCENTER.showLayerForm()','INTELCENTER.exportGeoint()','INTELCENTER.resetGeoint()');
     html+='<div style="display:grid;gap:8px">';
     this._geointLayers.forEach(function(l){
@@ -9042,10 +9113,11 @@ var INTELCENTER={
     this._exportJSON(this._geointLayers,'geoint_layers.json');
   },
   resetGeoint(){
-    if(!confirm('\u91cd\u7f6e\u4e3a\u9ed8\u8ba4\u6a21\u62df\u6570\u636e\uff1f'))return;
-    this._resetData('geoint');
+    if(!confirm('清空自定义图层？用户维护的图层将全部删除（真实库数据不受影响）。'))return;
+    this._geointLayers=[];
+    this._saveGeoint();
     this.render();
-    showToast('\u2705 \u5df2\u91cd\u7f6e');
+    showToast('✅ 已清空自定义图层');
   },
   showLayerDetail(name){
     var l=this._geointLayers.find(function(x){return x.name===name;});if(!l)return;
