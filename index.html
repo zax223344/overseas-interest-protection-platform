@@ -1067,16 +1067,19 @@ select.intel-input{cursor:pointer}
 <div class="sb-group">态势感知</div>
 <div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">全域态势感知</span></div>
 <div class="sb-item" data-view="workbench" onclick="navigateTo('workbench')"><span class="ic">🧭</span><span class="lb">智能协同作业台</span></div>
-<div class="sb-item" data-view="threatroom" onclick="navigateTo('threatroom')"><span class="ic">🎯</span><span class="lb">专项情报作战室</span></div>
-<div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">🎯</span><span class="lb">重点目标监测</span></div>
+<div class="sb-item" data-view="threatroom" onclick="navigateTo('threatroom')"><span class="ic">⚔️</span><span class="lb">专项情报作战室</span></div>
+<div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">⭐</span><span class="lb">重点目标监测</span></div>
 <div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
 <div class="sb-group">监测中心</div>
 <div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic">📡</span><span class="lb">实时风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
 <div class="sb-item" data-view="intel" onclick="navigateTo('intel')"><span class="ic">📸</span><span class="lb">影像情报中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
 <div class="sb-item" data-view="threatorgs" onclick="navigateTo('threatorgs')"><span class="ic">🎯</span><span class="lb">威胁组织图谱</span><span class="badge zero" id="sb-threat-count">0</span></div>
 <div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">智能预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
+<div class="sb-item" data-view="terjudge" onclick="navigateTo('terjudge')"><span class="ic">🛰️</span><span class="lb">全球恐袭态势监测中心</span></div>
 <div class="sb-group">分析研判</div>
 <div class="sb-item" data-view="brief" onclick="navigateTo('brief')"><span class="ic">🔴</span><span class="lb">领导要报速览</span></div>
+<div class="sb-item" data-view="evjudge" onclick="navigateTo('evjudge')"><span class="ic">🔬</span><span class="lb">事件研判中心</span></div>
+<div class="sb-item" data-view="entrisk" onclick="navigateTo('entrisk')"><span class="ic">🛡️</span><span class="lb">涉企风险预警研判</span></div>
 <div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别风险研判</span></div>
 <div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国别档案总表</span></div>
 <div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">周期简报中心</span></div>
@@ -1087,7 +1090,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
 <div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
 <div class="sb-item" data-view="manual-entry" onclick="navigateTo('manual-entry')"><span class="ic">✍️</span><span class="lb">情报录入</span></div>
-<div class="sb-item" data-view="thinktank" onclick="navigateTo('thinktank')"><span class="ic">📚</span><span class="lb">智库报告库</span></div>
+<div class="sb-item" data-view="thinktank" onclick="navigateTo('thinktank')"><span class="ic">🏛️</span><span class="lb">智库报告库</span></div>
 <div class="sb-group">系统</div>
 <div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
 <!-- 合并后保留的隐藏徽章（代码仍会更新计数，避免空指针） -->
@@ -1401,6 +1404,11 @@ select.intel-input{cursor:pointer}
 <!-- VIEW: LEADER BRIEF（brief-center.js 整视图渲染：领导要报速览 + 情报洞察弹窗） -->
 <div class="view" id="view-brief"><div id="brief-root"></div></div>
 
+<!-- VIEW: EVENT INSIGHT（event-insight.js 整视图渲染：事件研判中心——事件时间流研判 + 历史相似事件分析 + 智能研判 + 公文输出） -->
+<div class="view" id="view-evjudge"><div id="evjudge-root"></div></div>
+<div class="view" id="view-terjudge"><div id="terjudge-root"></div></div>
+<div class="view" id="view-entrisk"><div id="entrisk-root"></div></div>
+
 <!-- VIEW: ANALYSIS (研判简报：周期研判 + 每日简报 合并视图) -->
 <div class="view" id="view-analysis">
 <div class="dc-tabs" id="ana-tabs">
@@ -1460,7 +1468,7 @@ function closeMobileMenu(){
 }
 </script>
 
-<script src="api-client.js?v=9"></script>
+<script src="api-client.js?v=10"></script>
 <script src="gate.js?v=17"></script>
 <script src="entities.js?v=10"></script>
 <script src="project-emergency.js?v=1"></script>
@@ -1476,13 +1484,13 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=290"></script>
+<script src="app.js?v=295"></script>
 <script src="workbench.js?v=5"></script>
 <script src="threatroom.js?v=12"></script>
 <script src="foresee.js?v=3"></script>
 <script src="distribute.js?v=3"></script>
-<script src="datasources.js?v=27"></script>
-<script src="threats.js?v=12"></script>
+<script src="datasources.js?v=28"></script>
+<script src="threats.js?v=13"></script>
 <script src="aireport.js?v=5"></script>
 <script src="autoalert-v3.js?v=8"></script>
 <script src="geoint_live.js?v=6"></script>
@@ -1493,7 +1501,7 @@ function closeMobileMenu(){
 <script src="thinktank.js?v=1"></script>
 <script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=10"></script>
+<script src="role-ui.js?v=13"></script>
 <script src="model-analysis.js?v=5"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
@@ -1505,7 +1513,10 @@ function closeMobileMenu(){
 <script src="flight-ais.js?v=1"></script>
 <script src="wechat.js?v=4"></script>
 <script src="reports-center.js?v=5"></script>
-<script src="brief-center.js?v=1"></script>
+<script src="brief-center.js?v=2"></script>
+<script src="event-insight.js?v=5"></script>
+<script src="terror-center.js?v=9"></script>
+<script src="enterprise-risk.js?v=2"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
 <script src="linkgraph.js?v=6"></script>
 

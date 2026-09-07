@@ -153,6 +153,17 @@ function qcCheck(text) {
   if (/\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)/i.test(t) || /(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+20\d{2}/i.test(t)) issues.push('西式时间表达残留');
   /* 省略号残留 */
   if (/……{2,}|\.{6,}|。{3,}/.test(t)) issues.push('省略号/句号堆叠残留');
+  /* 2026-09-07 #658 公文版质量整治：审计新增机检项 */
+  if (/�/.test(t)) issues.push('编码乱码（�）残留');
+  if (/https?\s*:/i.test(t)) issues.push('URL 残留');
+  if (/&[a-zA-Z]+;|&#\d+;/.test(t)) issues.push('HTML 实体残留（&nbsp; 类）');
+  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}]/u.test(t)) issues.push('emoji 符号残留');
+  if (/#[A-Za-z0-9_]{3,}|@[A-Za-z0-9_]{3,}/.test(t)) issues.push('社媒话题/提及残留（#/@）');
+  if (/appeared first on|Original title\s*:|阅读更多/i.test(t)) issues.push('媒体尾巴残留');
+  /* 直接外文成句（拉丁字母远多于汉字且含英文连写词） */
+  const _ls = { letters: (t.match(/[A-Za-z]/g) || []).length, cjk: (t.match(/[一-鿿]/g) || []).length };
+  if (_ls.letters > 60 && _ls.letters > _ls.cjk * 2 && /[a-z]\s+[a-z]/i.test(t)) issues.push('直接外文成句残留');
+  if (/[一-鿿][,.;:!?][一-鿿]/.test(t)) issues.push('中文夹半角标点残留');
   return issues;
 }
 
@@ -161,6 +172,94 @@ function qcLog(tag, text) {
   const issues = qcCheck(text);
   if (issues.length) console.warn('[REPORT-QC] ' + tag + ' 质检告警：' + issues.join('；'));
   return issues;
+}
+
+/* ============================================================
+ * 三·五、cleanReportLine —— 公文条目级清洗器（2026-09-07 #658 公文版质量整治）
+ * ------------------------------------------------------------
+ * 背景：真实样本审计发现公文版（尤其月报/季报摘要详单）混入——
+ *   ① 直接外文成句（未译/半译标题摘要）② 中英混排碎片（"普京, 习近平 set for…"）
+ *   ③ &nbsp; 等 HTML 实体残留 ④ emoji/#话题/@提及（社媒条目）
+ *   ⑤ "appeared first on/阅读更多/Original title:" 媒体尾巴 ⑥ "[]" 链接剥离残留
+ *   ⑦ 乱码 �（编码损坏）⑧ 同名重复括注"奥斯汀（奥斯汀）" ⑨ 句内重复子句（机翻复读）
+ *   ⑩ URL/裸域名残留（含断裂 "https:// fault-line。io"）
+ * 本函数为唯一清洗咽喉：reports-engine 公文版/标准版条目渲染、server.js 每日简报
+ * 补充详单，统一调用，禁止各处自写正则。
+ * opts: { maxLen } 截断长度（优先在句末标点处收刀）；返回 '' = 该条不可修复，弃用。
+ * 铁律：宁可弃用一条，不放行一句外文/乱码进公文。
+ * ============================================================ */
+const _HTML_ENT = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", '#34': '"', mdash: '—', hellip: '…', deg: '°' };
+function _decodeEnt(s) {
+  return String(s || '').replace(/&([a-zA-Z]+|#\d+);/g, (m, k) => {
+    const v = _HTML_ENT[k.toLowerCase()];
+    return v != null ? v : ' ';
+  });
+}
+function _latinStat(s) {
+  return { letters: (s.match(/[A-Za-z]/g) || []).length, cjk: (s.match(/[一-鿿]/g) || []).length };
+}
+function cleanReportLine(text, opts) {
+  const o = opts || {};
+  let d = _decodeEnt(text).replace(/<[^>]*>/g, ' ');
+  if (!d.trim()) return '';
+  if (/\[object /i.test(d)) return '';                 /* [object Promise] 异步缺陷残留 */
+  if (/�/.test(d)) return '';                          /* 编码乱码不可修复，整句弃用 */
+  /* URL 全剥（含断裂残留 "https:// fault-line。io"、"https://?utm_c"） */
+  d = d.replace(/https?\s*:\s*\/\s*\/\S*/gi, ' ').replace(/\bwww\.\S+/gi, ' ');
+  /* 裸域名（fault-line.io - digest-059 / xxx.com/yyy） */
+  d = d.replace(/(?:[a-z0-9][a-z0-9-]*\.)+(?:com|net|org|io|cn|gov|edu|info|news|me|co|tv|uk|de|fr|ru|pk|ir)(?:\/\S*)?/gi, ' ');
+  /* 社媒元素：#话题、@提及、emoji/象形符号/杂项箭头 */
+  d = d.replace(/#[A-Za-z0-9_一-鿯]+/g, ' ').replace(/@[A-Za-z0-9_]{2,}/g, ' ');
+  d = d.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2190}-\u{21FF}\u{E000}-\u{F8FF}]/gu, '');
+  /* 媒体尾巴/平台残留 */
+  d = d.replace(/the post\s.{0,90}?appeared first on.{0,50}$/i, '');
+  d = d.replace(/appeared first on[^\n。]{0,60}/gi, ' ');
+  d = d.replace(/Original title\s*:[^\n。]{0,90}/gi, ' ');
+  d = d.replace(/阅读更多|阅读全文|点击阅读|查看全文|详情见\S{0,20}|Subscribe|Sign up for[^\n。]{0,50}/gi, ' ');
+  d = d.replace(/Copyright\s*©[^\n。]{0,60}/gi, ' ');
+  /* 链接剥离残留/空括号/边缘杂引号 */
+  d = d.replace(/\[\s*\]/g, ' ').replace(/（\s*）/g, '').replace(/\(\s*\)/g, '');
+  d = d.replace(/[''""「」『』]\s*$/, '').replace(/^\s*[''""]/, '');
+  /* 条目编号前缀（"247–攻击者…"采集编号非正文） */
+  d = d.replace(/^\s*\d{1,4}\s*[–—-]\s*/, '');
+  /* 省略号残留：公文正文不用省略号，收敛为句号（与 polishGovText 同规则） */
+  d = d.replace(/\s*…+\s*/g, '。').replace(/\s*\.{3,}\s*/g, '。');
+  /* 同名重复括注："劳埃德·奥斯汀（劳埃德·奥斯汀）"→ 保留一次 */
+  d = d.replace(/([一-鿿·]{2,15})（\1）/g, '$1');
+  d = d.replace(/([一-鿿·]{2,15})\(\1\)/g, '$1');
+  /* 空白归一（含汉字间残空格） */
+  d = d.replace(/[　\t]+/g, ' ')
+       .replace(/([一-鿿，。；：、）】》])[ ]+(?=[一-鿿（【《])/g, '$1')
+       .replace(/\s{2,}/g, ' ').trim();
+  /* 句内重复子句去重（机翻复读/凑字数："…姐妹;姐妹…"、同子句出现2次以上） */
+  const parts = d.split(/([，。；！？；、])/);
+  if (parts.length > 4) {
+    const seen = new Set(); const outParts = [];
+    for (const p of parts) {
+      const core = p.replace(/[\s，。；！？、]/g, '');
+      if (core.length >= 6) {
+        if (seen.has(core)) continue;
+        seen.add(core);
+      }
+      outParts.push(p);
+    }
+    d = outParts.join('').replace(/([，。；！？、]){2,}/g, '$1').replace(/^[，。；：、\s]+|[，；：、\s]+$/g, '').trim();
+  }
+  if (!d) return '';
+  /* 拉丁占比闸：整句外文（未译/半译）→ 弃用（公文零外文铁律）。
+   * 例："Chinese national rescued from mudslide-hit…"、"普京, 习近平 set for…"（cjk极少）；
+   * 阈值 20 字符起判——入库截断短摘要（"India condemns attacks on" 25 字符实证）同样拦截 */
+  const st = _latinStat(d);
+  if (d.length >= 20 && st.letters > 16 && st.letters > st.cjk * 2 && /[a-z]\s+[a-z]/i.test(d)) return '';
+  /* 截断（优先句末标点收刀） */
+  const maxLen = o.maxLen || 0;
+  if (maxLen && d.length > maxLen) {
+    d = d.slice(0, maxLen);
+    const p = Math.max(d.lastIndexOf('。'), d.lastIndexOf('！'), d.lastIndexOf('？'));
+    if (p > Math.min(30, maxLen * 0.4)) d = d.slice(0, p + 1);
+    else d = d.replace(/[,，、：:；;\s]+$/, '');
+  }
+  return d;
 }
 
 /* ============================================================
@@ -197,4 +296,4 @@ function wordCountIssue(freq, chars) {
   return '';
 }
 
-module.exports = { MANUAL_SPEC, GOV_STYLE_SPEC, REC_SPEC, SYSTEM_PROMPT, paperCss, paperHead, paperTail, qcCheck, qcLog, WORD_TARGETS, govCharCount, wordCountIssue };
+module.exports = { MANUAL_SPEC, GOV_STYLE_SPEC, REC_SPEC, SYSTEM_PROMPT, paperCss, paperHead, paperTail, qcCheck, qcLog, WORD_TARGETS, govCharCount, wordCountIssue, cleanReportLine };

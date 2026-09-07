@@ -233,7 +233,8 @@ function lvStat(list) {
   return c;
 }
 function toItem(i) {
-  return { title: i.title, level: i.severity, country: i.country || '未标注', time: _cnTime(i.time) || '时间不详', url: i.url, digest: i.digest };
+  /* 2026-09-07 #662：_t 保留原始时间串，供公文版数据分析（逐日趋势/国别聚合）取真实日期 */
+  return { title: i.title, level: i.severity, country: i.country || '未标注', time: _cnTime(i.time) || '时间不详', url: i.url, digest: i.digest, _t: i.time };
 }
 function section(name, list, n) {
   const st = lvStat(list);
@@ -739,11 +740,88 @@ function govPunctuate(text) {
   t = out;
   /* 2) 直引号 → 弯引号（成对交替） */
   t = t.replace(/"([^"]*)"/g, '“$1”').replace(/'([^']*)'/g, '‘$1’');
+  /* 2.5) 2026-09-07 #658：中文语境半角括号 → 全角（"8月31日电(记者 郭超凯)"审计实证）；
+   * 纯英文/数字内容括号保留半角（"(APC)"、"(MRV)"类专名不破坏） */
+  t = t.replace(/\(([^()]*[一-鿿][^()]*)\)/g, '（$1）');
   /* 3) 连续重复标点归一（！！！→！），顿号逗号句号等全归一 */
   t = t.replace(/([，。；：？！、])\1+/g, '$1');
   /* 4) 还原 URL */
   t = t.replace(/\x00(\d+)\x00/g, (_, i) => holds[+i]);
   return t;
+}
+
+/* ============================================================
+ * 七·五、AI 全文校对环（2026-09-07 #658 用户指令「生成时让 AI 全面校对」）
+ * ------------------------------------------------------------
+ * 对象：装配完成的 gov_html 正文段落（rgp-p 文本节点）。
+ * 流程：机检标脏（外文成句/乱码/emoji/URL/实体/半角标点/重复子句）
+ *   → 分批送 LLM 校对（只修语言不动事实）→ 逐条校验回贴（数字守恒/
+ *   长度比/禁新噪声）→ 替换。任何一步异常保留原文，绝不阻断成文。
+ * ============================================================ */
+const PROOFREAD_PROMPT = '你是公文校对员。对下列情报报告段落逐条校对：' +
+  '①修正标点错误（中文语境统一全角标点）；②剔除残留外文单词碎片、乱码、网址、话题标签、媒体来源尾巴；' +
+  '③消除同句重复与语义复读，使表达通顺、简洁、有重点，符合智库公文文风；' +
+  '④铁律：不得改动任何数字、日期、国名、人名、组织名与事件事实，不得新增信息；无法修复的段落返回空字符串。' +
+  '输入为 JSON 字符串数组，仅输出与输入等长的 JSON 字符串数组，不要任何解释与 Markdown。';
+function _govParasOf(html) {
+  const list = []; const re = /<p class="rgp-p"[^>]*>([\s\S]*?)<\/p>/g;
+  let m; while ((m = re.exec(html))) list.push({ start: m.index, end: m.index + m[0].length, inner: m[1] });
+  return list;
+}
+function _unesc(s) { return String(s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&'); }
+function _paraDirty(t) {
+  if (!t) return false;
+  if (/�|\[object |https?\s*:|&[a-zA-Z]+;|#[A-Za-z0-9_]{3,}|@[A-Za-z0-9_]{3,}|appeared first on/i.test(t)) return true;
+  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}]/u.test(t)) return true;
+  if (/[一-鿿][,.;:!?][一-鿿]/.test(t)) return true;
+  const letters = (t.match(/[A-Za-z]/g) || []).length, cjk = (t.match(/[一-鿿]/g) || []).length;
+  if (t.length > 25 && letters > 20 && letters > cjk * 2 && /[a-z]\s+[a-z]/i.test(t)) return true;
+  return false;
+}
+function _numsOf(t) { return (String(t).match(/\d+(?:[.,]\d+)*/g) || []).map(String).sort(); }
+async function aiProofreadGov(govHtml) {
+  const res = { html: govHtml, flagged: 0, fixed: 0, dropped: 0, skipped: 0 };
+  const paras = _govParasOf(govHtml);
+  if (!paras.length) return res;
+  const texts = paras.map(p => _unesc(p.inner));
+  const dirtyIdx = [];
+  texts.forEach((t, i) => { if (_paraDirty(t)) dirtyIdx.push(i); });
+  res.flagged = dirtyIdx.length;
+  if (!dirtyIdx.length) return res;
+  const pv = Object.assign({}, pvKimi(), { maxTokens: 8000, timeout: 120000 });
+  const call = (_ctx && _ctx.llm && _ctx.llm.callMsg) ? _ctx.llm.callMsg : _callMsgDefault;
+  const repl = {}; /* idx -> 新文本（'' = 删除该段） */
+  for (let b = 0; b < dirtyIdx.length; b += 12) {
+    const batch = dirtyIdx.slice(b, b + 12);
+    const input = batch.map(i => texts[i]);
+    const r = await call(pv, PROOFREAD_PROMPT, JSON.stringify(input));
+    let arr = null;
+    try { arr = JSON.parse((String(r.text || '').match(/\[[\s\S]*\]/) || [''])[0]); } catch (e) { arr = null; }
+    if (!Array.isArray(arr) || arr.length !== batch.length) { res.skipped += batch.length; continue; }
+    batch.forEach((pi, k) => {
+      const orig = texts[pi];
+      const nw = (arr[k] == null ? '' : String(arr[k])).trim();
+      if (!nw) { repl[pi] = ''; res.dropped++; return; }
+      /* 校验回贴：①数字守恒（原文出现的每个数字新文须保留）②长度比 0.35~1.9 ③不得引入新噪声 */
+      const on = _numsOf(orig), nn = _numsOf(nw);
+      const numsOk = on.every(n => nn.indexOf(n) >= 0);
+      const lenOk = nw.length >= orig.length * 0.35 && nw.length <= orig.length * 1.9;
+      const cleanOk = !/https?\s*:|�|\*\*|\[object |#{1,6}\s/i.test(nw);
+      if (numsOk && lenOk && cleanOk) { repl[pi] = nw; res.fixed++; }
+      else res.skipped++;
+    });
+  }
+  if (!Object.keys(repl).length) return res;
+  let out = '', cur = 0;
+  paras.forEach((p, i) => {
+    out += govHtml.slice(cur, p.start);
+    if (repl[i] == null) out += govHtml.slice(p.start, p.end);
+    else if (repl[i] !== '') out += govHtml.slice(p.start, p.end).replace(p.inner, _esc(repl[i]));
+    cur = p.end;
+  });
+  out += govHtml.slice(cur);
+  res.html = out;
+  return res;
 }
 
 /* ============================================================
@@ -765,6 +843,225 @@ function svgBars(chart) {
   });
   return s + '</svg>';
 }
+/* ============================================================
+ * 八·五、公文版数据分析图表引擎（2026-09-07 #662 用户指令：公文版全面嵌入数据分析——
+ * 柱状图/圆饼图/折线趋势/树型图 + 统计表，复合性分析。纯 SVG 无脚本（gov_html 前端剥 script），
+ * 纸面黑红配色对齐 GB/T 9704 版式；全部数据来自本期真实采集条目聚合，零模拟）
+ * ============================================================ */
+const _GOV_PIE_COLORS = ['#c00000', '#1a1a1a', '#7f7f7f', '#e06666', '#404040', '#a6a6a6', '#8b0000', '#595959', '#d9d9d9', '#2f2f2f', '#ea9999', '#0d0d0d'];
+const _GOV_FONT = 'font-family="Times New Roman,SimSun,serif"';
+/* 任意时间串 → YYYY-MM-DD（ISO/GDELT紧凑/RFC/中文式四兼容，同 _cnTime 解析口径） */
+function _dayOf(s) {
+  const raw = String(s == null ? '' : s).trim();
+  if (!raw) return '';
+  const p2 = n => String(n).padStart(2, '0');
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(raw);
+  if (m) return m[1] + '-' + p2(m[2]) + '-' + p2(m[3]);
+  m = /^(\d{4})(\d{2})(\d{2})T/.exec(raw);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  m = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(\d{1,2})\s+([A-Za-z]{3})\w*\s+(\d{4})/i.exec(raw);
+  if (m && _EN_MON[m[2].toLowerCase()]) return m[3] + '-' + p2(_EN_MON[m[2].toLowerCase()]) + '-' + p2(m[1]);
+  m = /^(\d{4})年(\d{1,2})月(\d{1,2})日/.exec(raw);
+  if (m) return m[1] + '-' + p2(m[2]) + '-' + p2(m[3]);
+  return '';
+}
+/* 横向柱状图（纸面版）：最多 12 项，最大值红色强调 */
+function govSvgBars(chart) {
+  const list = (chart || []).filter(x => (x.value || 0) > 0).slice(0, 12);
+  if (!list.length) return '';
+  const W = 640, RH = 30, PAD = 10;
+  const H = list.length * RH + PAD * 2;
+  const max = Math.max.apply(null, list.map(x => x.value)) || 1;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:640px;height:auto;">';
+  list.forEach((x, i) => {
+    const y = PAD + i * RH;
+    const bw = Math.max(2, Math.round(x.value / max * (W - 270)));
+    const top = x.value === max;
+    s += '<text x="4" y="' + (y + 16) + '" fill="#000" font-size="12" ' + _GOV_FONT + '>' + _esc(String(x.label || '').slice(0, 10)) + '</text>'
+      + '<rect x="136" y="' + (y + 5) + '" width="' + bw + '" height="15" fill="' + (top ? '#c00000' : '#1a1a1a') + '" opacity="' + (top ? 1 : (0.5 + 0.5 * x.value / max)) + '"/>'
+      + '<text x="' + (142 + bw) + '" y="' + (y + 17) + '" fill="#000" font-size="12" ' + _GOV_FONT + '>' + x.value + '</text>';
+  });
+  return s + '</svg>';
+}
+/* 圆饼图（环形 + 图例：名称/条数/占比），单切片退化为整圆 */
+function govSvgPie(chart) {
+  const list = (chart || []).filter(x => (x.value || 0) > 0).slice(0, 8);
+  if (!list.length) return '';
+  const sum = list.reduce((a, x) => a + x.value, 0) || 1;
+  const cx = 130, cy = 140, r = 105, ir = 52;
+  const H = Math.max(290, 40 + list.length * 30);
+  let s = '<svg viewBox="0 0 640 ' + H + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:640px;height:auto;">';
+  if (list.length === 1) {
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="' + _GOV_PIE_COLORS[0] + '"/>'
+      + '<circle cx="' + cx + '" cy="' + cy + '" r="' + ir + '" fill="#fff"/>';
+  } else {
+    let ang = -Math.PI / 2;
+    list.forEach((x, i) => {
+      const a2 = ang + (x.value / sum) * Math.PI * 2;
+      const large = (a2 - ang) > Math.PI ? 1 : 0;
+      const X = a => (cx + r * Math.cos(a)).toFixed(1), Y = a => (cy + r * Math.sin(a)).toFixed(1);
+      const x2 = a => (cx + ir * Math.cos(a)).toFixed(1), y2 = a => (cy + ir * Math.sin(a)).toFixed(1);
+      s += '<path d="M' + X(ang) + ' ' + Y(ang) + ' A' + r + ' ' + r + ' 0 ' + large + ' 1 ' + X(a2) + ' ' + Y(a2)
+        + ' L' + x2(a2) + ' ' + y2(a2) + ' A' + ir + ' ' + ir + ' 0 ' + large + ' 0 ' + x2(ang) + ' ' + y2(ang) + ' Z" fill="' + _GOV_PIE_COLORS[i % 12] + '" stroke="#fff" stroke-width="1.5"/>';
+      ang = a2;
+    });
+  }
+  s += '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="13" fill="#000" ' + _GOV_FONT + '>总计</text>'
+    + '<text x="' + cx + '" y="' + (cy + 17) + '" text-anchor="middle" font-size="16" font-weight="bold" fill="#c00000" ' + _GOV_FONT + '>' + sum + '</text>';
+  list.forEach((x, i) => {
+    const ly = 34 + i * 30;
+    s += '<rect x="290" y="' + (ly - 11) + '" width="12" height="12" fill="' + _GOV_PIE_COLORS[i % 12] + '"/>'
+      + '<text x="309" y="' + ly + '" font-size="12" fill="#000" ' + _GOV_FONT + '>' + _esc(String(x.label || '').slice(0, 12)) + ' ' + x.value + ' 条（' + (x.value / sum * 100).toFixed(1) + '%）</text>';
+  });
+  return s + '</svg>';
+}
+/* 折线趋势图：逐日/逐周分布，网格 + 峰值标注 */
+function govSvgTrend(points) {
+  const pts = (points || []).slice(0, 62);
+  if (pts.length < 2) return '';
+  const W = 640, H = 210, L = 46, R = 16, T = 16, B = 34;
+  const iw = W - L - R, ih = H - T - B;
+  const max = Math.max.apply(null, pts.map(p => p.v)) || 1;
+  const gx = i => L + (pts.length === 1 ? iw / 2 : i / (pts.length - 1) * iw);
+  const gy = v => T + ih - v / max * ih;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:640px;height:auto;">';
+  for (let k = 0; k <= 4; k++) {
+    const v = Math.round(max * k / 4), y = gy(v);
+    s += '<line x1="' + L + '" y1="' + y + '" x2="' + (W - R) + '" y2="' + y + '" stroke="' + (k ? '#e0e0e0' : '#000') + '" stroke-width="1"/>'
+      + '<text x="' + (L - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10" fill="#666" ' + _GOV_FONT + '>' + v + '</text>';
+  }
+  const path = pts.map((p, i) => (i ? 'L' : 'M') + gx(i).toFixed(1) + ' ' + gy(p.v).toFixed(1)).join(' ');
+  s += '<path d="' + path + ' L' + gx(pts.length - 1).toFixed(1) + ' ' + gy(0) + ' L' + gx(0).toFixed(1) + ' ' + gy(0) + ' Z" fill="#c00000" opacity="0.08"/>'
+    + '<path d="' + path + '" fill="none" stroke="#c00000" stroke-width="2"/>';
+  const step = Math.ceil(pts.length / 8);
+  let pk = 0;
+  pts.forEach((p, i) => { if (p.v > pts[pk].v) pk = i; });
+  pts.forEach((p, i) => {
+    s += '<circle cx="' + gx(i).toFixed(1) + '" cy="' + gy(p.v).toFixed(1) + '" r="' + (i === pk ? 4 : 2.4) + '" fill="' + (i === pk ? '#c00000' : '#1a1a1a') + '"/>';
+    if (i % step === 0 || i === pts.length - 1)
+      s += '<text x="' + gx(i).toFixed(1) + '" y="' + (H - 12) + '" text-anchor="middle" font-size="10" fill="#666" ' + _GOV_FONT + '>' + _esc(p.label) + '</text>';
+  });
+  s += '<text x="' + gx(pk).toFixed(1) + '" y="' + (gy(pts[pk].v) - 8) + '" text-anchor="middle" font-size="11" font-weight="bold" fill="#c00000" ' + _GOV_FONT + '>峰值 ' + pts[pk].v + '</text>';
+  return s + '</svg>';
+}
+/* 树型图：根（报告主题）→ 分项 → 国别 TOP，左根右叶肘形连线 */
+function govSvgTree(rootLabel, nodes) {
+  const secs = (nodes || []).filter(n => n && n.name && (n.count || 0) > 0).slice(0, 10);
+  if (!secs.length) return '';
+  const SUB = 24, GAP = 10, PAD = 12;
+  let y = PAD;
+  const layout = secs.map(n => {
+    const kids = (n.children || []).slice(0, 4);
+    const rows = Math.max(1, kids.length);
+    const L = { n, kids, y, cy: y + rows * SUB / 2 };
+    y += rows * SUB + GAP;
+    return L;
+  });
+  const H = y - GAP + PAD, rootCy = H / 2;
+  let s = '<svg viewBox="0 0 640 ' + H + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:640px;height:auto;">';
+  layout.forEach(L => {
+    s += '<path d="M120 ' + rootCy + ' C 168 ' + rootCy + ', 162 ' + L.cy + ', 210 ' + L.cy + '" stroke="#999" fill="none" stroke-width="1"/>';
+    L.kids.forEach((k, ki) => {
+      const ky = L.y + SUB / 2 + ki * SUB;
+      s += '<path d="M360 ' + L.cy + ' C 402 ' + L.cy + ', 398 ' + ky + ', 440 ' + ky + '" stroke="#c8c8c8" fill="none" stroke-width="1"/>';
+    });
+  });
+  s += '<rect x="10" y="' + (rootCy - 17) + '" width="110" height="34" rx="3" fill="#c00000"/>'
+    + '<text x="65" y="' + (rootCy + 4) + '" text-anchor="middle" font-size="12" font-weight="bold" fill="#fff" ' + _GOV_FONT + '>' + _esc(String(rootLabel || '本期主题').slice(0, 7)) + '</text>';
+  layout.forEach(L => {
+    s += '<rect x="210" y="' + (L.cy - 14) + '" width="150" height="28" rx="3" fill="#1a1a1a"/>'
+      + '<text x="285" y="' + (L.cy + 4) + '" text-anchor="middle" font-size="12" fill="#fff" ' + _GOV_FONT + '>' + _esc(String(L.n.name).slice(0, 8)) + ' ' + L.n.count + '</text>';
+    L.kids.forEach((k, ki) => {
+      const ky = L.y + SUB / 2 + ki * SUB;
+      s += '<circle cx="444" cy="' + ky + '" r="2.6" fill="#7f7f7f"/>'
+        + '<text x="452" y="' + (ky + 4) + '" font-size="11" fill="#333" ' + _GOV_FONT + '>' + _esc(String(k.name).slice(0, 10)) + '（' + k.count + '）</text>';
+    });
+  });
+  return s + '</svg>';
+}
+/* 公文三线表（全框线简化版） */
+function _govTable(head, rows) {
+  return '<table class="rgp-tbl"><thead><tr>' + head.map(h => '<th>' + _esc(h) + '</th>').join('') + '</tr></thead><tbody>'
+    + rows.map(r => '<tr>' + r.map((c, i) => '<td' + (i === 0 ? ' class="l"' : '') + '>' + _esc(String(c)) + '</td>').join('') + '</tr>').join('')
+    + '</tbody></table>';
+}
+/* 逐日趋势点：展示条目按真实日期聚合；跨度 >62 天自动升 ISO 周粒度 */
+function _govTrendPoints(items) {
+  const byDay = {};
+  items.forEach(it => { const d = _dayOf(it._t || it.time); if (d) byDay[d] = (byDay[d] || 0) + 1; });
+  const days = Object.keys(byDay).sort();
+  if (!days.length) return [];
+  const span = (new Date(days[days.length - 1] + 'T00:00:00') - new Date(days[0] + 'T00:00:00')) / 86400000 + 1;
+  if (span > 62) {
+    const byW = {};
+    days.forEach(d => { const w = weekKey(new Date(d + 'T00:00:00')); byW[w] = (byW[w] || 0) + byDay[d]; });
+    return Object.keys(byW).sort().map(k => ({ label: k.slice(5), v: byW[k] }));
+  }
+  const out = [];
+  for (let cur = new Date(days[0] + 'T00:00:00'), end = new Date(days[days.length - 1] + 'T00:00:00'); cur <= end; cur = new Date(cur.getTime() + 86400000)) {
+    const k = _dayKey(cur);
+    out.push({ label: k.slice(5), v: byDay[k] || 0 });
+  }
+  return out;
+}
+/* 复合分析板块装配：级别构成表 / 分项柱状+圆饼+分项表 / 国别 TOP 表 / 时间趋势 / 分项—国别树型图 */
+function _govAnalysisBlock(data) {
+  const st = data.stats || {};
+  const secs = data.sections || [];
+  const seen = new Set(); const items = [];
+  secs.forEach(s2 => (s2.items || []).forEach(it => {
+    const k = String(it.title || '').replace(/[^一-鿿A-Za-z0-9]/g, '').slice(0, 40);
+    if (!k || seen.has(k)) return; seen.add(k); items.push(it);
+  }));
+  const chart = (data.chart || []).filter(x => (x.value || 0) > 0);
+  if (!items.length && !chart.length) return '';
+  const total = st.total || items.length;
+  let fig = 0;
+  let out = '<div class="rgp-h1">二、数据分析</div>'
+    + '<p class="rgp-p">本节基于平台本期真实采集情报（监测总量 ' + total + ' 条，入表样本 ' + items.length + ' 条），从级别构成、分项分布、国别分布、时间趋势等维度进行复合统计分析，全部图表数据来自真实采集库聚合，不含任何模拟数据。</p>';
+  /* （一）级别构成 */
+  if (total > 0 && (st.red != null || st.orange != null)) {
+    const lv = [['红', st.red || 0], ['橙', st.orange || 0], ['黄', st.yellow || 0], ['蓝', st.blue || 0]];
+    out += '<div class="rgp-h2">（一）级别构成</div>' + _govTable(['级别', '数量（条）', '占比'],
+      lv.map(x => [x[0] + '级', x[1], (x[1] / total * 100).toFixed(1) + '%']).concat([['合计', total, '100%']]));
+  }
+  /* （二）分项分布：柱状图 + 圆饼图 + 分项统计表 */
+  if (chart.length) {
+    const csum = chart.reduce((a, x) => a + x.value, 0) || 1;
+    out += '<div class="rgp-h2">（二）分项分布</div>'
+      + '<div class="rgp-chart"><div class="rgp-cap">图' + (++fig) + '　' + _esc(data.chartCap || '分项统计（条）') + '</div>' + govSvgBars(chart) + '</div>'
+      + '<div class="rgp-chart"><div class="rgp-cap">图' + (++fig) + '　分项占比圆饼图</div>' + govSvgPie(chart) + '</div>'
+      + _govTable(['分项', '数量（条）', '红色', '橙色', '占比'],
+        secs.filter(s2 => (s2.count || 0) > 0).map(s2 => [s2.name, s2.count, s2.red || 0, s2.orange || 0, (s2.count / csum * 100).toFixed(1) + '%']));
+  }
+  /* （三）国别分布 TOP10 */
+  if (items.length) {
+    const byC = {};
+    items.forEach(it => {
+      const c = it.country || '未标注';
+      const o = byC[c] = byC[c] || { n: 0, red: 0, orange: 0 };
+      o.n++; if (it.level === 'red') o.red++; if (it.level === 'orange') o.orange++;
+    });
+    const rows = Object.keys(byC).map(c => [c, byC[c]]).sort((a, b) => b[1].n - a[1].n).slice(0, 10);
+    if (rows.length) out += '<div class="rgp-h2">（三）国别分布（TOP' + rows.length + '）</div>' + _govTable(
+      ['国别', '事件量（条）', '红色', '橙色', '占比'],
+      rows.map((x, i) => [(i + 1) + '.' + x[0], x[1].n, x[1].red, x[1].orange, (x[1].n / items.length * 100).toFixed(1) + '%']));
+  }
+  /* （四）时间趋势 */
+  const trend = _govTrendPoints(items);
+  if (trend.length >= 2) out += '<div class="rgp-h2">（四）时间趋势</div>'
+    + '<div class="rgp-chart"><div class="rgp-cap">图' + (++fig) + '　本期情报量逐日分布（条）</div>' + govSvgTrend(trend) + '</div>';
+  /* （五）分项—国别关联树型图 */
+  const treeNodes = secs.filter(s2 => (s2.count || 0) > 0).map(s2 => {
+    const bc = {};
+    (s2.items || []).forEach(it => { const c = it.country || '未标注'; bc[c] = (bc[c] || 0) + 1; });
+    return { name: s2.name, count: s2.count, children: Object.keys(bc).map(c => ({ name: c, count: bc[c] })).sort((a, b) => b.count - a.count).slice(0, 3) };
+  });
+  const tree = govSvgTree(data.title || '本期主题', treeNodes);
+  if (tree) out += '<div class="rgp-h2">（五）分项—国别关联</div>'
+    + '<div class="rgp-chart"><div class="rgp-cap">图' + (++fig) + '　分项—国别关联树型图</div>' + tree + '</div>';
+  return out;
+}
 function _llmParas(text) {
   return String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
 }
@@ -781,7 +1078,7 @@ function renderHtml(def, periodKey, data, llmText, llmOk) {
       /* 2026-09-05 报告事件行 → 研判详情弹窗（sandbox iframe 禁内联脚本，由父页面 addEventListener 绑定 RP_showItem；此前仅原文链接，行级无交互） */
       '<tr class="rp-row" data-lv="' + _esc(it.level || '') + '" data-ct="' + _esc(it.country || '') + '" data-tt="' + _esc(it.title || '') + '" data-tm="' + _esc(_cnTime(it.time) || '') + '" data-url="' + _esc(it.url || '') + '" style="cursor:pointer" title="点击查看事件研判详情"><td class="rp-lv rp-lv-' + _esc(it.level) + '">' + _esc(_LV_CN[it.level] || it.level || '—') + '</td>' +
       '<td class="rp-ct">' + _esc(it.country || '未标注') + '</td>' +
-      '<td class="rp-tt">' + _esc(it.title) + (it.url ? ' <a class="rp-url" href="' + _esc(it.url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">原文</a>' : '') + '</td>' +
+      '<td class="rp-tt">' + _esc(RS.cleanReportLine(it.title, { maxLen: 140 }) || '（外文原始条目，待周期回填翻译，可点原文查看）') + (it.url ? ' <a class="rp-url" href="' + _esc(it.url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">原文</a>' : '') + '</td>' +
       '<td class="rp-tm">' + _esc(_cnTime(it.time) || '—') + '</td></tr>').join('');
     return '<div class="rp-sec"><h2>' + _esc(s.name) +
       '<span class="rp-cnt">' + (s.count || 0) + ' 条 · 红' + (s.red || 0) + ' 橙' + (s.orange || 0) + '</span></h2>' +
@@ -843,23 +1140,10 @@ function renderGovHtml(def, periodKey, data, llmText, llmOk, opts) {
   const perSec = o.perSec || 6;
   const withDigest = !!o.digest;
   const digestLen = o.digestLen || 160;
-  /* 摘要清洗：剥裸域名/网页残留词，句读归一，截断至 digestLen（真实采集内容，非虚构）
-   * 2026-09-06 护栏：①DB 存量脏摘要 "[object Promise]" 直接弃用（入库翻译链 async 缺陷残留）；
-   * ②条目编号残留前缀（"247–攻击者…"类）剥除——数字+破折号打头的采集编号非正文 */
-  const _dg = s => {
-    let d = String(s || '').replace(/<[^>]*>/g, ' ');
-    if (/\[object/i.test(d)) return '';
-    d = d.replace(/^\s*\d{1,4}\s*[–—-]\s*/, '')
-      .replace(/(?:在|从|据|由|至|到|来源|源自)?\s*(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/gi, '')
-      .replace(/\s+/g, ' ').trim();
-    if (!d) return '';
-    if (d.length > digestLen) {
-      d = d.slice(0, digestLen);
-      const p = Math.max(d.lastIndexOf('。'), d.lastIndexOf('！'), d.lastIndexOf('？'));
-      if (p > 30) d = d.slice(0, p + 1); else d = d.replace(/[,，、：:\s]+$/, '');
-    }
-    return d;
-  };
+  /* 摘要清洗（2026-09-07 #658：统一走 RS.cleanReportLine 咽喉——实体/URL/emoji/社媒尾巴/
+   * 乱码/同名括注/重复子句/外文成句十项全治；标点再过 govPunctuate；截断收刀在清洗器内）。
+   * 返回 '' = 不可修复弃用（宁缺毋滥，公文零外文零乱码）。 */
+  const _dg = s => govPunctuate(RS.cleanReportLine(s, { maxLen: digestLen }));
   const st = data.stats || {};
   const now = new Date();
   const issueDate = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日';
@@ -867,20 +1151,52 @@ function renderGovHtml(def, periodKey, data, llmText, llmOk, opts) {
   const judgeHtml = llmOk
     ? paras.map(p => '<p class="rgp-p">' + _esc(p) + '</p>').join('')
     : '<p class="rgp-p">本期待大模型研判服务恢复后补充生成。</p>';
-  const secHtml = (data.sections || []).map((s, si) =>
-    '<div class="rgp-h2">（' + _cnNum(si + 1) + '）' + _esc(s.name) + '</div>'
-    + '<p class="rgp-p">' + (s.count || 0) + ' 条（红色 ' + (s.red || 0) + ' 条、橙色 ' + (s.orange || 0) + ' 条）。' + (s.note ? _esc(s.note) : '') + '</p>'
-    + ((s.items || []).length
-      ? (s.items.slice(0, perSec).map((it, ii) =>
-        /* 2026-09-03 用户铁律：段落尾部（国家，西式时间）括号整体删除——国别在表格与节标题中已有，公文书面上不留来源尾注
-         * 标题已带句末标点（。！？）时不再补句号，避免"？。"双标点
-         * 2026-09-06 深度化：月报/季报每条事件下附真实采集摘要（摘要：……），扩容主杠杆 */
-        '<p class="rgp-p">' + (ii + 1) + '.' + _esc(_LV_CN[it.level] || '') + '级：' + _esc(String(it.title || '').replace(/[。！？!?…]+$/, '')) + '。</p>'
-        + ((withDigest && _dg(it.digest)) ? '<p class="rgp-p" style="text-indent:2em;color:#333">摘要：' + _esc(_dg(it.digest)) + '</p>' : '')).join(''))
-      : '<p class="rgp-p">本周期内未监测到相关情报。</p>')
-  ).join('');
+  /* 2026-09-07 #658：标题同走 cleanReportLine+govPunctuate（半译外文标题整条弃用）；
+   * 跨节展示去重——同一事件命中多个节正则时只在首个节展示（审计实证 D2 跨段重复句 ×2/×5） */
+  const _sigShown = new Set();
+  const _dgSigShown = new Set(); /* 摘要级去重：同事件两个标题版本共用同一摘要时只展一次（D2 审计实证） */
+  const _titleOf = it => {
+    const t = govPunctuate(RS.cleanReportLine(it.title, { maxLen: 140 }));
+    return t ? t.replace(/[。！？!?…]+$/, '') : '';
+  };
+  const secHtml = (data.sections || []).map((s, si) => {
+    const showItems = (s.items || []).slice(0, perSec)
+      .map(it => ({ it: it, t: _titleOf(it), dg: withDigest ? _dg(it.digest) : '' }))
+      .filter(x => x.t)
+      .filter(x => {
+        const sig = x.t.replace(/[^一-鿿A-Za-z0-9]/g, '').slice(0, 40);
+        if (_sigShown.has(sig)) return false;
+        _sigShown.add(sig);
+        return true;
+      })
+      .map(x => {
+        if (x.dg && x.dg.length >= 20) {
+          const ds = x.dg.replace(/[^一-鿿A-Za-z0-9]/g, '').slice(0, 60);
+          if (_dgSigShown.has(ds)) x.dg = ''; /* 摘要重复：留标题去摘要 */
+          else _dgSigShown.add(ds);
+        }
+        return x;
+      });
+    return '<div class="rgp-h2">（' + _cnNum(si + 1) + '）' + _esc(s.name) + '</div>'
+      + '<p class="rgp-p">' + (s.count || 0) + ' 条（红色 ' + (s.red || 0) + ' 条、橙色 ' + (s.orange || 0) + ' 条）。' + (s.note ? _esc(s.note) : '') + '</p>'
+      + (showItems.length
+        ? (showItems.map((x, ii) =>
+          '<p class="rgp-p">' + (ii + 1) + '.' + _esc(_LV_CN[x.it.level] || '') + '级：' + _esc(x.t) + '。</p>'
+          + (x.dg ? '<p class="rgp-p" style="text-indent:2em;color:#333">摘要：' + _esc(x.dg) + '</p>' : '')).join(''))
+        : '<p class="rgp-p">本周期内未监测到相关情报。</p>');
+  }).join('');
+  /* 2026-09-07 #662 用户指令：公文版全面嵌入复合数据分析（图表+表格），置于总体情况之后、分项态势之前 */
+  const analysisHtml = _govAnalysisBlock(data);
   /* #625 统一公文版式引擎：版头版尾走 RS.paperHead/paperTail，CSS 与每日简报同一份 paperCss（类前缀 rgp），版式一处维护 */
-  return '<style>' + RS.paperCss('rgp') + '</style>'
+  return '<style>' + RS.paperCss('rgp')
+    /* #662 数据分析板块配套样式（表格/图表容器/图题，纸面公文风） */
+    + '.rgp-tbl{width:100%;border-collapse:collapse;margin:6pt 0 12pt;font-size:12pt;line-height:1.7;font-family:"Times New Roman","仿宋_GB2312","FangSong_GB2312","仿宋",serif;}'
+    + '.rgp-tbl th{border:0.7pt solid #000;padding:3pt 6pt;text-align:center;font-weight:700;background:#f2f2f2;}'
+    + '.rgp-tbl td{border:0.7pt solid #000;padding:3pt 6pt;text-align:center;}'
+    + '.rgp-tbl td.l{text-align:left;padding-left:10pt;}'
+    + '.rgp-chart{margin:6pt auto 12pt;text-align:center;max-width:640px;}'
+    + '.rgp-cap{font-size:12pt;font-weight:700;text-align:center;margin:4pt 0 6pt;font-family:"黑体","SimHei",serif;line-height:1.6;}'
+    + '</style>'
     + RS.paperHead('rgp', {
         org: '海外利益保护情报预警平台',
         qihao: def.name + '（' + periodKey + '）',
@@ -888,9 +1204,10 @@ function renderGovHtml(def, periodKey, data, llmText, llmOk, opts) {
       })
     + '<div class="rgp-h1">一、总体情况</div>'
     + '<p class="rgp-p">本周期（' + _cnDate(data.win[0]) + '至' + _cnDate(new Date(data.win[1].getTime() - 86400000)) + '）共监测独立情报事件 ' + (st.total || 0) + ' 条，其中红色 ' + (st.red || 0) + ' 条、橙色 ' + (st.orange || 0) + ' 条、黄色 ' + (st.yellow || 0) + ' 条、蓝色 ' + (st.blue || 0) + ' 条' + (st.chinaCount != null ? '，涉华情报 ' + st.chinaCount + ' 条' : '') + '。以上数据均来自平台真实采集库聚合。</p>'
-    + '<div class="rgp-h1">二、分项态势</div>'
+    + analysisHtml
+    + '<div class="rgp-h1">' + (analysisHtml ? '三' : '二') + '、分项态势</div>'
     + secHtml
-    + '<div class="rgp-h1">三、综合研判与对策建议</div>'
+    + '<div class="rgp-h1">' + (analysisHtml ? '四' : '三') + '、综合研判与对策建议</div>'
     + judgeHtml
     + RS.paperTail('rgp', {
         issuer: '海外利益保护情报预警平台',
@@ -1708,6 +2025,17 @@ async function generateReport(typeId, periodKey, opts) {
       if (wIssue) console.warn('[REPORTS] ' + def.id + ' ' + periodKey + ' ' + wIssue);
       else console.log('[REPORTS] ' + def.id + ' ' + periodKey + ' 公文版 ' + govChars + ' 字（硬指标 ' + tgt.min + '~' + tgt.max + ' 达标）');
     }
+    /* 2026-09-07 #658 AI 全文校对环：机检标脏 → LLM 校对 → 数字守恒/长度比校验回贴；
+     * 任何异常保留原文不阻断成文；结果落 summary.proofread 供验收 */
+    let _pf = { flagged: 0, fixed: 0, dropped: 0, skipped: 0 };
+    try {
+      _pf = await aiProofreadGov(govHtml);
+      if (_pf.flagged) {
+        govHtml = _pf.html;
+        govChars = RS.govCharCount(govHtml);
+        console.log('[GOV-PROOF] ' + def.id + ' ' + periodKey + ' 标脏 ' + _pf.flagged + ' 段：修 ' + _pf.fixed + ' / 删 ' + _pf.dropped + ' / 留 ' + _pf.skipped);
+      }
+    } catch (e) { console.warn('[GOV-PROOF] ' + def.id + ' ' + periodKey + ' 校对环异常（保留原文）: ' + e.message); }
     const paras = _llmParas(llmText);
     /* 摘要取首个有实质内容的段落（跳过「内容提要」类短标题行） */
     const absPara = paras.find(p => p.replace(/[\s（(【】）)「」：:、，。]/g, '').length >= 15) || paras[0] || '';
@@ -1720,7 +2048,9 @@ async function generateReport(typeId, periodKey, opts) {
       llmOk: llm.ok, llmError: llm.ok ? '' : llm.error,
       /* 2026-09-06 字数硬指标：公文版字数与目标落 summary，前端/验收可直接读取 */
       govChars: govChars,
-      wordTarget: tgt ? (tgt.min + '~' + tgt.max) : ''
+      wordTarget: tgt ? (tgt.min + '~' + tgt.max) : '',
+      /* 2026-09-07 #658 AI 校对环结果（标脏/修复/删除/保留计数），验收可查 */
+      proofread: { flagged: _pf.flagged || 0, fixed: _pf.fixed || 0, dropped: _pf.dropped || 0, skipped: _pf.skipped || 0 }
     };
     const dataJson = {
       stats: data.stats, sections: data.sections, chart: data.chart || [], chartCap: data.chartCap || '',
@@ -1895,3 +2225,6 @@ async function init(ctx) {
 module.exports = { init };
 /* 供离线验证脚本（不经 HTTP）使用的内部出口 */
 module.exports._test = { REPORT_TYPES, defOf, generateReport, periodWindowOf, currentTarget, currentPeriodOf, windowOfFreq, freqOfPeriodKey, titleForFreq, govPunctuate, polishGovText, _cnTime, pvKimi, weekKey, _dayKey };
+/* 2026-09-07 #664 事件研判中心公文输出复用：红头版式引擎 + 图表复合分析板块对外开放
+ * （intel-insight /api/insight/event-report 直接消费，版式与周期简报同一引擎，一处维护） */
+module.exports.govdoc = { renderGovHtml, _govAnalysisBlock };

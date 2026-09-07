@@ -58,7 +58,11 @@ const sourcesCollector = require('./sources-collector'); /* 94源工程包采集
 const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国哨兵（2026-08-29 审计：BRI命中仅0.1%/沙特印尼哈萨克不足/TIER2八国零覆盖，30分钟一轮） */
 const specialMatrix = require('./special-matrix'); /* 专项采集矩阵（2026-09-03 任务 #531：涉华/项目/组织/咽喉/制裁五类 48h 深度补捞，无体积上限，60分钟一轮） */
 const reportsEngine = require('./reports-engine'); /* 智库报告产品线引擎（2026-09-03：9类专业分析报告统一后端，自注册路由+定时器） */
-const intelInsight = require('./intel-insight'); /* 情报洞察服务（2026-09-05 用户指令三：领导要报速览/生命周期时间线/相似历史事件匹配） */
+const intelInsight = require('./intel-insight');
+const terrorCenter = require('./terror-center'); /* #672 全球恐怖组织动态预警研判中心（常开雷达：数据库聚合+组织碰撞，零采集触发） */ /* 情报洞察服务（2026-09-05 用户指令三：领导要报速览/生命周期时间线/相似历史事件匹配） */
+const chinaTerror = require('./china-terror'); /* #689 涉华恐袭数据集（2010以来全球针对中国驻外机构/中资企业/中国公民的恐袭专项采集+聚合，10分钟实时+15天切片历史回补） */
+const enterpriseRisk = require('./enterprise-risk'); /* #698 涉企风险预警研判（六维分类：出口管制/投资审查/歧视性执法/制裁清单/数字管控/政策突变，库内真实数据聚合+单国AI研判+30天前瞻） */
+const backfill = require('./backfill'); /* 历史补采引擎（2026-09-06 用户指令三 #649：2026-01-01→首采日逐日回扫，1500条/日，backfill_progress 断点续跑） */
 const wmFeed = require('./wm-feed'); /* WorldMonitor.app 数据接入哨兵（2026-08-31：UCDP冲突/FCDO领事警示/断网/疫情/新闻摘要，30分钟一轮） */
 const manualEntryApi = require('./manual-entry'); /* 手动录入工作区 API（2026-09-01：结构化录入+并发安全+铁律入预警中心，挂载见 DataHub API 段） */
 const modelsAnalysis = require('./models-analysis'); /* 专题分析模型 API（2026-09-02：四模型只读分析计算层，挂载见 manual-entries 挂载点之后） */
@@ -272,7 +276,15 @@ function _ttlInvalidate(prefix) {
 function ttlCache(ms) {
   return function (req, res, next) {
     if (req.method !== 'GET') return next();
-    const key = req.path; /* 按路径聚合：这些全局数据接口的查询参数只有缓存破坏参数(?t=时间戳) */
+    /* 2026-09-08 #699：key 扩展含查询参数（剔除 t/_/timestamp 缓存破坏参数）——
+     * /api/intel/:type 有 ?map=1 与 ?limit=N 变体，纯 path 键会把轻量 map 响应与
+     * 全量 3000 行响应互相污染（张冠李戴返回错误 payload）。 */
+    let key = req.path;
+    try {
+      const qs = Object.keys(req.query).filter(k => !/^(t|_|ts|timestamp|cb)$/i.test(k))
+        .sort().map(k => k + '=' + String(req.query[k])).join('&');
+      if (qs) key += '?' + qs;
+    } catch (e) {}
     const hit = _ttlStore.get(key);
     if (hit && Date.now() - hit.at < ms) {
       res.set('X-Cache', 'HIT');
@@ -315,6 +327,13 @@ function ttlCache(ms) {
     res.on('finish', () => { if (!settled) { settled = true; _ttlPending.delete(key); pend.resolve(null); } });
     next();
   };
+}
+
+/* 2026-09-08 #699：情报增删改后失效 /api/intel/* 聚合缓存（审计/删除最多 45s 不可见不可接受） */
+function _intelCachePurge() {
+  try {
+    for (const k of Array.from(_ttlStore.keys())) if (String(k).indexOf('/api/intel/') === 0) _ttlStore.delete(k);
+  } catch (e) {}
 }
 
 /* ===== JWT 认证 ===== */
@@ -1569,11 +1588,11 @@ function _buildGovDailyReport(dateKey, items, meta, judg, sugg) {
         if (_rows.length >= 40) break;
         const t = _govTitle(it);
         if (!t || _seenT.has(t)) continue;
+        /* 2026-09-07 #658：标题/摘要统一走 RS.cleanReportLine 咽喉（实体/URL/emoji/社媒尾巴/
+         * 乱码/同名括注/重复子句/外文成句十项全治）——未译外文标题整条弃用，宁缺毋滥 */
+        if (!RS.cleanReportLine(t, { maxLen: 200 })) continue;
         _seenT.add(t);
-        let d = String(it.digest || '').replace(/<[^>]*>/g, ' ')
-          .replace(/(?:在|从|据|由|至|到|来源|源自)?\s*(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/gi, '')
-          .replace(/\s+/g, ' ').trim();
-        if (d.length > 100) { d = d.slice(0, 100); const p = Math.max(d.lastIndexOf('。'), d.lastIndexOf('！'), d.lastIndexOf('？')); d = p > 25 ? d.slice(0, p + 1) : d.replace(/[,，、：:\s]+$/, ''); }
+        const d = RS.cleanReportLine(it.digest, { maxLen: 100 });
         _rows.push('<p class="drg-p">' + (_rows.length + 1) + '.' + _escapeHtml(t) + '。' + (d ? '摘要：' + _escapeHtml(d) : '') + '</p>');
       }
       if (_rows.length) {
@@ -2230,6 +2249,7 @@ function _capAlertQueue(list) {
      * 2026-09-03 专项采集矩阵（任务 #531）：special_matrix 同样豁免国别帽（用户指令"采集无上限"）。 */
     if (a._sourceType === 'org_watch') { out.push(a); continue; }
     if (a._sourceType === 'special_matrix') { out.push(a); continue; }
+    if (a._sourceType === 'china_terror') { out.push(a); continue; } /* #689 涉华恐袭数据集：预警中心国别帽豁免（涉华遇袭零容忍漏报） */
     /* 2026-08-25 赋分改革根因修复：红区预警（涉华人员伤亡/绑架，≥61 分）豁免国别帽。
      * 均衡帽本为压制美/伊/叙刷屏，绝不该把"启动应急预案"级的红区预警挤掉。
      * 2026-08-29 两区渲染（用户指令：预警中心有重点和核心）：核心区条目（is_core：
@@ -2421,7 +2441,9 @@ async function _serverAlertGen() {
      * 只有最新 300 条被评估预警资格，60%+ 的合格条目从未进过闸门就被遗忘。
      * 提高到 1000 覆盖 24h 全量视野（已生成条目靠 haveIds 秒跳，增量成本极低）。 */
     const { rows } = await query(
-      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '24 hours' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 1000"
+      /* 2026-09-06 #649：排除 backfill 历史补采条目（collect_time=入库当下会命中 24h 窗，
+       * 1 月的旧事件进预警中心=实时预警流被历史淹没；补采数据只进数据中心/周期报告） */
+      "SELECT id, data_type, title, country, severity, collect_time, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '24 hours' AND audit_status='approved' AND COALESCE(data_json->>'_sourceType','') <> 'backfill' ORDER BY collect_time DESC LIMIT 1000"
     );
     if (!rows.length) return;
     const dh = await query("SELECT data_json FROM datahub_store WHERE collection='alerts'");
@@ -4501,19 +4523,21 @@ app.post('/api/reports/daily/:date/items/remove', express.json(), authMiddleware
 
 /* 权威统计接口（2026-08-14 用户指令：所有统计对话框实时统一数据源）：
  * 数据中心统计卡、态势总览"数据库:N条" 全部以本接口为准（PostgreSQL 实数） */
-app.get('/api/intel/stats', ttlCache(30000), async (req, res) => {
+app.get('/api/intel/stats', ttlCache(120000), async (req, res) => {
   try {
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const r = await query(`SELECT data_type, COUNT(*) c, COUNT(*) FILTER (WHERE collect_time >= $1) today FROM intel_data WHERE audit_status='approved' GROUP BY 1`, [dayStart]);
-    const byType = {};
-    let total = 0, today = 0;
-    r.rows.forEach(x => { byType[x.data_type] = parseInt(x.c, 10); total += parseInt(x.c, 10); today += parseInt(x.today, 10); });
-    /* 涉华总量（标题要素口径，与涉华列表一致） */
-    const cn = await query(`SELECT COUNT(*) c FROM intel_data WHERE audit_status='approved' AND (
+    /* 2026-09-07 #668：两查询并行（原串行 4s+1.4s→并行 ~4s；120s 缓存） */
+    const [r, cn] = await Promise.all([
+      query(`SELECT data_type, COUNT(*) c, COUNT(*) FILTER (WHERE collect_time >= $1) today FROM intel_data WHERE audit_status='approved' GROUP BY 1`, [dayStart]),
+      query(`SELECT COUNT(*) c FROM intel_data WHERE audit_status='approved' AND (
       title ILIKE '%中国%' OR title ILIKE '%中资%' OR title ILIKE '%中企%' OR title ILIKE '%中方%' OR title ILIKE '%华人%'
       OR title ILIKE '%华侨%' OR title ILIKE '%一带一路%' OR title ILIKE '%China%' OR title ILIKE '%Chinese%' OR title ILIKE '%Beijing%'
       OR data_json->>'title_zh' ILIKE '%中国%' OR data_json->>'title_zh' ILIKE '%中资%' OR data_json->>'title_zh' ILIKE '%华人%'
-      OR data_json->>'title_zh' ILIKE '%一带一路%')`);
+      OR data_json->>'title_zh' ILIKE '%一带一路%')`)
+    ]);
+    const byType = {};
+    let total = 0, today = 0;
+    r.rows.forEach(x => { byType[x.data_type] = parseInt(x.c, 10); total += parseInt(x.c, 10); today += parseInt(x.today, 10); });
     res.json({ total, today, byType, chinaTotal: parseInt(cn.rows[0].c, 10), updatedAt: new Date().toISOString() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4927,6 +4951,49 @@ app.get('/api/sources', (req, res) => {
     list.forEach(s => { stat[s.status] = (stat[s.status] || 0) + 1; stat.items += (s.items || 0); });
     res.json({ ok: true, stat, sources: list });
   } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
+/* ===== 前端实时池只读供给（2026-09-07 #668 卡顿根治）
+ * 背景：前端 datasources._refreshReal() 每分钟并发 13 个 /api/scrape?category=X + ?all=1，
+ * 每个都触发服务端真实抓网+翻译（5-120s），把浏览器同源 6 连接永久占满——
+ * 所有其他请求（领导要报/统计/预警）排队 90s+，表现为"系统非常慢、时时卡顿、页面打不开"。
+ * 根治：采集是服务端 7×24 自己的职责，前端只需"读"。本端点用 LATERAL 索引快查，
+ * 一次请求返回 13 类最新已审核条目，替换前端触发的 15 个抓取风暴请求。 */
+app.get('/api/scrape/pool', ttlCache(60000), async (req, res) => {
+  try {
+    const per = Math.min(30, Math.max(3, parseInt(req.query.per, 10) || 12));
+    const days = Math.min(30, Math.max(1, parseInt(req.query.days, 10) || 3));
+    const cats = ['terror_events','security_events','military_conflicts','political_events','natural_disasters','public_health','sanctions_data','social_unrest','infrastructure','geopolitical_intel','osint_intel','economic_risks','global_media'];
+    const values = cats.map(c => "('" + c + "')").join(',');
+    const r = await query(`
+      SELECT t.data_type, d.id, d.title, d.country, d.source, d.collect_time, d.data_json
+      FROM (VALUES ${values}) AS t(data_type)
+      CROSS JOIN LATERAL (
+        SELECT id, title, country, source, collect_time, data_json
+        FROM intel_data
+        WHERE audit_status='approved' AND data_type = t.data_type
+          AND collect_time >= NOW() - ($1 || ' days')::interval
+        ORDER BY collect_time DESC LIMIT $2
+      ) d`, [days, per]);
+    const data = {};
+    for (const row of r.rows) {
+      const j = row.data_json || {};
+      const it = Object.assign({}, j, {
+        id: row.id,
+        title: j.title_zh || row.title || '',
+        title_en: row.title || '',
+        content: j.content_zh || j.content || '',
+        source: row.source || j.source || '',
+        country: row.country || j.country_cn || j.country || '',
+        url: j.url || '',
+        data_type: row.data_type,
+        interestLinked: j.interestLinked === true ? true : undefined,
+        chinaRelated: !!j.chinaRelated, chinaNegative: !!j.chinaNegative
+      });
+      (data[row.data_type] = data[row.data_type] || []).push(it);
+    }
+    res.json({ ok: true, data, per, days, note: '只读供给：来自服务端 7×24 采集库（PostgreSQL），前端不触发抓取' });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/api/scrape', async (req, res) => {
@@ -5916,11 +5983,42 @@ const DAILY_STATS_FILE = path.join(CACHE_DIR, 'daily_stats.json');
  *  3. 新增"核心实体指纹"：提取标题中的人名/组织名/地名/数字，避免仅改几个字的洗稿重复。
  * 注意：窗口变长会饿死热点后续进展，因此标题指纹仅 catch 高度相似转载；事件签名 7 天窗口用于
  * 拦截旧闻复活，新进展（如"死亡人数升至 X"）因日期或数字不同会生成新签名，不被误杀。 */
+/* 2026-09-07 #663 根修：去重键先剥媒体尾巴/装饰符再归一——同一条新闻被不同媒体
+ * 转载时各挂自家尾巴（"- Fourth. News"/"- Daily Post"/机翻后"-第四。新闻"），
+ * 旧键含尾巴 → 同一事件指纹不同 → 重复入库（用户实测"以色列打击黎巴嫩"采两遍）。
+ * 剥尾在归一前做，判重与提交同口径（_addTitleKey/预载集全走本函数，天然一致）。 */
 function _normTitleKey(t) {
-  return String(t || '').toLowerCase()
+  let s = String(t || '');
+  try { if (zhPolish && zhPolish.stripMediaTail) s = zhPolish.stripMediaTail(s); } catch (e) {}
+  s = _preTransCleanTitle(s);
+  return s.toLowerCase()
     .replace(/https?:\/\/\S+/g, '')
     .replace(/[^\w一-龥]+/g, '')
     .slice(0, 48);
+}
+
+/* 翻译前标题预清（2026-09-07 #663 根修）：英文原标题的媒体尾巴（"- Fourth. News"）
+ * 若一起送机翻，会被揉成"-第四。新闻"混排残尾入库——必须在翻译前剥掉。
+ * 只剥"分隔符+媒体型词"的确定尾巴（news/times/post/daily/week 等词表），不动句中内容；
+ * 同时剥首尾装饰符（★▲ 等栏目标记）。对中文标题同样安全（无匹配即原样返回）。 */
+const _MEDIA_TAIL_WORD = /news|times|post|daily|press|herald|tribune|week|today|monitor|observer|gazette|standard|mirror|guardian|bloomberg|reuters|telegraph|sun|star|tv|radio|magazine|journal|chronicle|dispatch|bulletin|network|wire/i;
+function _preTransCleanTitle(s) {
+  let t = String(s || '');
+  if (!t) return t;
+  t = t.replace(/^[★☆▲△►▻※◆◇●○◎■□▪▫▽▼◢◣◤◥\s]+/, '').replace(/[★☆▲△►▻※◆◇●○◎■□▪▫▽▼◢◣◤◥\s]+$/, '').trim();
+  /* 循环剥尾（"- Bloomberg - US. News" 双层） */
+  for (let i = 0; i < 3; i++) {
+    const m = t.match(/[\s\-–—|｜]{1,3}([A-Za-z][A-Za-z0-9.'& ]{1,30})\s*$/);
+    if (!m) break;
+    const tail = m[1];
+    /* 尾巴含媒体型词，或整段是域名形态（xxx.com）→ 剥 */
+    if (_MEDIA_TAIL_WORD.test(tail) || /\.\s?(com|net|org|news|live|tv|ng|pk|za|ke|tz)$/i.test(tail.replace(/\s/g, ''))) {
+      const kept = t.slice(0, m.index).trim();
+      if (kept.length >= 12) { t = kept; continue; }  /* 剥后主体太短则不剥（防误伤） */
+    }
+    break;
+  }
+  return t;
 }
 
 /* ===== 删除墓碑（2026-08-22 用户铁律：删掉的数据永远不再进来）=====
@@ -6170,9 +6268,10 @@ async function _gnewsDbSweep() {
             (data_json->>'_sourceType' = 'threatroom'
               AND event_date < to_char(NOW() - INTERVAL '7 days','YYYY-MM-DD'))
             OR
-            (data_json->>'_sourceType' NOT IN ('socmint_watch','special_matrix','threatroom')
+            (data_json->>'_sourceType' NOT IN ('socmint_watch','special_matrix','threatroom','china_terror','ent_risk')
               AND event_date < to_char(NOW() - INTERVAL '24 hours','YYYY-MM-DD HH24:MI:SS'))
           )
+      /* #698-④ china_terror/ent_risk 为档案级历史回补通道，event_date 旧是正常特征，永久豁免清扫 */
         RETURNING id, data_json->>'url' AS url, title
       )
       SELECT * FROM del`;
@@ -6224,8 +6323,13 @@ function _isDupTitle(titleKeys, it) {
   return false;
 }
 function _addTitleKey(titleKeys, it) {
-  const k1 = _normTitleKey(it.title); if (k1.length >= 10) titleKeys.add(k1);
-  const k2 = _normTitleKey(it.title_zh); if (k2.length >= 10) titleKeys.add(k2);
+  /* #661：与 _preInsertGate 判重同口径——补采条目按事件日后缀隔离，否则
+   * 判重用加缀键、提交存裸键，同批内同日重复反而拦不住 */
+  const _dd = (it && it._sourceType === 'backfill')
+    ? String(it.publish_time || it.publishedAt || it.event_date || '').slice(0, 10) : '';
+  /* #661 第四轮：基键判长先于加缀（空 title_zh 加缀成常量键会污染全集） */
+  const _k1b = _normTitleKey(it.title); if (_k1b.length >= 10) titleKeys.add(_k1b + (_dd ? '@' + _dd : ''));
+  const _k2b = _normTitleKey(it.title_zh); if (_k2b.length >= 10) titleKeys.add(_k2b + (_dd ? '@' + _dd : ''));
 }
 /* 事件签名去重：近 7 天同国家+同事件类型+同日期的条目视为同一事件，只保留最早/信源最高者。
  * 用于拦截"IS 声称喀布尔中国餐馆爆炸"这类旧闻 2-3 天后换标题重发。 */
@@ -6234,15 +6338,26 @@ let _eventSigCache = { t: 0, set: new Set() };
  * 由 _getRecentEventSigs/_getRecentTitleKeys 刷新时同步更新此二引用 */
 var _recentEventSigsCache = new Set();
 var _recentTitleKeysCache = new Set();
+var _recentEventLooseCache = new Set(); /* #690 宽松签名集（同步只读视图，与 _recentEventSigsCache 同步刷新） */
 async function _getRecentEventSigs() {
   if (Date.now() - _eventSigCache.t < 5 * 60 * 1000 && _eventSigCache.set.size) return _eventSigCache.set;
   try {
     const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-    const { rows } = await query(`SELECT data_json->>'_eventSig' AS sig FROM intel_data WHERE collect_time >= $1 AND data_json->>'_eventSig' IS NOT NULL`, [since]);
+    const { rows } = await query(`SELECT data_json->>'_eventSig' AS sig, data_json->>'_eventSigLoose' AS lsig FROM intel_data WHERE collect_time >= $1 AND data_json->>'_eventSig' IS NOT NULL`, [since]);
     const set = new Set();
-    rows.forEach(r => { if (r.sig) set.add(r.sig); });
+    const loose = new Set();
+    rows.forEach(r => {
+      if (r.sig) set.add(r.sig);
+      /* #690：宽松键优先取存量字段；老行无字段时从精确签名推导（日期形态可还原，纯锚点形态跳过） */
+      if (r.lsig) { loose.add(r.lsig); loose.add(String(r.lsig).replace(/[^|]*$/, '')); }
+      else if (r.sig) {
+        const lk = _legacySigLoose(r.sig);
+        if (lk) { loose.add(lk); loose.add(lk.replace(/[^|]*$/, '')); }
+      }
+    });
     _eventSigCache = { t: Date.now(), set };
     _recentEventSigsCache = set;   /* 同步只读视图刷新 */
+    _recentEventLooseCache = loose;
     return set;
   } catch (e) { return _eventSigCache.set || new Set(); }
 }
@@ -6546,6 +6661,21 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
       if (_cn !== _c0) it.country = _cn;
     }
   }
+  /* #690 事发国修正（root fix：country 列此前存的是查询国/来源媒体国——印度媒体报墨西哥
+   * 烟花市场爆炸被显示成"印度"，同一事件跨源分签 4+ 条进预警中心）。
+   * 标题含事件词+国名时以标题国为事发国（与 _eventSignature/_semanticEventDup 的
+   * "宁信标题不信来源国"原则同源），原值存 _originCountry 供审计回溯。 */
+  {
+    const _t = String(it.title || '') + ' ' + String(it.title_zh || '');
+    if (it.country && it.country !== '国际' && _SIG_EVENT_RE.test(_t)) {
+      const _tc = _titleEventCountry(_t);
+      if (_tc && _tc !== it.country) {
+        it._originCountry = it.country;
+        it.country = _tc;
+        if (it.country_cn && it.country_cn !== '国际') it.country_cn = _tc;
+      }
+    }
+  }
   if (!String(it.country || '').trim()) {
     const _t = String(it.title || '') + ' ' + String(it.title_zh || '');
     const _sc = _SIG_COUNTRIES.find(x => _t.indexOf(x) >= 0) || _regionToCountry(_t);
@@ -6576,6 +6706,12 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
     条目正是海外利益目标（闻泰向荷兰 Nexperia 索赔=中企海外资产纠纷，中文报道+中文实体名被
     _isDomesticChina 误判国内新闻拦杀 8 条/轮）；与 threatroom/wm_feed 同款 chinaRelated 双标豁免，
     纯国内新闻（无涉华海外关联）仍被拦 */
+    || (it._sourceType === 'ent_risk') /* #698-④ 涉企风险通道定义即海外对华管制/制裁新闻
+    （GNews 定向 12 查询+三道污染闸前置），标题只有中国实体无外国国名时 country 落"国际"，
+    锚定豁免失效被境内闸误杀（黑名单中企买 Nvidia 芯片=美出口管制新闻，非国内新闻） */
+    || (it._sourceType === 'china_terror') /* #698-④ 涉华恐袭通道同款：策展通道（涉华×袭击
+    矩阵检索），"中国承包商在芬什哈芬遇袭"类标题被 _isDomesticChina 误判国内；#700 境内
+    本土硬闸（country='中国'+境内类别）仍在其后兜底拦真国内条 */
     || (it.chinaRelated === true && it.country && it.country !== '中国' && it.country !== '国际'); /* 2026-09-01
     通用国别锚豁免：涉华+国别已定为外国=海外涉华新闻，定义上非国内新闻（生产日志实证：SOURCES-PACK
     "Albanese 因台湾警告而反击中国"——澳洲对华政治，中文标题无'澳大利亚'字样被误杀）。国别字段由采集端
@@ -6583,18 +6719,37 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
   if (!_cnsecExempt && globalmedia._isDomesticChina && globalmedia._isDomesticChina((it.title || '') + ' ' + (it.title_zh || '') + ' ' + (it.content || ''))) {
     return { ok: false, code: ['domestic-china'] };
   }
+  /* #700 境内本土类硬闸（2026-09-08 用户实证：台风Saudel境内疏散/印度驻华使馆西藏洪水DNA 混入研判队列）
+   * 口径：海外利益保护平台，发生地在中国境内（country 经 #690 事发国修正后仍为'中国'）且类别
+   * 属境内本土关注类（自然灾害/治安/公卫/基建中断/环境/生产安全/群体性暴力/金融市场）→ 不入库；
+   * 地缘外交（台海/决策信号）与制裁合规（反制清单/对华管制——涉企预警素材）保留。 */
+  const _DOMESTIC_LOCAL_CATS = ['自然灾害', '社会治安事件', '公共卫生', '基础设施中断', '环境生态事件', '生产安全事故', '群体性暴力', '金融市场风险'];
+  if ((it.country === '中国' || it.country_cn === '中国') && _DOMESTIC_LOCAL_CATS.indexOf(it.category) >= 0) {
+    _gateAudit('入库闸', 'domestic-local', it.title);
+    return { ok: false, code: ['domestic-local'] };
+  }
   /* 标题自动补全：残缺标题先补全，而不是直接拦截 */
   _completeTitle(it);
   /* 标题质量 */
   if (!_isTitleQualityOk(it)) return { ok: false, code: ['bad-title'] };
-  /* 标题指纹 */
-  const k1 = _normTitleKey(it.title);
-  if (k1.length >= 10 && titleKeys.has(k1)) return { ok: false, code: ['title-dup'] };
-  const k2 = _normTitleKey(it.title_zh);
-  if (k2.length >= 10 && titleKeys.has(k2)) return { ok: false, code: ['title-zh-dup'] };
+  /* 标题指纹
+   * 2026-09-07 #661 补采日维度隔离：历史补采按「事件日」判重——同一模板化标题
+   * （"也门：胡塞武装 对 沙特 发动袭击"）在不同日期是不同事件，但 preload 的
+   * titleKeys/eventSigs 是近 7 天 collect_time 全集（含其他补采日的同款标题），
+   * 不隔离会把跨日独立事件误杀 ~700 条/日（实测入库率 23% 的根因）。
+   * 补采条目指纹/签名一律后缀 @事件日：同日同题仍去重（防真重复），跨日放行。 */
+  const _dd = (it._sourceType === 'backfill')
+    ? String(it.publish_time || it.publishedAt || it.event_date || '').slice(0, 10) : '';
+  /* 2026-09-07 #661 第四轮根修：判长必须在加 @事件日 后缀【之前】——空 title_zh 的
+   * 补采条目归一化为空串，加上后缀变 '@2026-08-05'（长 11≥10），全批 2400 条共享
+   * 同一常量键互相判重（实测入库 1/2400 的直接根因）。先判基键长度再拼后缀。 */
+  const _k1b = _normTitleKey(it.title);
+  if (_k1b.length >= 10 && titleKeys.has(_k1b + (_dd ? '@' + _dd : ''))) return { ok: false, code: ['title-dup'] };
+  const _k2b = _normTitleKey(it.title_zh);
+  if (_k2b.length >= 10 && titleKeys.has(_k2b + (_dd ? '@' + _dd : ''))) return { ok: false, code: ['title-zh-dup'] };
   /* 核心实体指纹：catch 洗稿式重复 */
-  const cek = _coreEntityKey(it.title || it.title_zh);
-  if (cek.length >= 15 && titleKeys.has('_cek:' + cek)) return { ok: false, code: ['entity-dup'] };
+  const _cekb = _coreEntityKey(it.title || it.title_zh);
+  if (_cekb.length >= 15 && titleKeys.has('_cek:' + _cekb + (_dd ? '@' + _dd : ''))) return { ok: false, code: ['entity-dup'] };
   /* 事件签名
    * 2026-08-31 快照豁免（WM-FEED 0 入库根因二）：战区/舰队/咽喉/走廊/决策信号是
    * 状态型快照（每实体每日一条，合成 URL `worldmonitor.app/wm-snapshot/<entity>/<日期>` 幂等去重），
@@ -6607,7 +6762,20 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
    * url/title/entity 三层精确指纹（同一篇文章绝不重复入库） */
   const _trExempt = it._sourceType === 'threatroom';
   const sig = (_wmSnapshot || _trExempt) ? null : _eventSignature(it);
-  if (sig && sig.indexOf('|') >= 0 && eventSigs.has(sig)) return { ok: false, code: ['event-sig-dup'] };
+  const sigK = (sig && _dd) ? sig + '@' + _dd : sig;   /* #661：补采签名按事件日隔离（同签名跨日是不同事件） */
+  if (sigK && sigK.indexOf('|') >= 0 && eventSigs.has(sigK)) return { ok: false, code: ['event-sig-dup'] };
+  /* #690 宽松签名查重（跨源变体根治）：同一事件跨源时精确签名必然漂移——
+   * ① 事件词子集差（"死亡+爆炸" vs "爆炸"）；② 锚点有无（一家报伤亡数一家不报）；
+   * ③ 日期 ±1 天（时区/首发跨日）。墨西哥烟花爆炸 11 变体三种签名形态互不撞的实证。
+   * 宽松键=事发国|L|事件类型正典|事件日|锚点，命中条件：同国+同类型+日期±1 且
+   * （锚点相等 或 任一侧无锚点）。空锚对空锚仅限高特异类型（爆炸/恐袭/绑架/政变等），
+   * 冲突/抗议类高频事件不做空锚匹配（防同日不同事件误杀）。backfill 不参与
+   * （#661 教训：批量历史入库任何宽匹配都会重演 1/2400 误杀）。 */
+  const _lsig = (sig && !_dd) ? _eventSigLoose(it) : '';
+  if (_lsig && _sigLooseHit(_lsig)) {
+    _gateAudit('入库闸', 'event-sig-dup-loose', it.title);
+    return { ok: false, code: ['event-sig-dup'], lsig: _lsig };
+  }
   /* 语义级事件查重（2026-08-30 root-cause：跨措辞/跨通道/跨日变体绕过精确查重——
    * 海地屠杀 47 死 5 天 20+ 版本 / 斯里兰卡中国公民谋杀案三版本分签的同类问题根治。
    * 同事件已有 ≥2 独立源后全拒（保留前两源供多源印证），详见 _semanticEventDup 注释。 */
@@ -6633,6 +6801,11 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
       天然等不到"其他独立源印证"；时效由 trustPubDate 白名单+URL 日幂等保证 */
     || it._sourceType === 'threatroom' /* 2026-08-31：专项作战室是 7 天回顾性研究——窗口内大量
       条目发布已超 6h，小国/新组织事件常全网仅 1-2 源，印证窗口会系统性误杀专项素材 */
+    || it._sourceType === 'backfill' /* 2026-09-06 #649：历史补采条目发布已数月，
+      6h 印证窗+48h 库内印证对历史事件系统性全灭（库内只查近 48h collect_time）——豁免 */
+    || it._sourceType === 'ent_risk' /* 2026-09-08 #698-④：涉企风险实采是策展通道（12 定向查询+
+      三道污染闸+翻译），GNews 单源 1-3 天龄常态；6h 印证窗把管制/制裁独家报道全灭
+      （黑名单中企买 Nvidia 芯片 7 候选全灭实证）；URL/事件签名去重闸仍兜底防重 */
     || (it._sourceType === 'gdelt_events' && (it._gdSources || 0) >= 2) /* 2026-09-04：GDELT Events
       条目自带官方多源聚类统计（NumSources≥2 即 GDELT 确认的多源事件），GDELT 本身就是印证引擎，
       库内签名查新事件必然查无此人——28/61 条误杀实测（stale-single-source）；sources=1 仍走印证闸 */
@@ -6648,7 +6821,9 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
     }
   }
 
-  return { ok: true, code, sig, cek };
+  /* #661 第四轮：cek 基键够长才带出（带后缀提交与判重同口径）；基键过短返回空，
+   * 防止短实体键（如纯国名）加缀后被当有效指纹提交污染全集 */
+  return { ok: true, code, sig: sigK || sig, lsig: _lsig || '', cek: (_cekb.length >= 15 ? _cekb + (_dd ? '@' + _dd : '') : '') };
 }
 /* 核心重点类目判定（2026-08-28 用户指令：恐袭/恐组动态/绑架/骚乱群体性事件/涉华负面/涉华矿业 为采集核心） */
 function _isCorePriorityText(it) {
@@ -6664,6 +6839,16 @@ function _preInsertCommit(it, existing, titleKeys, eventSigs, gateResult) {
   if (gateResult && gateResult.cek && gateResult.cek.length >= 15) titleKeys.add('_cek:' + gateResult.cek);
   if (gateResult && gateResult.sig && gateResult.sig.indexOf('|') >= 0) eventSigs.add(gateResult.sig);
   it._eventSig = (gateResult && gateResult.sig) || it._eventSig || '';
+  /* #690 宽松签名提交：入集（实际锚点 + 空锚点两个变体）+ 落 data_json（7 天窗口重建用） */
+  const _ls = (gateResult && gateResult.lsig) || '';
+  it._eventSigLoose = _ls;
+  if (_ls && _ls.indexOf('|') >= 0) {
+    try {
+      _recentEventLooseCache.add(_ls);
+      _recentEventLooseCache.add(_ls.replace(/[^|]*$/, '')); /* 空锚变体：允许"对侧无锚点"的跨源命中 */
+    } catch (e) {}
+  }
+  delete it.__sigParts; /* 瞬态解析缓存不落库 */
 }
 /* ===== 时效硬闸门（2026-08-13 用户铁律：预警系统只采近 48 小时的数据）=====
  * 旧闻（如 4 月的中粮巴西建厂、6 天前的联合国新闻）没有预警价值。
@@ -6693,6 +6878,7 @@ const CORROBORATION_WINDOW_MS = 6 * 60 * 60 * 1000; /* 6小时内单源可放行
  *  ④ 纯战况琐事（战报更新/歼敌数/日常会见/宇航员等）→ 一律拒收，不看配额。 */
 let _ruUaCount = 0, _ruUaDate = '';
 let _ruUaDb = { date: '', n: 0, t: 0 };
+const _ruUaHist = {}; /* 2026-09-06 #649 backfill 俄乌配额按事件日桶计数（键=YYYY-MM-DD） */
 const RUUA_DAILY_CAP = 15;
 const _RUUA_RE = /乌克兰|俄罗斯|Ukraine|Ukrainian|Russia|Russian|Kyiv|Kiev|Moscow|Zelensky|Putin|Donetsk|Donbas|Kharkiv|Belgorod|Kherson|Zaporizhzhia|克里米亚|基辅|莫斯科|普京|泽连斯基|顿巴斯|顿涅茨克|赫尔松|TASS|Euromaidan/i;
 const _RUUA_CN_RE = /中国|中资|中企|中方|华人|华侨|北京|Beijing|Chinese|China/i;
@@ -6972,6 +7158,14 @@ function _ruUaQuotaOk(it) {
       !/空袭|导弹|无人机|炮击|前线|阵地|进攻|反攻|airstrike|missile|drone|frontline|offensive/i.test(txt)) { return true; }
   /* ④ 纯战况琐事：无伤亡/无涉华/无战略要素 → 一律拒收（即使配额未满） */
   if (!_RUUA_IMPORTANT_RE.test(txt)) return false;
+  /* 2026-09-06 #649 backfill：15条/日配额语义是"每个历史日"——按事件日桶计数，
+   * 不按采集日挤一桶（否则补采俄乌条目 15 条后全天全灭）。 */
+  if (it._sourceType === 'backfill') {
+    const hd = String(it.event_date || it.publish_time || '').slice(0, 10) || d;
+    _ruUaHist[hd] = (_ruUaHist[hd] || 0) + 1;
+    if (Object.keys(_ruUaHist).length > 500) { const ks = Object.keys(_ruUaHist); for (let i = 0; i < 250; i++) delete _ruUaHist[ks[i]]; }
+    return _ruUaHist[hd] <= RUUA_DAILY_CAP;
+  }
   /* ③ 重要事件：消耗 15 条/日配额 */
   const todayTotal = (_ruUaDb.date === d ? _ruUaDb.n : 0) + _ruUaCount;
   if (todayTotal < RUUA_DAILY_CAP) { _ruUaCount++; return true; }
@@ -7000,6 +7194,16 @@ function _dominantQuotaOk(it) {
   if (/中国|中资|中企|中方|华人|一带一路|涉华|Chinese|China|CPEC/i.test(t)) return true;
   const dm = t.match(/(\d+)\s*(?:人)?(?:死亡|遇难|身亡|丧生)|(\d+)\s*(?:killed|dead)/i);
   if (dm && parseInt(dm[1] || dm[2], 10) >= 5) return true;
+  /* 2026-09-06 #649 backfill：高发国日帽按事件日桶计数（语义=每个历史日的均衡，
+   * 不按采集日挤一桶；否则巴基斯坦 130 帽补采头两小时就触顶） */
+  if (it._sourceType === 'backfill') {
+    const hd = String(it.event_date || it.publish_time || '').slice(0, 10) || d;
+    if (!_domCounts.hist) _domCounts.hist = {};
+    const hk = hd + '|' + cap;
+    _domCounts.hist[hk] = (_domCounts.hist[hk] || 0) + 1;
+    if (Object.keys(_domCounts.hist).length > 3000) { const ks = Object.keys(_domCounts.hist); for (let i = 0; i < 1500; i++) delete _domCounts.hist[ks[i]]; }
+    return _domCounts.hist[hk] <= DOMINANT_DAILY_CAP[cap];
+  }
   _domCounts.by[cap] = (_domCounts.by[cap] || 0) + 1;
   return _domCounts.by[cap] <= DOMINANT_DAILY_CAP[cap];
 }
@@ -7033,6 +7237,7 @@ async function _catStructureOk(it) {
    * 2026-09-03 专项采集矩阵（任务 #531）：special_matrix 同样保留豁免锚点。 */
   if (it && it._sourceType === 'org_watch') return true;
   if (it && it._sourceType === 'special_matrix') return true;
+  if (it && it._sourceType === 'china_terror') return true; /* #689 涉华恐袭数据集豁免锚点 */
   return true;
 }
 
@@ -7202,20 +7407,36 @@ function _eventSignature(it) {
   const evSet = new Set();
   let mm; while ((mm = evRe.exec(tl)) !== null) evSet.add(mm[0]);
   const ev = Array.from(evSet).sort().join('+') || '';
-  /* 事发国：标题优先（跨源一致），标题无国名才退化用条目国别（含地区映射：俾路支→巴基斯坦等） */
-  const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
+  /* 事发国：标题优先（跨源一致），标题无国名才退化用条目国别（含地区映射：俾路支→巴基斯坦等）
+   * #690 修正：find 按 _SIG_COUNTRIES 数组序命中国名，多国标题（"美国谴责墨西哥爆炸"）
+   * 会取数组序靠前者而非文中更近事件词者——改 _titleEventCountry（国名与事件词最近邻，
+   * 优先事件词之前的位置），跨源措辞差异下国别提取更稳定。 */
+  const ctry = _titleEventCountry(t) || String(it.country_cn || it.country || '');
   /* 主语锚点：伤亡数字 / 威胁组织 / 关键设施——同事件不同措辞的共同锚
    * 2026-08-29 P1-3 数量级桶修正：同一事件死亡人数随救援进展持续更新（469→475→626），
    * 精确数字当锚点会让每次更新都换签名绕过 event-sig-dup——中尼洪灾 7 天 141 条变体的根因。
    * 改按数量级分桶（十位 n2/百位 n3/千位 n4），死亡人数爬升不再换签名。 */
-  const numRaw = (t.match(/(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|killed|missing|injured|dead)/i) || [])[1] || '';
+  const numRaw = (t.match(/(\d{2,4})\s*(?:人|名)?\s*(?:死亡|遇难|身亡|失踪|受伤|死|killed|missing|injured|dead)/i) || [])[1] || '';
   const num = numRaw ? (numRaw.length >= 4 ? 'n4' : numRaw.length === 3 ? 'n3' : 'n2') : '';
-  const org = (t.match(/塔利班|胡塞|博科|青年党|BLA|TTP|ISIS|伊斯兰国|基地组织|Taliban|Houthi|Hamas|Hezbollah/i) || [])[0] || '';
+  /* #690 org 词边界修复：BLA/TTP/ISIS 无边界时大小写不敏感匹配英文单词前缀——
+   * "blast kills 12" 被 BLA 命中 → 锚点='bla'（垃圾锚漂移源之一）。加 \b 词边界。 */
+  const org = (t.match(/塔利班|胡塞|博科|青年党|伊斯兰国|基地组织|\bBLA\b|\bTTP\b|\bISIS\b|Taliban|Houthi|Hamas|Hezbollah/i) || [])[0] || '';
   const fac = (t.match(/瓜达尔|霍尔木兹|红海|苏伊士|中巴经济走廊|CPEC|大使馆|使馆|清真寺|学校|医院|机场|港口|Gwadar|Hormuz|embassy/i) || [])[0] || '';
   const anchor = [num, org, fac].filter(Boolean).join('/');
   const text = String(it.title || '') + ' ' + String(it.title_zh || '') + ' ' + String(it.content || it.description || it.desc || '');
   const evtDate = _extractEventDate(text, it.publish_time || it.publishedAt || it.pubDate || new Date());
-  const day = evtDate ? evtDate.toISOString().slice(0, 10) : String(it.publish_time || it.publishedAt || '').slice(0, 10);
+  /* #690 日期归一：旧版 fallback 直接 slice 原始串——"Sun, 06 Sep 2026" 被切成 "Sun, 06 Se"
+   * 垃圾段进签名（墨西哥案第三签名形态实证）。归一链：解析成功→本地 YMD；解析失败→
+   * Date 兜底解析；全失败→采集日。且弃 toISOString（UTC 日界与本地差 8h，凌晨采的
+   * 事件日漂一天）。 */
+  let day = '';
+  if (evtDate) day = _ymdLocal(evtDate);
+  if (!day) {
+    const pr = new Date(String(it.publish_time || it.publishedAt || it.pubDate || ''));
+    day = (!isNaN(pr.getTime())) ? _ymdLocal(pr) : _ymdLocal(new Date());
+  }
+  /* #690 瞬态解析缓存：_eventSigLoose 复用同一份解析结果（入库前 delete，不落库） */
+  it.__sigParts = { ctry: ctry, evCanon: _evCanonOf(evSet), day: day, anchor: anchor };
   /* 2026-09-01 退化签名细化：无事件词且无锚点的条目此前退化为「国||日期」——同国同日
    * 第二条起全灭。近12h实测 event-sig-dup 拒收 1725 条中 1096 条(64%)是此类**独立新闻**
    * （卢拉贸易谈判/图帕克案审判/数字卢布/中国黑客司法部…全部单源单版），非同事件变体。
@@ -7246,6 +7467,125 @@ function _degenKw(t, ctry) {
   }
   return toks.join('+');
 }
+/* ===== #690 采集时归一化指纹工具集（用户指令："设计一个工具，在采集的时候就处理掉"）=====
+ * 宽松签名层：同事件跨源变体的统一指纹。三个漂移源（事件词子集差/锚点有无/日期±1）
+ * 任一触发即精确签名失配——宽松键只保留跨源稳定成分：事发国 + 事件类型正典 + 事件日 + 锚点。 */
+function _ymdLocal(d) {
+  try { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  catch (e) { return ''; }
+}
+function _shiftYmd(day, off) {
+  const m = String(day || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10) + off);
+  return _ymdLocal(d);
+}
+/* 事件类型正典：事件词集合 → 单一类型标签（按特异性优先级），跨语言跨子集归一 */
+const _EV_CANON_PRI = [
+  ['爆炸', 'explosion', 'blast', 'bomb'],
+  ['恐袭', 'attack', '袭击', 'strike', '枪击', 'shoot', 'raid', 'ambush', '空袭'],
+  ['绑架', 'kidnap', '劫持', 'hostage'],
+  ['死亡', 'killed', '遇难', '身亡', '伤亡', 'murder', '谋杀', '屠杀', 'massacre'],
+  ['冲突', 'clash', '交火', '炮击'],
+  ['政变', 'coup'],
+  ['制裁', 'sanction', 'tariff'],
+  ['抗议', 'protest', 'riot', '骚乱', '示威'],
+  ['火灾', 'fire'],
+  ['洪水', 'flood'],
+  ['地震', 'earthquake'],
+  ['逮捕', 'arrest', '被捕'],
+  ['坠机', 'crash', '沉船', 'collapse'],
+  ['疫情', 'outbreak', 'epidemic', 'pandemic', '传染病'],
+  ['断网', 'outage', '中断', 'disruption'],
+  ['判决', '释放'],
+  ['预警', 'advisory'],
+  ['撤离']
+];
+function _evCanonOf(evSet) {
+  if (!evSet || !evSet.size) return '';
+  for (const fam of _EV_CANON_PRI) { for (const w of fam) { if (evSet.has(w)) return fam[0]; } }
+  return '';
+}
+/* 空锚对空锚匹配白名单：仅高特异类型（同国同日两起独立爆炸/绑架/政变概率极低）；
+ * 冲突/抗议/制裁类高频日常事件不做空对空匹配（防巴基斯坦同日多起冲突误杀） */
+const _LOOSE_EMPTY_OK = new Set(['爆炸', '恐袭', '绑架', '政变', '坠机', '地震', '洪水', '火灾', '沉船']);
+/* 标题事发国提取：国名与事件词最近邻（优先事件词之前的位置）。
+ * 数组序 find 的缺陷：多国标题（"美国谴责墨西哥爆炸"）命中数组序靠前者而非事发国；
+ * 最近邻启发式在常规"国名+事件"新闻标题语序下取到真正的事发国。 */
+const _TITLE_EV_ANCHOR_RE = /袭击|爆炸|绑架|劫持|恐袭|枪击|冲突|政变|抗议|示威|制裁|坠机|沉船|地震|洪水|死亡|遇难|遇袭|身亡|伤亡|火灾|骚乱|屠杀|attack|bomb|blast|explosion|kidnap|clash|coup|protest|sanction|crash|killed|flood|earthquake|riot|massacre/gi;
+/* #690 英文国名→中文标准名：_SIG_COUNTRIES 中英文并存，标题命中英文项时
+ * 直接返回英文会导致中英源签名国别分签（墨西哥 vs Mexico）。统一归一中文。 */
+const _SIG_COUNTRY_EN2ZH = {
+  Nepal: '尼泊尔', Pakistan: '巴基斯坦', Afghanistan: '阿富汗', Iran: '伊朗', Iraq: '伊拉克', Syria: '叙利亚', Yemen: '也门',
+  Saudi: '沙特', Israel: '以色列', Ukraine: '乌克兰', Russia: '俄罗斯', Myanmar: '缅甸', Thailand: '泰国', Vietnam: '越南',
+  Laos: '老挝', Cambodia: '柬埔寨', Malaysia: '马来西亚', Indonesia: '印度尼西亚', Philippines: '菲律宾', Bangladesh: '孟加拉国',
+  'Sri Lanka': '斯里兰卡', India: '印度', Kazakhstan: '哈萨克斯坦', Uzbekistan: '乌兹别克斯坦', Ethiopia: '埃塞俄比亚',
+  Somalia: '索马里', Kenya: '肯尼亚', Nigeria: '尼日利亚', Ghana: '加纳', Mali: '马里', Niger: '尼日尔', Chad: '乍得',
+  Cameroon: '喀麦隆', 'South Africa': '南非', Mexico: '墨西哥', Brazil: '巴西', Argentina: '阿根廷', Chile: '智利',
+  Peru: '秘鲁', Colombia: '哥伦比亚', Venezuela: '委内瑞拉', Ecuador: '厄瓜多尔', Bolivia: '玻利维亚', Haiti: '海地', Panama: '巴拿马'
+};
+function _titleEventCountry(t) {
+  const s = String(t || '');
+  if (!s) return null;
+  const cands = [];
+  for (const c of _SIG_COUNTRIES) { const p = s.indexOf(c); if (p >= 0) cands.push({ c: _SIG_COUNTRY_EN2ZH[c] || c, p: p }); }
+  if (!cands.length) return _regionToCountry(s);
+  const evs = []; let m;
+  _TITLE_EV_ANCHOR_RE.lastIndex = 0;
+  while ((m = _TITLE_EV_ANCHOR_RE.exec(s)) !== null) evs.push(m.index);
+  if (!evs.length) { cands.sort((a, b) => a.p - b.p); return cands[0].c; }
+  let best = null;
+  for (const cd of cands) {
+    for (const e of evs) {
+      const dist = cd.p < e ? (e - cd.p) : (e - cd.p + 60); /* 事件词之后的国名加惩罚（多为行为方/受害方国） */
+      if (!best || dist < best.d) best = { c: cd.c, d: dist };
+    }
+  }
+  return best ? best.c : cands[0].c;
+}
+/* 宽松签名：ctry|L|evCanon|day|anchor（复用 _eventSignature 的瞬态解析缓存 __sigParts） */
+function _eventSigLoose(it) {
+  try {
+    if (!it || !it.__sigParts) { _eventSignature(it); }
+    const p = it && it.__sigParts;
+    if (!p || !p.ctry || !p.evCanon || !p.day) return '';
+    return p.ctry + '|L|' + p.evCanon + '|' + p.day + '|' + (p.anchor || '');
+  } catch (e) { return ''; }
+}
+/* 宽松命中：同国+同类型+日期±1 且（锚点相等 或 任一侧空锚）。
+ * 空锚侧只查空锚变体，且仅白名单类型；有锚侧查 实际锚+空锚 两个变体。 */
+function _sigLooseHit(loose) {
+  try {
+    const parts = String(loose || '').split('|');
+    if (parts.length !== 5) return false;
+    const ctry = parts[0], ev = parts[2], day = parts[3], anchor = parts[4];
+    if (!ctry || !ev || !day) return false;
+    const anchors = anchor ? [anchor, ''] : (_LOOSE_EMPTY_OK.has(ev) ? [''] : []);
+    for (const off of [-1, 0, 1]) {
+      const dd = _shiftYmd(day, off);
+      if (!dd) continue;
+      for (const a of anchors) {
+        if (_recentEventLooseCache.has(ctry + '|L|' + ev + '|' + dd + '|' + a)) return true;
+      }
+    }
+    return false;
+  } catch (e) { return false; }
+}
+/* 存量精确签名 → 宽松键推导（老行无 _eventSigLoose 字段时的重建路径）：
+ * 仅「国|事件词|日期」形态可还原；锚点形态（无日期）无法还原事件日，跳过。 */
+function _legacySigLoose(sig) {
+  try {
+    const parts = String(sig || '').split('|');
+    if (parts.length !== 3) return null;
+    const ctry = parts[0], ev = parts[1], tail = parts[2];
+    if (!ctry || !ev || ev === 'kw') return null;
+    const evCanon = _evCanonOf(new Set(ev.toLowerCase().split('+').filter(Boolean)));
+    if (!evCanon) return null;
+    const mDay = tail.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (!mDay) return null;
+    return ctry + '|L|' + evCanon + '|' + mDay[1] + '|' + tail.slice(mDay[1].length).replace(/^\|/, '');
+  } catch (e) { return null; }
+}
 /* ===== 事件簇产量帽（2026-08-29 三部委审查 P1-3 根因修复）=====
  * 起因：中尼边境洪灾单一事件 7 天 141 条变体入库。根因链：
  *  ① 事件签名锚点含具体伤亡数字——死亡人数 469→626 每次更新都换签名，绕过 event-sig-dup；
@@ -7264,6 +7604,8 @@ function _eventClusterOk(it) {
    * 2026-09-03 专项采集矩阵豁免（任务 #531）：special_matrix 48h 深度补捞不受簇帽限（用户指令"采集无上限"） */
   if (it._sourceType === 'org_watch') return true;
   if (it._sourceType === 'special_matrix') return true;
+  /* 2026-09-07 涉华恐袭数据集（#689）：china_terror 涉华公民/中资项目/驻外机构遇袭零容忍漏采，不受簇帽限 */
+  if (it._sourceType === 'china_terror') return true;
   const t = String(it.title || '') + ' ' + String(it.title_zh || '');
   if (t.trim().length < 8) return true;
   const ctry = _SIG_COUNTRIES.find(x => t.indexOf(x) >= 0) || _regionToCountry(t) || String(it.country_cn || it.country || '');
@@ -7273,9 +7615,19 @@ function _eventClusterOk(it) {
   const d = _todayKey();
   if (_evCluster.date !== d) { _evCluster.date = d; _evCluster.by = {}; }
   const key = ctry + '|' + ev[0].toLowerCase();
+  /* 2026-09-06 #649 backfill：历史条目按「事件日」计簇帽——一天补 1500 条若挤进
+   * 今天一个桶，同国同事件词秒触 12 条帽全灭；独立 map 不与实时计数互相清零。 */
+  if (it._sourceType === 'backfill') {
+    const hd = String(it.event_date || it.publish_time || '').slice(0, 10) || d;
+    const hk = hd + '|' + key;
+    _evClusterHist[hk] = (_evClusterHist[hk] || 0) + 1;
+    if (Object.keys(_evClusterHist).length > 4000) { const ks = Object.keys(_evClusterHist); for (let i = 0; i < 2000; i++) delete _evClusterHist[ks[i]]; }
+    return _evClusterHist[hk] <= EVENT_CLUSTER_DAILY_CAP;
+  }
   _evCluster.by[key] = (_evCluster.by[key] || 0) + 1;
   return _evCluster.by[key] <= EVENT_CLUSTER_DAILY_CAP;
 }
+const _evClusterHist = {}; /* #649 backfill 事件日簇帽计数器（键=事件日|国|事件词） */
 /* ===== 语义级事件查重（2026-08-30 root-cause：跨措辞/跨通道/跨日变体绕过精确查重）=====
  * 用户抓到的一类问题（非个案，两个铁证样本）：
  * ① 海地帮派屠杀 47 死（08-26 事发）→ 08-26~08-30 被采 20+ 版本入库。各通道按检索国/
@@ -7325,7 +7677,7 @@ async function _semanticEventDup(it) {
          * 裸列 url 使本查询每次必败 → throw 被 _semanticEventDup 外层 catch 吞掉 →
          * 语义查重整体失效 + 候选缓存从未写入（每条都打必败查询，日志 20839 次）+ 连接池被占用。
          * 改为 data_json->>'url' AS url，与 7004/7275 行查重写法对齐。 */
-        `SELECT title, COALESCE(NULLIF(data_json->>'title_zh',''), title) tzh, source, data_json->>'url' AS url FROM intel_data
+        `SELECT title, COALESCE(NULLIF(data_json->>'title_zh',''), title) tzh, source, data_json->>'url' AS url, data_json->>'event_date' AS evd FROM intel_data
          WHERE collect_time > NOW() - INTERVAL '3 days' AND (title LIKE $1 OR data_json->>'title_zh' LIKE $1) LIMIT 300`,
         ['%' + ckey + '%']);
       cand = { t: Date.now(), rows: rows || [] };
@@ -7348,6 +7700,14 @@ async function _semanticEventDup(it) {
       catch (e2) { const sv = String(s || ''); return _AGG_HOST_RE.test(sv) ? 'AGG:' + sv.slice(0, 30) : sv; }
     };
     for (const r of cand.rows) {
+      /* 2026-09-06 #649 backfill 跨日误杀防御：候选池按 collect_time 近 3 天拉取，
+       * 补采运行期覆盖全部已补历史日——不同日期的同国同伤亡数事件（"巴基斯坦冲突3死"
+       * 月月有）会被误判同事件。backfill 条目追加事件日一致才进入同事件判定。 */
+      if (it._sourceType === 'backfill') {
+        const rDay = String(r.evd || '').slice(0, 10);
+        const iDay = String(it.event_date || it.publish_time || '').slice(0, 10);
+        if (rDay && iDay && rDay !== iDay) continue;
+      }
       const rt = String(r.title || '') + ' ' + String(r.tzh || '');
       const rNum = (rt.match(_SEM_NUM_RE) || [])[1] || '';
       const evHit = evArr.some(w => rt.toLowerCase().indexOf(w) >= 0);
@@ -7386,6 +7746,13 @@ async function _semanticEventDup(it) {
     return false;
   } catch (e) { return false; }
 }
+/* 2026-09-07 #678 性能根治：stance 交叉验证候选集进程内缓存。
+ * 此前每条入库都跑一次「近2天 title LIKE '%国别%'」全表扫（补采洪峰下 18.8 万行 × 每数秒数十次
+ * = 5~7s/条的慢查询风暴，打满 40 连接池、前台 API 全部排队超时 → 用户感知系统卡死）。
+ * 同签名精确匹配改走 _eventSig 表达式索引（idx_intel_eventsig）；v2 存量 LIKE 兜底结果按国别
+ * 缓存 10 分钟——stance 集合在 10 分钟内无实质变化，且本函数只做增量打标，容忍近似。 */
+const _stanceCandCache = new Map(); /* ctry -> {at, rows} */
+
 /* 入库后计算印证数（近2天同签名独立来源数+1），写回本条 data_json */
 async function _markCorroboration(id, it) {
   try {
@@ -7410,11 +7777,31 @@ async function _markCorroboration(id, it) {
       const ctry = sig.split('|')[0] || '';
       const evWords = (sig.split('|')[1] || '').split('+').filter(Boolean);
       if (!ctry || !evWords.length) return;
-      const { rows: cand } = await query(
-        `SELECT data_json->>'stance' st, data_json->>'_eventSig' sig2, title FROM intel_data
-         WHERE collect_time >= $1 AND data_json->>'stance' IS NOT NULL AND title LIKE '%' || $2 || '%'`,
-        [since, ctry]
-      );
+      const _now = Date.now();
+      let _cc = _stanceCandCache.get(ctry);
+      if (!_cc || _now - _cc.at > 10 * 60 * 1000) {
+        /* 同签名精确匹配走索引（快）；v2 存量 LIKE 兜底限 500 行并缓存 10 分钟 */
+        const { rows: sigRows } = await query(
+          `SELECT data_json->>'stance' st, data_json->>'_eventSig' sig2, title FROM intel_data
+           WHERE data_json->>'_eventSig' = $1 AND data_json->>'stance' IS NOT NULL LIMIT 50`,
+          [sig]
+        );
+        const { rows: likeRows } = await query(
+          `SELECT data_json->>'stance' st, data_json->>'_eventSig' sig2, title FROM intel_data
+           WHERE collect_time >= $1 AND data_json->>'stance' IS NOT NULL AND title LIKE '%' || $2 || '%'
+           LIMIT 500`,
+          [since, ctry]
+        );
+        const seen = new Set(); const merged = [];
+        sigRows.concat(likeRows).forEach(r => {
+          const k = String(r.sig2 || '') + '|' + String(r.title || '');
+          if (!seen.has(k)) { seen.add(k); merged.push(r); }
+        });
+        _cc = { at: _now, rows: merged };
+        _stanceCandCache.set(ctry, _cc);
+        if (_stanceCandCache.size > 80) _stanceCandCache.delete(_stanceCandCache.keys().next().value);
+      }
+      const cand = _cc.rows;
       const stances = new Set();
       cand.forEach(r => {
         const sameSig = r.sig2 === sig;
@@ -7461,6 +7848,51 @@ function _isFreshEnough(it) {
     it.event_date = it.event_date || it.publish_time;
     if (!it.date) it.date = it.event_date;
     return true;
+  }
+
+  /* 2026-09-06 #649 历史补采（backfill）：窗口 2026-01-01→首采日的历史事件，
+   * 24h/60h 时效窗与"当天铁律"对补采全灭——以发布时间为准绳：
+   * 过去任意日期放行（event_date=发布日，供按日统计/年报）；未来 >12h 或无日期拒
+   * （GDELT 恒带 seendate，backfill 模块已归一到 publish_time，无日期=脏数据）。
+   * 提前 return true 同时绕过末尾"当天数据铁律"段（历史日必非今天，否则全被 importance 闸杀）。 */
+  if (it._sourceType === 'backfill') {
+    const _bv = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
+    const _bd = new Date(_bv);
+    if (!isNaN(_bd.getTime())) {
+      if (Date.now() - _bd.getTime() < -12 * 3600 * 1000) return false; /* 未来事件 */
+      if (!it.event_date) { it.event_date = _bd.toISOString(); if (!it.date) it.date = it.event_date; }
+      return true;
+    }
+    return false;
+  }
+
+  /* 2026-09-07 #689 涉华恐袭数据集（china_terror）：数据集口径覆盖 2010 以来历史+实时，
+   * 24h 时效窗/当天铁律不适用——以 GDELT 发布时间为准绳（模块已归一 seendate→ISO）：
+   * 过去任意日期放行（event_date=发布日，供年度/国别聚合）；未来 >12h 或无日期拒。 */
+  if (it._sourceType === 'china_terror') {
+    const _cv = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
+    const _cd = new Date(_cv);
+    if (!isNaN(_cd.getTime())) {
+      if (Date.now() - _cd.getTime() < -12 * 3600 * 1000) return false; /* 未来事件 */
+      if (!it.event_date) { it.event_date = _cd.toISOString(); if (!it.date) it.date = it.event_date; }
+      return true;
+    }
+    return false;
+  }
+
+  /* 2026-09-08 #698-④ 涉企风险实采（ent_risk）：GNews 定向 12 查询轮换 × when:3d，
+   * 24h 时效闸与 3d 采集窗系统性错配（实测 7 候选 6 条被"超时旧闻"拦）。
+   * 以发布时间为准绳、72h 窗放行（对齐预警中心 72h 红橙口径）；未来 >12h 或无日期拒。 */
+  if (it._sourceType === 'ent_risk') {
+    const _ev = it.publish_time || it.publishedAt || it.pubDate || it.event_date || it.date || '';
+    const _ed = new Date(_ev);
+    if (!isNaN(_ed.getTime())) {
+      const _age = Date.now() - _ed.getTime();
+      if (_age > 72 * 3600 * 1000 || _age < -12 * 3600 * 1000) return false;
+      if (!it.event_date) { it.event_date = _ed.toISOString(); if (!it.date) it.date = it.event_date; }
+      return true;
+    }
+    return false;
   }
 
   /* 2026-08-25 白名单公众号豁免：wechat_oa 通道（搜狗/profile_ext/镜像站）是用户亲选的专业安全信源，
@@ -7933,7 +8365,9 @@ async function _ingestLinkedItems(items, tag, note) {
       'PROJECT-WATCH-MANUAL': 'project_watch', 'CNSEC': 'cnsec_watch', 'WECHAT-MIRROR': 'wechat_oa',
       'WECHAT-LEAD': 'wechat_lead', 'TERROR': 'terror_attack', 'CAT-BAL': 'category_balance', 'REGION-BAL': 'region_balance', 'GAP-SCHED': 'gap_scheduler',
       'WM-FEED': 'wm_feed', 'THREATROOM': 'threatroom', 'ORG-WATCH': 'org_watch', 'ORG-WATCH-MANUAL': 'org_watch',
-      'SPECIAL-MATRIX': 'special_matrix', 'SPECIAL-MATRIX-MANUAL': 'special_matrix'
+      'SPECIAL-MATRIX': 'special_matrix', 'SPECIAL-MATRIX-MANUAL': 'special_matrix',
+      'CHINA-TERROR': 'china_terror', 'CHINA-TERROR-MANUAL': 'china_terror', 'CHINA-TERROR-BF': 'china_terror',
+      'BACKFILL': 'backfill' /* 2026-09-06 #649 历史补采（条目自带 _sourceType，此兜底防御漏设） */
     };
     linked.forEach(it => { if (!it._sourceType) it._sourceType = _TAG_TYPE[tag] || ('channel_' + String(tag).toLowerCase()); });
     console.log('[' + tag + '] 待入库 linked: ' + linked.length + ' 条');
@@ -7957,8 +8391,32 @@ async function _ingestLinkedItems(items, tag, note) {
     const _bumpRej = (code) => { _rj.bySource[tag].rejected++; if (code === 'dup-url') _rj.dupUrl++; else if (code === 'dup-title' || code === 'dup-title-zh' || code === 'dup-entity') _rj.dupTitle++; else if (code === 'dup-event' || code === 'event-flood') _rj.dupEvent++; else if (code === 'domestic') _rj.domestic++; else if (code === 'bad-title') _rj.badTitle++; else if (code === 'historical') _rj.historical++; else if (code === 'stale') _rj.stale++; else if (code === 'ruua-quota' || code === 'dominant-quota') _rj.ruUa++; else if (code === 'cat-struct') _rj.catStruct++; else if (code === 'no-url') _rj.noUrl++; else if (code === 'insert-err') _rj.insertErr++; };
     let inserted = 0, backfilled = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0, skippedCatStruct = 0;
     let chinaInserted = 0, chinaNegativeInserted = 0;
-    const titleKeys = await _getRecentTitleKeys();
-    const eventSigs = await _getRecentEventSigs();
+    /* 2026-09-07 #661 补采去重集日维度隔离（root fix）：全局 preload 是近 7 天 collect_time
+     * 全集——补采高峰期 4 worker 并行插数万条模板标题，缓存互相污染+跨日同题误杀
+     * （实测入库率一度掉到 1/1857）。BACKFILL 批改为只查「同一补采日」库内行构建
+     * 去重集：同日同题真重复仍拦（幂等重跑安全），跨日独立事件不再误杀。 */
+    const _bfDay = tag === 'BACKFILL'
+      ? String((linked.find(it => it._backfillDay) || {})._backfillDay || '') : '';
+    let titleKeys, eventSigs;
+    if (_bfDay) {
+      titleKeys = new Set(); eventSigs = new Set();
+      try {
+        const { rows: _drows } = await query(
+          `SELECT title, data_json->>'title_zh' AS tzh, data_json->>'_eventSig' AS sig
+           FROM intel_data WHERE data_json->>'_backfillDay' = $1`, [_bfDay]);
+        _drows.forEach(r => {
+          const kk1 = _normTitleKey(r.title), kk2 = _normTitleKey(r.tzh);
+          /* 新旧两版键都种：裸键（旧行）+ 带日后缀键（与判重口径一致） */
+          if (kk1.length >= 10) { titleKeys.add(kk1); titleKeys.add(kk1 + '@' + _bfDay); }
+          if (kk2.length >= 10) { titleKeys.add(kk2); titleKeys.add(kk2 + '@' + _bfDay); }
+          if (r.sig) { eventSigs.add(r.sig); if (r.sig.indexOf('@') < 0) eventSigs.add(r.sig + '@' + _bfDay); }
+        });
+      } catch (e) { console.warn('[BACKFILL] 日维度去重集构建失败（退回全局）:', e.message); titleKeys = null; }
+      if (!titleKeys) { titleKeys = await _getRecentTitleKeys(); eventSigs = await _getRecentEventSigs(); }
+    } else {
+      titleKeys = await _getRecentTitleKeys();
+      eventSigs = await _getRecentEventSigs();
+    }
     for (const it of linked) {
       /* 国别回填（2026-09-01）：no-country 拒 ~200 条/日的根因是 country 字段空但标题/URL 有
        * 国别证据。闸门判定前先回填（仅填空值绝不覆盖），闸门拿到的 country 非空即通过。 */
@@ -8281,8 +8739,8 @@ async function _runNeonBackup() {
     }
     await _neonBkPool.query('CREATE TABLE IF NOT EXISTS intel_backup (id BIGINT PRIMARY KEY, data_json JSONB, backed_at TIMESTAMPTZ DEFAULT now())');
     const cursor = _readBackupCursor();
-    const { rows } = await query('SELECT id, data_json, collect_time FROM intel_data WHERE id > $1 ORDER BY id ASC LIMIT 1000', [cursor]);
-    if (!rows.length) return;
+    const { rows } = await query('SELECT id, data_json, collect_time FROM intel_data WHERE id > $1 ORDER BY id ASC LIMIT 5000', [cursor]);
+    if (!rows.length) return { more: false, ok: true };
     let ok = 0, maxId = cursor;
     /* 50 行一批多值 INSERT：1000 行仅 20 个往返，免费层友好；失败断点保留下轮重试 */
     for (let i = 0; i < rows.length; i += 50) {
@@ -8303,10 +8761,29 @@ async function _runNeonBackup() {
       } catch (e) { console.warn('[NEON-BACKUP] 批量写入失败（断点 ' + maxId + ' 下轮续传）:', e.message); break; }
     }
     if (ok) console.log('[NEON-BACKUP] 云端容灾备份 +' + ok + ' 条（游标 ' + cursor + ' → ' + maxId + '）');
+    /* 2026-09-07 #671 自适应追赶：返回本轮是否还有积压（批满即大概率未追平） */
+    return { more: rows.length >= 5000, ok: true };
   } catch (e) {
     console.warn('[NEON-BACKUP] 备份失败:', e.message);
     if (_neonBkPool) { try { await _neonBkPool.end(); } catch (_) {} _neonBkPool = null; }
+    return { more: false, ok: false };
   } finally { _neonBackupBusyUntil = 0; }
+}
+
+/* ===== #671 云端上行自适应追赶（2026-09-07 用户指令四：带宽不够能不能扩容）
+ * 已从 4.8万/日 提到 48万/日（LIMIT 5000 + 15min）。本机制再进一步：
+ * 每轮结束后看是否有积压——批满 5000 说明追不上，60s 后立即续跑（追赶态，
+ * 上限 5000/min ≈ 720万/日，实际受 Neon 免费层吞吐与本地 CPU 制约）；
+ * 追平后自动回落 15min 常态；失败 5min 温和重试。 */
+let _neonBackupTimer = null;
+function _scheduleNeonBackup(ms) {
+  if (_neonBackupTimer) return;
+  _neonBackupTimer = setTimeout(async () => {
+    _neonBackupTimer = null;
+    let r = { more: false, ok: false };
+    try { const _r = await _runNeonBackup(); if (_r && typeof _r === 'object') r = _r; } catch (e) {}
+    _scheduleNeonBackup(r.more ? 60000 : (r.ok ? 15 * 60 * 1000 : 5 * 60 * 1000));
+  }, ms);
 }
 
 /* ===== 涉华专项采集：每轮单独抓取高命中中文媒体/涉华外媒，确保日涉华80-100条 ===== */
@@ -9419,9 +9896,11 @@ async function _runGapScheduler() {
   _gapSchedBusyUntil = Date.now() + BUSY_LOCK_TIMEOUT_MS;
   const t0 = Date.now();
   try {
-    /* ① 当日 国别×类别 矩阵 */
+    /* ① 当日 国别×类别 矩阵
+     * 2026-09-06 #649：排除 backfill 补采量——补采 collect_time=当下，若不剔除，
+     * 238 天×1500 条会把当日矩阵灌成全绿，实时采集地板（4500/日）停摆饿死。 */
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    const cnt = await query('SELECT country, data_type, COUNT(*) n FROM intel_data WHERE collect_time >= $1 GROUP BY 1,2', [dayStart]);
+    const cnt = await query("SELECT country, data_type, COUNT(*) n FROM intel_data WHERE collect_time >= $1 AND COALESCE(data_json->>'_sourceType','') <> 'backfill' GROUP BY 1,2", [dayStart]);
     /* 2026-09-01 #526：缩写归一——双向子串对「印尼」≠「印度尼西亚」失明，印尼计数被低估（8-31 实测 2+8 分裂） */
     const _GAP_CN_ALIAS = { '印尼': '印度尼西亚', '南韩': '韩国', '南朝鲜': '韩国' };
     const countryN = {}, catN = {};
@@ -9762,6 +10241,81 @@ async function _runSpecialMatrix(manual) {
     console.warn('[SPECIAL-MATRIX] 采集失败:', e.message);
     return { ok: false, error: e.message };
   } finally { _specialMatrixBusyUntil = 0; }
+}
+
+/* ===== 涉华恐袭数据集调度（2026-09-07 #689 用户指令二）=====
+ * 实时：每 10 分钟一轮——GDELT 涉华×袭击矩阵（公民/企业与项目/使领馆）+ 六组重点国别
+ *       深挖（巴基斯坦·CPEC/阿富汗/刚果金/尼日利亚/尼日尔·萨赫勒/非洲之角）+ 搜索引擎
+ *       原子词兜底，标题正则二次过滤（涉华∩袭击，噪声即弃）。
+ * 历史：GDELT 全文库自 2017-01-01 逐 15 天切片回扫（每片 2 条矩阵查询，片间 150s 错峰，
+ *       与 #649/#661 补采自然错峰抢配额）；2010-2016 档走 GDELT 1.0 事件表二期补齐。
+ * 体积豁免同 special_matrix：_sourceType='china_terror' 豁免事件簇帽/类别结构帽/预警国别帽
+ * （涉华恐袭零容忍漏采），去重/墓碑/时效/翻译等质量闸全站一致。 */
+let _chinaTerrorBusyUntil = 0;
+async function _runChinaTerrorCollect(manual) {
+  if (Date.now() < _chinaTerrorBusyUntil) return { ok: false, error: '上一轮涉华恐袭采集尚未结束' };
+  _chinaTerrorBusyUntil = Date.now() + 10 * 60 * 1000; /* 单轮 10 分钟锁（9 条 GDELT + 8 条搜索，慢响应不重叠） */
+  try {
+    const gdeltCooling = (typeof crawler.gdeltStatus === 'function') && crawler.gdeltStatus().cooling;
+    const r = await chinaTerror.runChinaTerrorCollect({ maxPerQuery: 30 });
+    const items = r.items || [];
+    let inserted = 0;
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[CHINA-TERROR] 翻译异常:', e.message); }
+      items.forEach(it => {
+        it.interestLinked = true;
+        it._forceDataType = true;   /* data_type=terror_events 口径锁定 */
+        if (!it.category) it.category = '涉华恐袭';
+        try { ENTITY.enrich(it); } catch (e) {}
+      });
+      const res = await _ingestLinkedItems(items, manual ? 'CHINA-TERROR-MANUAL' : 'CHINA-TERROR', '');
+      inserted = (res && res.inserted) || 0;
+      if (inserted) console.log('[CHINA-TERROR] ✅ 新入库涉华恐袭事件 ' + inserted + ' 条');
+    }
+    const st = chinaTerror.state();
+    if (st.lastRun) st.lastRun.inserted = inserted;
+    st.lastRun = st.lastRun || {};
+    st.lastRun.gdeltCooling = !!gdeltCooling;
+    return { ok: true, passed: items.length, inserted, stats: r.stats };
+  } catch (e) {
+    console.warn('[CHINA-TERROR] 采集失败:', e.message);
+    return { ok: false, error: e.message };
+  } finally { _chinaTerrorBusyUntil = 0; }
+}
+/* 历史回补驱动：每 60s tick 一次，活跃时每 150s 推进一个 15 天切片（断点续跑，cursor 存模块状态） */
+async function _chinaTerrorBackfillTick() {
+  const st = chinaTerror.state().backfill;
+  if (!st.running) return;
+  if (st._nextAt && Date.now() < st._nextAt) return;
+  if (st._slicing) return;
+  st._slicing = true;
+  try {
+    const todayKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const r = await chinaTerror.runBackfillSlice(st.cursor || '20170101', 15);
+    const items = r.items || [];
+    let inserted = 0;
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 6); } catch (e) {}
+      items.forEach(it => {
+        it.interestLinked = true;
+        it._forceDataType = true;
+        if (!it.category) it.category = '涉华恐袭';
+        try { ENTITY.enrich(it); } catch (e) {}
+      });
+      const res = await _ingestLinkedItems(items, 'CHINA-TERROR-BF', '');
+      inserted = (res && res.inserted) || 0;
+      if (inserted) console.log('[CHINA-TERROR-BF] ✅ 切片 ' + (st.cursor || '20170101') + ' 新入库 ' + inserted + ' 条');
+    }
+    st.doneSlices++; st.candidates += items.length; st.inserted += inserted;
+    st.lastSlice = st.cursor + '→' + r.next;
+    st.cursor = r.next;
+    if (r.next.slice(0, 8) >= todayKey) {
+      st.running = false;
+      st.note = 'GDELT 全文库 2017-01-01 起回扫完成（' + st.doneSlices + ' 切片，入库 ' + st.inserted + ' 条）；2010-2016 档走 GDELT 1.0 事件表二期补齐';
+      console.log('[CHINA-TERROR-BF] 🏁 历史回补完成: ' + st.note);
+    }
+  } catch (e) { st.errors++; console.warn('[CHINA-TERROR-BF] 切片失败:', e.message); }
+  finally { st._nextAt = Date.now() + 150000; st._slicing = false; }
 }
 
 /* ===== 海上战略通道哨兵调度（维度⑤，2026-08-28 官方框架六维补全）=====
@@ -10155,6 +10709,11 @@ function startGlobalMediaCron() {
   setInterval(_runConsularWatch, 10 * 60 * 1000); /* 2026-08-28 涉华受害专项提速：30min→10min（用户指令：涉华受害是采集核心） */
   setTimeout(_runCoreThreatSentinel, 350000);  // 核心威胁专项哨兵（弱类补强），启动350s后首跑
   setInterval(_runCoreThreatSentinel, 10 * 60 * 1000);
+  setTimeout(_runChinaTerrorCollect, 410000);  // 涉华恐袭数据集（#689：涉华公民/中资项目/驻外机构×袭击矩阵+重点国别深挖），启动410s后首跑（错峰）
+  setInterval(_runChinaTerrorCollect, 10 * 60 * 1000); /* 10min 一轮实时采集 */
+  setTimeout(_runEntRiskCollect, 500000);  // 涉企风险实采（#698：GNews 定向——库内 sanctions_data 为机翻垃圾重灾区，实采为主数据源），启动500s后首跑（错峰）
+  setInterval(_runEntRiskCollect, 30 * 60 * 1000); /* 30min 一轮（12 查询轮换 4/轮） */
+  setInterval(_chinaTerrorBackfillTick, 60 * 1000);    /* 60s tick：活跃时每 150s 推进一个 15 天历史切片（需 POST /api/terror/china-backfill 启动） */
   setTimeout(_runTranslateRetry, 180000);      // 未翻译重试队列，启动180s后首跑
   setInterval(_runTranslateRetry, 15 * 60 * 1000);
   // 94源工程包采集器（2026-08-28：多立场源证据链），启动380s后首跑
@@ -10215,8 +10774,7 @@ function startGlobalMediaCron() {
   setTimeout(_runNeonSync, 90000);
   setInterval(_runNeonSync, 10 * 60 * 1000);
   // Neon 云端容灾备份：每30分钟把本地新入库数据增量上行到云端副本（2026-08-25 用户铁指令"一次性解决数据库"）
-  setTimeout(_runNeonBackup, 4 * 60 * 1000);
-  setInterval(_runNeonBackup, 30 * 60 * 1000);
+  setTimeout(() => { _scheduleNeonBackup(2000); }, 4 * 60 * 1000);
 }
 
 /* ===== 全球恐怖袭击/武装袭击专项采集 ===== */
@@ -10317,7 +10875,7 @@ app.get('/api/media', async (req, res) => {
 });
 
 /* 每日采集指标：总量≥500条/天，涉华80-100条/天，境外涉华负面≥50条/天 */
-app.get('/api/media/daily-stats', ttlCache(15000), async (req, res) => {
+app.get('/api/media/daily-stats', ttlCache(45000), async (req, res) => {
   try {
     /* 本地自然日 0 点边界（不能用 CURRENT_DATE——取决于 PG 会话时区，跨天可能不切换） */
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
@@ -11514,7 +12072,8 @@ async function _translateListToZh(list) {
       const contentForeign = _looksForeign(it.content) && String(it.content || '').length > 20;
       let tZh = it.title, cZh = it.content;
       if (titleForeign) {
-        const tr = await _translateAny(it.title);
+        /* #663：翻译前先剥媒体尾巴/装饰符——"- Fourth. News"送机翻会产出"-第四。新闻"混排残尾 */
+        const tr = await _translateAny(_preTransCleanTitle(it.title));
         if (tr && tr.trim() && tr.trim() !== String(it.title || '').trim()) tZh = tr.trim();
       }
       if (contentForeign) {
@@ -11952,6 +12511,8 @@ async function _translateListToZhParallel(list, concurrency, opts) {
         if (t.field === 'title') {
           const tm = /^\s*([\[【][^\]】]{0,24}[\]】])\s*/.exec(String(raw));
           if (tm) { tag = tm[1] + ' '; src = String(raw).slice(tm[0].length); }
+          /* #663：翻译前剥媒体尾巴/装饰符（"- Fourth. News"→机翻成"-第四。新闻"混排残尾的根因） */
+          src = _preTransCleanTitle(src);
         }
         const zh0 = await _translateAnyCached(src);
         const zh = zh0 && zh0.trim() ? (tag + zh0.trim()) : zh0;
@@ -12248,12 +12809,21 @@ app.delete('/api/intel/sidepool/:id', authMiddleware, adminOnly, _signCheck, asy
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.get('/api/intel/:type', async (req, res) => {
+app.get('/api/intel/:type', ttlCache(45000), async (req, res) => {
   try {
     let { type } = req.params;
     type = CAT_STD.mapType(type) || type; /* #627：旧类别名请求自动归一到新 18 类 */
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
-    const result = await query('SELECT * FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC', [type]);
+    /* 2026-09-07 #668 卡顿根治：原实现无 LIMIT 全表返回（osint_intel 类 6 万+ 行，33 秒/次，
+     * 每次都占死一条连接 + Node 序列化阻塞事件循环，全站请求跟着卡）。
+     * ① map=1 轻量模式：只回 id+title（前端 _getSrvIds 译文回写定位用，payload 缩 99%）；
+     * ② 默认 LIMIT 3000（最新优先），需要更多时显式传 ?limit=（上限 1 万）。 */
+    if (req.query.map !== undefined) {
+      const r = await query('SELECT id, title, data_json->>\'title_zh\' AS title_zh FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC LIMIT 20000', [type]);
+      return res.json(r.rows.map(x => ({ id: x.id, title: x.title_zh || x.title || '' })));
+    }
+    const limit = Math.min(10000, Math.max(1, parseInt(req.query.limit, 10) || 3000));
+    const result = await query('SELECT * FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC LIMIT $2', [type, limit]);
     /* 2026-08-25 铁律修复：必须回传真实入库时间 collect_time——此前只铺 data_json，
      * 历史条目 data_json 无时间字段时前端只能用 Date.now() 兜底，导致 5 月旧闻盖今日新戳
      * 混入最新预警（id 11233 事件）。DB 列置后覆盖，防止 data_json 内同名字段造假。 */
@@ -12343,22 +12913,27 @@ app.post('/api/intel/:type', authMiddleware, async (req, res) => {
     type = CAT_STD.mapType(type) || type; /* #627：旧类别名请求自动归一 */
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
     const item = req.body;
-    if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
-    const blocked = await _postGate(item);
-    if (blocked) return res.json({ skipped: blocked });
-    /* 2026-09-03（审计 A1）：POST 通道补翻译——旧版完全无翻译，前端 POST 的外文条目英文直落
-     * DB 且无 _untranslated 标记（前端自动翻译只回写浏览器本地缓存，从不回写服务器）。
-     * 复用采集即译管线：外文标题/正文 → 中文；失败保留原文 + 打标（走 _runTranslateRetry 回填）。
-     * skipBodyFetch：不回源抓用户提交的 url，防 POST 端点分钟级阻塞。 */
-    try { await _translateListToZhParallel([item], 1, { skipBodyFetch: true }); } catch (e) {}
-    _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
-    const _dt = req.params.type === 'osint_intel' ? _classifyIntelType(item) : type; /* #627：归一前的原始参数判定 osint 泛投 */
-    item.data_type = _dt;
-    const result = await query(
-      'INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
-      [_dt, item.title||'', item.country||'', item.location||'', item.date||'', _lv, item.desc||'', item.source||'', JSON.stringify(item), item.audit_status||'approved']
-    );
-    res.json({ id: result.rows[0].id, ...item });
+    /* #689 P0 根治（2026-09-07）：单条 POST 原地 await 翻译同样占死连接（页面加载
+     * DBCenter 迁移并发 6+ 个单条 POST × 翻译引擎熔断 30s+ → 6 连接上限全灭）。
+     * 前端唯一调用方（app.js DBCenter.add）仅 .catch 不消费响应 → 即收即应，后台异步处理。 */
+    res.json({ success: true, queued: true });
+    (async () => {
+      try {
+        if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
+        const blocked = await _postGate(item);
+        if (blocked) return;
+        /* 2026-09-03（审计 A1）：POST 通道补翻译——外文标题/正文 → 中文；失败保留原文 + 打标
+         * （走 _runTranslateRetry 回填）。skipBodyFetch：不回源抓用户提交的 url，防分钟级阻塞。 */
+        try { await _translateListToZhParallel([item], 1, { skipBodyFetch: true }); } catch (e) {}
+        _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
+        const _dt = req.params.type === 'osint_intel' ? _classifyIntelType(item) : type; /* #627：归一前的原始参数判定 osint 泛投 */
+        item.data_type = _dt;
+        await query(
+          'INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+          [_dt, item.title||'', item.country||'', item.location||'', item.date||'', _lv, item.desc||'', item.source||'', JSON.stringify(item), item.audit_status||'approved']
+        );
+      } catch (e) { console.warn('[INTEL-POST] 后台处理失败:', type, e.message); }
+    })();
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -12368,21 +12943,32 @@ app.post('/api/intel/:type/batch', authMiddleware, async (req, res) => {
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
     const items = req.body;
     if (!Array.isArray(items)) return res.status(400).json({ error: '请提供数组' });
-    /* 2026-09-03（审计 A1）：批量 POST 同样补翻译（闸门前整批译，省得逐条过闸后再译） */
-    try { await _translateListToZhParallel(items, 3, { skipBodyFetch: true }); } catch (e) {}
-    let count = 0, skipped = 0;
-    for (const item of items) {
-      if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
-      const blocked = await _postGate(item);
-      if (blocked) { skipped++; continue; }
-      _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
-      const _dt = req.params.type === 'osint_intel' ? _classifyIntelType(item) : type; /* #627：归一前的原始参数判定 osint 泛投 */
-      item.data_type = _dt;
-      await query('INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-        [_dt, item.title||'', item.country||'', item.location||'', item.date||'', _lv, item.desc||'', item.source||'', JSON.stringify(item), item.audit_status||'approved']);
-      count++;
-    }
-    res.json({ success: true, count, skipped });
+    /* #689 P0 根治（2026-09-07）：批量 POST 原地 await 翻译——翻译引擎全线熔断时单批拖 30-60s，
+     * 页面加载 DBCenter 版本迁移并发多类型 batch → 浏览器同源 6 连接全被占满，
+     * terror/insight/datahub 等所有面板 fetch 排队 80s+，terjudge 视图 30s AbortController 全灭。
+     * 改为即收即应：HTTP 秒回，翻译+过闸+INSERT 全部后台异步（前端 addBatch 仅 catch 错误，不消费计数）。 */
+    res.json({ success: true, queued: true, count: items.length });
+    if (!items.length) return;
+    (async () => {
+      try {
+        try { await _translateListToZhParallel(items, 3, { skipBodyFetch: true }); } catch (e) {}
+        let count = 0, skipped = 0;
+        for (const item of items) {
+          try {
+            if (!item._sourceType) item._sourceType = 'frontend_post'; /* 2026-08-29 溯源铁律 */
+            const blocked = await _postGate(item);
+            if (blocked) { skipped++; continue; }
+            _tagAssets(item); const _lv = _normLevelForStore(item); item.level_norm = _lv;
+            const _dt = req.params.type === 'osint_intel' ? _classifyIntelType(item) : type; /* #627：归一前的原始参数判定 osint 泛投 */
+            item.data_type = _dt;
+            await query('INSERT INTO intel_data (data_type, title, country, location, event_date, severity, description, source, data_json, audit_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+              [_dt, item.title||'', item.country||'', item.location||'', item.date||'', _lv, item.desc||'', item.source||'', JSON.stringify(item), item.audit_status||'approved']);
+            count++;
+          } catch (e) { skipped++; }
+        }
+        if (count) console.log('[INTEL-BATCH] 后台入库 ' + type + ' ' + count + ' 条（跳过 ' + skipped + '）');
+      } catch (e) { console.warn('[INTEL-BATCH] 后台处理失败:', type, e.message); }
+    })();
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -12391,6 +12977,7 @@ app.put('/api/intel/:id', authMiddleware, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const item = req.body;
     await query('UPDATE intel_data SET title=$1, country=$2, data_json=$3, audit_status=$4 WHERE id=$5', [item.title||'', item.country||'', JSON.stringify(item), item.audit_status||'approved', id]);
+    _intelCachePurge();
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -12401,6 +12988,7 @@ app.put('/api/intel/:id/audit', authMiddleware, adminOnly, async (req, res) => {
     const { status } = req.body;
     if (!['approved','rejected','pending'].includes(status)) return res.status(400).json({ error: '无效审核状态' });
     await query('UPDATE intel_data SET audit_status=$1, audit_time=$2 WHERE id=$3', [status, new Date().toISOString(), id]);
+    _intelCachePurge();
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -12417,6 +13005,7 @@ app.delete('/api/intel/:id', authMiddleware, adminOnly, _signCheck, async (req, 
       }
     } catch (e) { console.warn('[TOMBSTONE] 删除前立碑失败:', e.message); }
     await query('DELETE FROM intel_data WHERE id = $1', [id]);
+    _intelCachePurge();
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -12500,6 +13089,7 @@ app.delete('/api/intel/:type/all', authMiddleware, adminOnly, async (req, res) =
     const { type } = req.params;
     if (!INTEL_TYPES.includes(type)) return res.status(400).json({ error: '无效的情报类型' });
     await query('DELETE FROM intel_data WHERE data_type = $1', [type]);
+    _intelCachePurge();
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -12708,7 +13298,73 @@ app.use('/api/manual-entries', manualEntryApi({
 app.use('/api/models', modelsAnalysis({ query }));
 
 /* ===== 情报洞察 API（2026-09-05 用户指令三：领导要报速览/事件全生命周期时间线/相似历史事件匹配）===== */
-app.use('/api/insight', intelInsight({ query, isChinaRelated: scrapers.isChinaRelatedStrict }));
+app.use('/api/insight', intelInsight({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
+
+/* ===== 全球恐怖组织动态预警研判中心 API（#672：常开雷达——terror_events 数据库聚合 × 87组织档案碰撞 + AI研判公文，与 threatroom 搜集触发式差异化）===== */
+app.use('/api/terror', terrorCenter({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
+
+/* ===== 涉华恐袭数据集 API（#689：/china-dataset 全景聚合 + 手动 sweep/backfill 端点；#692：/china-judge 单事件研判 + /china-forecast 30天预测）===== */
+app.use('/api/terror', chinaTerror({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
+
+/* ===== 涉企风险预警研判 API（#698：/overview 六维全景 + /country-judge 单国AI研判 + /forecast 30天前瞻；纯库内真实数据聚合，零采集触发）===== */
+app.use('/api/entrisk', enterpriseRisk({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
+
+/* ===== #698 涉企风险实采驱动（GNews 定向 4 查询/轮 × 30min；库内 sanctions_data 通道为 GDELT 1.0 机翻垃圾重灾区，实采是主数据源）===== */
+let _entRiskBusyUntil = 0;
+async function _runEntRiskCollect(manual) {
+  if (Date.now() < _entRiskBusyUntil) return { ok: false, error: '上一轮涉企风险采集尚未结束' };
+  _entRiskBusyUntil = Date.now() + 10 * 60 * 1000;
+  try {
+    const r = await enterpriseRisk.runEntRiskCollect();
+    const items = r.items || [];
+    let inserted = 0;
+    if (items.length) {
+      try { await _translateListToZhParallel(items, 4); } catch (e) { console.warn('[ENT-RISK] 翻译异常:', e.message); }
+      items.forEach(it => {
+        it.interestLinked = true;
+        it._forceDataType = true;   /* data_type=sanctions_data 口径锁定 */
+        if (!it.category) it.category = '制裁与合规';
+        try { ENTITY.enrich(it); } catch (e) {}
+      });
+      const res = await _ingestLinkedItems(items, manual ? 'ENT-RISK-MANUAL' : 'ENT-RISK', '');
+      inserted = (res && res.inserted) || 0;
+      if (inserted) console.log('[ENT-RISK] ✅ 新入库涉企管控事件 ' + inserted + ' 条');
+    }
+    return { ok: true, passed: items.length, inserted, stats: r.stats };
+  } catch (e) {
+    console.warn('[ENT-RISK] 采集失败:', e.message);
+    return { ok: false, error: e.message };
+  } finally { _entRiskBusyUntil = 0; }
+}
+app.post('/api/entrisk/sweep', async (req, res) => {
+  /* 手动触发一轮涉企风险实采（即发即忘，与 china-sweep 同模式） */
+  if (Date.now() < _entRiskBusyUntil) return res.json({ ok: false, error: '上一轮涉企风险采集尚未结束，请稍候' });
+  res.json({ ok: true, started: true, note: '涉企风险实采已触发（GNews 定向 4 查询 × when:3d，约 1-2 分钟），结果请查涉企风险预警研判面板或 GET /api/entrisk/overview' });
+  _runEntRiskCollect(true).catch(() => {});
+});
+
+app.post('/api/terror/china-sweep', async (req, res) => {
+  /* 手动触发一轮实时采集（即发即忘，与 special-matrix/run 同模式；结果查 GET /api/terror/china-dataset） */
+  if (Date.now() < _chinaTerrorBusyUntil) return res.json({ ok: false, error: '上一轮涉华恐袭采集尚未结束，请稍候' });
+  res.json({ ok: true, started: true, note: '涉华恐袭实时采集已触发（GDELT 涉华×袭击矩阵 + 重点国别深挖，约 2-4 分钟），结果请查数据集面板或 GET /api/terror/china-dataset' });
+  _runChinaTerrorCollect(true).catch(() => {});
+});
+app.post('/api/terror/china-backfill', async (req, res) => {
+  /* 启动/停止历史回补：{start:'20170101'} 启动（默认 2017-01-01，断点续跑）；{action:'stop'} 停止 */
+  try {
+    const st = chinaTerror.state().backfill;
+    const action = (req.body && (req.body.action || '')).toLowerCase();
+    if (action === 'stop') { st.running = false; return res.json({ ok: true, stopped: true, backfill: st }); }
+    const start = String((req.body && req.body.start) || st.cursor || '20170101').replace(/[^0-9]/g, '').slice(0, 8);
+    if (!/^(2017|2018|2019|2020|2021|2022|2023|2024|2025|2026)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/.test(start)) {
+      return res.status(400).json({ ok: false, error: 'start 须为 YYYYMMDD（2017-01-01 起，GDELT 全文库上限）' });
+    }
+    st.cursor = start; st.running = true; st.startedAt = new Date().toISOString();
+    if (!st.doneSlices) { st.doneSlices = 0; st.candidates = 0; st.inserted = 0; st.errors = 0; }
+    st.note = 'GDELT 全文库覆盖自 2017 年 1 月起；2010-2016 档走 GDELT 1.0 事件表二期补齐';
+    res.json({ ok: true, started: true, from: start, backfill: st });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 
 /* ===== 智库报告产品线引擎（2026-09-03：9类专业报告 数据装配+Kimi研判+公文渲染+定时生成，铁律见 reports-engine.js 头注）===== */
 reportsEngine.init({
@@ -12717,6 +13373,25 @@ reportsEngine.init({
   isChinaRelated: scrapers.isChinaRelatedStrict,
   auth: authMiddleware,
   app
+});
+
+/* ===== 历史补采引擎（2026-09-06 用户指令三 #649：2026-01-01→首采日逐日 GDELT 回扫，
+ * 1500条/日×现有类别配额；全程 _preInsertGate 零虚构；_sourceType='backfill' 可溯源；
+ * backfill_progress 断点续跑，开机 60s 自检自动续跑；/api/backfill/status|pause|resume|test-day）===== */
+backfill.init({
+  query,
+  app,
+  auth: authMiddleware,
+  crawler,
+  ingest: _ingestLinkedItems,
+  translate: _translateListToZhParallel,
+  enrich: (it) => { ENTITY.enrich(it); },
+  fillCountry: _backfillCountry,
+  isChinaRelated: scrapers.isChinaRelatedStrict,
+  CAT_STD,
+  INTEREST_BASE,
+  GAP_COUNTRY_EN,
+  netx
 });
 
 /* ===== AI 报告 API ===== */
