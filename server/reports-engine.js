@@ -2223,6 +2223,9 @@ async function init(ctx) {
 }
 
 module.exports = { init };
+/* #712 调度收编：补生成检查开放给 SCHED 托管（server.js 注册 report 类任务，
+ * init ctx.schedule=false 时不再自建定时器） */
+module.exports.scheduleCheck = scheduleCheck;
 /* 供离线验证脚本（不经 HTTP）使用的内部出口 */
 module.exports._test = { REPORT_TYPES, defOf, generateReport, periodWindowOf, currentTarget, currentPeriodOf, windowOfFreq, freqOfPeriodKey, titleForFreq, govPunctuate, polishGovText, _cnTime, pvKimi, weekKey, _dayKey };
 /* 2026-09-07 #664 事件研判中心公文输出复用：红头版式引擎 + 图表复合分析板块对外开放

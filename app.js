@@ -560,6 +560,8 @@ const DBCenter={
   add(s,o){
     if(!o)return null;
     s=this._coerceCol(s);
+    /* #693 手动录入唯一写入口豁免：手动条目仅存 manual_entries/datahub alerts，禁止入采集库被重采 */
+    if(o.is_manual===true || String(o.url||'').indexOf('manual://')===0){ console.log('[DBC-GATE] 手动录入条目不入采集库: '+String((o.title||'')).slice(0,40)); return null; }
     if(typeof _isStaleSeed==='function'&&_isStaleSeed(o)){ console.log('[DBC-GATE] 历史静态种子拦截: '+String((o.title||'')).slice(0,40)); return null; }
     if(this._genreBlocked(o)) return null;
     o.collect_time=o.collect_time||new Date().toISOString();
@@ -588,6 +590,8 @@ const DBCenter={
     if(!arr||!arr.length)return 0;
     s=this._coerceCol(s);
     if(typeof _isStaleSeed==='function') arr=arr.filter(function(o){ return !(o&&_isStaleSeed(o)); });
+    /* #693 手动录入豁免：批量写入口同样拦截 manual:// 条目（_seedAllSystemData 泄漏路径） */
+    arr=arr.filter(function(o){ return !(o&&(o.is_manual===true||String(o.url||'').indexOf('manual://')===0)); });
     if(!arr.length)return 0;
     var a=this._r(s),me=this;
     /* 入库前按 标题+国家 去重（同一新闻从多个来源/多分类同时入库时防重复） */
@@ -3363,7 +3367,9 @@ var DATACENTER={
       var now=Date.now();
       if(this._srvIdMap[col]&&now-(this._srvIdAt[col]||0)<600000){cb(this._srvIdMap[col]);return;}
       var me=this;
-      APIClient.getIntel(col).then(function(rows){
+      /* 2026-09-07 #668：改走 ?map=1 轻量端点（id+title），不再全量拉取（osint_intel 6万+行 33s） */
+      var getter=(APIClient.getIntelMap||APIClient.getIntel).bind(APIClient);
+      getter(col).then(function(rows){
         if(!Array.isArray(rows)){cb(null);return;}
         var m={};
         rows.forEach(function(rw){ if(rw&&rw.id!=null){ var k=_normTitle(String(rw.title||'')); if(k)m[k]=rw.id; } });
@@ -4169,6 +4175,9 @@ const VIEW_MAP={
   monitor:{t:'实时风险监测',b:'监测中心 / 实时风险监测'},
   alerts:{t:'智能预警中心',b:'监测中心 / 智能预警中心（实时队列 · 智能联动 · 异动信号）'},
   brief:{t:'领导要报速览',b:'分析研判 / 领导要报速览（30秒一页纸 · 红橙置顶 · 涉华优先）'},
+  evjudge:{t:'事件研判中心',b:'分析研判 / 事件研判中心（事件时间流研判 · 历史相似事件分析 · 智能研判 · 公文输出）'},
+  entrisk:{t:'涉企风险预警研判',b:'分析研判 / 涉企风险预警研判（七域全风险：管控制裁·冲突波及·恐袭遇袭·社会动荡·政局政策·经济金融·灾害设施 · AI大盘研判 · 国别下钻 · 30天前瞻）'},
+  terjudge:{t:'全球恐袭态势监测中心',b:'监测中心 / 全球恐袭态势监测中心（常开雷达 · 威胁实体活跃度异动 · 红橙预警 · AI智库研判 · 反恐态势通报）'},
   country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · 企业资产）'},
   countryfile:{t:'国别档案总表',b:'分析研判 / 国别档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报 · 每月/每季/半年/全年简报）'},
@@ -4359,6 +4368,10 @@ function runViewInit(v){
       else if(v==='wechat'){ if(typeof WECHAT!=='undefined')WECHAT.init(); }
       else if(v==='command'){ if(typeof COMMAND!=='undefined'){ if(!COMMAND._incidents)COMMAND.init(); else COMMAND.render(); } }
       else if(v==='brief'){ if(typeof LEADERBRIEF!=='undefined')LEADERBRIEF.init(); }
+      else if(v==='aiwatch'){ if(typeof AIWATCH!=='undefined')AIWATCH.init(); }
+      else if(v==='evjudge'){ if(typeof EVENTINSIGHT!=='undefined')EVENTINSIGHT.init(); }
+      else if(v==='terjudge'){ if(typeof TERRORCENTER!=='undefined')TERRORCENTER.init(); }
+      else if(v==='entrisk'){ if(typeof ENTRISK!=='undefined')ENTRISK.init(); }
       else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
       else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
       else if(v==='manual-entry'){ if(typeof MANUALENTRY!=='undefined')MANUALENTRY.init(); }
@@ -9679,7 +9692,7 @@ const SITUATION={
     this.startRotation();
     this._enhanceHomePanels();
     this.fetchDailyStats();
-    if(!this._dailyStatsTimer) this._dailyStatsTimer=setInterval(function(){SITUATION.fetchDailyStats();}, 30000);
+    if(!this._dailyStatsTimer) this._dailyStatsTimer=setInterval(function(){SITUATION.fetchDailyStats();}, 60000);
     /* ===== 一分钟循环引擎（2026-08-28 用户指令：全球态势焦点/最新预警面板必须不断变化） =====
      * 旧问题：①焦点面板每 60s 重绘但内容是确定性"TOP 列表"，数据不更新画面就一层不变；
      * ②最新预警的自动翻页计时器每次 renderLiveStats 都被 clearInterval 重建，数据刷新频繁时
@@ -9693,7 +9706,7 @@ const SITUATION={
     try{
       var self=this;
       /* 权威 KPI 补丁（2026-08-15 用户指令：统计数据必须实时）：涉华安全库/恐袭库读 PostgreSQL 实数 */
-      if(!self._intelStatsAt||Date.now()-self._intelStatsAt>30000){
+      if(!self._intelStatsAt||Date.now()-self._intelStatsAt>120000){
         self._intelStatsAt=Date.now();
         fetch('/api/intel/stats').then(function(r){return r.ok?r.json():null;}).then(function(st){
           if(st&&st.byType){ self._intelStats=st; self._patchIntelKpis(); }
@@ -13216,10 +13229,10 @@ const AVIEW={
   /* 模糊事件键：用于态势总览/实时流等摘要面板，抵抗同事件多来源标题的词序/同义差异 */
   _eventKeyFuzzy(a){
     try{
-      /* 2026-08-28：优先服务端事件签名 v3（事发国+事件词+锚点，入库时算好）——
-       * 跨源同事件签名一致（根治"尼泊尔洪水三源三签"式重复），同国不同事件
-       * 因锚点不同不会误合并（根治"巴基斯坦同日16条共用一签"式误合并）。 */
-      if(a&&a._eventSig&&String(a._eventSig).indexOf('|')>0) return String(a._eventSig);
+      /* 2026-09-08 #710：不再直接返回服务端 _eventSig——签名含锚点段（n2 vs 日期兜底）与
+       * 事件词集（死亡+爆炸 vs 爆炸），同事件跨源措辞差异会让签名互异（墨西哥烟花 8 源 5 种签名），
+       * 直接用签名=合并失效（态势总览 3 卡并存实证）。签名降级为「事发国提示」：
+       * 客户端标题提取失败时用签名国别段兜底，键本体统一为 国|事件类型。 */
       var title=String(_zhT(a)||a.title||'');
       var country=String(a.country||'');
       /* 如果 country 字段明显错误（如把受害者国籍/来源国当初事发国），尝试从标题提取主事发国 */
@@ -13264,8 +13277,10 @@ const AVIEW={
       }
       var extracted=_mainEventCountry(title);
       if(extracted) country=extracted;
-      else if(!country && typeof COUNTRIES!=='undefined' && COUNTRIES.length){
-        for(var i=0;i<COUNTRIES.length;i++){ if(title.indexOf(COUNTRIES[i].name)>=0){ country=COUNTRIES[i].name; break; } }
+      /* #710：客户端提取失败时用服务端签名国别段兜底（签名国别来自标题，跨源一致） */
+      else{
+        var _sigC=String(a._eventSig||'').split('|')[0]||'';
+        if(_sigC && typeof COUNTRIES!=='undefined' && COUNTRIES.length && COUNTRIES.some(function(x){return x.name===_sigC;})) country=_sigC;
       }
       /* 去掉媒体来源后缀、数字、计数 */
       title=title.replace(/\s*[-—–]\s*[^，。；;]+$/,'').replace(/\d+/g,'').replace(/[０-９]+/g,'');
@@ -13300,10 +13315,9 @@ const AVIEW={
       /* 语义要素抽取 */
       var ent=norm.match(/(能源设施|化工厂|矿区|营地|港口|机场|车站|铁路|边境|首都|海域|海峡|设施|法院|司法机关|贸易|经济|市场|货币|汇率|银行|金融|关税|制裁|冲突|战争|无人机|导弹|战机|军舰|潜艇|航母|坦克|装甲车|火炮|火箭弹|地雷|爆炸物)/);
       var inc=norm.match(/(火灾|爆炸|袭击|绑架|劫持|枪击|坠机|沉船|地震|洪水|山洪|制裁|冲突|战争|事故|坠毁|沉没|抗议|骚乱|罢工|政变|恐袭|空袭|交火|扣押|逮捕|审判|选举|公投|签约|谈判|协议|条约|关税|贸易战|禁运|封锁|入侵|占领|撤退|停火|维和|救援|疏散|撤离|遣返|驱逐|引渡|通缉|追捕|伏击|屠杀|人道主义危机|难民|饥荒|干旱|飓风|台风|龙卷风|海啸|火山|泥石流|雪崩|山火|森林火灾|化学泄漏|核泄漏|辐射|污染|中毒|传染病|疫情|网络攻击|黑客|勒索|数据泄露|间谍|监控|审查|宣传|欺诈|诈骗|洗钱|腐败|贿赂|走私|贩毒|武器|弹药|导弹|无人机)/);
-      /* 2026-08-27 去重键不再区分是否提及中方受害者：同一事件多条变体有的写中国有的不写，避免因此拆成多条
-       * “边境”只是位置修饰，不是实体，避免同一洪灾因是否写“边境”而拆成两条 */
-      if(country && ent && ent[1]!=='边境' && inc) return country+'|'+ent[1]+'|'+inc[1];
-      /* 国家+灾害/事件类型 兜底合并：同一国家同一类灾害（洪水/袭击/冲突等）只留一条 */
+      /* 2026-09-08 #710：键统一为 国|事件类型（去掉实体段）——实体段有无会让同事件
+       * 措辞变体分键（"烟花仓库爆炸"无实体 vs "教堂烟花爆炸"无 → 已同键；但"机场爆炸"
+       * vs "爆炸"曾分键）。摘要面板按 国+类型 粒度合并，全量队列在预警中心可查。 */
       if(country && inc) return country+'|'+inc[1];
       /* 回退：国家+排序后的字符指纹（抵抗词序差异） */
       var clean=norm.replace(/[^一-龥a-z]/gi,'');
@@ -13325,7 +13339,7 @@ const AVIEW={
       if(a && a.is_manual){ out.push(a); return; } /* 2026-09-01 手动录入铁律：手动条目不参与事件级合并，始终独立展示 */
       var k;
       try{ k=keyFn.call(self,a); }catch(err){ k=self._eventKey(a); }
-      if(!k || k.replace(/\|/g,'').length<6){ out.push(a); return; }
+      if(!k || k.replace(/\|/g,'').length<4){ out.push(a); return; } /* #710：<6 会把「国名+二字事件词」（墨西哥|爆炸=5、印度|爆炸=4）这类有效键放行不合并——多源重复刷屏的直接根因；降到 4 */
       if(seen[k]){
         seen[k]._mergedN=(seen[k]._mergedN||1)+1;
         /* 合并涉华标记：任一版本提到中方受害者，主条目即标为涉华 */
@@ -19480,6 +19494,8 @@ function _extractCountryFromText(t){
   return '';
 }
 function _ingestApproved(item, cat){
+  /* #693 手动录入豁免：手动数据由服务端 manual-entry.js 权威写入，禁止经实时分发链路盖新时间戳回流预警中心 */
+  if(item && (item.is_manual===true || String(item.url||'').indexOf('manual://')===0)) return;
   var ingestKey = 'K-' + cat + '-' + (item.url||'') + '-' + _normTitle(item.title||item.content||'');
   if(!item || _ingestedIds[ingestKey]) return;
   _ingestedIds[ingestKey] = 1;
@@ -19951,6 +19967,9 @@ function _seedAllSystemData(){
       var before=(list||[]).length, after=0, gateDrop=0, linkDrop=0;
       (list||[]).forEach(function(it){
         try{
+          /* #693 手动录入豁免闸：manual_entries 已由 manual-entry.js 服务端权威写入 datahub alerts，
+           * 在此重采会 delete o.id 盖新时间戳回流 events/terror_events/intel_data（8-25 旧闻变"今日 21:47"预警） */
+          if(it.is_manual===true || String(it.url||'').indexOf('manual://')===0){ gateDrop++; return; }
           var text=(it.title||'')+' '+(it.desc||it.detail||'')+' '+(it.type||'');
           /* 时效闸门⓪（2026-08-15 用户铁律：预警只能存在今天的数据）：
            * 种子归集每次启动都跑，旧静态事件若不带时效拦截会被盖新时间戳重新入库（自我再生） */
@@ -20517,6 +20536,36 @@ function initApp(){
         }catch(e){}
       }
       if(_nTotal>0) console.log('[PURGE] 已剔除 '+_nTotal+' 处电竞/娱乐类噪声数据');
+    }catch(e){}
+    /* === #693 手动录入污染自愈：剔除曾被泄漏链重采入库的 manual:// 条目（每次启动都跑）===
+     * _seedAllSystemData 曾把手动 alert delete o.id 盖新时间戳回流 events/terror_events/采集库，
+     * 判据：url 以 manual:// 开头（manual_entries 权威 uuid）。 */
+    try{
+      var _mHit=function(d){ if(!d)return false; return d.is_manual===true || String(d.url||'').indexOf('manual://')===0; };
+      var _mk=Object.keys(localStorage), _mTotal=0;
+      for(var _mi=0;_mi<_mk.length;_mi++){
+        var _mkey=_mk[_mi];
+        if(_mkey.indexOf('orps_')!==0) continue;
+        try{
+          var _mv=JSON.parse(localStorage.getItem(_mkey));
+          if(Array.isArray(_mv)){
+            var _mb=_mv.length;
+            _mv=_mv.filter(function(d){return !_mHit(d);});
+            if(_mv.length!==_mb){ localStorage.setItem(_mkey,JSON.stringify(_mv)); _mTotal+=_mb-_mv.length; }
+          } else if(_mv&&typeof _mv==='object'){
+            var _mch=false;
+            Object.keys(_mv).forEach(function(cat){
+              if(Array.isArray(_mv[cat])){
+                var _mb2=_mv[cat].length;
+                _mv[cat]=_mv[cat].filter(function(d){return !_mHit(d);});
+                if(_mv[cat].length!==_mb2)_mch=true;
+              }
+            });
+            if(_mch){ localStorage.setItem(_mkey,JSON.stringify(_mv)); _mTotal++; }
+          }
+        }catch(e){}
+      }
+      if(_mTotal>0) console.log('[PURGE-693] 已剔除手动录入重采污染条目 '+_mTotal+' 处');
     }catch(e){}
   })();
   // 全部数据加载/迁移完成后，再次合并重复预警（不同来源/分类导入可能产生同标题记录）

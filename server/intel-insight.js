@@ -17,6 +17,7 @@
 const express = require('express');
 const scrapers = require('./scrapers');
 const INTEREST_BASE = require('./interest-base'); /* 要道通道正则（与 reports-engine 同源单一来源） */
+const reportsEngine = require('./reports-engine'); /* #664 公文版式引擎复用（govdoc.renderGovHtml，红头版式+图表复合分析与周期简报同源） */
 
 /* 情报类别中文名（leader-brief 与 intel-center 共用） */
 const _CAT_CN = {
@@ -41,6 +42,38 @@ const _CH_CN = {
 function _lv(j, sev) {
   const l = String((j && j.level_norm) || sev || 'yellow').toLowerCase();
   return ['red', 'orange', 'yellow', 'blue'].includes(l) ? l : 'yellow';
+}
+
+/* ============ #712 事件时效闸（主面板数据核实原则） ============
+ * 用户口径（2026-09-08）：研判中心主面板只放「近期发生且对海外利益安全有现实威胁」的
+ * 实时数据；旧数据只能作历史辅助。此前补采回灌/旧文重发（如 2004 年阿富汗 11 工人
+ * 遇袭案，collect_time=昨晚）被误判为新鲜红橙事件顶上主面板——根因是只看采集时间。
+ * 口径（自主研判）：
+ *   _evTs   事件发生时间戳：publish_time/event_date 优先（regex-cast 铁律，varchar 脏值
+ *           只认 YYYY-MM-DD 前缀）；无有效事件日期回落 collect_time（实时通道未带日期）。
+ *   _evFresh 近 N 天内发生（默认 7 天）才算「近期」——研判队列/突发链等主面板闸门。
+ *   _evAgeD 事件距今天数（案卷历史复盘标记用，>30 天 = 历史事件）。
+ * 旧事件的合法去处：lifecycle / similar / event-report 历史复盘（全库不限时，标注历史）。 */
+function _evTs(r) {
+  const j = (r && r.data_json) || {};
+  const raw = String(j.publish_time || r.event_date || '');
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) { const t = Date.parse(m[1] + '-' + m[2] + '-' + m[3] + 'T00:00:00+08:00'); if (!isNaN(t)) return t; }
+  const c = Date.parse(r && r.collect_time || '');
+  return isNaN(c) ? 0 : c;
+}
+function _evFresh(r, days) {
+  const t = _evTs(r);
+  if (!t) return true; /* 连采集时间都缺的极端脏行，交下游闸门 */
+  return (Date.now() - t) <= (days || 7) * 86400000;
+}
+function _evAgeD(r) {
+  const t = _evTs(r);
+  return t ? Math.floor((Date.now() - t) / 86400000) : 0;
+}
+function _evDate(r) {
+  const j = (r && r.data_json) || {};
+  return String(j.publish_time || r.event_date || '').slice(0, 10);
 }
 
 /* 中文数字/时间工具 */
@@ -98,6 +131,7 @@ function _fmtTime(t) {
 module.exports = function intelInsight(ctx) {
   const q = ctx.query;
   const isChina = ctx.isChinaRelated || scrapers.isChinaRelatedStrict;
+  const llmCall = (ctx.llm && ctx.llm.callMsg) || null;
   const router = express.Router();
 
   /* ---------- ① 领导要报速览（30 秒一页纸数据装配） ---------- */
@@ -107,34 +141,125 @@ module.exports = function intelInsight(ctx) {
       const { rows } = await q(
         `SELECT id, data_type, title, country, severity, source, collect_time, data_json,
                 COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
-         FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' ORDER BY collect_time DESC LIMIT 900`,
+         FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' ORDER BY collect_time DESC LIMIT 3000`,
         [since]
       );
       const items = rows.map(r => {
         const j = r.data_json || {};
+        /* #688 时间归一修复：publish_time/event_date 解析失败（英文残串）回落 collect_time */
+        let time = _fmtTime(j.publish_time || r.event_date || r.collect_time);
+        if (!/^\d{4}-/.test(time)) time = _fmtTime(r.collect_time);
         return {
           id: r.id, type: r.data_type,
           title: r.title_cn || r.title || '',
           country: _iso2cnTry(r.country || j.country_cn || ''),
           severity: j.level_norm || r.severity || 'yellow',
           source: r.source || j.source || '',
-          time: _fmtTime(j.publish_time || r.event_date || r.collect_time),
+          time,
           url: j.url || '',
+          sig: j._eventSig || '',
           china: !!isChina(String(r.title || '') + ' ' + String(r.title_cn || '')),
           corr: Number(j.corroboration || 0),
-          deaths: Number(j.deaths || 0)
+          deaths: Number(j.deaths || 0),
+          /* #688 事件时效：回补入库的旧事件（event_date/publish_time 早于 48h）不进要报榜 */
+          stale: /^\d{4}-\d{2}-\d{2}/.test(time) ? (Date.now() - new Date(time).getTime()) > 48 * 3600 * 1000 : false
         };
       });
       const reds = items.filter(i => i.severity === 'red');
       const oranges = items.filter(i => i.severity === 'orange');
       const chinas = items.filter(i => i.china);
-      /* TOP5：红全部 + 橙补足，涉华加权置顶（corroboration + china + deaths 排序） */
-      const _score = i => ({ red: 100, orange: 60, yellow: 30, blue: 10 }[i.severity] || 5) + (i.china ? 25 : 0) + i.corr * 5 + i.deaths;
-      const top = items.slice().sort((a, b) => _score(b) - _score(a)).slice(0, 5);
-      const chinaTop = chinas.slice().sort((a, b) => _score(b) - _score(a)).slice(0, 5);
-      /* 待办风险：涉华/高印证黄橙事件未升级处置（近 24h 红橙之外的需关注项） */
-      const pending = items.filter(i => i.china && (i.severity === 'orange' || i.severity === 'yellow') && i.corr >= 1)
-        .sort((a, b) => _score(b) - _score(a)).slice(0, 4);
+
+      /* ===== #688 选题质量整治：核心（硬安全事件）· 重点（红橙/涉华/多源）· 不重复（同事件归并去重） ===== */
+      /* ① 标题质量门：过短、t.co/URL 残留的条目直接出局 */
+      const _okTitle = i => {
+        const t = i.title || '';
+        if (t.length < 8) return false;
+        if (/\bt\.co\b|https?:\/\//.test(t)) return false;
+        return true;
+      };
+      /* ② 硬安全事件词（领导要报的核心素材：真袭击/真伤亡/真冲突） */
+      const _INC_RE = /(袭击|遇袭|爆炸|绑架|劫持|人质|枪击|开火|交火|空袭|炮击|火箭弹|导弹|无人机袭击|身亡|死亡|遇难|伤亡|死伤|击毙|遗体|冲突爆发|交战|武装人员|极端分子|恐怖|袭击者|枪手|撤侨|袭击事件)/;
+      /* ③ 经贸/文娱噪音词（不是领导要报素材，重罚出榜） */
+      const _NOISE_RE = /(反倾销|关税|股价|股市|股票|基金净值|袋费|票价|联赛|锦标赛|天气预报|票房|综艺|加息|利率|财报|招股|IPO|冠军|选秀|打折|促销)/;
+      /* #688b（20:28 用户口径）中资企业海外立项与经营安全要素——这才是重点 */
+      const _CNBIZ_RE = /(中资|中国企业|中国公司|中方项目|中企|中国工人|中国工程师|中国公民|中国籍|华商|华人商铺|经济走廊|CPEC|一带一路|工业园|矿区|油田|电站|承包工程|驻外机构|大使馆|领事馆|孔子学院|中资银行|中国投资|中方人员|项目遇袭|项目暂停|停工)/;
+      /* #688b 俄罗斯方向降权：仅特别重大（红色/死亡≥10/三源以上印证）才保留权重 */
+      const _isRu = i => (i.country === '俄罗斯' || /俄罗斯/.test(i.title || ''));
+      const _major = i => i.severity === 'red' || (i.deaths || 0) >= 10 || (i.corr || 0) >= 3;
+      /* #688b 涉华负面加权、正面软新闻降权（庆祝/合作类不是要报素材） */
+      const _NEG_RE = /(袭击|遇袭|爆炸|绑架|劫持|人质|制裁|打压|封锁|禁令|管制|警告|威胁|暂停|停工|抗议|示威|骚乱|排华|反华|歧视|摩擦|纠纷|冲突|死亡|遇难|枪击|拘留|逮捕|起诉|扣押|没收|风险)/;
+      const _POS_RE = /(庆祝|友谊|合作共赢|携手|开辟了|落成|揭牌|签署合作|音乐会|欢迎|成果丰硕|职业道路)/;
+      /* ④ 类型权重（恐袭/武装冲突最高，经贸金融垫底） */
+      const _TYPE_W = {
+        terror_events: 24, military_conflicts: 20, mass_violence: 16, crime_events: 16,
+        social_unrest: 14, regime_change: 14, natural_disasters: 12, cyber_security: 10,
+        industrial_accident: 10, public_health: 10, environmental_event: 8, infrastructure: 8,
+        election_events: 6, political_events: 6, sanctions_data: 5, geopolitical_intel: 5,
+        policy_shift: 4, business_climate: 3, financial_market: 2
+      };
+      const _score = i =>
+        ({ red: 100, orange: 55, yellow: 25, blue: 8 }[i.severity] || 5)
+        + (i.china ? 35 : 0)
+        + (_INC_RE.test(i.title) ? 30 : 0)
+        + Math.min(i.corr, 6) * 6
+        + Math.min(i.deaths || 0, 50) * 2
+        + (_TYPE_W[i.type] || 4)
+        - (_NOISE_RE.test(i.title) ? 60 : 0)
+        + (_CNBIZ_RE.test(i.title) ? 18 : 0)
+        + (i.china && _NEG_RE.test(i.title) ? 15 : 0)
+        - (_POS_RE.test(i.title) ? 20 : 0)
+        - (i.country === '中国' ? 25 : 0)
+        - (_isRu(i) && !_major(i) ? 30 : 0)
+        /* GDELT 模板句（"国别：A 对 B 发动XX/实施XX"）机翻格式差、事件语义弱，重罚出榜 */
+        - (/^[^：]{1,14}：.+对.+(发动|实施|进行|举行|表达)/.test(i.title) ? 45 : 0);
+      /* ⑤ 同事件归并：同 _eventSig / 同 URL / 同国别+相似标题 判为同一事件；
+       *    归并时累计独立来源数（前端「N 源印证」徽章），代表条目取组内评分最高者。
+       *    相似判定：CJK 二元组+拉丁词包含度（_sim）或词元重合≥3（词元切块对中文不稳，双保险） */
+      const _bgrams = t => {
+        const s = String(t || '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9 ]/g, ' ');
+        const set = new Set();
+        (s.match(/[\u4e00-\u9fa5]{2,}/g) || []).forEach(w => { for (let k = 0; k + 2 <= w.length; k++) set.add(w.slice(k, k + 2)); });
+        (s.toLowerCase().match(/[a-z]{3,}/g) || []).forEach(w => set.add(w));
+        return set;
+      };
+      const _sim = (a, b) => {
+        const A = _bgrams(a), B = _bgrams(b);
+        if (!A.size || !B.size) return 0;
+        let inter = 0; A.forEach(x => { if (B.has(x)) inter++; });
+        return inter / Math.min(A.size, B.size);
+      };
+      const pool = items.filter(_okTitle).sort((a, b) => _score(b) - _score(a));
+      const picked = [];
+      for (const i of pool) {
+        if (picked.length >= 60) break;
+        let hit = null;
+        for (const p of picked) {
+          if (i.sig && i.sig === p.sig) { hit = p; break; }
+          if (i.url && i.url === p.url) { hit = p; break; }
+          if (i.country && i.country === p.country && (_overlap(_tokens(i.title), _tokens(p.title)) >= 3 || _sim(i.title, p.title) >= 0.40)) { hit = p; break; }
+        }
+        if (hit) {
+          if (i.source) hit._srcSet.add(i.source);
+          hit._corrN++;
+          if (_score(i) > _score(hit)) { /* 保留评分更高的代表（级别/伤亡/印证） */
+            const keepN = hit._corrN, keepS = hit._srcSet;
+            Object.assign(hit, i); hit._corrN = keepN; hit._srcSet = keepS;
+          }
+        } else {
+          i._corrN = 1; i._srcSet = new Set(i.source ? [i.source] : []);
+          picked.push(i);
+        }
+      }
+      const _corr = i => Math.max(i._corrN || 1, i._srcSet ? i._srcSet.size : 1);
+      /* TOP5 入选门：海外事件（国别≠中国）+ 硬事件词/涉华/红色 + 48h 时效（杜绝经贸评论/国内事务凑数） */
+      const gate = i => !i.stale && i.country !== '中国' && (_INC_RE.test(i.title) || i.china || i.severity === 'red');
+      const top = picked.filter(gate).slice(0, 5);
+      /* 涉华榜：海外方向（国别≠中国）+ 俄罗斯普通条目最多保留 1 条（特别重大不受限）——20:28 用户口径 */
+      let _ruN = 0;
+      const chinaTop = picked.filter(i => i.china && !i.stale && i.country !== '中国' && !top.includes(i))
+        .filter(i => !_isRu(i) || _major(i) || _ruN++ < 1).slice(0, 5);
+      /* 待办风险：涉华橙黄未升级项（不在 TOP5 内的，供值班主任追办） */
+      const pending = picked.filter(i => i.china && !i.stale && (i.severity === 'orange' || i.severity === 'yellow') && !top.includes(i) && !chinaTop.includes(i)).slice(0, 4);
       /* 一句话决策建议：按 TOP 事件类型推导（规则模板，引用真实数字） */
       const types = {};
       items.forEach(i => { types[i.type] = (types[i.type] || 0) + 1; });
@@ -147,10 +272,10 @@ module.exports = function intelInsight(ctx) {
       if (topTypes.length) advice.push('事件量前三类：' + topTypes.map(t => (_CAT_CN[t[0]] || t[0]) + ' ' + t[1] + ' 条').join('、'));
       res.json({
         ok: true, generatedAt: _nowCn(), window: '24h',
-        stats: { total: items.length, red: reds.length, orange: oranges.length, china: chinas.length },
-        top: top.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, type: _CAT_CN[i.type] || i.type, time: String(i.time).slice(0, 16), url: i.url, china: i.china, corr: i.corr })),
-        chinaTop: chinaTop.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, time: String(i.time).slice(0, 16), url: i.url })),
-        advice, pending: pending.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, corr: i.corr })),
+        stats: { total: items.length, red: reds.length, orange: oranges.length, china: chinas.length, dedupEvents: picked.length },
+        top: top.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, type: _CAT_CN[i.type] || i.type, time: String(i.time).slice(0, 16), url: i.url, china: i.china, corr: _corr(i) })),
+        chinaTop: chinaTop.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, time: String(i.time).slice(0, 16), url: i.url, corr: _corr(i) })),
+        advice, pending: pending.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, corr: _corr(i) })),
         topTypes: topTypes.map(t => ({ key: t[0], name: _CAT_CN[t[0]] || t[0], n: t[1] }))
       });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -176,13 +301,12 @@ module.exports = function intelInsight(ctx) {
       const j = anchor.data_json || {};
       const anchorTitle = anchor.title_cn || anchor.title || '';
       const anchorTk = _tokens(anchorTitle);
-      /* 召回：同事件签名 OR 标题词元重合 ≥2 OR 同 URL */
+      /* 召回：同事件签名 OR 标题词元重合 ≥2 OR 同 URL（#669 全库不限时） */
       const cand = await q(
         `SELECT id, data_type, title, country, severity, source, collect_time, event_date, audit_status, data_json,
                 COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
          FROM intel_data
-         WHERE collect_time >= NOW() - INTERVAL '30 days'
-           AND (data_json->>'_eventSig' = $1 AND $1 <> '' OR (data_json->>'url' = $2 AND $2 <> '') OR title ILIKE $3)
+         WHERE (data_json->>'_eventSig' = $1 AND $1 <> '' OR (data_json->>'url' = $2 AND $2 <> '') OR title ILIKE $3)
          ORDER BY collect_time ASC LIMIT 120`,
         [j._eventSig || '', j.url || '', '%' + String(anchorTitle).slice(0, 18) + '%']
       );
@@ -232,11 +356,11 @@ module.exports = function intelInsight(ctx) {
       const anchorTk = _tokens(anchorTitle);
       const anchorType = type || anchor.data_type;
       const anchorCountry = country || _iso2cnTry(anchor.country);
-      /* 同类 + 近 90 天候选池（含归档，直接查 intel_data 全量） */
+      /* 同类候选池（#669 全库不限时，含归档，直接查 intel_data 全量取最新 1500） */
       const cand = await q(
         `SELECT id, data_type, title, country, severity, collect_time, data_json,
                 COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
-         FROM intel_data WHERE data_type = $1 AND collect_time >= NOW() - INTERVAL '90 days' ORDER BY collect_time DESC LIMIT 1500`,
+         FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC LIMIT 1500`,
         [anchorType]
       );
       const sims = cand.rows
@@ -256,7 +380,7 @@ module.exports = function intelInsight(ctx) {
           time: _fmtTime(x.r.collect_time).slice(0, 10), sameCountry: x.sameCountry, overlap: x.ov,
           url: (x.r.data_json || {}).url || ''
         }));
-      /* 复发统计：同类事件近 90 天总数与国别分布 */
+      /* 复发统计：同类事件全库总数与国别分布 */
       const total = cand.rows.length;
       const byCountry = {};
       cand.rows.forEach(r => { const c = _iso2cnTry(r.country) || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
@@ -267,7 +391,7 @@ module.exports = function intelInsight(ctx) {
         ok: true, anchor: { id: anchor.id, title: anchorTitle.slice(0, 90), type: anchorType, country: anchorCountry },
         matches: sims, matchCount: sims.length,
         stats: { total90d: total, lvDist, hotCountries: hotCountries.map(x => ({ country: x[0], n: x[1] })) },
-        note: '匹配口径：同情报类别 + 标题实质词元重合加权（同国别加成），近 90 天真实库检索'
+        note: '匹配口径：同情报类别 + 标题实质词元重合加权（同国别加成），全库不限时检索（最新 1500 条候选池）'
       });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
@@ -515,6 +639,389 @@ module.exports = function intelInsight(ctx) {
       };
       _icCache = out; _icCacheAt = Date.now();
       res.json(out);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ---------- ⑥ 事件研判专报（#664 用户指令：历史相似事件分析 + 事件时间流研判 → 智能研判 + 自带公文输出） ----------
+   * 参数：id 或 q（标题关键词）+ country + type。
+   * 装配：锚点事件 → 时间流召回（同事件签名/同URL/词元重合，30天）→ 相似历史事件（同类别90天词元加权）
+   *      → 级别/国别/趋势复合统计 → LLM 智能研判（失败回落规则模板，引用真实数字，零模拟）
+   *      → govdoc.renderGovHtml 红头公文（图表复合分析与周期简报同一引擎）。
+   * 返回 JSON：anchor / stages / related / sims / stats / daily / govHtml / llmOk。 */
+  router.get('/event-report', async (req, res) => {
+    try {
+      const id = req.query.id, kw = String(req.query.q || '').trim(),
+        country = String(req.query.country || '').trim(), type = String(req.query.type || '').trim();
+      let anchor = null;
+      if (id) {
+        const r = await q(`SELECT id, data_type, title, country, severity, source, collect_time, event_date, audit_status, data_json,
+                COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn FROM intel_data WHERE id=$1`, [id]);
+        anchor = r.rows[0] || null;
+      } else if (kw) {
+        /* #664 多关键词 AND 检索：空格分隔的每个词元都须命中（标题或中文译题），
+         * 用户自然语言输入（"刚果金 袭击"）不再要求整串连续命中；
+         * 标点归一：两侧同去括号/空格/连字符后比对（"刚果金" 可命中 "刚果（金）"） */
+        const PUNCT_RE = '[ （）()·\\-—、，,。.：:；;"\'\'""【】\\[\\]]'; /* SQL 字面量内 ''=转义单引号 */
+        const _norm = s => String(s).replace(/[\s（）()·\-—、，,。.：:；;"''""【】\[\]]/g, '');
+        const words = kw.split(/\s+/).filter(Boolean).slice(0, 4);
+        const conds = words.map((_, i) => "(regexp_replace(COALESCE(title,''), '" + PUNCT_RE + "', '', 'g') ILIKE $" + (i + 1) + " OR regexp_replace(COALESCE(data_json->>'title_zh',''), '" + PUNCT_RE + "', '', 'g') ILIKE $" + (i + 1) + ")").join(' AND ');
+        const r = await q(`SELECT id, data_type, title, country, severity, source, collect_time, event_date, audit_status, data_json,
+                COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+                FROM intel_data WHERE ${conds} ORDER BY collect_time DESC LIMIT 1`, words.map(w => '%' + _norm(w) + '%'));
+        anchor = r.rows[0] || null;
+      }
+      if (!anchor) return res.json({ ok: false, error: '未找到锚点事件（请提供事件 id 或标题关键词）' });
+      const j = anchor.data_json || {};
+      const anchorTitle = anchor.title_cn || anchor.title || '';
+      const anchorTk = _tokens(anchorTitle);
+      const anchorType = type || anchor.data_type;
+      const anchorCountry = country || _iso2cnTry(anchor.country);
+      /* #712 历史锚点标记：事件发生距今天数（publish_time/event_date 优先）。
+       * >30 天 = 历史事件 → 案卷降级为「历史复盘」模式（旧数据的合法去处），
+       * 前端打徽章 + 研判提示语切换，绝不冒充近期实时威胁。 */
+      const evAgeD = _evAgeD(anchor);
+      const evDateStr = _evDate(anchor);
+      const historic = evAgeD > 30;
+
+      /* —— A. 时间流召回：同事件签名 / 同 URL / 标题词元重合（#669 全库不限时，正序） ——
+       * 2026-09-07 用户指令：时间要求不受限，去掉原 30 天帽；LIMIT 控制成本。 */
+      const relQ = await q(
+        `SELECT id, data_type, title, country, severity, source, collect_time, event_date, data_json,
+                COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+         FROM intel_data
+         WHERE (data_json->>'_eventSig' = $1 AND $1 <> '' OR (data_json->>'url' = $2 AND $2 <> '') OR title ILIKE $3)
+         ORDER BY collect_time ASC LIMIT 200`,
+        [j._eventSig || '', j.url || '', '%' + String(anchorTitle).slice(0, 18) + '%']
+      );
+      const related = relQ.rows.filter(r => {
+        if (r.id === anchor.id) return true;
+        if (j._eventSig && (r.data_json || {})._eventSig === j._eventSig) return true;
+        if (j.url && (r.data_json || {}).url === j.url) return true;
+        return _overlap(anchorTk, _tokens(r.title_cn || r.title)) >= 2;
+      }).map(r => ({
+        id: r.id, title: String(r.title_cn || r.title || '').slice(0, 120),
+        country: _iso2cnTry(r.country), level: _lv(r.data_json, r.severity),
+        source: r.source || ((r.data_json || {}).source || '全网检索'),
+        time: _fmtTime(r.collect_time), url: (r.data_json || {}).url || '',
+        digest: String((r.data_json || {}).content_zh || (r.data_json || {}).summary || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+      }));
+
+      /* —— B. 相似历史事件：同类别词元加权（#669 全库不限时，同国加成）——
+       * 2026-09-07 用户指令：去掉原 90 天帽，取全库该类别最新 1500 条参与匹配。 */
+      const simQ = await q(
+        `SELECT id, data_type, title, country, severity, collect_time, data_json,
+                COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+         FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC LIMIT 1500`,
+        [anchorType]
+      );
+      const sims = simQ.rows
+        .filter(r => r.id !== anchor.id)
+        .map(r => {
+          const t = r.title_cn || r.title || '';
+          const ov = _overlap(anchorTk, _tokens(t));
+          const sameCountry = anchorCountry && _iso2cnTry(r.country) === anchorCountry;
+          return { r, ov, sameCountry, score: ov * 2 + (sameCountry ? 3 : 0) };
+        })
+        .filter(x => x.score >= 2)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 40)
+        .map(x => ({
+          id: x.r.id, title: String(x.r.title_cn || x.r.title || '').slice(0, 120),
+          country: _iso2cnTry(x.r.country), level: _lv(x.r.data_json, x.r.severity),
+          time: _fmtTime(x.r.collect_time), sameCountry: x.sameCountry, overlap: x.ov,
+          url: (x.r.data_json || {}).url || '',
+          digest: String((x.r.data_json || {}).content_zh || (x.r.data_json || {}).summary || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+        }));
+
+      /* —— C. 复合统计（全部真实库聚合） —— */
+      /* #669 全库月度规律：该类别自建库以来逐月事件量（历史相似性趋势的根基，
+       * 不做任何时间截断；用户口径：时间不受限） */
+      let typeMonthly = [], typeTotal = 0;
+      try {
+        const mq = await q(
+          `SELECT to_char(collect_time, 'YYYY-MM') AS m, COUNT(*)::int AS c
+           FROM intel_data WHERE data_type = $1 GROUP BY 1 ORDER BY 1`, [anchorType]);
+        typeMonthly = mq.rows.map(x => ({ m: x.m, n: x.c }));
+        typeTotal = typeMonthly.reduce((s, x) => s + x.n, 0);
+      } catch (e) { console.warn('[INSIGHT] 月度规律查询失败:', e.message); }
+      const all = related.concat(sims.filter(s => !related.some(r => r.id === s.id)));
+      const lvDist = { red: 0, orange: 0, yellow: 0, blue: 0 };
+      all.forEach(i => { if (lvDist[i.level] != null) lvDist[i.level]++; });
+      const byCountry = {};
+      all.forEach(i => { const c = i.country || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
+      const hotCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const chinaCnt = all.filter(i => isChina(i.title)).length;
+      /* 逐日趋势（本地时区切日） */
+      const byDay = {};
+      all.forEach(i => { const d = String(i.time || '').slice(0, 10); if (d) byDay[d] = (byDay[d] || 0) + 1; });
+      const daily = Object.keys(byDay).sort().map(d => ({ date: d, n: byDay[d] }));
+      /* 复发间隔：相似事件相邻日期间隔中位数（天） */
+      const simDays = sims.map(s => String(s.time).slice(0, 10)).filter(Boolean).sort();
+      let recur = null;
+      if (simDays.length >= 3) {
+        const gaps = [];
+        for (let k = 1; k < simDays.length; k++) {
+          const g = Math.round((new Date(simDays[k]) - new Date(simDays[k - 1])) / 86400000);
+          if (g >= 0) gaps.push(g);
+        }
+        gaps.sort((a, b) => a - b);
+        if (gaps.length) recur = gaps[Math.floor(gaps.length / 2)];
+      }
+      const srcSet = new Set(related.map(i => i.source).filter(Boolean));
+      const first = related[0] || { time: _fmtTime(anchor.collect_time), title: anchorTitle, source: anchor.source || '采集通道' };
+
+      /* —— D. 生命周期五阶段（真实字段，无数据如实标注） —— */
+      const stages = [
+        { key: 'collect', name: '首次采集', time: String(first.time || ''), detail: '来源：' + first.source + '；' + String(first.title || '').slice(0, 60), done: true },
+        { key: 'corrob', name: '多源印证', time: srcSet.size > 1 ? String((related[related.length - 1] || first).time || '') : '', detail: srcSet.size > 1 ? ('库内 ' + srcSet.size + ' 个独立信源报道同一事件：' + Array.from(srcSet).slice(0, 5).join('、')) : '单一信源，尚无库内交叉印证', done: srcSet.size > 1 },
+        { key: 'alert', name: '预警入列', time: '', detail: '当前级别：' + (j.level_norm || anchor.severity || 'yellow') + '；涉华关联：' + (isChina(String(anchor.title || '') + ' ' + anchorTitle) ? '是' : '否'), done: true },
+        { key: 'audit', name: '审核入库', time: _fmtTime(anchor.collect_time), detail: '审核状态：' + (anchor.audit_status || 'approved'), done: !!anchor.audit_status },
+        { key: 'archive', name: '归档复盘', time: '', detail: related.length > 3 ? '已进入归档检索范围（相关条目 ' + related.length + ' 条）' : '事件仍在活跃监测窗口内', done: related.length > 3 }
+      ];
+
+      /* —— E. 智能研判：LLM 优先，失败回落规则模板（引用真实数字，零虚构） —— */
+      const stats = { total: all.length, red: lvDist.red, orange: lvDist.orange, yellow: lvDist.yellow, blue: lvDist.blue, chinaCount: chinaCnt };
+      const hot3 = hotCountries.slice(0, 3).map(x => x[0] + ' ' + x[1] + ' 起').join('、') || '分布零散';
+      const ruleJudge = [
+        (historic ? '【历史复盘模式】本事件发生于 ' + evDateStr + '（距今 ' + evAgeD + ' 天），属历史事件复盘研判，非近期实时威胁，仅供历史规律参考与同类事件防范借鉴。' : '') +
+        '一、事件概况。锚点事件"' + anchorTitle.slice(0, 50) + '"（' + (anchorCountry || '未标注国别') + '，' + (_CAT_CN[anchorType] || anchorType) + '类，' + (j.level_norm || anchor.severity || 'yellow') + '级）。库内时间流召回相关条目 ' + related.length + ' 条，独立信源 ' + srcSet.size + ' 个；全库同类别历史事件 ' + typeTotal + ' 条，其中检索到相似事件 ' + sims.length + ' 起（同国别 ' + sims.filter(s => s.sameCountry).length + ' 起）。',
+        '二、时间流研判。该事件自首次采集（' + String(first.time || '时间不详') + '）以来，' + (related.length > 3 ? '呈多节点持续演进态势，库内累计 ' + related.length + ' 个时间节点的后续报道，事件仍处于活跃发展窗口' : '库内后续演进报道 ' + related.length + ' 条，事件链条相对收敛') + '。' + (srcSet.size > 1 ? '已获 ' + srcSet.size + ' 个独立信源交叉印证，事件真实性置信度高。' : '目前为单一信源，建议持续跟踪等待多源印证。'),
+        '三、历史相似事件规律。全库同类事件 ' + typeTotal + ' 条，集中于：' + hot3 + '。级别分布为红 ' + lvDist.red + '、橙 ' + lvDist.orange + '、黄 ' + lvDist.yellow + '、蓝 ' + lvDist.blue + '。' + (recur != null ? '相似事件复发间隔中位数约 ' + recur + ' 天，' : '') + (lvDist.red + lvDist.orange > 0 ? '同类事件中红橙级占比 ' + Math.round((lvDist.red + lvDist.orange) / (all.length || 1) * 100) + '%，同类风险烈度不容忽视。' : '同类事件总体烈度可控。'),
+        '四、对策建议。' + (chinaCnt > 0 ? '本事件链涉华关联条目 ' + chinaCnt + ' 条，建议领事保护条线今日内完成专项过筛，逐条核实中方人员机构安全状态；' : '') + (sims.filter(s => s.sameCountry).length >= 3 ? anchorCountry + '方向同类事件密集复发，建议驻外机构对照历史处置案例前置部署防范措施；' : '') + '建议值班条线将该事件纳入重点盯防清单，按复发周期加密跟踪，后续演进节点实时入库复盘。'
+      ].join('\n');
+      let judgeText = ruleJudge, llmOk = false;
+      /* #682 quick 模式：跳过 LLM（规则模板秒出，引用真实数字），供自主研判队列自动立卷；
+       * 完整模式（无 quick）走 Kimi 大模型深度研判。 */
+      if (llmCall && !req.query.quick) {
+        try {
+          const pv = reportsEngine._test.pvKimi();
+          const sys = '你是国家安全情报研判参谋，为海外利益保护情报预警平台撰写事件研判专报的综合研判段（参谋助手级，须可直接供值班领导决策使用）。必须分五段，段落标题固定：「一、事件概况与研判结论」「二、时间流研判」「三、历史相似事件规律」「四、风险预测（30天窗口）」「五、对策建议」。硬性要求：①概况段先给一句话总结论（事件性质+当前阶段+是否需要升级关注），再给置信度档位（高/中/低）及定档依据（信源数/链条长度/样本量）；②时间流段判断事件当前处于发展/收敛/复发阶段并给依据；③规律段引用给定热点国别、级别分布、复发中位数，指出可直接类比的历史事件；④预测段给30天内该事件链的演化方向与应盯的具体信号（升级触发条件）；⑤建议段步骤化（一是/二是/三是）、每条带时限与责任条线（领事保护/企业安全/值班条线）。全部基于给定真实数据，禁止虚构数字与事件，信息不足处如实标注，禁止口号式空话。';
+          const usr = (historic ? '【重要背景：本事件为历史事件，发生于 ' + evDateStr + '（距今 ' + evAgeD + ' 天）。本卷为历史复盘研判：结论必须明确区分「历史规律参考」与「近期实时威胁」，不得把历史事件表述为当前正在发生的威胁，防范建议以类比借鉴为基调。】\n' : '') +
+            '锚点事件：' + anchorTitle + '\n国别：' + (anchorCountry || '未标注') + '；类别：' + (_CAT_CN[anchorType] || anchorType) + '；级别：' + (j.level_norm || anchor.severity || 'yellow') +
+            '\n时间流相关条目 ' + related.length + ' 条，独立信源 ' + srcSet.size + ' 个，首次采集 ' + String(first.time || '不详') +
+            '\n全库同类别事件 ' + typeTotal + ' 条，其中相似事件 ' + sims.length + ' 起（同国别 ' + sims.filter(s => s.sameCountry).length + ' 起），热点国别：' + hot3 +
+            '\n级别分布：红' + lvDist.red + ' 橙' + lvDist.orange + ' 黄' + lvDist.yellow + ' 蓝' + lvDist.blue + '；涉华关联 ' + chinaCnt + ' 条' + (recur != null ? '；复发间隔中位数 ' + recur + ' 天' : '') +
+            '\n月度规律：近6个月该类别事件量 ' + typeMonthly.slice(-6).map(x => x.m + ':' + x.n).join('、') +
+            '\n时间流最新演进（含日期与来源）：\n' + related.slice(-5).map((i, ix) => (ix + 1) + '.「' + i.title.slice(0, 55) + '」（' + String(i.time).slice(0, 10) + '，' + i.level + '级，' + i.source + '）').join('\n') +
+            '\n相似历史事件（含日期/国别/是否同国复发）：\n' + sims.slice(0, 8).map((s, i) => (i + 1) + '.「' + s.title.slice(0, 55) + '」（' + s.country + '，' + String(s.time).slice(0, 10) + '，' + s.level + '级' + (s.sameCountry ? '，同国复发' : '') + '）').join('\n');
+          const r = await llmCall(pv, sys, usr);
+          if (r && r.text && r.text.length > 300) {
+            /* 去 Markdown 残留（星号加粗 / 井号标题 / 列表符），公文段只留纯文本 */
+            judgeText = String(r.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+            llmOk = true;
+          }
+        } catch (e) { console.warn('[INSIGHT] event-report LLM 研判失败，回落规则模板:', e.message); }
+      }
+
+      /* —— F. 公文输出：复用 reports-engine 红头版式引擎（图表复合分析板块自动装配） —— */
+      const now = new Date();
+      const pkey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+      const def = { name: '事件研判专报' };
+      const toItem = i => ({ title: i.title, level: i.level, country: i.country, time: i.time, url: i.url, digest: i.digest, _t: i.time });
+      const win = [new Date(now.getTime() - 90 * 86400000), new Date(now.getTime() + 86400000)];
+      const govData = {
+        title: '关于"' + anchorTitle.slice(0, 40) + '"事件的研判专报' + (historic ? '（历史复盘）' : ''),
+        stats, win,
+        sections: [
+          { name: '事件时间流（库内演进链条）', count: related.length, red: related.filter(i => i.level === 'red').length, orange: related.filter(i => i.level === 'orange').length, items: related.map(toItem), note: '按采集时间正序，同事件签名/同源链接/标题词元召回。' },
+          { name: '相似历史事件（全库同类别）', count: sims.length, red: sims.filter(i => i.level === 'red').length, orange: sims.filter(i => i.level === 'orange').length, items: sims.slice(0, 20).map(toItem), note: '同类别+标题实质词元重合加权（同国加成），全库不限时检索。' }
+        ],
+        chart: [
+          { label: '时间流条目', value: related.length },
+          { label: '同国相似事件', value: sims.filter(s => s.sameCountry).length },
+          { label: '他国相似事件', value: sims.filter(s => !s.sameCountry).length }
+        ].concat(hotCountries.slice(0, 4).map(x => ({ label: x[0], value: x[1] }))),
+        chartCap: '事件链条与相似事件构成（条）'
+      };
+      let govHtml = '';
+      try {
+        govHtml = reportsEngine.govdoc.renderGovHtml(def, pkey, govData, judgeText, true, { perSec: 12, digest: true, digestLen: 120 });
+      } catch (e) { console.warn('[INSIGHT] 公文渲染失败:', e.message); }
+
+      res.json({
+        ok: true,
+        anchor: { id: anchor.id, title: anchorTitle.slice(0, 120), country: anchorCountry, type: _CAT_CN[anchorType] || anchorType, level: j.level_norm || anchor.severity, evDate: evDateStr, evAgeDays: evAgeD, historic },
+        stages, related, sims, daily, typeMonthly,
+        stats: Object.assign({}, stats, { typeTotal: typeTotal, simCount: sims.length, sameCountry: sims.filter(s => s.sameCountry).length, srcCount: srcSet.size, recurMedian: recur, hotCountries: hotCountries.map(x => ({ country: x[0], n: x[1] })) }),
+        judgment: judgeText, llmOk, govHtml,
+        generatedAt: _nowCn(),
+        note: '口径（#669 全库不限时）：时间流=同事件签名/同URL/词元重合召回（全库）；相似事件=同类别+词元加权（全库）；月度规律=该类别建库以来逐月事件量；研判=' + (llmOk ? 'Kimi 大模型' : '规则模板（引用真实库统计数字' + (req.query.quick ? '，quick 模式未调用大模型，可点击"AI 深度研判"升级' : '，大模型暂不可用') + '）') + '；全部平台数据库真实数据，零模拟。'
+      });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ============================================================
+   * #682 GET /api/insight/event-docket — 自主研判队列（常开 · 零输入 · 零触发）
+   * ================================================================
+   * 用户口径（2026-09-07 18:43）：「事件研判中心不要搜集引擎设计——自主设计，复合性」。
+   * 打开即自动装配，不做任何用户检索动作：
+   *   ① KPI：72h 待研判红橙 / 今日新增 / 红橙涉华 / 活跃事件链（7d 签名链≥3）
+   *   ② 研判队列（TOP12）：72h 红橙候选 × 复合研判价值评分
+   *      评分 = 级别权重 × 时近衰减 + 涉华加成 + 独立信源印证加成 + 链条长度加成
+   *   ③ 突发事件链：48h 国别×类别聚合簇（红橙 ≥4 条，爆发态检测）
+   *   ④ 7 日类别分布 + 国别×类别热度矩阵（复合态势底牌）
+   * 前端点击队列条目 → /event-report?id=X&quick=1 秒级立卷（规则模板），
+   * 「AI 深度研判」按钮再升级完整 LLM + 公文输出。全部真实库计算，零模拟。 */
+  router.get('/event-docket', async (req, res) => {
+    try {
+      const LVW = { red: 4, orange: 3, yellow: 2, blue: 1 };
+
+      /* ① 72h 红橙候选（level_norm 归一优先，severity 兜底，标题红橙关键词补漏） */
+      const candQ = await q(
+        `SELECT id, data_type, title, country, severity, source, collect_time, data_json,
+                COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+         FROM intel_data
+         WHERE collect_time >= NOW() - INTERVAL '72 hours' AND audit_status = 'approved'
+           AND COALESCE(country,'') <> '中国'
+           AND (COALESCE(data_json->>'level_norm','') IN ('red','orange')
+                OR lower(COALESCE(severity,'')) IN ('red','orange')
+                OR title ~* '(红色|橙色|严重|危急)'
+                OR COALESCE(data_json->>'title_zh','') ~* '(红色|橙色|严重|危急)')
+         ORDER BY collect_time DESC LIMIT 400`
+      );
+      /* #712 主面板时效闸：候选先过「事件发生近 7 日」闸（publish_time/event_date 优先，
+       * regex-cast 脏值容错；无事件日期回落采集时间判定），杜绝补采回灌/旧文重发
+       * 被采集时间伪装成新鲜事件（2004 阿富汗 11 工人案实证） */
+      const candidates = candQ.rows
+        .filter(r => _evFresh(r, 7))
+        .map(r => {
+        const j = r.data_json || {};
+        const t = r.title_cn || r.title || '';
+        return {
+          id: r.id, title: String(t).slice(0, 120),
+          country: _iso2cnTry(r.country), type: r.data_type,
+          level: _lv(j, r.severity), source: r.source || '采集通道',
+          time: _fmtTime(r.collect_time), ts: new Date(r.collect_time).getTime(),
+          evDate: _evDate(r), evAge: _evAgeD(r),
+          sig: j._eventSig || '', digest: String(j.content_zh || j.summary || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160),
+          china: isChina(t + ' ' + (r.title || ''))
+        };
+      }).filter(r => r.level === 'red' || r.level === 'orange');
+
+      /* ② 7d 事件签名链（信源印证数 + 链条长度，供队列评分） */
+      const sigQ = await q(
+        `SELECT data_json->>'_eventSig' AS sig, COUNT(*)::int AS n, COUNT(DISTINCT source)::int AS srcs
+         FROM intel_data
+         WHERE collect_time >= NOW() - INTERVAL '7 days' AND COALESCE(data_json->>'_eventSig','') <> ''
+         GROUP BY 1`
+      );
+      const sigMap = {};
+      sigQ.rows.forEach(x => { if (x.sig) sigMap[x.sig] = x; });
+
+      /* ③ 复合研判价值评分 → TOP12 队列（国别多样性去重：同国≤2 条 + 标题词元去重防模板化刷屏） */
+      const now = Date.now();
+      const ranked = candidates.map(c => {
+        const sig = sigMap[c.sig] || { n: 1, srcs: 1 };
+        const hours = Math.max(0, (now - c.ts) / 3600000);
+        const recency = Math.max(0.4, 1 - hours / 72);
+        const score = LVW[c.level] * recency * 10
+          + (c.china ? 40 : 0)   /* #698-③ 涉华权重强化：海外涉华事件优先入列（用户口径：核心重点数据须涉华海外相关） */
+          + Math.min(sig.srcs, 5) * 4
+          + Math.min(sig.n, 10) * 2;
+        return { c, sig, score: Math.round(score * 10) / 10, tk: _tokens(c.title) };
+      }).sort((a, b) => b.score - a.score);
+      const queue = [];
+      const countryN = {};
+      for (const x of ranked) {
+        if (queue.length >= 12) break;
+        const cy = x.c.country || '未标注';
+        if ((countryN[cy] || 0) >= 2) continue;                       /* 同国≤2 条 */
+        if (queue.some(qq => _overlap(qq._tk, x.tk) >= 2)) continue;  /* 标题词元重复剔除 */
+        countryN[cy] = (countryN[cy] || 0) + 1;
+        queue.push({
+          id: x.c.id, title: x.c.title, country: x.c.country, type: _CAT_CN[x.c.type] || x.c.type,
+          level: x.c.level, time: x.c.time, evDate: x.c.evDate, evAge: x.c.evAge, china: x.c.china, srcs: x.sig.srcs,
+          chain: x.sig.n, score: x.score, digest: x.c.digest, _tk: x.tk
+        });
+      }
+      queue.forEach(qq => { delete qq._tk; });
+
+      /* ④ 突发事件链：48h 国别×类别红橙聚合簇（≥4 条，聚焦安全类事件——恐袭/冲突/暴力/治安/动荡/政权）
+       * #712 事件时效闸：事件发生日期（event_date/publish_time，regex-cast 脏值容错，
+       * 无有效日期视为实时通道放行）须在近 7 日内——补采回灌的历史簇不再伪装突发 */
+      const EVGATE_SQL = `COALESCE((substring(COALESCE(NULLIF(event_date,''), data_json->>'publish_time') from '^[0-9]{4}-[0-9]{2}-[0-9]{2}'))::date, CURRENT_DATE) >= CURRENT_DATE - 7`;
+      const chainQ = await q(
+        `SELECT country, data_type, COUNT(*)::int AS n,
+                SUM(CASE WHEN COALESCE(data_json->>'level_norm','')='red' THEN 1 ELSE 0 END)::int AS red,
+                MAX(collect_time) AS last
+         FROM intel_data
+         WHERE collect_time >= NOW() - INTERVAL '48 hours' AND COALESCE(country,'') <> ''
+           AND COALESCE(data_json->>'level_norm','') IN ('red','orange')
+           AND data_type IN ('terror_events','military_conflicts','mass_violence','crime_events','social_unrest','regime_change')
+           AND ${EVGATE_SQL}
+         GROUP BY 1, 2 HAVING COUNT(*) >= 4
+         ORDER BY n DESC LIMIT 10`
+      );
+      /* #700 链明细：每链 top8 红橙条目（内联国别研判用，点击国别就地展开，不再跳转） */
+      let chainEvents = [];
+      if (chainQ.rows.length) {
+        try {
+          const evQ = await q(
+            `SELECT country, data_type, id,
+                    COALESCE(NULLIF(data_json->>'title_zh',''), title) AS t,
+                    COALESCE(data_json->>'level_norm','') AS lv,
+                    collect_time AS ct,
+                    (data_json->>'chinaRelated') = 'true' AS cr
+             FROM intel_data
+             WHERE collect_time >= NOW() - INTERVAL '48 hours'
+               AND COALESCE(data_json->>'level_norm','') IN ('red','orange')
+               AND data_type IN ('terror_events','military_conflicts','mass_violence','crime_events','social_unrest','regime_change')
+               AND country = ANY($1) AND data_type = ANY($2)
+               AND ${EVGATE_SQL}
+             ORDER BY collect_time DESC LIMIT 80`,
+            [chainQ.rows.map(r => r.country), [...new Set(chainQ.rows.map(r => r.data_type))]]
+          );
+          chainEvents = evQ.rows || [];
+        } catch (e) { /* 明细缺失不阻断 docket */ }
+      }
+      const chains = chainQ.rows.map(r => ({
+        country: _iso2cnTry(r.country), type: _CAT_CN[r.data_type] || r.data_type,
+        n: r.n, red: r.red, last: _fmtTime(r.last),
+        /* #700 明细按 原始country+data_type 归组，每国别≤8 条 */
+        events: chainEvents
+          .filter(ev => ev.country === r.country && ev.data_type === r.data_type)
+          .slice(0, 8)
+          .map(ev => ({ id: ev.id, title: String(ev.t || '').slice(0, 90), level: ev.lv || 'orange', time: _fmtTime(ev.ct), china: ev.cr === true }))
+      }));
+
+      /* ⑤ 7 日类别分布 + 国别×类别热度矩阵 */
+      const typeQ = await q(
+        `SELECT data_type, COUNT(*)::int AS n FROM intel_data
+         WHERE collect_time >= NOW() - INTERVAL '7 days' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`
+      );
+      const mtxQ = await q(
+        `SELECT country, data_type, COUNT(*)::int AS n FROM intel_data
+         WHERE collect_time >= NOW() - INTERVAL '7 days' AND COALESCE(country,'') <> ''
+         GROUP BY 1, 2`
+      );
+      const cTot = {}, tTot = {}, cell = {};
+      mtxQ.rows.forEach(r => {
+        const c = _iso2cnTry(r.country);
+        cTot[c] = (cTot[c] || 0) + r.n;
+        tTot[r.data_type] = (tTot[r.data_type] || 0) + r.n;
+        cell[c + '|' + r.data_type] = r.n;
+      });
+      const topCountries = Object.entries(cTot).sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x[0]);
+      const topTypes = Object.entries(tTot).sort((a, b) => b[1] - a[1]).slice(0, 6).map(x => x[0]);
+
+      /* ⑥ KPI */
+      const todayQ = await q(
+        `SELECT COUNT(*)::int AS n FROM intel_data WHERE collect_time >= date_trunc('day', NOW())`
+      );
+      const kpi = {
+        pending72: candidates.length,
+        todayNew: todayQ.rows[0] ? todayQ.rows[0].n : 0,
+        chinaRedOrange: candidates.filter(c => c.china).length,
+        activeChains: sigQ.rows.filter(x => x.n >= 3).length
+      };
+
+      res.json({
+        ok: true, kpi, queue, chains,
+        typeDist7: typeQ.rows.map(r => ({ type: _CAT_CN[r.data_type] || r.data_type, n: r.n })),
+        matrix: { countries: topCountries, types: topTypes.map(t => _CAT_CN[t] || t), typeKeys: topTypes, cell },
+        generatedAt: _nowCn(),
+        note: '口径：研判队列=近72小时红橙事件 × 复合研判价值评分（级别权重×时近衰减 + 涉华加成 + 信源印证加成 + 链条长度加成，全库真实计算）· #712 事件时效闸：候选须事件发生于近7日内（event_date/publish_time 优先判定，补采回灌/旧文重发不进主面板，历史数据走 lifecycle/similar/案卷历史复盘）；突发事件链=48小时国别×类别红橙聚合簇（≥4条，同受时效闸约束）；矩阵=近7日国别×类别事件量。零模拟。'
+      });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 

@@ -1070,6 +1070,7 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="threatroom" onclick="navigateTo('threatroom')"><span class="ic">⚔️</span><span class="lb">专项情报作战室</span></div>
 <div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">⭐</span><span class="lb">重点目标监测</span></div>
 <div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
+<div class="sb-item" data-view="aiwatch" onclick="navigateTo('aiwatch')"><span class="ic">🤖</span><span class="lb">AI中枢控制台</span></div>
 <div class="sb-group">监测中心</div>
 <div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic">📡</span><span class="lb">实时风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
 <div class="sb-item" data-view="intel" onclick="navigateTo('intel')"><span class="ic">📸</span><span class="lb">影像情报中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
@@ -1405,6 +1406,7 @@ select.intel-input{cursor:pointer}
 <div class="view" id="view-brief"><div id="brief-root"></div></div>
 
 <!-- VIEW: EVENT INSIGHT（event-insight.js 整视图渲染：事件研判中心——事件时间流研判 + 历史相似事件分析 + 智能研判 + 公文输出） -->
+<div class="view" id="view-aiwatch"><div id="aiwatch-root"></div></div>
 <div class="view" id="view-evjudge"><div id="evjudge-root"></div></div>
 <div class="view" id="view-terjudge"><div id="terjudge-root"></div></div>
 <div class="view" id="view-entrisk"><div id="entrisk-root"></div></div>
@@ -1484,7 +1486,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=295"></script>
+<script src="app.js?v=296"></script>
 <script src="workbench.js?v=5"></script>
 <script src="threatroom.js?v=12"></script>
 <script src="foresee.js?v=3"></script>
@@ -1501,7 +1503,7 @@ function closeMobileMenu(){
 <script src="thinktank.js?v=1"></script>
 <script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=13"></script>
+<script src="role-ui.js?v=14"></script>
 <script src="model-analysis.js?v=5"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
@@ -1514,9 +1516,10 @@ function closeMobileMenu(){
 <script src="wechat.js?v=4"></script>
 <script src="reports-center.js?v=5"></script>
 <script src="brief-center.js?v=2"></script>
-<script src="event-insight.js?v=5"></script>
+<script src="event-insight.js?v=6"></script>
 <script src="terror-center.js?v=9"></script>
-<script src="enterprise-risk.js?v=2"></script>
+<script src="enterprise-risk.js?v=5"></script>
+<script src="ai-watch.js?v=4"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
 <script src="linkgraph.js?v=6"></script>
 
