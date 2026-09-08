@@ -94,11 +94,15 @@ function copyUrl(){
   alert('已复制：' + liveUrl);
 }
 
-// 多源容灾：github.io 主源 → jsDelivr CDN 镜像 → ghproxy 代理
+// 多源容灾：github.io 主源 → jsDelivr CDN（主）→ fastly（purge 立刷）→ gcore 镜像 → raw 直连兜底
+// 2026-09-08 #711 加固：fastly 为强刷验证源（purge 后立即更新）；raw 为最终兜底（无 CDN 缓存，永远最新）
+var TS = Date.now();
 var JSON_SOURCES = [
-  'orps-server.json?t=' + Date.now(),
-  'https://cdn.jsdelivr.net/gh/zax223344/overseas-interest-protection-platform@gh-pages/orps-server.json?t=' + Date.now(),
-  'https://gcore.jsdelivr.net/gh/zax223344/overseas-interest-protection-platform@gh-pages/orps-server.json?t=' + Date.now()
+  'orps-server.json?t=' + TS,
+  'https://cdn.jsdelivr.net/gh/zax223344/overseas-interest-protection-platform@gh-pages/orps-server.json?t=' + TS,
+  'https://fastly.jsdelivr.net/gh/zax223344/overseas-interest-protection-platform@gh-pages/orps-server.json?t=' + TS,
+  'https://gcore.jsdelivr.net/gh/zax223344/overseas-interest-protection-platform@gh-pages/orps-server.json?t=' + TS,
+  'https://raw.githubusercontent.com/zax223344/overseas-interest-protection-platform/gh-pages/orps-server.json?t=' + TS
 ];
 
 function fetchJsonFromSources(idx){
@@ -116,6 +120,15 @@ fetchJsonFromSources(0)
     liveUrl = j.url.replace(/\/+$/,'');
     document.getElementById('dot').className = 'dot on';
     document.getElementById('statusText').textContent = '服务器在线 · 地址更新于 ' + (j.updated || '未知时间');
+    // 2026-09-08 #711 超龄检测：地址 >3h 未刷新（keeper 推送链可能断了），仍可进入但明示
+    try{
+      var ageMs = Date.now() - (new Date(String(j.updated||'').replace(' ','T')+'+08:00')).getTime();
+      if(ageMs > 3*3600*1000){
+        var st = document.getElementById('statusText');
+        st.textContent = '服务器在线（注意：地址已 ' + Math.round(ageMs/3600000) + ' 小时未刷新，如无法进入请稍后再试）';
+        st.style.color = '#e6a23c';
+      }
+    }catch(e){}
     document.getElementById('urlBox').textContent = liveUrl;
     var btn = document.getElementById('enterBtn');
     btn.href = liveUrl;
