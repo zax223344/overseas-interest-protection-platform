@@ -12932,6 +12932,7 @@ const AVIEW={
       {id:'command',ic:'🎛️',lb:'预警指挥台'},
       {id:'correlation',ic:'🔗',lb:'关联分析'},
       {id:'tracking',ic:'⚡',lb:'响应追踪'},
+      {id:'dispboard',ic:'🗂️',lb:'处置看板'},
       {id:'playbook',ic:'📖',lb:'应急预案'},
       {id:'sources',ic:'📡',lb:'情报融合'},
       {id:'cases',ic:'📚',lb:'案例分析'},
@@ -13045,6 +13046,7 @@ const AVIEW={
     if(el)el.style.display='block';
     if(t==='correlation'){this.renderCorrelation();this.renderCharts();}
     if(t==='tracking')this.renderTracking();
+    if(t==='dispboard')this.renderDispBoard();
     if(t==='playbook')this.renderPlaybook();
     if(t==='sources')this.renderSources();
     if(t==='cases')this.renderCases();
@@ -13064,11 +13066,85 @@ const AVIEW={
       {ic:'📊',bg:'var(--blue-bg)',c:'var(--cyan)',l:'预警总量',v:total,s:'累计'+resolved+'起已解除'},
       {ic:'⏱️',bg:'var(--yellow-bg)',c:'var(--yellow)',l:'平均响应',v:(function(){var ms=ALERTS.filter(function(a){return a.acknowledgedAt&&a.time;}).map(function(a){return (new Date(a.acknowledgedAt)-new Date(a.time))/60000;}).filter(function(x){return x>=0&&x<1440;});return ms.length?(ms.reduce(function(s2,x){return s2+x;},0)/ms.length).toFixed(1)+'min':'—';})(),s:'SLA达标率'+(function(){var t=ALERTS.length;var d=ALERTS.filter(function(a){return a.status!=='active';}).length;return t>0?Math.round(d/t*100):0;})()+'%'},
       {ic:'✅',bg:'var(--green-bg)',c:'var(--green)',l:'已解除',v:resolved,s:'处置完成率'+ackRate+'%'},
-      {ic:'🎯',bg:'var(--purple-bg)',c:'var(--purple)',l:'SLA达标',v:(function(){var t=ALERTS.length;var d=ALERTS.filter(function(a){return a.status!=='active';}).length;return(t>0?Math.round(d/t*100):0)+'%';})(),s:(function(){var o=ALERTS.filter(function(a){return a.status==='active'&&a.level==='red';}).length;return o+'起超时预警';})()}
-    ].map(function(s){return '<div class="stat-card"><div class="stat-ic" style="background:'+s.bg+';color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div><div class="stat-sub">'+s.s+'</div></div></div>';}).join('');
+      {ic:'⏰',bg:'var(--red-bg)',c:'var(--red)',l:'SLA超时',v:(function(){return ALERTS.filter(function(a){return AVIEW._slaOver(a);}).length;})(this),s:(function(){var r=ALERTS.filter(function(a){return AVIEW._slaOver(a)&&a.level==='red';}).length,o=ALERTS.filter(function(a){return AVIEW._slaOver(a)&&a.level==='orange';}).length;return '红2h超'+r+'起 · 橙24h超'+o+'起';})(),hint:'红2小时/橙24小时未确认即超时'}
+    ].map(function(s){return '<div class="stat-card" title="'+(s.hint||'')+'"><div class="stat-ic" style="background:'+s.bg+';color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div><div class="stat-sub">'+s.s+'</div></div></div>';}).join('');
     var badge=document.getElementById('sb-alert-count');
     if(badge){badge.textContent=active;badge.classList.toggle('zero',active===0);}
     try{AVIEW.renderPostureBar&&AVIEW.renderPostureBar();}catch(e){}
+  },
+  /* ===== #728 P1-2 处置看板：四态分列 + SLA 超时清单 + 今日处置统计（服务端权威） ===== */
+  renderDispBoard(){
+    var el=document.getElementById('disp-board');
+    if(!el)return;
+    var me=this;
+    var stEl=document.getElementById('disp-stats');
+    /* 服务端今日处置统计（alert_records 权威口径） */
+    if(stEl){
+      stEl.innerHTML='<div class="stat-card"><div class="stat-ic" style="background:var(--blue-bg);color:var(--cyan)">📊</div><div class="stat-info"><div class="stat-label">今日处置统计</div><div class="stat-val" style="color:var(--cyan)">载入中</div><div class="stat-sub">alert_records 服务端口径</div></div></div>';
+      try{
+        if(typeof APIClient!=='undefined'&&APIClient._fetch){
+          APIClient._fetch('GET','/api/alerts/disposition/stats').then(function(d){
+            if(!d||d.error){stEl.innerHTML='<div class="stat-card"><div class="stat-ic" style="background:var(--blue-bg);color:var(--cyan)">📊</div><div class="stat-info"><div class="stat-label">今日处置统计</div><div class="stat-val">—</div><div class="stat-sub">'+esc(String(d&&d.error||'离线').slice(0,20))+'</div></div></div>';return;}
+            var cards=[
+              {ic:'📥',bg:'var(--blue-bg)',c:'var(--cyan)',l:'今日触发',v:d.total,s:'alert_records 入账'},
+              {ic:'🔴',bg:'var(--red-bg)',c:'var(--red)',l:'待处理',v:d.active,s:'未确认'},
+              {ic:'🟡',bg:'var(--yellow-bg)',c:'var(--yellow)',l:'已确认',v:d.acknowledged,s:'评估处置中'},
+              {ic:'🟠',bg:'var(--orange-bg)',c:'var(--orange)',l:'处置中',v:d.responding,s:'预案执行'},
+              {ic:'✅',bg:'var(--green-bg)',c:'var(--green)',l:'已解除',v:d.resolved,s:'SLA达标 '+d.slaPct+'%'},
+              {ic:'⏱️',bg:'var(--purple-bg)',c:'var(--purple)',l:'平均办结',v:(d.slaAvgMin>=60?(d.slaAvgMin/60).toFixed(1)+'h':d.slaAvgMin+'min'),s:'触发→解除'}
+            ];
+            stEl.innerHTML=cards.map(function(s){return '<div class="stat-card"><div class="stat-ic" style="background:'+s.bg+';color:'+s.c+'">'+s.ic+'</div><div class="stat-info"><div class="stat-label">'+s.l+'</div><div class="stat-val" style="color:'+s.c+'">'+s.v+'</div><div class="stat-sub">'+s.s+'</div></div></div>';}).join('');
+          }).catch(function(){});
+        }
+      }catch(e){}
+    }
+    /* 四态分列（本地实时队列口径） */
+    var COLS=[
+      {k:'active',n:'🔴 待处理',c:'var(--red)'},
+      {k:'acknowledged',n:'🟡 已确认',c:'var(--yellow)'},
+      {k:'responding',n:'🟠 处置中',c:'var(--orange)'},
+      {k:'resolved',n:'✅ 已解除',c:'var(--green)'}
+    ];
+    var list=ALERTS.slice().sort(function(a,b){
+      var lw={red:0,orange:1,yellow:2,blue:3};
+      if(lw[a.level]!==lw[b.level])return lw[a.level]-lw[b.level];
+      return (b.time||'').localeCompare(a.time||'');
+    });
+    var colHtml=COLS.map(function(col){
+      var items=list.filter(function(a){return a.status===col.k;});
+      var rows=items.slice(0,12).map(function(a){
+        var lv=ALERT_LV[a.level]||ALERT_LV.blue;
+        var sla=me._slaOver(a);
+        return '<div class="disp-item'+(sla?' sla-over':'')+'" onclick="AVIEW.selectAlert(\''+String(a.id).replace(/'/g,"\\'")+'\')">'
+          +'<span class="badge '+lv.cls+'" style="font-size:8px;padding:0 3px">'+lv.label+'</span>'
+          +(sla?'<span class="sla-badge">⏰'+Math.round(me._slaHours(a))+'h</span>':'')
+          +(a.assigned_to?'<span style="font-size:8px;color:var(--cyan)" title="责任人">👤'+esc(a.assigned_to.slice(0,8))+'</span>':'')
+          +'<div class="disp-tt">'+stripTags(_zhT(a)||a.title||'').slice(0,60)+'</div>'
+          +'<div style="font-size:9px;color:var(--text3)">'+(a.country||'—')+' · '+(a.time||'').substring(5,16)+'</div></div>';
+      }).join('');
+      return '<div class="card" style="border-top:2px solid '+col.c+'"><div class="card-tt" style="font-size:12px"><span class="ic">'+col.n.split(' ')[0]+'</span>'+col.n.split(' ').slice(1).join(' ')+' <span style="color:'+col.c+';font-weight:800">'+items.length+'</span></div><div class="disp-col">'+(rows||'<div style="font-size:10px;color:var(--text3);padding:12px 0;text-align:center">暂无</div>')+(items.length>12?'<div style="font-size:9px;color:var(--text3);text-align:center;padding-top:6px">…其余 '+(items.length-12)+' 条见指挥台</div>':'')+'</div></div>';
+    }).join('');
+    /* SLA 超时清单 */
+    var overdues=list.filter(function(a){return me._slaOver(a);});
+    var overHtml=overdues.length?('<div class="card mt-12" style="border:1px solid rgba(255,51,85,.4)"><div class="card-tt"><span class="ic">⏰</span>SLA 超时预警（红2h/橙24h未确认） <span style="color:var(--red);font-weight:800">'+overdues.length+'</span></div><div style="display:flex;flex-wrap:wrap;gap:6px">'
+      +overdues.map(function(a){
+        return '<div class="disp-item sla-over" style="flex:1;min-width:240px" onclick="AVIEW.selectAlert(\''+String(a.id).replace(/'/g,"\\'")+'\')"><span class="badge '+(ALERT_LV[a.level]||ALERT_LV.red).cls+'" style="font-size:8px">'+(ALERT_LV[a.level]||ALERT_LV.red).label+'</span><span class="sla-badge">⏰超时 '+Math.round(me._slaHours(a))+'h</span><div class="disp-tt">'+stripTags(_zhT(a)||a.title||'').slice(0,70)+'</div><div style="font-size:9px;color:var(--text3)">'+(a.country||'—')+' · '+(a.time||'')+'</div></div>';
+      }).join('')+'</div></div>'):'';
+    /* 近期处置日志（本地登记） */
+    var logs=[];
+    try{
+      Object.keys(this.responseLogs||{}).forEach(function(k){
+        (me.responseLogs[k]||[]).forEach(function(l){logs.push(Object.assign({aid:k},l));});
+      });
+      logs.sort(function(x,y){return (y.time||'').localeCompare(x.time||'');});
+    }catch(e){}
+    var logHtml='<div class="card mt-12"><div class="card-tt"><span class="ic">📝</span>处置登记日志（本次会话）</div>'
+      +(logs.length?('<div class="table-wrap" style="max-height:260px;overflow-y:auto"><table><thead><tr><th>时间</th><th>动作</th><th>预警</th><th>登记内容</th></tr></thead><tbody>'
+      +logs.slice(0,30).map(function(l){
+        var a=_findAlertAny?_findAlertAny(l.aid):null;
+        return '<tr><td style="white-space:nowrap">'+l.time+'</td><td>'+esc(l.action)+'</td><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+stripTags((a&&(_zhT(a)||a.title))||l.aid).slice(0,50)+'</td><td style="font-size:10px;color:var(--text3)">'+esc(String(l.desc||'').slice(0,120))+'</td></tr>';
+      }).join('')+'</tbody></table></div>'):'<div style="font-size:10px;color:var(--text3);padding:10px 0;text-align:center">暂无处置登记（本次会话）</div>')+'</div>';
+    el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">'+colHtml+'</div>'+overHtml+logHtml;
   },
   /* ===== 境外安全态势指挥条（2026-08-18 实战化重构）=====
    * 面向境外环境态势感知 + 数据赋能中国海外安全保护：
@@ -13487,9 +13563,11 @@ const AVIEW={
       var aid=String(a.id||'');
       var selected=aid===sid;
       var pulsing=a.level==='red'&&a.status==='active';
+      var slaOver=AVIEW._slaOver(a);
       var safeAid=aid.replace(/'/g,"\\'");
-      return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
+      return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+(slaOver?' sla-over':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
+        (slaOver?'<span class="sla-badge" title="SLA 超时：'+(a.level==='red'?'红色':'橙色')+'预警超 '+(a.level==='red'?'2':'24')+' 小时未确认，已超 '+Math.round(AVIEW._slaHours(a))+' 小时">⏰SLA超时</span>':'')+
         (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
         (a.is_manual?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(0,255,159,.12);border:1px solid #00ff9f;color:#00ff9f;font-weight:800" title="手动录入条目（手动录入工作区提交 · 不受时效窗/上限约束 · 仅可人工删除）">✍手动</span>':'')+
         (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
@@ -13523,9 +13601,9 @@ const AVIEW={
         '<span style="margin-left:auto;display:flex;gap:2px">'+
         (function(){
           var btns='';
-          if(a.status==='active')btns+='<button class="btn sm primary" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();AVIEW.ack(\''+safeAid+'\')" title="确认预警">👁️</button>';
-          else if(a.status==='acknowledged')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--orange)" onclick="event.stopPropagation();AVIEW.respond(\''+safeAid+'\')" title="启动处置">🏃</button>';
-          else if(a.status==='responding')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--green)" onclick="event.stopPropagation();AVIEW.resolve(\''+safeAid+'\')" title="解除预警">✅</button>';
+          if(a.status==='active')btns+='<button class="btn sm primary" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();AVIEW._dispDialog(\''+safeAid+'\',\'ack\')" title="确认预警（登记责任人/备注）">👁️</button>';
+          else if(a.status==='acknowledged')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--orange)" onclick="event.stopPropagation();AVIEW._dispDialog(\''+safeAid+'\',\'respond\')" title="启动处置（登记责任人/备注）">🏃</button>';
+          else if(a.status==='responding')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--green)" onclick="event.stopPropagation();AVIEW._dispDialog(\''+safeAid+'\',\'resolve\')" title="解除预警（登记责任人/备注）">✅</button>';
           else btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();AVIEW.reopen(\''+safeAid+'\')" title="重新激活">🔄</button>';
           return btns;
         })()+
@@ -13648,9 +13726,11 @@ const AVIEW={
       var aid=String(a.id||'');
       var selected=aid===sid;
       var pulsing=a.level==='red'&&a.status==='active';
+      var slaOver=AVIEW._slaOver(a);
       var safeAid=aid.replace(/'/g,"\\'");
-      return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
+      return '<div class="alert-q-item lv-'+a.level+(selected?' selected':'')+(pulsing?' pulsing':'')+(slaOver?' sla-over':'')+'" onclick="AVIEW.selectAlert(\''+safeAid+'\')">'+
         '<div class="alert-q-tt"><span class="badge '+lv.cls+'" style="font-size:9px;padding:1px 4px">'+lv.label+'</span> '+
+        (slaOver?'<span class="sla-badge" title="SLA 超时：'+(a.level==='red'?'红色':'橙色')+'预警超 '+(a.level==='red'?'2':'24')+' 小时未确认，已超 '+Math.round(AVIEW._slaHours(a))+' 小时">⏰SLA超时</span>':'')+
         (a._anomaly?'<span class="badge b-blue" style="font-size:8px;padding:0 3px;margin-right:2px" title="派生信号：基于情报量统计异动生成，非一手事件情报">📈异动</span>':'')+
         (a.is_manual?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(0,255,159,.12);border:1px solid #00ff9f;color:#00ff9f;font-weight:800" title="手动录入条目（手动录入工作区提交 · 不受时效窗/上限约束 · 仅可人工删除）">✍手动</span>':'')+
         (a.is_core?'<span style="font-size:8px;padding:0 4px;margin-right:2px;border-radius:6px;background:rgba(255,170,0,.12);border:1px solid #ffaa00;color:#ffaa00;font-weight:800" title="核心区条目：核心威胁/资产项目命中/橙区起/涉华严重事件——置顶展示，不占国别均衡配额">★核心</span>':'')+
@@ -13684,9 +13764,9 @@ const AVIEW={
         '<span style="margin-left:auto;display:flex;gap:2px">'+
         (function(){
           var btns='';
-          if(a.status==='active')btns+='<button class="btn sm primary" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();AVIEW.ack(\''+safeAid+'\')" title="确认预警">👁️</button>';
-          else if(a.status==='acknowledged')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--orange)" onclick="event.stopPropagation();AVIEW.respond(\''+safeAid+'\')" title="启动处置">🏃</button>';
-          else if(a.status==='responding')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--green)" onclick="event.stopPropagation();AVIEW.resolve(\''+safeAid+'\')" title="解除预警">✅</button>';
+          if(a.status==='active')btns+='<button class="btn sm primary" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();AVIEW._dispDialog(\''+safeAid+'\',\'ack\')" title="确认预警（登记责任人/备注）">👁️</button>';
+          else if(a.status==='acknowledged')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--orange)" onclick="event.stopPropagation();AVIEW._dispDialog(\''+safeAid+'\',\'respond\')" title="启动处置（登记责任人/备注）">🏃</button>';
+          else if(a.status==='responding')btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px;color:var(--green)" onclick="event.stopPropagation();AVIEW._dispDialog(\''+safeAid+'\',\'resolve\')" title="解除预警（登记责任人/备注）">✅</button>';
           else btns+='<button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();AVIEW.reopen(\''+safeAid+'\')" title="重新激活">🔄</button>';
           return btns;
         })()+
@@ -13861,9 +13941,9 @@ const AVIEW={
     var _rk=String(a.alert_no||a.id||'').replace(/'/g,''); /* 稳定键：alert_no 优先 */
     var actions='';
     if(PERM.isAdmin()){
-    if(a.status==='active')actions='<button class="btn primary sm" onclick="AVIEW.ack(\''+_rk+'\')">👁️ 确认预警</button><button class="btn danger sm" onclick="AVIEW.escalate(\''+_rk+'\')">⬆️ 升级</button><button class="btn sm" onclick="AVIEW.showPlaybook(\''+a.type+'\')">📖 预案</button>';
-    else if(a.status==='acknowledged')actions='<button class="btn primary sm" onclick="AVIEW.respond(\''+_rk+'\')">🏃 启动处置</button><button class="btn sm" onclick="AVIEW.showPlaybook(\''+a.type+'\')">📖 预案</button>';
-    else if(a.status==='responding')actions='<button class="btn primary sm" onclick="AVIEW.resolve(\''+_rk+'\')">✅ 解除预警</button><button class="btn sm" onclick="AVIEW.showPlaybook(\''+a.type+'\')">📖 预案</button>';
+    if(a.status==='active')actions='<button class="btn primary sm" onclick="AVIEW._dispDialog(\''+_rk+'\',\'ack\')">👁️ 确认预警</button><button class="btn danger sm" onclick="AVIEW.escalate(\''+_rk+'\')">⬆️ 升级</button><button class="btn sm" onclick="AVIEW.showPlaybook(\''+a.type+'\')">📖 预案</button>';
+    else if(a.status==='acknowledged')actions='<button class="btn primary sm" onclick="AVIEW._dispDialog(\''+_rk+'\',\'respond\')">🏃 启动处置</button><button class="btn sm" onclick="AVIEW.showPlaybook(\''+a.type+'\')">📖 预案</button>';
+    else if(a.status==='responding')actions='<button class="btn primary sm" onclick="AVIEW._dispDialog(\''+_rk+'\',\'resolve\')">✅ 解除预警</button><button class="btn sm" onclick="AVIEW.showPlaybook(\''+a.type+'\')">📖 预案</button>';
     else actions='<button class="btn sm" onclick="AVIEW.reopen(\''+_rk+'\')">🔄 重新激活</button>';
     }
     if(PERM.canUpload()){
@@ -14002,13 +14082,80 @@ const AVIEW={
     var time=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
     this.responseLogs[id].push({time:time,action:action,desc:desc});
   },
-  ack(id){if(!PERM.guard('\u786e\u8ba4\u9884\u8b66'))return;
+  /* ===== #728 P1-2 处置闭环：SLA 超时检测（红2h/橙24h 未确认） ===== */
+  _slaOver(a){
+    try{
+      if(!a||a.status!=='active')return false;
+      var lim=(a.level==='red')?2*3600e3:(a.level==='orange')?24*3600e3:0;
+      if(!lim)return false;
+      var t=new Date(a.time||a.triggeredAt||0).getTime();
+      if(!t||isNaN(t))return false;
+      return Date.now()-t>lim;
+    }catch(e){return false;}
+  },
+  _slaHours(a){
+    var t=new Date(a.time||a.triggeredAt||0).getTime();
+    return t?((Date.now()-t)/3600e3):0;
+  },
+  /* 处置登记弹窗：确认/处置/解除前登记责任人与备注（可跳过直接提交）
+   * 2026-09-09 #728 P1-2：旧版一键直接变更状态——状态落库但无责任人/备注，事后无法追责。 */
+  _dispDialog(id,action){
+    if(!PERM.guard('处置预警'))return;
+    var a=(typeof _findAlertAny==='function')?_findAlertAny(id):ALERTS.find(function(x){return String(x.id)===String(id);});
+    if(!a){showToast('该预警已更新或合并，请刷新列表');return;}
+    var ACT={ack:'👁️ 确认预警',respond:'🏃 启动处置',resolve:'✅ 解除预警',reopen:'🔄 重新激活'};
+    var act=ACT[action]||action;
+    var dlg=document.getElementById('disp-dialog');
+    if(dlg)dlg.remove();
+    dlg=document.createElement('div');
+    dlg.id='disp-dialog';
+    dlg.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center';
+    var tt=stripTags(_zhT(a)||a.title||'');
+    dlg.innerHTML='<div style="width:400px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.5);overflow:hidden">'
+      +'<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'
+      +'<strong style="font-size:13px;color:var(--text)">'+act+' · 处置登记</strong>'
+      +'<span style="cursor:pointer;color:var(--text3);font-size:16px" onclick="document.getElementById(\'disp-dialog\').remove()">✕</span></div>'
+      +'<div style="padding:14px 16px">'
+      +'<div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5;border-left:3px solid var(--cyan);padding-left:8px">'+tt.slice(0,90)+(tt.length>90?'…':'')+'</div>'
+      +'<div style="font-size:11px;color:var(--text3);margin-bottom:4px">责任人（值班人/处置人）</div>'
+      +'<input id="disp-assignee" class="input" style="width:100%;font-size:12px;margin-bottom:10px" placeholder="如：值班一组·张三" value="'+esc(String(a.assigned_to||(typeof AUTH!=='undefined'&&AUTH.user&&AUTH.user.name)||''))+'">'
+      +'<div style="font-size:11px;color:var(--text3);margin-bottom:4px">处置备注</div>'
+      +'<textarea id="disp-notes" class="input" style="width:100%;font-size:12px;min-height:64px;resize:vertical" placeholder="处置依据/措施/后续安排（选填）"></textarea>'
+      +'</div>'
+      +'<div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">'
+      +'<button class="btn sm" onclick="document.getElementById(\'disp-dialog\').remove()">取消</button>'
+      +'<button class="btn sm" style="color:var(--text3)" onclick="AVIEW._doDisp(\''+String(a.id).replace(/'/g,"\\'")+'\',\''+action+'\',true)">跳过登记直接提交</button>'
+      +'<button class="btn sm primary" onclick="AVIEW._doDisp(\''+String(a.id).replace(/'/g,"\\'")+'\',\''+action+'\',false)">提交登记</button>'
+      +'</div></div>';
+    document.body.appendChild(dlg);
+    try{document.getElementById('disp-assignee').focus();}catch(e){}
+  },
+  _doDisp(id,action,skip){
+    var a=(typeof _findAlertAny==='function')?_findAlertAny(id):ALERTS.find(function(x){return String(x.id)===String(id);});
+    var dlg=document.getElementById('disp-dialog');
+    var opts={};
+    if(!skip&&dlg){
+      var asg=(document.getElementById('disp-assignee')||{}).value||'';
+      var nts=(document.getElementById('disp-notes')||{}).value||'';
+      if(asg.trim())opts.assigned_to=asg.trim();
+      if(nts.trim())opts.notes=nts.trim();
+    }
+    if(dlg)dlg.remove();
+    if(!a){showToast('该预警已更新或合并，请刷新列表');return;}
+    if(action==='ack')this.ack(a.id,opts);
+    else if(action==='respond')this.respond(a.id,opts);
+    else if(action==='resolve')this.resolve(a.id,opts);
+    else if(action==='reopen')this.reopen(a.id,opts);
+  },
+  ack(id,opts){if(!PERM.guard('\u786e\u8ba4\u9884\u8b66'))return;
     var a=(typeof _findAlertAny==='function')?_findAlertAny(id):ALERTS.find(function(x){return String(x.id)===String(id);});
     if(a)id=a.id; /* 统一回真实 id，保证日志/联动键一致 */
     if(a){
       a.status='acknowledged';
-      this._feedback(a,'ack');
-      this.addLog(id,'确认预警','值班人员确认预警真实性，开始评估处置方案');
+      if(opts&&opts.assigned_to)a.assigned_to=opts.assigned_to;
+      if(opts&&opts.notes)a.notes=opts.notes;
+      this._feedback(a,'ack',opts);
+      this.addLog(id,'确认预警','值班人员确认预警真实性，开始评估处置方案'+(opts&&opts.assigned_to?'（责任人：'+opts.assigned_to+'）':'')+(opts&&opts.notes?'｜'+opts.notes:''));
       /* 预警确认 → 指挥调度中心自动建案（2026-08-14 实战联动：接警即立案，自动匹配预案并派发工单） */
       try{
         if(typeof COMMAND!=='undefined'&&COMMAND.createIncidentFromAlert){
@@ -14027,16 +14174,16 @@ const AVIEW={
     }
     this.renderStats();this.renderQueue();this.renderDetail();renderTicker();
   },
-  respond(id){if(!PERM.guard('\u542f\u52a8\u9884\u8b66\u5904\u7f6e'))return;
+  respond(id,opts){if(!PERM.guard('\u542f\u52a8\u9884\u8b66\u5904\u7f6e'))return;
     var a=(typeof _findAlertAny==='function')?_findAlertAny(id):ALERTS.find(function(x){return String(x.id)===String(id);});
     if(a)id=a.id; /* 统一回真实 id，保证日志/联动键一致 */
-    if(a){a.status='responding';this._feedback(a,'respond');this.addLog(id,'启动处置','启动应急预案，组建现场处置小组');showToast('🏃 已启动处置流程');}
+    if(a){a.status='responding';if(opts&&opts.assigned_to)a.assigned_to=opts.assigned_to;if(opts&&opts.notes)a.notes=opts.notes;this._feedback(a,'respond',opts);this.addLog(id,'启动处置','启动应急预案，组建现场处置小组'+(opts&&opts.assigned_to?'（责任人：'+opts.assigned_to+'）':'')+(opts&&opts.notes?'｜'+opts.notes:''));showToast('🏃 已启动处置流程');}
     this.renderStats();this.renderQueue();this.renderDetail();renderTicker();
   },
-  resolve(id){if(!PERM.guard('\u89e3\u9664\u9884\u8b66'))return;
+  resolve(id,opts){if(!PERM.guard('\u89e3\u9664\u9884\u8b66'))return;
     var a=(typeof _findAlertAny==='function')?_findAlertAny(id):ALERTS.find(function(x){return String(x.id)===String(id);});
     if(a)id=a.id; /* 统一回真实 id，保证日志/联动键一致 */
-    if(a){a.status='resolved';this._feedback(a,'resolve');this.addLog(id,'解除预警','威胁已消除，预警正式解除');showToast('✅ 预警已解除');}
+    if(a){a.status='resolved';if(opts&&opts.assigned_to)a.assigned_to=opts.assigned_to;if(opts&&opts.notes)a.notes=opts.notes;this._feedback(a,'resolve',opts);this.addLog(id,'解除预警','威胁已消除，预警正式解除'+(opts&&opts.assigned_to?'（责任人：'+opts.assigned_to+'）':'')+(opts&&opts.notes?'｜'+opts.notes:''));showToast('✅ 预警已解除');}
     this.renderStats();this.renderQueue();this.renderDetail();renderTicker();
   },
   escalate(id){if(!PERM.guard('\u5347\u7ea7\u9884\u8b66'))return;
@@ -14053,15 +14200,18 @@ const AVIEW={
     this.renderStats();this.renderQueue();this.renderDetail();renderTicker();
   },
   /* ===== 处置闭环：预警操作反向联动（持久化 + AUTOALERT同步 + 国家分数精准回调） ===== */
-  _feedback(a,action){
+  _feedback(a,action,opts){
     try{
       if(!a)return;
-      /* 服务端持久化处置状态 */
+      /* 服务端持久化处置状态（#728：携带责任人/备注，alert_records 落库可审计） */
       try{
         if(typeof APIClient!=='undefined'&&APIClient.isOnline&&APIClient.isOnline()&&APIClient.getToken&&APIClient.getToken()){
+          var _body={action:action};
+          if(opts&&opts.assigned_to)_body.assigned_to=opts.assigned_to;
+          if(opts&&opts.notes)_body.notes=opts.notes;
           fetch('/api/alerts/'+encodeURIComponent(String(a.alert_no||a.id||''))+'/disposition',{
             method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+APIClient.getToken()},
-            body:JSON.stringify({action:action})
+            body:JSON.stringify(_body)
           }).catch(function(){});
         }
       }catch(e){}
@@ -19937,6 +20087,10 @@ function _purgeAlertsNotToday(){
   var before=ALERTS.length;
   ALERTS=ALERTS.filter(function(a){
     if(a.is_manual) return true; /* 2026-09-01 手动录入铁律：手动条目永不过期，只能人工删除 */
+    /* #724 P0-1（2026-09-09）：stall_replay=服务端停摆窗口回补条目（08-26→09-08 预警供血
+     * 停摆 14 天的橙红回补，已过全闸门链+哨兵豁免）。豁免本地 24h 窗与 72h 旧闻否决，
+     * 否则前端一加载就把回补滤光（time=原始采集时间天然超窗）。上限受服务端总帽 800 约束。 */
+    if(a._sourceType==='stall_replay') return true;
     if(_isStaleSeed(a)) return false;
     if(_isStaleEvent(a)) return false;   /* 2026-08-28 旧闻硬否决：事件超 72h 一律剔除（伦敦使馆旧闻根治） */
     var t=_alertTsRaw(a);

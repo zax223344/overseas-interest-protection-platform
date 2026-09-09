@@ -139,4 +139,32 @@ async function healthPing() {
   } catch (e) { return false; }
 }
 
-module.exports = { pool, query, reportQuery, getClient, testConnection, getStats, healthPing };
+/* ===== #724 P0-1 预警供血专用微池（2026-09-09 审计铁证根治）=====
+ * 背景：08-26→09-08 17 时预警中心零新增 14 天——_serverAlertGen/_alertValueSentinel
+ * 走 40 连接主池，采集大军（127 源/轮）+backfill 4 worker 洪峰打满主池，
+ * 预警三函数排队 10s 超时（PM2 err: timeout exceeded when trying to connect），
+ * catch(e){console.warn} 吞掉静默重试。进程重启后自愈但根因（池饥饿）未除。
+ * 方案：预警供血链（候选扫描/队列读写/哨兵巡检）走独立 2 连接微池 + 4s 硬超时，
+ * 与采集 INSERT 永不抢连接。铁律：采集/事务/API 在线查询禁用此池。 */
+const alertPool = new Pool({
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  database: process.env.DB_NAME || 'orps_db',
+  user: process.env.DB_USER || 'orps_user',
+  password: process.env.DB_PASS || 'orps_dev_pass_2026',
+  ssl: { rejectUnauthorized: false },
+  max: 2,
+  idleTimeoutMillis: 0,       /* 常驻连接不复收，预警 3min 一轮零建连开销 */
+  connectionTimeoutMillis: 4000,
+});
+alertPool.on('error', (err) => { console.error('[DB-ALERT] 预警池错误:', err.message); });
+async function alertQuery(text, params) {
+  try {
+    return await alertPool.query(text, params);
+  } catch (err) {
+    console.error('[DB-ALERT] 查询错误:', err.message);
+    throw err;
+  }
+}
+
+module.exports = { pool, query, reportQuery, alertQuery, getClient, testConnection, getStats, healthPing };

@@ -18,6 +18,7 @@ const express = require('express');
 const scrapers = require('./scrapers');
 const INTEREST_BASE = require('./interest-base'); /* 要道通道正则（与 reports-engine 同源单一来源） */
 const reportsEngine = require('./reports-engine'); /* #664 公文版式引擎复用（govdoc.renderGovHtml，红头版式+图表复合分析与周期简报同源） */
+const RL = require('./risk-level'); /* #724 P0-3：定级读取归一单一来源——与 ai-watch/恐袭/涉企同源，杜绝功能区口径漂移 */
 
 /* 情报类别中文名（leader-brief 与 intel-center 共用） */
 const _CAT_CN = {
@@ -38,11 +39,20 @@ const _CH_CN = {
   google_news: '谷歌新闻', sources_pack: '聚合源包', terror_attack: '恐袭专项采集',
   media: '媒体采集', threatroom: '威胁室采集', manual: '人工录入'
 };
-/* 级别归一：severity 列有脏值（历史写入），level_norm 优先，非四色一律回落 yellow */
+/* 级别归一：severity 列有脏值（历史写入），level_norm 优先，非四色一律回落 yellow
+ * #724 P0-3：实现收敛到 risk-level.js assessLevel 单一来源（本函数保留为薄代理，
+ * 全文件既有调用点不改名——与 ai-watch/china-terror/enterprise-risk 同一口径） */
 function _lv(j, sev) {
-  const l = String((j && j.level_norm) || sev || 'yellow').toLowerCase();
-  return ['red', 'orange', 'yellow', 'blue'].includes(l) ? l : 'yellow';
+  return RL.assessLevel(j, sev);
 }
+
+/* #718 实时数据铁律（用户原话：「事件研判中心……不能用旧数据，用近期的实时数据，
+ * 这是铁律」）：leader-brief / intel-center 等实时视图的 SQL 一律排除补采回灌
+ * （_sourceType='backfill'：collect_time=当下但事件为历史旧闻）与归档件。
+ * 追加事件时间闸：档案级通道（china_terror/gap_scheduler 等）event_date 为 2022-2025
+ * 旧闻但 collect_time 近期，ISO 格式超 45 天即排除；非 ISO 脏值保留。
+ * 历史复盘类视图（lifecycle/similar/event-report 案卷、月度规律）不受此闸。 */
+const FRESH = `COALESCE(data_json->>'_sourceType','') <> 'backfill' AND COALESCE(data_json->>'_archiveEvent','') <> 'true' AND (event_date IS NULL OR event_date !~ '^20\\d{2}-\\d{2}-\\d{2}' OR event_date >= to_char(NOW() - INTERVAL '45 days','YYYY-MM-DD'))`;
 
 /* ============ #712 事件时效闸（主面板数据核实原则） ============
  * 用户口径（2026-09-08）：研判中心主面板只放「近期发生且对海外利益安全有现实威胁」的
@@ -141,7 +151,7 @@ module.exports = function intelInsight(ctx) {
       const { rows } = await q(
         `SELECT id, data_type, title, country, severity, source, collect_time, data_json,
                 COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
-         FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' ORDER BY collect_time DESC LIMIT 3000`,
+         FROM intel_data WHERE collect_time >= $1 AND audit_status='approved' AND ${FRESH} ORDER BY collect_time DESC LIMIT 3000`,
         [since]
       );
       const items = rows.map(r => {
@@ -153,7 +163,7 @@ module.exports = function intelInsight(ctx) {
           id: r.id, type: r.data_type,
           title: r.title_cn || r.title || '',
           country: _iso2cnTry(r.country || j.country_cn || ''),
-          severity: j.level_norm || r.severity || 'yellow',
+          severity: _lv(j, r.severity),
           source: r.source || j.source || '',
           time,
           url: j.url || '',
@@ -324,14 +334,14 @@ module.exports = function intelInsight(ctx) {
       const stages = [
         { key: 'collect', name: '首次采集', time: _fmtTime(first.collect_time), detail: '来源：' + ((first.data_json || {})._sourceType || first.source || '采集通道') + '；标题：' + String(first.title_cn || first.title || '').slice(0, 60), done: true },
         { key: 'corrob', name: '多源印证', time: srcSet.size > 1 ? _fmtTime((related[related.length - 1] || first).collect_time) : '', detail: srcSet.size > 1 ? ('库内 ' + srcSet.size + ' 个独立信源报道同一事件：' + Array.from(srcSet).slice(0, 5).join('、')) : '单一信源，尚无库内交叉印证', done: srcSet.size > 1 },
-        { key: 'alert', name: '预警入列', time: '', detail: '当前级别：' + (j.level_norm || anchor.severity || 'yellow') + '；涉华关联：' + (isChina(String(anchor.title || '') + ' ' + anchorTitle) ? '是' : '否'), done: true },
+        { key: 'alert', name: '预警入列', time: '', detail: '当前级别：' + _lv(j, anchor.severity) + '；涉华关联：' + (isChina(String(anchor.title || '') + ' ' + anchorTitle) ? '是' : '否'), done: true },
         { key: 'audit', name: '审核入库', time: _fmtTime(anchor.collect_time), detail: '审核状态：' + (anchor.audit_status || 'approved'), done: !!anchor.audit_status },
         { key: 'dispose', name: '处置跟踪', time: '', detail: '处置工单数据暂未接入（如实标注，不虚拟进度）', done: false },
         { key: 'archive', name: '归档复盘', time: '', detail: related.length > 3 ? '已进入归档检索范围（相关条目 ' + related.length + ' 条）' : '事件仍在活跃监测窗口内', done: related.length > 3 }
       ];
       res.json({
-        ok: true, anchor: { id: anchor.id, title: anchorTitle.slice(0, 100), country: _iso2cnTry(anchor.country), type: anchor.data_type, level: j.level_norm || anchor.severity },
-        stages, related: related.map(r => ({ id: r.id, title: String(r.title_cn || r.title || '').slice(0, 70), source: r.source || ((r.data_json || {}).source || '全网检索'), time: _fmtTime(r.collect_time), level: (r.data_json || {}).level_norm || r.severity }))
+        ok: true, anchor: { id: anchor.id, title: anchorTitle.slice(0, 100), country: _iso2cnTry(anchor.country), type: anchor.data_type, level: _lv(j, anchor.severity) },
+        stages, related: related.map(r => ({ id: r.id, title: String(r.title_cn || r.title || '').slice(0, 70), source: r.source || ((r.data_json || {}).source || '全网检索'), time: _fmtTime(r.collect_time), level: _lv(r.data_json, r.severity) }))
       });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
@@ -376,7 +386,7 @@ module.exports = function intelInsight(ctx) {
         .slice(0, 12)
         .map(x => ({
           id: x.r.id, title: String(x.r.title_cn || x.r.title || '').slice(0, 90),
-          country: _iso2cnTry(x.r.country), level: ((x.r.data_json || {}).level_norm || x.r.severity || 'yellow'),
+          country: _iso2cnTry(x.r.country), level: _lv(x.r.data_json, x.r.severity),
           time: _fmtTime(x.r.collect_time).slice(0, 10), sameCountry: x.sameCountry, overlap: x.ov,
           url: (x.r.data_json || {}).url || ''
         }));
@@ -386,7 +396,7 @@ module.exports = function intelInsight(ctx) {
       cand.rows.forEach(r => { const c = _iso2cnTry(r.country) || '未标注'; byCountry[c] = (byCountry[c] || 0) + 1; });
       const hotCountries = Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 5);
       const lvDist = { red: 0, orange: 0, yellow: 0, blue: 0 };
-      cand.rows.forEach(r => { const l = (r.data_json || {}).level_norm || r.severity; if (lvDist[l] != null) lvDist[l]++; });
+      cand.rows.forEach(r => { const l = _lv(r.data_json, r.severity); if (lvDist[l] != null) lvDist[l]++; });
       res.json({
         ok: true, anchor: { id: anchor.id, title: anchorTitle.slice(0, 90), type: anchorType, country: anchorCountry },
         matches: sims, matchCount: sims.length,
@@ -450,14 +460,14 @@ module.exports = function intelInsight(ctx) {
         return res.json(_icCache);
       }
       const P = {};
-      /* —— ① 信源统计（与 source-cred 同口径聚合） —— */
+      /* —— ① 信源统计（与 source-cred 同口径聚合；#718 实时口径排除补采回灌） —— */
       P.sources = q(
         `SELECT COALESCE(NULLIF(source,''), (data_json->>'source')) AS src,
                 COUNT(*) AS v30,
                 COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '7 days') AS a7,
                 COUNT(*) FILTER (WHERE data_json->>'chinaRelated' = 'true') AS cn,
                 MAX(collect_time) AS last_seen
-         FROM intel_data WHERE collect_time >= NOW() - INTERVAL '30 days'
+         FROM intel_data WHERE collect_time >= NOW() - INTERVAL '30 days' AND ${FRESH}
          GROUP BY 1 ORDER BY v30 DESC LIMIT 60`
       );
       /* —— ② 采集通道分布（_sourceType，30 天） —— */
@@ -483,34 +493,34 @@ module.exports = function intelInsight(ctx) {
          FROM intel_sidepool WHERE blocked_at >= NOW() - INTERVAL '7 days'
          GROUP BY 1 ORDER BY c DESC LIMIT 12`
       ).catch(() => ({ rows: [] })); /* 表不存在时如实空返回 */
-      /* —— ⑤ 近 7 天红橙事件（analysis tab，审核通过） —— */
+      /* —— ⑤ 近 7 天红橙事件（analysis tab，审核通过；#718 实时口径） —— */
       P.recent = q(
         `SELECT id, data_type, title, country, source, collect_time, data_json,
                 COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
          FROM intel_data
-         WHERE collect_time >= NOW() - INTERVAL '7 days' AND audit_status = 'approved'
+         WHERE collect_time >= NOW() - INTERVAL '7 days' AND audit_status = 'approved' AND ${FRESH}
          ORDER BY collect_time DESC LIMIT 600`
       );
-      /* —— ⑥ 国别 7 天环比 + 逐日曲线（本地时区 Asia/Shanghai） —— */
+      /* —— ⑥ 国别 7 天环比 + 逐日曲线（本地时区 Asia/Shanghai；#718 实时口径） —— */
       P.countryTrend = q(
         `SELECT COALESCE(NULLIF(country,''),'未标注') AS c,
                 COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '7 days')::int AS d7,
                 COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '14 days' AND collect_time < NOW() - INTERVAL '7 days')::int AS prev7,
                 COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '7 days' AND COALESCE(NULLIF(data_json->>'level_norm',''),NULLIF(severity,'')) = 'red')::int AS red7
-         FROM intel_data WHERE collect_time >= NOW() - INTERVAL '14 days'
+         FROM intel_data WHERE collect_time >= NOW() - INTERVAL '14 days' AND ${FRESH}
          GROUP BY 1`
       );
       P.daily = q(
         `SELECT to_char(collect_time AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
-         FROM intel_data WHERE collect_time >= NOW() - INTERVAL '14 days'
+         FROM intel_data WHERE collect_time >= NOW() - INTERVAL '14 days' AND ${FRESH}
          GROUP BY 1 ORDER BY 1`
       );
-      /* —— ⑦ 近 30 天国别分布 + 要道匹配池（geoint tab） —— */
+      /* —— ⑦ 近 30 天国别分布 + 要道匹配池（geoint tab；#718 实时口径） —— */
       P.geo = q(
         `SELECT id, data_type, title, country, collect_time, data_json,
                 COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
          FROM intel_data
-         WHERE collect_time >= NOW() - INTERVAL '30 days' AND audit_status = 'approved'
+         WHERE collect_time >= NOW() - INTERVAL '30 days' AND audit_status = 'approved' AND ${FRESH}
          ORDER BY collect_time DESC LIMIT 3000`
       );
       const [sources, channels, osint, sidepool, recent, countryTrend, daily, geo] = await Promise.all(
@@ -774,7 +784,7 @@ module.exports = function intelInsight(ctx) {
       const stages = [
         { key: 'collect', name: '首次采集', time: String(first.time || ''), detail: '来源：' + first.source + '；' + String(first.title || '').slice(0, 60), done: true },
         { key: 'corrob', name: '多源印证', time: srcSet.size > 1 ? String((related[related.length - 1] || first).time || '') : '', detail: srcSet.size > 1 ? ('库内 ' + srcSet.size + ' 个独立信源报道同一事件：' + Array.from(srcSet).slice(0, 5).join('、')) : '单一信源，尚无库内交叉印证', done: srcSet.size > 1 },
-        { key: 'alert', name: '预警入列', time: '', detail: '当前级别：' + (j.level_norm || anchor.severity || 'yellow') + '；涉华关联：' + (isChina(String(anchor.title || '') + ' ' + anchorTitle) ? '是' : '否'), done: true },
+        { key: 'alert', name: '预警入列', time: '', detail: '当前级别：' + _lv(j, anchor.severity) + '；涉华关联：' + (isChina(String(anchor.title || '') + ' ' + anchorTitle) ? '是' : '否'), done: true },
         { key: 'audit', name: '审核入库', time: _fmtTime(anchor.collect_time), detail: '审核状态：' + (anchor.audit_status || 'approved'), done: !!anchor.audit_status },
         { key: 'archive', name: '归档复盘', time: '', detail: related.length > 3 ? '已进入归档检索范围（相关条目 ' + related.length + ' 条）' : '事件仍在活跃监测窗口内', done: related.length > 3 }
       ];
@@ -784,7 +794,7 @@ module.exports = function intelInsight(ctx) {
       const hot3 = hotCountries.slice(0, 3).map(x => x[0] + ' ' + x[1] + ' 起').join('、') || '分布零散';
       const ruleJudge = [
         (historic ? '【历史复盘模式】本事件发生于 ' + evDateStr + '（距今 ' + evAgeD + ' 天），属历史事件复盘研判，非近期实时威胁，仅供历史规律参考与同类事件防范借鉴。' : '') +
-        '一、事件概况。锚点事件"' + anchorTitle.slice(0, 50) + '"（' + (anchorCountry || '未标注国别') + '，' + (_CAT_CN[anchorType] || anchorType) + '类，' + (j.level_norm || anchor.severity || 'yellow') + '级）。库内时间流召回相关条目 ' + related.length + ' 条，独立信源 ' + srcSet.size + ' 个；全库同类别历史事件 ' + typeTotal + ' 条，其中检索到相似事件 ' + sims.length + ' 起（同国别 ' + sims.filter(s => s.sameCountry).length + ' 起）。',
+        '一、事件概况。锚点事件"' + anchorTitle.slice(0, 50) + '"（' + (anchorCountry || '未标注国别') + '，' + (_CAT_CN[anchorType] || anchorType) + '类，' + (_lv(j, anchor.severity) || 'yellow') + '级）。库内时间流召回相关条目 ' + related.length + ' 条，独立信源 ' + srcSet.size + ' 个；全库同类别历史事件 ' + typeTotal + ' 条，其中检索到相似事件 ' + sims.length + ' 起（同国别 ' + sims.filter(s => s.sameCountry).length + ' 起）。',
         '二、时间流研判。该事件自首次采集（' + String(first.time || '时间不详') + '）以来，' + (related.length > 3 ? '呈多节点持续演进态势，库内累计 ' + related.length + ' 个时间节点的后续报道，事件仍处于活跃发展窗口' : '库内后续演进报道 ' + related.length + ' 条，事件链条相对收敛') + '。' + (srcSet.size > 1 ? '已获 ' + srcSet.size + ' 个独立信源交叉印证，事件真实性置信度高。' : '目前为单一信源，建议持续跟踪等待多源印证。'),
         '三、历史相似事件规律。全库同类事件 ' + typeTotal + ' 条，集中于：' + hot3 + '。级别分布为红 ' + lvDist.red + '、橙 ' + lvDist.orange + '、黄 ' + lvDist.yellow + '、蓝 ' + lvDist.blue + '。' + (recur != null ? '相似事件复发间隔中位数约 ' + recur + ' 天，' : '') + (lvDist.red + lvDist.orange > 0 ? '同类事件中红橙级占比 ' + Math.round((lvDist.red + lvDist.orange) / (all.length || 1) * 100) + '%，同类风险烈度不容忽视。' : '同类事件总体烈度可控。'),
         '四、对策建议。' + (chinaCnt > 0 ? '本事件链涉华关联条目 ' + chinaCnt + ' 条，建议领事保护条线今日内完成专项过筛，逐条核实中方人员机构安全状态；' : '') + (sims.filter(s => s.sameCountry).length >= 3 ? anchorCountry + '方向同类事件密集复发，建议驻外机构对照历史处置案例前置部署防范措施；' : '') + '建议值班条线将该事件纳入重点盯防清单，按复发周期加密跟踪，后续演进节点实时入库复盘。'
@@ -797,7 +807,7 @@ module.exports = function intelInsight(ctx) {
           const pv = reportsEngine._test.pvKimi();
           const sys = '你是国家安全情报研判参谋，为海外利益保护情报预警平台撰写事件研判专报的综合研判段（参谋助手级，须可直接供值班领导决策使用）。必须分五段，段落标题固定：「一、事件概况与研判结论」「二、时间流研判」「三、历史相似事件规律」「四、风险预测（30天窗口）」「五、对策建议」。硬性要求：①概况段先给一句话总结论（事件性质+当前阶段+是否需要升级关注），再给置信度档位（高/中/低）及定档依据（信源数/链条长度/样本量）；②时间流段判断事件当前处于发展/收敛/复发阶段并给依据；③规律段引用给定热点国别、级别分布、复发中位数，指出可直接类比的历史事件；④预测段给30天内该事件链的演化方向与应盯的具体信号（升级触发条件）；⑤建议段步骤化（一是/二是/三是）、每条带时限与责任条线（领事保护/企业安全/值班条线）。全部基于给定真实数据，禁止虚构数字与事件，信息不足处如实标注，禁止口号式空话。';
           const usr = (historic ? '【重要背景：本事件为历史事件，发生于 ' + evDateStr + '（距今 ' + evAgeD + ' 天）。本卷为历史复盘研判：结论必须明确区分「历史规律参考」与「近期实时威胁」，不得把历史事件表述为当前正在发生的威胁，防范建议以类比借鉴为基调。】\n' : '') +
-            '锚点事件：' + anchorTitle + '\n国别：' + (anchorCountry || '未标注') + '；类别：' + (_CAT_CN[anchorType] || anchorType) + '；级别：' + (j.level_norm || anchor.severity || 'yellow') +
+            '锚点事件：' + anchorTitle + '\n国别：' + (anchorCountry || '未标注') + '；类别：' + (_CAT_CN[anchorType] || anchorType) + '；级别：' + (_lv(j, anchor.severity) || 'yellow') +
             '\n时间流相关条目 ' + related.length + ' 条，独立信源 ' + srcSet.size + ' 个，首次采集 ' + String(first.time || '不详') +
             '\n全库同类别事件 ' + typeTotal + ' 条，其中相似事件 ' + sims.length + ' 起（同国别 ' + sims.filter(s => s.sameCountry).length + ' 起），热点国别：' + hot3 +
             '\n级别分布：红' + lvDist.red + ' 橙' + lvDist.orange + ' 黄' + lvDist.yellow + ' 蓝' + lvDist.blue + '；涉华关联 ' + chinaCnt + ' 条' + (recur != null ? '；复发间隔中位数 ' + recur + ' 天' : '') +
@@ -840,7 +850,7 @@ module.exports = function intelInsight(ctx) {
 
       res.json({
         ok: true,
-        anchor: { id: anchor.id, title: anchorTitle.slice(0, 120), country: anchorCountry, type: _CAT_CN[anchorType] || anchorType, level: j.level_norm || anchor.severity, evDate: evDateStr, evAgeDays: evAgeD, historic },
+        anchor: { id: anchor.id, title: anchorTitle.slice(0, 120), country: anchorCountry, type: _CAT_CN[anchorType] || anchorType, level: _lv(j, anchor.severity), evDate: evDateStr, evAgeDays: evAgeD, historic },
         stages, related, sims, daily, typeMonthly,
         stats: Object.assign({}, stats, { typeTotal: typeTotal, simCount: sims.length, sameCountry: sims.filter(s => s.sameCountry).length, srcCount: srcSet.size, recurMedian: recur, hotCountries: hotCountries.map(x => ({ country: x[0], n: x[1] })) }),
         judgment: judgeText, llmOk, govHtml,

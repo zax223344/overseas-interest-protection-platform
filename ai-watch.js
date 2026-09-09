@@ -13,8 +13,9 @@
  * 铁律：全屏数据均来自库内真实字段，零模拟。 */
 'use strict';
 var AIWATCH = (function () {
-  var _inited = false, _timer = null, _clock = null;
+  var _inited = false, _timer = null, _clock = null, _toolTimer = null;
   var _status = null, _log = [], _maxLogId = 0, _logFilter = 'all';
+  var _tools = {};   /* #720 深度工具值班矩阵：各 AI 引擎最近产出（真实端点探测） */
 
   function _esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -137,6 +138,76 @@ var AIWATCH = (function () {
       '.aw-brief .row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:10.5px;color:#9db8d2}' +
       '.aw-brief .row b{font-family:Consolas,monospace;font-size:13px}' +
       '.aw-brief .red-b{color:#ff3355}.aw-brief .org-b{color:#ff8800}.aw-brief .cy-b{color:#22d3ee}.aw-brief .gn-b{color:#00e676}' +
+      /* ===== #720 AI 深度工具值班矩阵 ===== */
+      '.aw-tools .tl{display:grid;grid-template-columns:1fr;gap:6px}' +
+      '.aw-tools .tool{position:relative;display:grid;grid-template-columns:26px 1fr auto;grid-template-rows:auto auto;gap:1px 8px;align-items:center;border:1px solid rgba(34,211,238,.12);border-radius:7px;padding:6px 8px;background:rgba(13,28,54,.6);transition:.15s}' +
+      '.aw-tools .tool:hover{border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.06)}' +
+      '.aw-tools .tool .ic{grid-row:1/3;font-size:15px;text-align:center;filter:drop-shadow(0 0 6px rgba(34,211,238,.5))}' +
+      '.aw-tools .tool .nm{font-size:11px;font-weight:700;color:#dff3ff;letter-spacing:.5px}' +
+      '.aw-tools .tool .lg{display:flex;align-items:center;gap:5px;font-size:8.5px;color:#7aa5c9;font-family:Consolas,monospace;grid-column:2/4}' +
+      '.aw-tools .tool .st{grid-row:1/3;align-self:center;font-size:9px;font-weight:800;border-radius:5px;padding:2px 7px;letter-spacing:1px;flex-shrink:0}' +
+      '.aw-tools .tool .st.on{background:rgba(0,230,118,.1);color:#00e676;border:1px solid rgba(0,230,118,.35)}' +
+      '.aw-tools .tool .st.idle{background:rgba(255,204,0,.08);color:#ffcc00;border:1px solid rgba(255,204,0,.3)}' +
+      '.aw-tools .tool .st.off{background:rgba(255,51,85,.08);color:#ff5577;border:1px solid rgba(255,51,85,.3)}' +
+      '.aw-tools .tool .st.run{background:rgba(255,136,0,.1);color:#ffaa33;border:1px solid rgba(255,136,0,.35);animation:aw-pulse 1.4s infinite}' +
+      '.aw-tools .eng{display:inline-block;border-radius:4px;padding:0 5px;font-size:8px;font-weight:700;letter-spacing:.5px}' +
+      '.aw-tools .eng.kimi{background:rgba(124,58,237,.16);color:#c4b5fd;border:1px solid rgba(124,58,237,.4)}' +
+      '.aw-tools .eng.rule{background:rgba(90,122,153,.12);color:#8fa8c0;border:1px solid rgba(90,122,153,.35)}' +
+      '.aw-tools .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:7px;padding-top:6px;border-top:1px dashed rgba(34,211,238,.12)}' +
+      /* ===== #720 AI 研判深度指标 ===== */
+      '.aw-dm .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}' +
+      '.aw-dm .cell{border:1px solid rgba(124,58,237,.18);border-radius:7px;padding:7px 9px;background:linear-gradient(135deg,rgba(124,58,237,.07),rgba(8,20,42,.5))}' +
+      '.aw-dm .cell .v{font-size:17px;font-weight:800;font-family:Consolas,monospace;color:#e2e8f0;text-shadow:0 0 10px rgba(124,58,237,.5);line-height:1.2}' +
+      '.aw-dm .cell .v small{font-size:9px;color:#7aa5c9;font-weight:400}' +
+      '.aw-dm .cell .l{font-size:9px;color:#8fa8c0;margin-top:3px;letter-spacing:.5px;line-height:1.5}' +
+      '.aw-dm .cell.hot{border-color:rgba(255,51,85,.25)}' +
+      '.aw-dm .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:7px;padding-top:6px;border-top:1px dashed rgba(124,58,237,.15)}' +
+      /* ===== #721 结构化风险预测清单 ===== */
+      '.aw-fc .row{position:relative;border:1px solid rgba(34,211,238,.12);border-radius:7px;padding:6px 8px;margin-bottom:6px;background:rgba(13,28,54,.6);transition:.15s}' +
+      '.aw-fc .row:hover{border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.06)}' +
+      '.aw-fc .row.up{border-left:3px solid #ff3355}' +
+      '.aw-fc .row.down{border-left:3px solid #00e676}' +
+      '.aw-fc .row.flat{border-left:3px solid #22d3ee}' +
+      '.aw-fc .r1{display:flex;align-items:center;gap:6px}' +
+      '.aw-fc .nm{font-size:11.5px;font-weight:800;color:#e9f6ff;letter-spacing:.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.aw-fc .dir{font-size:11px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0}' +
+      '.aw-fc .dir.up{color:#ff3355;text-shadow:0 0 8px rgba(255,51,85,.5)}' +
+      '.aw-fc .dir.down{color:#00e676;text-shadow:0 0 8px rgba(0,230,118,.5)}' +
+      '.aw-fc .dir.flat{color:#22d3ee}' +
+      '.aw-fc .conf{font-size:8.5px;font-weight:800;border-radius:4px;padding:1px 6px;letter-spacing:1px;flex-shrink:0}' +
+      '.aw-fc .conf.h{background:rgba(255,51,85,.12);color:#ff5577;border:1px solid rgba(255,51,85,.4)}' +
+      '.aw-fc .conf.m{background:rgba(255,136,0,.1);color:#ffaa33;border:1px solid rgba(255,136,0,.35)}' +
+      '.aw-fc .conf.l{background:rgba(90,122,153,.12);color:#8fa8c0;border:1px solid rgba(90,122,153,.35)}' +
+      '.aw-fc .dom{font-size:9px;color:#c084fc;margin-top:3px;letter-spacing:.5px}' +
+      '.aw-fc .basis{font-size:8.5px;color:#7aa5c9;margin-top:2px;font-family:Consolas,monospace;line-height:1.5}' +
+      '.aw-fc .bsb{display:inline-block;margin-left:6px;padding:0 6px;border:1px dashed rgba(255,136,0,.55);border-radius:4px;color:#ff9a3c;font-size:8.5px;vertical-align:1px;white-space:nowrap}' +
+      '.aw-fc .hb{display:inline-block;margin-left:6px;padding:0 6px;border-radius:4px;font-size:8.5px;font-weight:700;vertical-align:1px;white-space:nowrap;cursor:help}' +
+      '.aw-fc .hb.g{background:rgba(0,230,118,.1);color:#00e676;border:1px solid rgba(0,230,118,.4)}' +
+      '.aw-fc .hb.w{background:rgba(255,136,0,.1);color:#ffaa33;border:1px solid rgba(255,136,0,.35)}' +
+      '.aw-fc .trig{font-size:8.5px;color:#5a7a99;margin-top:2px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}' +
+      '.aw-fc .trig b{color:#ffaa33;font-weight:700}' +
+      '.aw-fc .more{font-size:9px;color:#5a7a99;text-align:center;padding:3px 0;letter-spacing:1px}' +
+      '.aw-fc .row{cursor:pointer}' +
+      '.aw-fc .chev{font-size:9px;color:#5a7a99;flex-shrink:0;transition:transform .15s}' +
+      '.aw-fc .row.open .chev{color:#22d3ee;transform:rotate(90deg)}' +
+      '.aw-fc .hint{font-size:8.5px;color:#ffaa33;letter-spacing:.5px;margin-left:auto;flex-shrink:0}' +
+      '.aw-fc .exp{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(34,211,238,.2)}' +
+      '.aw-fc .seg{display:flex;gap:6px;margin-bottom:5px}' +
+      '.aw-fc .seg .sl{flex-shrink:0;font-size:8.5px;font-weight:800;color:#c084fc;border:1px solid rgba(192,132,252,.4);border-radius:4px;padding:1px 6px;height:fit-content;letter-spacing:2px}' +
+      '.aw-fc .seg .sv{font-size:9.5px;color:#c3d9ec;line-height:1.75}' +
+      '.aw-fc .pend{font-size:9px;color:#8fa8c0;line-height:1.7}' +
+      '.aw-fc .evh{font-size:8.5px;color:#5a7a99;letter-spacing:1.5px;margin:7px 0 4px}' +
+      '.aw-fc .ev{display:flex;gap:5px;align-items:baseline;font-size:9px;padding:2.5px 0;border-bottom:1px dotted rgba(34,211,238,.08)}' +
+      '.aw-fc .ev:last-child{border-bottom:none}' +
+      '.aw-fc .ev .ed{color:#5a7a99;font-family:Consolas,monospace;flex-shrink:0}' +
+      '.aw-fc .ev .el{flex-shrink:0;font-size:8px;font-weight:700;border-radius:3px;padding:0 4px;letter-spacing:1px}' +
+      '.aw-fc .ev .el.r{background:rgba(255,51,85,.12);color:#ff5577;border:1px solid rgba(255,51,85,.3)}' +
+      '.aw-fc .ev .el.o{background:rgba(255,136,0,.12);color:#ffaa33;border:1px solid rgba(255,136,0,.3)}' +
+      '.aw-fc .ev .el.n{background:rgba(90,122,153,.12);color:#8fa8c0;border:1px solid rgba(90,122,153,.3)}' +
+      '.aw-fc .ev .ec{flex-shrink:0;font-size:8px;font-weight:700;color:#ffaa33}' +
+      '.aw-fc .ev .et{color:#a9c6dd;line-height:1.55}' +
+      '.aw-fc .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:4px;padding-top:6px;border-top:1px dashed rgba(34,211,238,.12)}' +
+      '.aw-fc .empty{font-size:10px;color:#7aa5c9;line-height:1.8;text-align:center;padding:10px 4px}' +
       /* ===== KPI 带 ===== */
       '.aw-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:12px}' +
       '@media (max-width:700px){.aw-kpis{grid-template-columns:repeat(2,1fr)}}' +
@@ -291,6 +362,8 @@ var AIWATCH = (function () {
     var ev = _log.filter(function (e) { var t = _parseTs(e.ts); return !isNaN(t) && t >= startMs; });
     var evs = ev.filter(function (e) { return e.kind === 'event'; });
     var scans = ev.filter(function (e) { return e.kind === 'scan'; });
+    var situ = ev.filter(function (e) { return e.kind === 'situation'; }).length;
+    var fc = ev.filter(function (e) { return e.kind === 'forecast'; }).length;
     var red = evs.filter(function (e) { return e.level === 'red'; }).length;
     var orange = evs.filter(function (e) { return e.level === 'orange'; }).length;
     var ctry = {};
@@ -302,9 +375,167 @@ var AIWATCH = (function () {
       '<div class="aw-pb aw-brief">' +
       row('本班大模型研判', evs.length + ' 条', 'gn-b') +
       row('红级 / 橙级分布', red + ' / ' + orange, 'red-b') +
+      row('态势研判 / 风险预测', situ + ' / ' + fc, 'cy-b') +
       row('值班扫描落痕', scans.length + ' 轮', 'cy-b') +
       row('研判重点国别', top, 'org-b') +
       '</div></div>';
+  }
+
+  /* ================= #720 AI 深度工具值班矩阵 =================
+   * 真实探测各 AI 研判引擎端点（秒级缓存端点为主），展示在岗状态——零模拟。 */
+  function _loadTools() {
+    function grab(key, url, ms) {
+      return _fetch(url, ms || 20000).then(function (d) {
+        if (d && d.ok) _tools[key] = { at: Date.now(), d: d, fail: false };
+        else _tools[key] = { at: _tools[key] ? _tools[key].at : 0, d: _tools[key] ? _tools[key].d : null, fail: true };
+      }).catch(function () { _tools[key] = { at: _tools[key] ? _tools[key].at : 0, d: _tools[key] ? _tools[key].d : null, fail: true }; })
+        .finally(function () { _render(); }); /* 各源独立上屏，先到先显示 */
+    }
+    grab('terror', '/api/terror/judge?scope=global');
+    grab('cnTerror', '/api/terror/china-briefing');
+    grab('entrisk', '/api/entrisk/overview', 20000);
+    grab('leader', '/api/insight/leader-brief', 65000);
+  }
+
+  function _toolsHTML(du, st) {
+    var now = Date.now();
+    /* 事件/态势/预测三引擎直接来自 ai-watch 状态（同源真实数据） */
+    var rows = [];
+    function row(ic, nm, sub, engCls, engName, lamp, lampTxt) {
+      rows.push('<div class="tool"><span class="ic">' + ic + '</span>' +
+        '<span class="nm">' + nm + '</span>' +
+        '<span class="st ' + lamp + '">' + lampTxt + '</span>' +
+        '<span class="lg"><span class="eng ' + engCls + '">' + engName + '</span>' + sub + '</span></div>');
+    }
+    var evLast = st.lastEventAt || null, sitLast = st.lastSituationAt || null, fcLast = st.lastForecastAt || null;
+    function ageOf(iso) { if (!iso) return null; var t = new Date(String(iso).replace(' ', 'T').replace(/Z$/, '') + 'Z').getTime(); return isNaN(t) ? null : (now - t) / 60000; }
+    function lampOf(min, busyMs) { if (min == null) return ['idle', '待首产']; if (min <= 25) return ['on', '在岗']; if (min <= 200) return ['on', '在岗']; return ['idle', '待产出']; }
+    var evAge = ageOf(evLast), sitAge = ageOf(sitLast), fcAge = ageOf(fcLast);
+    var evL = du.busy ? ['run', '研判中'] : lampOf(evAge);
+    row('🧠', '事件研判引擎', (st.eventJudgments || 0) + ' 条落档' + (evAge != null ? ' · ' + (evAge < 60 ? Math.round(evAge) + '′前' : Math.round(evAge / 60) + 'h前') : ''), 'kimi', 'Kimi', evL[0], evL[1]);
+    var sitL = sitAge != null && sitAge <= 45 ? ['on', '在岗'] : ['idle', '滚动中'];
+    row('🧭', '态势研判引擎', (st.situation || 0) + ' 份通报' + (sitAge != null ? ' · ' + (sitAge < 60 ? Math.round(sitAge) + '′前' : Math.round(sitAge / 60) + 'h前') : ''), 'kimi', 'Kimi', sitL[0], sitL[1]);
+    var fcDue = fcAge != null && fcAge <= 200;
+    row('🔮', '风险预测引擎', (st.forecast || 0) + ' 份前瞻' + (fcAge != null ? ' · ' + (fcAge < 60 ? Math.round(fcAge) + '′前' : Math.round(fcAge / 60) + 'h前') : '') + ' · 3h 周期', 'kimi', 'Kimi', fcDue ? 'on' : 'idle', fcDue ? '在岗' : '滚动中');
+    /* 外部 AI 研判工具（真实端点探测） */
+    function extRow(key, ic, nm, genAt, llmOk, extra) {
+      var t = _tools[key];
+      var have = t && t.d;
+      var min = null;
+      if (genAt) {
+        /* 多格式兼容：2026/9/9 15:34:21（toLocaleString）与 2026年9月9日 15:34 */
+        var m = /(\d{4})[年\/\-\.](\d{1,2})[月\/\-\.](\d{1,2})日?\s*(?:[上下]午)?\s*(\d{1,2}):(\d{2})/.exec(String(genAt));
+        if (m) { var hh = +m[4]; if (/下午/.test(String(genAt)) && hh < 12) hh += 12; min = (now - new Date(+m[1], +m[2] - 1, +m[3], hh, +m[5]).getTime()) / 60000; }
+        else { var p = Date.parse(String(genAt).slice(0, 19).replace(' ', 'T')); if (!isNaN(p)) min = (now - p) / 60000; }
+      }
+      var lamp = t && t.fail && !have ? ['off', '待探测'] : (min != null && min <= 40 ? ['on', '在岗'] : (have ? ['idle', '缓存中'] : ['idle', '探测中']));
+      row(ic, nm, (extra || '') + (min != null ? ' · ' + (min < 60 ? Math.round(min) + '′前' : Math.round(min / 60) + 'h前') : ' · 探测中'),
+        llmOk === false ? 'rule' : 'kimi', llmOk === false ? '规则' : 'Kimi', lamp[0], lamp[1]);
+    }
+    var tT = _tools.terror && _tools.terror.d;
+    extRow('terror', '🔴', '反恐态势通报', tT && tT.generatedAt, tT && tT.llmOk, '红头公文 ' + ((tT && tT.govHtml || '').length) + ' 字');
+    var tC = _tools.cnTerror && _tools.cnTerror.d;
+    extRow('cnTerror', '🇨🇳', '涉华恐袭威胁研判', tC && tC.generatedAt, tC && tC.llmOk, (tC && tC.stats ? '覆盖 ' + (tC.stats.countries || 0) + ' 国' : ''));
+    var tE = _tools.entrisk && _tools.entrisk.d;
+    extRow('entrisk', '🏢', '涉企风险七域研判', tE && tE.generatedAt, null, (tE && tE.kpi ? '72h 预警 ' + (tE.kpi.alerts72 || 0) + ' 条' : ''));
+    var tL = _tools.leader && _tools.leader.d;
+    extRow('leader', '📜', '领导要报速览', tL && tL.generatedAt, null, (tL && tL.stats ? '24h 窗口 ' + (tL.stats.total || 0) + ' 条' : ''));
+    return '<div class="aw-panel"><div class="aw-ph"><span class="ic">🧰</span><span class="t">AI 深度工具值班矩阵</span><span class="tag">TOOL MATRIX · ' + rows.length + ' 引擎</span></div>' +
+      '<div class="aw-pb aw-tools"><div class="tl">' + rows.join('') + '</div>' +
+      '<div class="ft">全平台 AI 研判引擎统一列装值班：事件层逐条快评 → 态势层 20min 滚动 → 预测层 3h 前瞻 → 专项通报（反恐/涉华/涉企/要报）红头公文输出。状态灯按各引擎真实产出时间点亮，每 5 分钟自动巡检一次。</div>' +
+      '</div></div>';
+  }
+
+  /* ================= #721/#721b 结构化风险预测清单（可交互：点击行展开 AI 细化研判+事件明细） =================
+   * 数据源：/api/aiwatch/status 的 forecastItems（ai_forecast_items 表，预测层每 3h 装配覆盖 + 逐国/逐域 LLM 细化）。
+   * 行=方向（7d vs 前周真实统计）×幅度×置信度；点击展开：LLM 针对性研判（态势/预测/触发）+ 近7日代表性事件明细。 */
+  var _fcOpen = {};   /* 展开态：key=kind|name（_render 后保持） */
+  function _forecastHTML() {
+    var items = (_status && _status.forecastItems) || [];
+    var cItems = items.filter(function (i) { return i.kind === 'country'; });
+    var dItems = items.filter(function (i) { return i.kind === 'domain'; });
+    var fcLast = (_status && _status.stats && _status.stats.lastForecastAt) || null;
+    var ageTxt = '';
+    if (fcLast) {
+      var t = Date.parse(String(fcLast).slice(0, 19).replace(' ', 'T'));
+      if (!isNaN(t)) { var mn = (Date.now() - t) / 60000; ageTxt = mn < 60 ? Math.round(mn) + '′前细化' : Math.round(mn / 60) + 'h前细化'; }
+    }
+    /* #730 累计对账总览（滚动命中率）：满7天回算 hit/near/miss 全量口径 */
+    var fv = (_status && _status.forecastVerify) || null;
+    var fvTxt = (fv && fv.total) ? ' · 预测对账累计：命中 ' + fv.hit + '/' + fv.total + '（' + (fv.rate != null ? fv.rate + '%' : '—') + '，方向对/幅度不足 ' + fv.near + '，未命中 ' + fv.miss + '；连续3轮未命中自动降置信度）' : '';
+    function arrow(it) {
+      var d = it.delta == null ? 0 : it.delta;
+      if (it.direction === 'up') return ['up', '↑', (d > 0 ? '+' : '') + d + '%'];
+      if (it.direction === 'down') return ['down', '↓', d + '%'];
+      return ['flat', '→', '±' + Math.abs(d) + '%'];
+    }
+    function confCls(c) { return c === '高' ? 'h' : (c === '中' ? 'm' : 'l'); }
+    /* #730 对账角标：近4轮命中 x/4（绿=命中率≥50%，橙=低于50%；无对账数据不显示） */
+    function hitBadge(it) {
+      if (!it.hit4) return '';
+      var p = String(it.hit4).split('/');
+      var rate = it.hitRate != null ? it.hitRate : 0;
+      return '<span class="hb ' + (rate >= 50 ? 'g' : 'w') + '" title="预测对账：近 ' + p[1] + ' 轮满7天回算，命中 ' + p[0] + ' 轮（命中率 ' + rate + '%）；上轮判定=' + (it.lastVerdict === 'hit' ? '命中' : (it.lastVerdict === 'near' ? '方向对/幅度不足' : '未命中')) + '">对账 ' + p[0] + '/' + p[1] + '</span>';
+    }
+    function lvCls(lv) { return lv === 'red' ? 'r' : (lv === 'orange' ? 'o' : 'n'); }
+    function expBlock(it) {
+      var d = it.detail;
+      var h = '<div class="exp">';
+      if (d && d.llm) {
+        if (d.s) h += '<div class="seg"><span class="sl">态势</span><div class="sv">' + _esc(d.s) + '</div></div>';
+        if (d.p) h += '<div class="seg"><span class="sl">预测</span><div class="sv">' + _esc(d.p) + '</div></div>';
+        if (d.t) h += '<div class="seg"><span class="sl">触发</span><div class="sv">' + _esc(d.t).replace(/\n/g, '<br>') + '</div></div>';
+      } else if (d && d.s) {
+        h += '<div class="seg"><span class="sl">研判</span><div class="sv">' + _esc(d.s) + '</div></div>';
+      } else {
+        h += '<div class="pend">AI 细化研判生成中——预测层每 3 小时逐国滚动细化（红橙/涉华证据喂给大模型逐国研判；失败自动回落模板并在下轮重试）。</div>';
+      }
+      var ev = (d && d.ev) || [];
+      if (ev.length) {
+        h += '<div class="evh">近 7 日代表性事件（红橙/涉华优先）</div>';
+        ev.forEach(function (e) {
+          h += '<div class="ev"><span class="ed">' + _esc(e.d || '') + '</span>' +
+            '<span class="el ' + lvCls(e.lv) + '">' + (e.lv === 'red' ? '红' : (e.lv === 'orange' ? '橙' : '记')) + '</span>' +
+            (e.cn ? '<span class="ec">涉华</span>' : '') +
+            '<span class="et">' + _esc(e.t || '') + '</span></div>';
+        });
+      }
+      h += '</div>';
+      return h;
+    }
+    function fcRow(it) {
+      var a = arrow(it);
+      var key = it.kind + '|' + it.name;
+      var open = !!_fcOpen[key];
+      var domLine = it.kind === 'country'
+        ? '<div class="dom">主导风险域：' + _esc(it.topDomain || '其他风险域') + (it.red7 ? ' · <span style="color:#ff5577">红级 ' + it.red7 + '</span>' : '') + (it.china7 ? ' · <span style="color:#ffaa33">涉华 ' + it.china7 + '</span>' : '') + '</div>'
+        : '<div class="dom">细分主线：' + _esc(it.topDomain || '—') + (it.china7 ? ' · <span style="color:#ffaa33">涉华 ' + it.china7 + '</span>' : '') + '</div>';
+      return '<div class="row ' + a[0] + (open ? ' open' : '') + '" data-fk="' + _esc(key) + '" title="点击展开/收起 AI 细化研判与事件明细">' +
+        '<div class="r1"><span class="chev">▶</span><span class="nm">' + _esc(it.name) + '</span>' +
+        '<span class="dir ' + a[0] + '">' + a[1] + ' ' + a[2] + '</span>' +
+        (it.basisShift ? '<span class="bsb" title="' + _esc(it.basis || '') + '">' + (String(it.basis || '').indexOf('冷启动') >= 0 ? '冷启动' : '口径变化') + '</span>' : '') +
+        hitBadge(it) +
+        '<span class="conf ' + confCls(it.confidence) + '">' + _esc(it.confidence || '低') + '信</span></div>' +
+        domLine +
+        '<div class="basis">' + _esc(it.basis || '') + '</div>' +
+        '<div class="trig"><b>触发：</b>' + _esc(it.trigger || '事件量超周基线 50% 即验证') + '</div>' +
+        (open ? expBlock(it) : '') +
+        '</div>';
+    }
+    function panel(ic, title, tag, list, max, moreTxt) {
+      var body;
+      if (!list.length) {
+        body = '<div class="aw-pb aw-fc"><div class="empty">预测层每 3 小时自动装配结构化清单<br>（近 7 天 vs 前周真实入库对比）</div></div>';
+      } else {
+        var rows = list.slice(0, max).map(fcRow).join('');
+        if (list.length > max) rows += '<div class="more">… 其余 ' + (list.length - max) + ' ' + moreTxt + '</div>';
+        body = '<div class="aw-pb aw-fc">' + rows +
+          '<div class="ft">方向=近7日 vs 前周<b>可比口径</b>（源恒定子集：新上线源冷启动与断流源已自动剔除）；「口径变化」徽章=该条环比基线覆盖不足半数，幅度仅供参考。触发条件由大模型基于该国/该域真实事件逐条细化——<b style="color:#ffaa33">点击任意条目展开 AI 研判详情与代表性事件</b>；「对账 x/y」徽章=近 y 轮满 7 天回算的预测命中数。' + (ageTxt ? ' · ' + ageTxt : '') + fvTxt + '</div></div>';
+      }
+      return '<div class="aw-panel"><div class="aw-ph"><span class="ic">' + ic + '</span><span class="t">' + title + '</span><span class="hint">点击展开</span><span class="tag">' + tag + (list.length ? ' · ' + list.length + ' 项' : '') + '</span></div>' + body + '</div>';
+    }
+    return panel('🗺', '国别风险预测', 'COUNTRY · 7D', cItems, 8, '国详见清单') +
+      panel('🏭', '行业风险域预测', 'DOMAIN · 7D', dItems, 5, '域详见清单');
   }
 
   /* ================= 渲染：中列（态势区） ================= */
@@ -313,10 +544,10 @@ var AIWATCH = (function () {
     function kpi(color, v, l, d) { return '<div class="aw-kpi" style="color:' + color + '"><div class="v">' + v + '</div><div class="l">' + l + '</div><div class="d">' + d + '</div></div>'; }
     return '<div class="aw-kpis">' +
       kpi('#00e676', (st.eventJudgments || 0), 'AI 事件研判（累计落库）', '红橙级逐条大模型快评') +
+      kpi('#c084fc', (st.situation || 0), 'AI 态势研判（累计）', '每 20 分钟全局态势滚动研判') +
+      kpi('#38bdf8', (st.forecast || 0), 'AI 风险预测（累计）', '每 3 小时 7 天前瞻滚动') +
       kpi('#22d3ee', (du.round || 0), '值班轮次', '无人值守自动扫库累计') +
-      kpi('#c084fc', succ, '大模型研判成功率', '失败 ' + (du.llmFail || 0) + ' 次 · 宁缺毋假不落档') +
-      kpi('#38bdf8', (st.totalLogs || 0), '决策日志总量', '研判 + 扫描全审计留痕') +
-      kpi('#ff8800', (ops.intake24h || 0), '近 24h 情报入库', '含红 ' + (ops.red24h || 0) + ' / 橙 ' + (ops.orange24h || 0)) +
+      kpi('#ff8800', (ops.intake24h || 0), '近 24h 实时入库', '含红 ' + (ops.red24h || 0) + ' / 橙 ' + (ops.orange24h || 0) + '（已排除补采）') +
       kpi('#ff3355', (ops.alerts || 0), '预警水位（在档预警）', '库内总情报 ' + (ops.totalIntel || 0) + ' 条') +
       '</div>';
   }
@@ -333,7 +564,7 @@ var AIWATCH = (function () {
       var dh = Math.floor((nowBj.getTime() - bj.getTime()) / 3600000);
       if (dh < 0 || dh > 23) return;
       var b = buckets[(bj.getHours())];
-      if (e.kind === 'event') b.ev++; else b.sc++;
+      if (e.kind === 'event' || e.kind === 'situation' || e.kind === 'forecast') b.ev++; else b.sc++;
     });
     var max = 1; buckets.forEach(function (b) { max = Math.max(max, b.ev * 2 + b.sc); });
     var bars = '', xs = '';
@@ -397,17 +628,29 @@ var AIWATCH = (function () {
   /* ================= 渲染：右列（决策日志实时墙） ================= */
   function _entry(e, fresh) {
     var isEv = e.kind === 'event';
+    var isSit = e.kind === 'situation';
+    var isFc = e.kind === 'forecast';
     var cts = '';
     if (isEv) {
       cts = '<span class="lv" style="color:' + (LV_COLOR[e.level] || '#ffcc00') + '">● ' + (e.level === 'red' ? '红级' : '橙级') + '</span>' +
         (e.country ? '<span>📍 ' + _esc(e.country) + '</span>' : '') +
         (e.eventId ? '<span class="rno">#' + _esc(e.eventId) + '</span>' : '') +
         '<span class="llmb">Kimi 大模型</span>';
+    } else if (isSit) {
+      cts = '<span class="rno">round #' + _esc(e.round) + '</span>' +
+        '<span class="llmb" style="color:#c084fc;background:rgba(192,132,252,.08);border-color:rgba(192,132,252,.3)">实时口径 · 24h</span>';
+    } else if (isFc) {
+      cts = '<span class="rno">round #' + _esc(e.round) + '</span>' +
+        '<span class="llmb" style="color:#38bdf8;background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.3)">近7天 vs 前周</span>';
     } else {
       cts = '<span class="rno">round #' + _esc(e.round) + '</span><span class="llmb" style="color:#22d3ee;background:rgba(0,212,255,.08);border-color:rgba(0,212,255,.3)">值班审计</span>';
     }
+    var knd = isEv ? { cls: 'judge', ic: '🧠 AI 研判' }
+      : isSit ? { cls: 'judge', ic: '🧭 态势研判' }
+      : isFc ? { cls: 'judge', ic: '🔮 风险预测' }
+      : { cls: 'scan', ic: '🛰 值班扫描' };
     return '<div class="aw-entry ' + (isEv ? 'ev' : '') + (fresh ? ' fresh' : '') + '">' +
-      '<div class="hd"><span class="knd ' + (isEv ? 'judge' : 'scan') + '">' + (isEv ? '🧠 AI 研判' : '🛰 值班扫描') + '</span>' +
+      '<div class="hd"><span class="knd ' + knd.cls + '">' + knd.ic + '</span>' +
       '<span class="tgt">' + _esc(e.target) + '</span>' +
       '<span class="ts">' + _esc(e.ts) + '</span></div>' +
       '<div class="cts">' + cts + '</div>' +
@@ -419,6 +662,8 @@ var AIWATCH = (function () {
     var list = _log.filter(function (e) {
       if (_logFilter === 'event') return e.kind === 'event';
       if (_logFilter === 'scan') return e.kind === 'scan';
+      if (_logFilter === 'situation') return e.kind === 'situation';
+      if (_logFilter === 'forecast') return e.kind === 'forecast';
       return true;
     });
     var h = '<div class="aw-panel" style="margin-bottom:0"><div class="aw-ph"><span class="ic">📡</span><span class="t">决策日志实时墙</span><span class="tag">LIVE FEED · ' + _log.length + ' 条</span></div>' +
@@ -426,6 +671,8 @@ var AIWATCH = (function () {
       '<div class="filters">' +
       '<button class="fbtn ' + (_logFilter === 'all' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'all\')">全部</button>' +
       '<button class="fbtn ' + (_logFilter === 'event' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'event\')">🧠 大模型研判</button>' +
+      '<button class="fbtn ' + (_logFilter === 'situation' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'situation\')">🧭 态势研判</button>' +
+      '<button class="fbtn ' + (_logFilter === 'forecast' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'forecast\')">🔮 风险预测</button>' +
       '<button class="fbtn ' + (_logFilter === 'scan' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'scan\')">🛰 值班扫描</button>' +
       '</div>';
     if (list.length) {
@@ -456,7 +703,7 @@ var AIWATCH = (function () {
     var h = '<div class="aw-screen">';
     h += _topHTML(du, ops);
     h += '<div class="aw-grid">' +
-      '<div class="aw-col-l">' + _seatHTML(du, st) + _shiftsHTML() + _linksHTML(du, st, ops) + _briefHTML(du) + '</div>' +
+      '<div class="aw-col-l">' + _seatHTML(du, st) + _shiftsHTML() + _linksHTML(du, st, ops) + _briefHTML(du) + _toolsHTML(du, st) + _forecastHTML() + '</div>' +
       '<div class="aw-col-c">' + _kpisHTML(du, st, ops) + _barsHTML() + _gaugesHTML(ops) + _hotsHTML(ops) + _roundsHTML(du) + '</div>' +
       '<div class="aw-col-r">' + _wallHTML(du) + '</div>' +
       '</div>';
@@ -510,8 +757,25 @@ var AIWATCH = (function () {
     if (_inited) { refresh(true); return; }
     _inited = true;
     var root = document.getElementById('aiwatch-root');
+    /* #721b 预测清单交互：事件委托（root 上绑定一次，innerHTML 重绘不掉）——点击行展开/收起 */
+    if (root && !root.__awFcBind) {
+      root.__awFcBind = true;
+      root.addEventListener('click', function (e) {
+        var el = e.target;
+        var row = el && el.closest ? el.closest('.aw-fc .row[data-fk]') : null;
+        if (!row) return;
+        var k = row.getAttribute('data-fk');
+        if (!k) return;
+        if (_fcOpen[k]) delete _fcOpen[k]; else _fcOpen[k] = 1;
+        _render();
+      });
+    }
     if (root) root.innerHTML = '<div class="aw-loading">⟳ AI 值班大屏状态与决策日志装载中……</div>';
     refresh(false);
+    /* #720 深度工具矩阵巡检：进视图 4s 后首巡（错峰），此后每 5 分钟一次 */
+    setTimeout(function () { _loadTools(); }, 4000);
+    if (_toolTimer) clearInterval(_toolTimer);
+    _toolTimer = setInterval(function () { _loadTools(); }, 5 * 60 * 1000);
     if (_timer) clearInterval(_timer);
     _timer = setInterval(function () { refresh(true); }, 60000);
     /* 秒级时钟（只更新时钟 DOM，不重渲染全屏） */

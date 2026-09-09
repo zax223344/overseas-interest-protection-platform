@@ -30,6 +30,7 @@ const globalmedia = require('./globalmedia.js');
 const netx = require('./netx');
 const scrapers = require('./scrapers');
 const reportsEngine = require('./reports-engine');   /* #692：pvKimi() 取 LLM 供应商 */
+const RL = require('./risk-level'); /* #724 P0-3：定级读取归一单一来源——与 ai-watch/涉企/研判中心同源，杜绝功能区口径漂移 */
 
 /* ---- 涉华要素词（标题/摘要必须命中其一） ---- */
 const CN_RE = /chinese|china|beijing|中国|中方|中资|中企|华人|华侨|华裔|cpec|belt and road|一带一路|中巴经济走廊/i;
@@ -398,7 +399,7 @@ module.exports = function chinaTerror(ctx) {
           id: r.id, title: t.slice(0, 100),
           country: r.country || '',
           year: year || (new Date(r.collect_time).getFullYear()),
-          level: (j.level_norm || r.severity || 'yellow').toLowerCase(),
+          level: RL.assessLevel(j, r.severity), /* #724 P0-3：定级单一来源 */
           target: _targetType(t),
           time: j.publish_time || r.event_date || r.collect_time,
           source: r.source || j.source || '',
@@ -517,7 +518,7 @@ module.exports = function chinaTerror(ctx) {
       const event = {
         id: r.id, title: t, country: r.country || '', location: r.location || '',
         time: j.publish_time || r.event_date || r.collect_time,
-        level: String(j.level_norm || r.severity || 'yellow').toLowerCase(),
+        level: RL.assessLevel(j, r.severity), /* #724 P0-3：定级单一来源 */
         target: _targetType(t), source: r.source || j.source || '', url: j.url || '',
         digest: String(j.description_zh || j.description || '').slice(0, 600)
       };

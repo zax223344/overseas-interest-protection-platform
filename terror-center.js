@@ -182,6 +182,13 @@ var TERRORCENTER = {
     if (this._retryTimer) clearTimeout(this._retryTimer);
     var self = this;
     this._timer = setInterval(function () { self.load(true); self.loadChina(true); }, 60000);
+    /* #719 进视图即后台预热《反恐态势通报》（服务端 30min 缓存 + in-flight 合并）：
+     * 用户点"生成"按钮时命中缓存秒回——对齐每日简报/涉华研判的即点即得体验。 */
+    setTimeout(function () {
+      self._fetch('/api/terror/judge?scope=global', 300000).then(function (d) {
+        if (d && d.ok && d.govHtml) { self._govHtml = d.govHtml; self._govTitle = '反恐态势通报'; }
+      }).catch(function () { /* 预热失败静默，不影响主面板 */ });
+    }, 3000);
   },
 
   _fetch: function (url, timeout) {
@@ -784,7 +791,7 @@ var TERRORCENTER = {
     try {
       govWin = window.open('', '_blank', 'width=980,height=1300');
       if (govWin && govWin.document) {
-        govWin.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>公文生成中</title></head><body style="font-family:SimSun,serif;padding:60px;color:#333">《' + (scope === 'org' ? '组织动态研判专报' : '反恐态势通报') + '》生成中，请稍候…（AI 研判 + 红头版式装配约 20-40 秒）</body></html>');
+        govWin.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>公文生成中</title></head><body style="font-family:SimSun,serif;padding:60px;color:#333">《' + (scope === 'org' ? '组织动态研判专报' : '反恐态势通报') + '》生成中，请稍候…（首次生成约 30-90 秒，AI 研判排队高峰时自动回落规则模板；结果缓存 30 分钟，期间再次生成即秒出）</body></html>');
         govWin.document.close();
       }
     } catch (e) { govWin = null; }

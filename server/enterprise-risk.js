@@ -29,6 +29,7 @@ const scrapers = require('./scrapers');
 const globalmedia = require('./globalmedia');
 const reportsEngine = require('./reports-engine');   /* pvKimi() 取 LLM 供应商 */
 const { ENTERPRISES } = require('./ent-assets');     /* #702 ①：35 企资产注册表（服务端 join 底座） */
+const RL = require('./risk-level'); /* #724 P0-3：定级读取归一单一来源——与 ai-watch/恐袭/研判中心同源，杜绝功能区口径漂移 */
 
 const UA_HDR = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' };
 
@@ -233,12 +234,16 @@ module.exports = function enterpriseRisk(ctx) {
    * 口径（用户 #698-③）：仅涉华海外利益相关，国别≠中国（境内事件零收录）；
    * 地缘外交类（6779 条、机翻重灾区）不入池；china_terror 专项真货直接入恐袭域。 */
   async function _poolAgg() {
+    /* #718 实时数据铁律：_sourceType='backfill'（补采主战役回灌，collect_time=当下
+     * 但事件为 1-8 月旧闻）整体排除——七域分布/最新事件/研判证据全部基于实时采集，
+     * 绝不让历史旧闻冒充当前涉企风险（用户原话：不能用旧数据，这是铁律）。 */
     const { rows } = await q(
       `SELECT id, country, event_date, collect_time, severity, source, data_json,
               COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn,
               title AS title_raw
        FROM intel_data
        WHERE audit_status='approved'
+         AND COALESCE(data_json->>'_sourceType','') <> 'backfill'
          AND COALESCE(country,'') NOT IN ('','中国')
          AND (
            data_json->>'_sourceType' IN ('ent_risk','china_terror')
@@ -280,12 +285,12 @@ module.exports = function enterpriseRisk(ctx) {
       const country = r.country || j.country || '';
       if (!country || country === '中国') continue;
       const time = j.publish_time || r.event_date || r.collect_time;
-      const level = String(j.level_norm || r.severity || _sevOf(tAll)).toLowerCase();
+      const level = RL.assessLevel(j, r.severity || _sevOf(tAll)); /* #724 P0-3：定级单一来源（原本地三段兜底收敛，脏值回落 yellow 已内置） */
       rel.push({
         id: r.id, title: t.slice(0, 110), country,
         domain, domainCn: DOMAIN_CN[domain] || domain,
         dim: dimCn || DOMAIN_CN[domain],
-        level: ['red', 'orange', 'yellow', 'blue'].indexOf(level) >= 0 ? level : 'yellow',
+        level, /* #724 P0-3：assessLevel 已保证四色归一，本地脏值守卫收敛删除 */
         time: String(time), ts: _ts(time),
         source: r.source || j.source || '',
         url: j.url || ''
@@ -306,7 +311,11 @@ module.exports = function enterpriseRisk(ctx) {
       if (e.ts >= t72 && (e.level === 'red' || e.level === 'orange')) alerts72.push(e);
     });
     alerts72.sort((a, b) => (a.level === 'red' ? 0 : 1) - (b.level === 'red' ? 0 : 1) || b.ts - a.ts);
-    return { rel, byDomain, byCountry, byMonth, fresh30, alerts72: alerts72.slice(0, 16) };
+    /* #718 铁律补闸：latest/研判证据必须按【事件时间】近期取数——档案级通道
+     * （china_terror/gap_scheduler 历史回补，event_date 为 2022-2025 旧闻）虽非
+     * backfill 标记，但绝不允许冒充当前涉企风险进入"最新事件"与 AI 研判证据。 */
+    const latest30 = rel.filter(e => e.ts >= t30).sort((a, b) => b.ts - a.ts).slice(0, 20);
+    return { rel, byDomain, byCountry, byMonth, fresh30, alerts72: alerts72.slice(0, 16), latest30 };
   }
 
   /* ---------- GET /overview：七域涉企风险全景 ---------- */
@@ -334,7 +343,7 @@ module.exports = function enterpriseRisk(ctx) {
         domains: DOMAINS.map(d => ({ id: d.id, cn: d.cn, n: agg.byDomain[d.cn] || 0 })),
         byCountry: cTop.map(([country, n]) => ({ country, n, dims: cDims[country] || {} })),
         alerts72: agg.alerts72.map(e => ({ id: e.id, title: e.title.slice(0, 100), country: e.country, domain: e.domainCn, dim: e.dim, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
-        latest: agg.rel.slice(0, 14).map(e => ({ id: e.id, title: e.title.slice(0, 100), country: e.country, domain: e.domainCn, dim: e.dim, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
+        latest: agg.latest30.slice(0, 14).map(e => ({ id: e.id, title: e.title.slice(0, 100), country: e.country, domain: e.domainCn, dim: e.dim, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
         byMonth: Object.keys(agg.byMonth).sort().slice(-14).map(m => ({ m, n: agg.byMonth[m] })),
         note: '涉企风险预警研判（全风险域）：仅涉华海外利益相关数据，国别≠中国（境内事件零收录）；七域=管控与制裁（六维细分）/武装冲突波及/恐袭与遇袭/社会动荡与治安/政局与政策/经济与金融/灾害与设施；国别压力=近90天涉企风险事件量；72h 红橙=当前活跃涉企预警；GDELT 机翻模板句全池拒收；全部真实库数据，零模拟。'
       });
@@ -460,7 +469,7 @@ module.exports = function enterpriseRisk(ctx) {
         try {
           const pv = reportsEngine._test.pvKimi();
           const sys = '你是海外利益保护与企业安全风险研判参谋，为海外利益保护情报预警平台撰写《未来30天涉企风险前瞻》（全风险域口径，参谋级预测）。必须分五段，段落标题固定：「一、总体态势预判」「二、重点压力国别与方向」「三、主要风险域演变」「四、风险触发条件」「五、对策建议」。硬性要求：①预判给明确方向（抬升/平稳/回落）及依据基线数字；②前瞻判断以"研判/预计"表述并与事实明确区分；③触发条件段给出可观测的具体触发器（如制裁清单扩容、选举节点、月度量超基线50%）；④建议段步骤化、每条带时限。所有数字必须来自给定真实统计；禁止虚构具体事件、日期；禁止免责套话。';
-          const usr = '七域池累计 ' + total + ' 条，近30天 ' + agg.fresh30 + ' 条，近12月月均 ' + mAvg + ' 条，72h红橙 ' + agg.alerts72.length + ' 条\n风险域分布：' + dTop.map(d => d[0] + '(' + d[1] + ')').join('、') + '\n近3个月逐月事件量（加速度依据）：' + months.slice(-3).map(m => m + ':' + agg.byMonth[m]).join('、') + '\n国别TOP（近90天）：' + cTop.map(c => c[0] + '(' + c[1] + ')').join('、') + '\n代表性最新事件：\n' + agg.rel.slice(0, 10).map((e, i) => (i + 1) + '.「' + e.title.slice(0, 70) + '」（' + e.country + '，' + e.domainCn + '，' + e.level + '级，' + String(e.time).slice(0, 10) + '）').join('\n');
+          const usr = '七域池累计 ' + total + ' 条，近30天 ' + agg.fresh30 + ' 条，近12月月均 ' + mAvg + ' 条，72h红橙 ' + agg.alerts72.length + ' 条\n风险域分布：' + dTop.map(d => d[0] + '(' + d[1] + ')').join('、') + '\n近3个月逐月事件量（加速度依据）：' + months.slice(-3).map(m => m + ':' + agg.byMonth[m]).join('、') + '\n国别TOP（近90天）：' + cTop.map(c => c[0] + '(' + c[1] + ')').join('、') + '\n代表性最新事件（近30天实时口径）：\n' + agg.latest30.slice(0, 10).map((e, i) => (i + 1) + '.「' + e.title.slice(0, 70) + '」（' + e.country + '，' + e.domainCn + '，' + e.level + '级，' + String(e.time).slice(0, 10) + '）').join('\n');
           const r2 = await llmCall(pv, sys, usr);
           if (r2 && r2.text && r2.text.length > 250) {
             text = String(r2.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
@@ -583,7 +592,7 @@ module.exports = function enterpriseRisk(ctx) {
           country: c, n: b.n, red: b.red, orange: b.orange,
           recent90: b.events.filter(e => e.ts >= t90).length,
           domains: Object.entries(b.domains).sort((a, b2) => b2[1] - a[1]).map(x => x[0]),
-          latest: b.events.sort((a, b2) => b2.ts - a.ts).slice(0, 3).map(e => ({
+          latest: b.events.filter(e => e.ts >= t90).sort((a, b2) => b2.ts - a.ts).slice(0, 3).map(e => ({
             title: e.title, level: e.level, time: String(e.time).slice(0, 10), source: e.source, domain: e.domainCn
           }))
         };
