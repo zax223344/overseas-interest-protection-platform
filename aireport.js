@@ -391,15 +391,32 @@ var AIREPORT = {
     this._updateBadge();
   },
 
-  /* ===== 删除报告 ===== */
+  /* ===== 删除报告（#620：PG 为准——API 删成功才算删，失败回滚防止本地删了 PG 复活）===== */
   deleteReport(id) {
     if (!PERM.canUpload()) { showToast('权限不足'); return; }
     showConfirm('确定删除该情报分析报告？', function () {
+      var prev = (INTELCENTER._aiReports || []).slice();
       if (typeof INTELCENTER !== 'undefined') {
         INTELCENTER._aiReports = INTELCENTER._aiReports.filter(function (r) { return r.id !== id; });
         INTELCENTER._aiReportSave();
       }
       AIREPORT.render();
+      var rollback = function () {
+        if (typeof INTELCENTER !== 'undefined') { INTELCENTER._aiReports = prev; INTELCENTER._aiReportSave(); }
+        AIREPORT.render();
+        showToast('⚠️ 删除失败，已恢复报告');
+      };
+      if (typeof APIClient !== 'undefined' && APIClient.isOnline && APIClient.isOnline()) {
+        APIClient.deleteReport(String(id)).then(function () {
+          return (INTELCENTER._aiReportSync ? INTELCENTER._aiReportSync() : Promise.resolve(false));
+        }).then(function () { if (INTELCENTER._aiReportRerender) INTELCENTER._aiReportRerender(); })
+        .catch(function (err) {
+          console.warn('[AIREPORT] API删除失败:', err && err.message);
+          rollback();
+        });
+      } else {
+        rollback(); /* 离线不删除（PG 为准） */
+      }
       showToast('已删除报告');
     });
   },
@@ -1161,8 +1178,9 @@ var AIREPORT = {
     this.render();
   },
 
-  /* ---------- 持久化（localStorage + API 同步 deep 结构） ---------- */
+  /* ---------- 持久化（#620：PG 为准——API 写成功后写后失效重拉；localStorage 仅缓存） ---------- */
   _persist(r) {
+    r._dirty = true;
     try { INTELCENTER._aiReportSave(); } catch (e) {}
     if (typeof APIClient !== 'undefined' && APIClient.isOnline && APIClient.isOnline()) {
       APIClient.updateReport(r.id, {
@@ -1174,7 +1192,14 @@ var AIREPORT = {
         window: r.window || '72h', dataSupport: r.dataSupport || null,
         genModel: r.genModel || '', deep: r.deep || null,
         reviewStatus: r.reviewStatus || '', createTime: r.createTime || '', author: r.author || ''
-      }).catch(function (err) { console.warn('[AIREPORT] API同步失败:', err.message); });
+      }).then(function () {
+        if (r && r._dirty) r._dirty = false; /* PG 写成功，清除脏标 */
+        return (INTELCENTER._aiReportSync ? INTELCENTER._aiReportSync() : Promise.resolve(false));
+      }).then(function () { if (INTELCENTER._aiReportRerender) INTELCENTER._aiReportRerender(); })
+      .catch(function (err) {
+        console.warn('[AIREPORT] API同步失败:', err && err.message);
+        showToast('⚠️ 报告已暂存本地，同步服务器失败（' + (err && err.message ? err.message : '网络异常') + '）');
+      });
     }
   },
 

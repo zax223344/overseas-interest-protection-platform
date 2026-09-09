@@ -7560,36 +7560,44 @@ var INTELCENTER={
       });
     }catch(e){console.warn('[analysis-link]',e);}
   },
-  // ===== AI 情报分析报告 =====
+  // ===== AI 情报分析报告（#620 双轨统一：PG 为准，localStorage 仅缓存，写后失效）=====
   _aiReports:null,
   _aiReportMaterials:[],
+  /* 从 PG 重拉报告列表，覆盖内存+缓存；本地 _dirty 脏记录（API 写失败兜底）本地优先保留 */
+  _aiReportSync(){
+    var self=this;
+    if(typeof APIClient==='undefined'||!APIClient.isOnline())return Promise.resolve(false);
+    return APIClient.listReports().then(function(data){
+      if(!Array.isArray(data))return false;
+      var dirtyList=(self._aiReports||[]).filter(function(r){return r&&r._dirty;});
+      var dirtyById={};dirtyList.forEach(function(r){dirtyById[r.id]=r;});
+      self._aiReports=data.map(function(pr){return dirtyById[pr.id]||pr;})
+        .concat(dirtyList.filter(function(r){return !data.some(function(pr){return pr.id===r.id;});}));
+      try{localStorage.setItem('orps_ai_reports',JSON.stringify(self._aiReports));}catch(e){}
+      return true;
+    }).catch(function(err){console.warn('[INTELCENTER] PG报告列表拉取失败:',err&&err.message);return false;});
+  },
+  /* 数据刷新后按当前视图局部重渲（详情页不打断阅读，仅列表态整体重渲） */
+  _aiReportRerender(){
+    try{
+      if(typeof AIREPORT==='undefined'||!document.getElementById('view-aireport'))return;
+      if(!AIREPORT._currentDetailId)AIREPORT.render();
+    }catch(e){}
+  },
   _aiReportInit(){
     if(this._aiReports===null){
       try{var saved=localStorage.getItem('orps_ai_reports');
       this._aiReports=saved?JSON.parse(saved):[];}catch(e){this._aiReports=[];}
-      // 异步从 API 加载
-      if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
-        var self=this;
-        APIClient.listReports().then(function(data){
-          if(Array.isArray(data)&&data.length>0){
-            self._aiReports=data;
-            // 同步回 localStorage
-            try{localStorage.setItem('orps_ai_reports',JSON.stringify(data));}catch(e){}
-          }
-        }).catch(function(err){console.warn('[INTELCENTER] API报告加载失败:',err.message);});
-      }
+    }
+    // PG 为准：在线时总是以服务端结果覆盖（空列表也覆盖，清除本地幽灵；_dirty 脏记录除外）
+    if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
+      var self=this;
+      this._aiReportSync().then(function(changed){if(changed)self._aiReportRerender();});
     }
   },
   _aiReportSave(){
-    // localStorage 即时保存
-    localStorage.setItem('orps_ai_reports',JSON.stringify(this._aiReports));
-    // 异步 API 同步
-    if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
-      var reports=this._aiReports;
-      // 逐个同步到 API（简单策略：删除后重新创建当前活跃的）
-      // 标记脏数据，实际使用批量同步
-      console.log('[INTELCENTER] 报告已保存到本地，API同步将在后台进行');
-    }
+    // 仅缓存快照（PG 为准；API 写路径各自负责同步与写后失效，见 saveAiReport/deleteAiReport）
+    try{localStorage.setItem('orps_ai_reports',JSON.stringify(this._aiReports||[]));}catch(e){}
   },
   renderAiReport(el){
     this._aiReportInit();
@@ -8567,10 +8575,17 @@ var INTELCENTER={
         r.window=win;
         if(dataSupport)r.dataSupport=dataSupport;
         if(this._lastGenModel)r.genModel=this._lastGenModel;
-        // API 同步更新
+        r._dirty=true; /* 乐观更新先打脏标，PG 写成功后由 _aiReportSync 清除 */
+        // API 同步更新（#620：PG 为准——成功后写后失效重拉；失败保留本地脏记录不静默丢）
         if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
-          var updR=r;
-          APIClient.updateReport(id,{title:updR.title,mode:updR.reportMode||'elements',country:updR.country,level:updR.threatLevel,reportType:updR.reportType,materials:JSON.stringify(updR.materials||[]),threatAnalysis:updR.threatAnalysis,impactAnalysis:updR.impactAnalysis,advice:updR.advice,summary:updR.summary,elements:updR.elements,window:updR.window,dataSupport:updR.dataSupport||null,genModel:updR.genModel||''}).catch(function(err){console.warn('[INTELCENTER] API报告更新失败:',err.message);});
+          var updR=r,self2=this;
+          APIClient.updateReport(id,{title:updR.title,mode:updR.reportMode||'elements',country:updR.country,level:updR.threatLevel,reportType:updR.reportType,materials:JSON.stringify(updR.materials||[]),threatAnalysis:updR.threatAnalysis,impactAnalysis:updR.impactAnalysis,advice:updR.advice,summary:updR.summary,elements:updR.elements,window:updR.window,dataSupport:updR.dataSupport||null,genModel:updR.genModel||''}).then(function(){
+            if(updR._dirty)updR._dirty=false; /* PG 写成功，清除脏标（同步后以 PG 版本为准） */
+            return self2._aiReportSync();
+          }).then(function(){self2._aiReportRerender();}).catch(function(err){
+            console.warn('[INTELCENTER] API报告更新失败:',err&&err.message);
+            showToast('⚠️ 报告已暂存本地，同步服务器失败（'+(err&&err.message?err.message:'网络异常')+'）');
+          });
         }
       }
       showToast('\u2705 \u62a5\u544a\u5df2\u66f4\u65b0');
@@ -8584,9 +8599,16 @@ var INTELCENTER={
         createTime:now,author:AUTH.user?AUTH.user.name:''
       };
       this._aiReports.unshift(newReport);
-      // API 同步创建
+      // API 同步创建（#620：PG 为准——成功后写后失效重拉，失败保留 _dirty 脏记录防静默丢）
+      newReport._dirty=true;
       if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
-        APIClient.createReport({id:nid,title:title,mode:'elements',country:country,level:level,reportType:reportType,materials:JSON.stringify(newReport.materials||[]),threatAnalysis:threatAnalysis,impactAnalysis:impactAnalysis,advice:advice,summary:summary,elements:elements,window:win,dataSupport:newReport.dataSupport||null,genModel:newReport.genModel||''}).catch(function(err){console.warn('[INTELCENTER] API报告创建失败:',err.message);});
+        var self3=this;
+        APIClient.createReport({id:nid,title:title,mode:'elements',country:country,level:level,reportType:reportType,materials:JSON.stringify(newReport.materials||[]),threatAnalysis:threatAnalysis,impactAnalysis:impactAnalysis,advice:advice,summary:summary,elements:elements,window:win,dataSupport:newReport.dataSupport||null,genModel:newReport.genModel||''}).then(function(){
+          return self3._aiReportSync();
+        }).then(function(){self3._aiReportRerender();}).catch(function(err){
+          console.warn('[INTELCENTER] API报告创建失败:',err&&err.message);
+          showToast('⚠️ 报告已暂存本地，同步服务器失败（'+(err&&err.message?err.message:'网络异常')+'）');
+        });
       }
       showToast('\u2705 AI\u60c5\u62a5\u5206\u6790\u62a5\u544a\u5df2\u4fdd\u5b58');
     }
@@ -8708,12 +8730,25 @@ var INTELCENTER={
   deleteAiReport(id){
     if(!PERM.canUpload()){showToast('\u26a0\ufe0f \u6743\u9650\u4e0d\u8db3');return;}
     showConfirm('\u786e\u5b9a\u5220\u9664\u8be5\u60c5\u62a5\u5206\u6790\u62a5\u544a\uff1f',function(){
+      var prev=INTELCENTER._aiReports.slice();
       INTELCENTER._aiReports=INTELCENTER._aiReports.filter(function(r){return r.id!==id;});
       INTELCENTER._aiReportSave();
-      // API 同步删除
+      var rollback=function(){
+        INTELCENTER._aiReports=prev;
+        INTELCENTER._aiReportSave();
+        if(typeof AIREPORT!=='undefined')AIREPORT.render();
+        showToast('\u26a0\ufe0f \u5220\u9664\u5931\u8d25\uff0c\u5df2\u6062\u590d\u62a5\u544a');
+      };
+      // API 同步删除（#620：报告 id 为 'AIR-xxxxxx' 字符串，服务端按 report_id 匹配；旧实现 parseInt 数字 id 几乎必然删错行或删不掉）
       if(typeof APIClient!=='undefined'&&APIClient.isOnline()){
-        var numId=parseInt(id.replace(/[^0-9]/g,''),10);
-        if(numId)APIClient.deleteReport(numId).catch(function(err){console.warn('[INTELCENTER] API报告删除失败:',err.message);});
+        APIClient.deleteReport(String(id)).then(function(){
+          return INTELCENTER._aiReportSync();
+        }).then(function(){INTELCENTER._aiReportRerender();}).catch(function(err){
+          console.warn('[INTELCENTER] API报告删除失败:',err&&err.message);
+          rollback();
+        });
+      }else{
+        rollback(); /* PG 为准：离线不删除（防止本地删了 PG 复活的双轨漂移） */
       }
       if(typeof AIREPORT!=='undefined')AIREPORT.render();
       showToast('\u{1F5D1}\uFE0F \u5df2\u5220\u9664\u62a5\u544a');
@@ -16983,7 +17018,8 @@ const FORECAST={
       try{
         if(typeof DBCenter!=='undefined'&&DBCenter.getAll){
           var cats=CATV2_SCAN;
-          var tmap={terror_events:'安全风险',security_events:'安全风险',military_conflicts:'安全风险',political_events:'政治风险',natural_disasters:'自然环境风险',public_health:'安全风险',sanctions_data:'经济风险',social_unrest:'社会文化风险',infrastructure:'运营风险',geopolitical_intel:'地缘战略风险',osint_intel:'安全风险'};
+          /* #633 副本收敛：data_type→预警类型一律取 CATV2.alertOf（category-standard 单一来源），旧 key 仅留兜底 */
+          var tmap=(function(){var m={security_events:'安全风险',political_events:'政治风险',osint_intel:'安全风险',economic_risk:'经济风险',legal_compliance:'经济风险'};if(typeof CATV2!=='undefined'&&CATV2.alertOf){for(var k in CATV2.alertOf)m[k]=CATV2.alertOf[k];}return m;})();
           cats.forEach(function(c){
             var rows=[]; try{rows=DBCenter.getAll(c)||[];}catch(e){}
             rows.forEach(function(r){
