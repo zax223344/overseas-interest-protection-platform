@@ -144,8 +144,10 @@ module.exports = function intelInsight(ctx) {
   const llmCall = (ctx.llm && ctx.llm.callMsg) || null;
   const router = express.Router();
 
-  /* ---------- ① 领导要报速览（30 秒一页纸数据装配） ---------- */
-  router.get('/leader-brief', async (req, res) => {
+  /* ---------- ① 领导要报速览（30 秒一页纸数据装配；#740-1 抽取共享底座，5min 缓存） ---------- */
+  let _lbCache = null, _lbCacheAt = 0;
+  async function _loadBrief() {
+    if (_lbCache && Date.now() - _lbCacheAt < 300000) return _lbCache;
     try {
       const since = new Date(Date.now() - 24 * 3600 * 1000);
       const { rows } = await q(
@@ -280,14 +282,82 @@ module.exports = function intelInsight(ctx) {
       else advice.push('近24小时无红橙预警，各方向按常态监测运行');
       if (chinas.length >= 5) advice.push('涉华情报 ' + chinas.length + ' 条，集中在' + (chinas[0] && chinas[0].country ? chinas[0].country : '重点国别') + '等方向，建议领事保护条线今日专项过筛');
       if (topTypes.length) advice.push('事件量前三类：' + topTypes.map(t => (_CAT_CN[t[0]] || t[0]) + ' ' + t[1] + ' 条').join('、'));
-      res.json({
+      const out = {
         ok: true, generatedAt: _nowCn(), window: '24h',
         stats: { total: items.length, red: reds.length, orange: oranges.length, china: chinas.length, dedupEvents: picked.length },
         top: top.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, type: _CAT_CN[i.type] || i.type, time: String(i.time).slice(0, 16), url: i.url, china: i.china, corr: _corr(i) })),
         chinaTop: chinaTop.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, time: String(i.time).slice(0, 16), url: i.url, corr: _corr(i) })),
         advice, pending: pending.map(i => ({ id: i.id, title: i.title.slice(0, 80), level: i.severity, country: i.country, corr: _corr(i) })),
         topTypes: topTypes.map(t => ({ key: t[0], name: _CAT_CN[t[0]] || t[0], n: t[1] }))
-      });
+      };
+      _lbCache = out; _lbCacheAt = Date.now();
+      return out;
+    } catch (e) { throw e; }
+  }
+  router.get('/leader-brief', async (req, res) => {
+    try { res.json(await _loadBrief()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ---------- ①b #740-1 要报 AI 深度研判 + 未来趋势预测 ----------
+   * 用户口径（2026-09-09）：速览不够复合化、无 AI 对未来趋势的预测内容；PDF 太简单无深度研判。
+   * 通用范式（AI 研判类现算端点铁律）：30min 缓存 + in-flight 合并 + LLM 60s 硬超时回落规则模板。
+   * 研判输入全部为 /leader-brief 真实装配数据（红橙要情/涉华要点/统计数字），零模拟。 */
+  let _lbAiCache = null, _lbAiAt = 0, _lbAiBusy = null;
+  function _lbAiFallback(d) {
+    const s = d.stats || {};
+    const top = d.top || [], cn = d.chinaTop || [];
+    const hotC = {}; top.concat(cn).forEach(i => { if (i.country) hotC[i.country] = (hotC[i.country] || 0) + 1; });
+    const hot = Object.entries(hotC).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]).join('、') || '多方向';
+    const judge = [
+      '一、态势判断。近24小时平台监测独立情报事件 ' + (s.total || 0) + ' 条（归并后事件 ' + (s.dedupEvents || 0) + ' 起），其中红色 ' + (s.red || 0) + ' 条、橙色 ' + (s.orange || 0) + ' 条、涉华关联 ' + (s.china || 0) + ' 条，焦点集中于 ' + hot + ' 方向。' + ((s.red || 0) > 0 ? '红级事件在场，态势处于加强关注档。' : '无红级事件，态势总体处于常态监测档。'),
+      '二、关键证据。' + (top.slice(0, 3).map(i => '「' + String(i.title).slice(0, 50) + '」（' + i.country + '，' + i.level + '级' + (i.corr > 1 ? '，' + i.corr + '源印证' : '') + '）').join('；') || '近24小时无红橙要情入库。'),
+      '三、影响评估。涉华方向要点 ' + cn.length + ' 条，建议优先按' + (cn[0] ? cn[0].country : '重点国别') + '方向评估对中方人员、项目与供应链的现实影响；其余海外事件作态势背景参考。（本段为规则模板装配，大模型研判暂不可用，数字均引用真实库统计）'
+    ].join('\n');
+    const forecasts = (d.topTypes || []).slice(0, 3).map(t => ({
+      title: (t.name || '该类别') + '方向延续态势',
+      conf: (t.n || 0) >= 30 ? '中' : '低',
+      text: '近24小时该类别事件 ' + t.n + ' 条。若同类事件密度维持或上升，未来一周该方向风险面将延续当前水平。',
+      trigger: '该类别 24h 事件量再增 50%，或出现红级同类事件'
+    }));
+    return { ok: true, llmOk: false, judge, forecasts, generatedAt: _nowCn(), note: '大模型研判暂不可用，本段为规则模板（引用真实库统计数字）；链路恢复后自动升级 Kimi 参谋级研判（30 分钟缓存周期后重试）。' };
+  }
+  async function _lbAiGen() {
+    const d = await _loadBrief();
+    const pv = reportsEngine._test.pvKimi();
+    const sys = '你是海外利益保护情报预警平台的首席情报参谋，为委办领导撰写《要报深度研判与未来趋势预测》（参谋级，可直接供决策参考）。严格按以下格式输出：【深度研判】段含三小段，段首分别用「一、态势判断。」「二、关键证据。」「三、影响评估。」——态势判断先给一句总结论，再给当前所处档位（加强关注/常态监测）及定档依据；关键证据逐条引用给定红橙要情（点明国别、级别、多源印证情况）；影响评估落到对中方人员、项目、供应链的具体影响面。【趋势预测】段含 3-4 条，每条格式严格为：（一）标题（8-14 字）换行「预测：」未来 7-14 天该方向最可能的演化与风险点（2-3 句，点明对中资企业出海的安全与运营含义）换行「置信度：高|中|低」换行「触发：」一条可观测的验证或升级信号。全部基于给定真实数据外推，禁止编造事件与数字；信息不足处写「样本不足」；禁止口号式空话。';
+    const usr = '【近24小时统计（真实采集库聚合）】独立情报事件 ' + ((d.stats && d.stats.total) || 0) + ' 条（归并后事件 ' + ((d.stats && d.stats.dedupEvents) || 0) + ' 起），红色 ' + ((d.stats && d.stats.red) || 0) + ' 条 / 橙色 ' + ((d.stats && d.stats.orange) || 0) + ' 条 / 涉华关联 ' + ((d.stats && d.stats.china) || 0) + ' 条\n类别分布前五：' + ((d.topTypes || []).map(t => t.name + ' ' + t.n + ' 条').join('、') || '—') +
+      '\n【红橙要情 TOP5（评分精选）】\n' + ((d.top || []).map((i, n) => (n + 1) + '.[' + i.level + (i.china ? '·涉华' : '') + ']' + i.country + '：' + i.title + '（' + String(i.time).slice(0, 16) + '，' + (i.corr || 1) + ' 源印证）').join('\n') || '（无）') +
+      '\n【涉华要点（TOP5）】\n' + ((d.chinaTop || []).map((i, n) => (n + 1) + '.[' + i.level + ']' + i.country + '：' + i.title + '（' + (i.corr || 1) + ' 源印证）').join('\n') || '（无）') +
+      '\n【待办风险（涉华黄橙，值班主任追办）】\n' + ((d.pending || []).map((i, n) => (n + 1) + '.[' + i.level + ']' + i.country + '：' + i.title).join('\n') || '（无）') +
+      '\n请输出深度研判与未来 7-14 天趋势预测。';
+    let out = null;
+    try {
+      /* #740 实测（2026-09-10 探针）：kimi-k2.7 推理模型小 prompt 52s，真实要报 prompt 更大——
+       * 60s 必超时回落规则模板（llmOk=false 根因），放宽到 150s（30min 缓存兜底，首算可接受） */
+      const r = await Promise.race([llmCall(pv, sys, usr), new Promise((_, rej) => setTimeout(() => rej(new Error('LLM_TIMEOUT_150s')), 150000))]);
+      if (r && r.text && r.text.length > 300) {
+        if (r.error) console.warn('[INSIGHT] leader-brief-ai LLM 返回异常:', r.error);
+        const txt = String(r.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+        const parts = txt.split(/【趋势预测】/);
+        const jB = String(parts[0] || '').replace(/^【深度研判】/, '').trim();
+        const fB = String(parts[1] || '').trim();
+        const forecasts = [];
+        const re = /（[一二三四五六七八九十]+）\s*([^\n]+)\n\s*预测：([\s\S]*?)\n\s*置信度：\s*(高|中|低)\s*\n\s*触发：\s*([^\n]+)/g;
+        let m;
+        while ((m = re.exec(fB))) forecasts.push({ title: m[1].trim(), text: m[2].trim(), conf: m[3], trigger: m[4].trim() });
+        if (jB.length > 100) out = { ok: true, llmOk: true, judge: jB, forecasts, generatedAt: _nowCn(), note: 'Kimi 大模型基于近 24 小时真实采集库生成（事件清单与统计全部真实，研判与预测为模型外推，事实以原文链接为准）；30 分钟缓存。' };
+      }
+    } catch (e) { console.warn('[INSIGHT] leader-brief-ai LLM 失败，回落规则模板:', e.message); }
+    if (!out) { console.warn('[INSIGHT] leader-brief-ai LLM 输出不达标（text<300 或研判段<100），回落规则模板'); out = _lbAiFallback(d); }
+    _lbAiCache = out; _lbAiAt = Date.now();
+    return out;
+  }
+  router.get('/leader-brief-ai', async (req, res) => {
+    try {
+      if (!llmCall) return res.json(_lbAiFallback(await _loadBrief()));
+      if (_lbAiCache && Date.now() - _lbAiAt < 30 * 60 * 1000) return res.json(_lbAiCache);
+      if (!_lbAiBusy) _lbAiBusy = _lbAiGen().finally(() => { _lbAiBusy = null; });
+      res.json(await _lbAiBusy);
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 

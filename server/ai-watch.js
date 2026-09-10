@@ -23,6 +23,22 @@ const ROUND_MS = 20 * 60 * 1000;      /* 值班节奏：20 分钟一轮 */
 const TOP_N = 5;                       /* 每轮研判条数上限 */
 const FORECAST_EVERY = 9;              /* 预测层：每 9 轮（≈3 小时）一次 7 天风险前瞻 */
 const SITUATION_MIN = 3;               /* 态势层：近 24h 实时入库 <3 条时静默（宁缺毋假） */
+const THEME_EVERY = 18;                /* #740-2 主题层：每 18 轮（≈6 小时）一次主题前瞻研判 */
+
+/* ---------- #740-2 主题前瞻研判引擎（用户口径 2026-09-09：例如「美国关税重塑贸易背景下，
+ * 中国电动汽车品牌在墨西哥取得进展」的政策与市场反噬风险——需要跨事件的主题级前瞻预测，
+ * 而非仅国别/风险域维度）。主题簇 = 关键词正则 × 近 7 天真实库命中，命中量+涉华加权选 TOP，
+ * 逐主题 LLM 前瞻研判（态势/预测/风险路径/触发），落 ai_theme_items + ai_watch_log。 ---------- */
+const THEMES = [
+  { key: 'ev', name: '中国车企出海与市场反噬', re: /电动汽车|电动车|比亚迪|奇瑞|吉利|长城汽车|中国车企|中国汽车|汽车工厂|汽车关税|新能源车/i },
+  { key: 'tariff', name: '美国关税与贸易规则重塑', re: /关税|贸易战|301调查|232条款|加征|贸易壁垒|对等关税|贸易协定重塑|出口管制新规/i },
+  { key: 'minerals', name: '关键矿产资源博弈', re: /锂矿|钴矿|铜矿|稀土|镍矿|铝土矿|锡矿|钨矿|铀矿|采矿权|矿业法|矿产协议|资源国有化/i },
+  { key: 'choke', name: '红海航运与海上要道安全', re: /红海|胡塞|曼德海峡|苏伊士|巴拿马运河|霍尔木兹|马六甲|海盗|劫持商船|货轮遇袭|绕行/i },
+  { key: 'bri', name: '一带一路走廊与中欧班列', re: /一带一路|中欧班列|经济走廊|CPEC|中巴经济走廊|跨里海|陆路走廊|瓜达尔|皎漂/i },
+  { key: 'sanction', name: '制裁与长臂合规风险', re: /实体清单|制裁清单|SDN|金融制裁|二级制裁|长臂管辖|禁运|管制清单/i },
+  { key: 'chinaAsset', name: '涉华人员与项目安全', re: /中国工人|中国工程师|中国公民|中国籍|中方人员|中资项目|中企员工|华人商铺|中国使馆|领事馆遇袭|孔子学院/i },
+  { key: 'politics', name: '东道国政局与资源民族主义', re: /政变|军政府|政权更迭|罢免|弹劾|宵禁|紧急状态|资源民族主义|国有化|矿业禁令|外资审查/i }
+];
 
 /* #718 实时数据铁律（用户原话：「不能用旧数据，用近期的实时数据」）：
  * AI 中枢所有数据口径一律排除补采回灌（_sourceType='backfill'，collect_time=当下
@@ -121,6 +137,19 @@ function aiWatch(ctx) {
       await q(`CREATE INDEX IF NOT EXISTS idx_aifh_kn ON ai_forecast_history (kind, name, ts DESC)`, []);
       await q(`CREATE INDEX IF NOT EXISTS idx_aifh_verify ON ai_forecast_history (verify_status, ts)`, []);
     } catch (e) { /* 老库静默 */ }
+    /* #740-2 主题前瞻研判清单（每轮主题层全量覆盖，与 forecast_items 同模式） */
+    await q(`CREATE TABLE IF NOT EXISTS ai_theme_items (
+      id SERIAL PRIMARY KEY,
+      ts TIMESTAMP DEFAULT NOW(),
+      round INTEGER,
+      tkey VARCHAR(32),
+      name VARCHAR(64),
+      n7 INTEGER, p7 INTEGER, china7 INTEGER, red7 INTEGER,
+      countries TEXT,
+      events TEXT,
+      detail TEXT,
+      llm_ok BOOLEAN DEFAULT FALSE
+    )`, []);
   }
   async function loadState() {
     try {
@@ -597,9 +626,11 @@ function aiWatch(ctx) {
     return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('LLM_TIMEOUT_60s')), 60000))]);
   }
   async function _mapLimit(arr, n, fn) {
+    const out = [];
     for (let i = 0; i < arr.length; i += n) {
-      await Promise.all(arr.slice(i, i + n).map(fn));
+      out.push(...await Promise.all(arr.slice(i, i + n).map(fn)));
     }
+    return out;
   }
   const FC_SYS_C = '你是海外利益保护情报预警平台的国别风险预测分析师，对指定国别做未来 7 天风险预测。基于给定的该国近 7 天真实事件统计与代表性事件，输出三段，段首分别用【态势】【预测】【触发】：【态势】该国当前具体局势与风险面，必须引用给定事件的具体细节（事件内容、指向对象、地点、时间），2-3 句；【预测】未来 7 天最可能的发展方向与具体风险点，点明风险类型与可能受影响的中资海外利益场景（项目/人员/供应链），2-3 句；【触发】2-3 条具体可观测的升级/验证信号，每条单独一行以「·」开头，必须紧扣该国真实事件脉络与其当前现实情况（如具体组织、地区、人物、行业），禁止适用于任何国家的通用套话。全文 220-350 字；只基于给定信息外推，样本不够处写「样本不足」；禁止编造事件、组织与数字。';
   const FC_SYS_D = '你是海外利益保护情报预警平台的行业/风险域预测分析师，对指定风险域做未来 7 天风险预测。基于给定该域近 7 天真实统计、细分主线与代表性事件，输出三段，段首分别用【态势】【预测】【触发】：【态势】该风险域当前态势与近 7 天异动（引用具体事件细节与国别分布），2-3 句；【预测】未来 7 天该域最可能的演化方向与具体风险点（点明高危国别×行业组合），2-3 句；【触发】2-3 条具体可观测的升级/验证信号，每条单独一行以「·」开头，必须引用该域真实事件脉络（具体制裁措施/冲突战线/组织动向等），禁止通用套话。全文 220-350 字；只基于给定信息外推，样本不够处写「样本不足」；禁止编造。';
@@ -680,6 +711,97 @@ function aiWatch(ctx) {
     } catch (e) { S.fcFail++; S.lastError = e.message; }
   }
 
+  /* ---------- #740-2 主题层：主题前瞻研判（近 7 天真实库命中 → TOP 主题 → LLM 前瞻） ----------
+   * 聚合口径与预测层一致（approved + FRESH 排除补采回灌；近 7 天 vs 前 7 天环比），
+   * 主题命中按中文译题/原始标题正则匹配；代表事件红橙/涉华优先。 */
+  async function _themeAgg() {
+    const out = {};
+    try {
+      const { rows } = await q(`SELECT COALESCE(NULLIF(data_json->>'title_zh',''), title) AS t,
+          COALESCE(NULLIF(country,''),'国际') AS ctry,
+          LOWER(COALESCE(data_json->>'level_norm', COALESCE(severity,''))) AS lv,
+          COALESCE(data_json->>'chinaRelated','') AS cn,
+          (collect_time >= NOW() - INTERVAL '7 days') AS is7,
+          TO_CHAR(collect_time, 'MM-DD') AS d
+        FROM intel_data
+        WHERE collect_time >= NOW() - INTERVAL '14 days'
+          AND COALESCE(audit_status,'approved')='approved' AND COALESCE(country,'') <> '中国' AND ${FRESH}
+        ORDER BY id DESC LIMIT 6000`, []);
+      for (const th of THEMES) {
+        out[th.key] = { key: th.key, name: th.name, n7: 0, p7: 0, china7: 0, red7: 0, countries: {}, ev: [] };
+      }
+      rows.forEach(r => {
+        const t = String(r.t || '');
+        if (!t) return;
+        for (const th of THEMES) {
+          if (!th.re.test(t)) continue;
+          const x = out[th.key];
+          if (r.is7) x.n7++; else x.p7++;
+          if (r.cn === 'true') x.china7++;
+          if (r.lv === 'red') x.red7++;
+          if (r.is7) {
+            x.countries[r.ctry] = (x.countries[r.ctry] || 0) + 1;
+            /* 代表事件：红橙/涉华优先，每主题最多 6 条 */
+            if (x.ev.length < 6 && (r.lv === 'red' || r.lv === 'orange' || r.cn === 'true')) {
+              x.ev.push({ d: r.d, lv: r.lv || '', cn: r.cn === 'true', c: r.ctry, t: t.slice(0, 110) });
+            }
+          }
+        }
+      });
+      /* 主题排序权重：涉华加权 + 红级 + 量（跨主题选 TOP4 深研） */
+      Object.values(out).forEach(x => {
+        x.w = x.china7 * 2 + x.red7 * 2 + x.n7;
+        x.topCountries = Object.entries(x.countries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(e => e[0] + '(' + e[1] + ')');
+      });
+    } catch (e) { /* 静默 */ }
+    return out;
+  }
+  const THEME_SYS = '你是海外利益保护情报预警平台的主题前瞻分析师，对指定主题做未来 14 天前瞻研判（面向中资企业出海的安全与运营风险）。输出四段，段首分别用【态势】【预测】【风险路径】【触发】：【态势】该主题当前态势与近 7 天库内动向，必须引用给定真实事件的具体细节（国别、对象、时间）；【预测】未来 14 天该主题最可能的演化方向，点明对中资企业的政策与市场含义（如反噬、准入收紧、供应链扰动）；【风险路径】该主题风险向中资企业传导的具体路径（项目/人员/供应链/市场准入/合规），1-2 句；【触发】2-3 条可观测的验证或升级信号，每条单独一行以「·」开头，必须紧扣给定事件脉络，禁止通用套话。全文 250-400 字；只基于给定信息外推，样本不足处写「样本不足」；禁止编造事件、组织与数字。';
+  async function _themeRound(round) {
+    try {
+      const agg = await _themeAgg();
+      const hot = Object.values(agg).filter(x => x.n7 >= 4).sort((a, b) => b.w - a.w).slice(0, 4);
+      if (!hot.length) return;   /* 无主题命中静默（宁缺毋假） */
+      if (!llmCall) return;
+      const pv = reportsEngine._test.pvKimi();
+      const evStr = list => list.map((e, i) => (i + 1) + '. [' + e.d + '][' + (e.lv || '—') + ']' + (e.cn ? '[涉华]' : '') + '[' + e.c + '] ' + e.t).join('\n');
+      async function enrich(th) {
+        const item = { round, key: th.key, name: th.name, n7: th.n7, p7: th.p7, china7: th.china7, red7: th.red7, countries: th.topCountries.join('、'), events: th.ev, detail: null, llm_ok: false };
+        try {
+          const usr = '主题：' + th.name + '\n近7天库内命中 ' + th.n7 + ' 条（前周 ' + th.p7 + ' 条，环比 ' + (th.p7 ? ((th.n7 >= th.p7 ? '+' : '') + Math.round((th.n7 - th.p7) / th.p7 * 100) + '%') : '（前周无样本）') + '），涉华 ' + th.china7 + ' 条，红级 ' + th.red7 + ' 条\n命中国别TOP：' + (th.topCountries.join('、') || '—') + '\n代表性真实事件（近7天采集）：\n' + (evStr(th.ev) || '（无红橙/涉华级样本，仅常规命中）') + '\n请输出该主题的 14 天前瞻研判。';
+          const r = await _llm60(llmCall(pv, THEME_SYS, usr));
+          if (r && r.text && r.text.length > 120) {
+            const txt = _clean(r.text);
+            const m = txt.match(/【态势】([\s\S]*?)【预测】([\s\S]*?)【风险路径】([\s\S]*?)【触发】([\s\S]*)/);
+            item.detail = m ? { s: m[1].trim(), p: m[2].trim(), r: m[3].trim(), t: m[4].trim() } : { s: txt };
+            item.detail.llm = true;
+            item.llm_ok = true;
+          }
+        } catch (e) { /* 单主题失败回落规则摘要，下轮重试 */ }
+        if (!item.detail) {
+          item.detail = {
+            s: '近7天库内命中 ' + th.n7 + ' 条（前周 ' + th.p7 + ' 条）' + (th.china7 ? '，涉华 ' + th.china7 + ' 条' : '') + '，命中国别TOP：' + (th.topCountries.join('、') || '—') + '。（大模型暂不可达，规则摘要；链路恢复后下轮自动升级 AI 前瞻研判）',
+            p: '该主题近 7 天持续有真实事件入库' + (th.p7 && th.n7 > th.p7 ? '且较前周升温（+' + Math.round((th.n7 - th.p7) / th.p7 * 100) + '%）' : '') + '，建议纳入下周监测重点。',
+            r: '风险传导路径待大模型细化研判。',
+            t: '该主题 24h 命中量再增 50% 或出现红级涉华事件'
+          };
+        }
+        /* 决策日志落档（值班大屏实时墙可筛「主题前瞻」） */
+        const d = item.detail;
+        await insertLog({ round, kind: 'theme', target: th.name + '（近7天 ' + th.n7 + ' 条）', country: (th.topCountries[0] || '').replace(/\(.*\)/, ''), level: th.red7 ? 'red' : '', content: (String(d.s || '').replace(/^\s*【态势】/, '') ? '【态势】' + String(d.s).replace(/^\s*【态势】/, '') : '') + '\n【预测】' + d.p + '\n【风险路径】' + d.r + '\n【触发】' + String(d.t || '').trim(), llm_ok: item.llm_ok });
+        return item;
+      }
+      const items = await _mapLimit(hot, 2, enrich);
+      await q('DELETE FROM ai_theme_items', []);
+      for (const it of items) {
+        await q(`INSERT INTO ai_theme_items(round, tkey, name, n7, p7, china7, red7, countries, events, detail, llm_ok)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [it.round, it.key, it.name, it.n7, it.p7, it.china7, it.red7, it.countries, JSON.stringify(it.events), JSON.stringify(it.detail), it.llm_ok]);
+      }
+      S.themeOk = (S.themeOk || 0) + 1; S.lastThemeAt = new Date().toISOString();
+    } catch (e) { S.themeFail = (S.themeFail || 0) + 1; S.lastError = e.message; }
+  }
+
   /* ---------- 一轮值班（#718 三层：①事件层 TOP5 逐条研判 ②态势层全局研判 ③预测层 7 天前瞻） ---------- */
   async function runRound(manual) {
     if (S.busy) return { ok: false, error: '本轮值班仍在进行' };
@@ -755,6 +877,8 @@ function aiWatch(ctx) {
       await _situationRound(round);
       /* ③c 预测层：7 天风险前瞻（每 FORECAST_EVERY 轮一次，≈3 小时） */
       if (round % FORECAST_EVERY === 0) await _forecastRound(round);
+      /* ③d #740-2 主题层：主题前瞻研判（每 THEME_EVERY 轮一次，≈6 小时；关税/车企出海/矿产/要道等跨事件主题级前瞻） */
+      if (round % THEME_EVERY === 0) await _themeRound(round);
       /* ④ 本轮扫描落痕（值班审计） */
       const scanNote = picked.length
         ? '本轮扫描新增红橙候选 ' + cands.length + ' 条，AI 研判 ' + okN + ' 条' + (skipN ? '，跳过 ' + skipN + ' 条（大模型未就绪，宁缺毋假）' : '') + '；研判对象：' + picked.slice(0, 3).map(c => c.country + '·' + c.level).join('、') + (picked.length > 3 ? ' 等' : '')
@@ -792,7 +916,7 @@ function aiWatch(ctx) {
           level: r.level, eventId: r.event_id, content: r.content, llmOk: r.llm_ok
         })),
         generatedAt: new Date().toLocaleString('zh-CN'),
-        note: 'AI 值班决策日志：kind=event 事件层大模型逐条研判 / kind=situation 态势层全局研判 / kind=forecast 预测层 7 天前瞻 / kind=scan 值班扫描落痕。零模拟——LLM 失败的条目不落日志（宁缺毋假）；数据口径铁律：实时采集（排除历史补采回灌）。'
+        note: 'AI 值班决策日志：kind=event 事件层大模型逐条研判 / kind=situation 态势层全局研判 / kind=forecast 预测层 7 天前瞻 / kind=theme 主题层 14 天前瞻 / kind=scan 值班扫描落痕。零模拟——LLM 失败的条目不落日志（宁缺毋假）；数据口径铁律：实时采集（排除历史补采回灌）。'
       });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
@@ -864,6 +988,20 @@ function aiWatch(ctx) {
           };
         });
       } catch (e) { /* 空表/建表中 */ }
+      /* #740-2 主题前瞻研判清单（主题层落库结果；未到 6h 周期时取上次清单） */
+      let themeItems = [];
+      try {
+        const tr = await q(`SELECT tkey, name, n7, p7, china7, red7, countries, events, detail, llm_ok FROM ai_theme_items ORDER BY (china7 * 2 + red7 * 2 + n7) DESC`, []);
+        themeItems = tr.rows.map(r => {
+          let detail = null, events = [];
+          if (r.detail) { try { detail = JSON.parse(r.detail); } catch (e) { detail = { s: r.detail }; } }
+          if (r.events) { try { events = JSON.parse(r.events) || []; } catch (e) { events = []; } }
+          return {
+            key: r.tkey, name: r.name, n7: Number(r.n7), p7: Number(r.p7), china7: Number(r.china7), red7: Number(r.red7),
+            countries: r.countries || '', events: events, detail: detail, llmOk: !!r.llm_ok
+          };
+        });
+      } catch (e) { /* 空表/建表中 */ }
       res.json({
         ok: true, duty: {
           active: true, intervalMin: Math.round(ROUND_MS / 60000),
@@ -876,10 +1014,12 @@ function aiWatch(ctx) {
         },
         stats: { totalLogs: total, eventJudgments: events, llmOkLogs: llmOkN,
           situation: S.situOk, forecast: S.fcOk,
+          theme: S.themeOk || 0, lastThemeAt: S.lastThemeAt || null,
           lastEventAt: S.lastEventAt, lastSituationAt: S.lastSituationAt, lastForecastAt: S.lastForecastAt },
         ops: ops,
         forecastItems: forecastItems,
         forecastVerify: fcVerify,
+        themeItems: themeItems,
         generatedAt: new Date().toLocaleString('zh-CN'),
         note: 'AI 值班分析师（三层）：①事件层——' + Math.round(ROUND_MS / 60000) + ' 分钟/轮自动扫库，复合价值评分 TOP' + TOP_N + ' 逐条大模型研判；②态势层——每轮全局态势研判（置信度+关键动向+涉华风险）；③预测层——每 ' + Math.round(FORECAST_EVERY * ROUND_MS / 3600000) + ' 小时 7 天风险前瞻。数据口径铁律：全部基于实时采集（排除历史补采回灌与归档件）；研判仅基于库内真实事件；LLM 不可达时宁缺毋假。'
       });
@@ -900,6 +1040,18 @@ function aiWatch(ctx) {
       const { rows } = await q('SELECT COUNT(*)::int AS n FROM ai_forecast_items', []);
       res.json({ ok: true, items: rows[0] ? rows[0].n : 0, round: S.round,
         note: '手动触发一轮预测层装配：国别+风险域结构化预测清单（7d vs 前周真实统计）；常规节奏每 ' + Math.round(FORECAST_EVERY * ROUND_MS / 3600000) + ' 小时自动执行' });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* #740-2 手动触发一轮主题前瞻研判（无需等 6h 周期） */
+  router.post('/theme-run', async (req, res) => {
+    try {
+      await ensureTables();
+      if (!S.started) { await loadState(); S.started = true; }
+      await _themeRound(S.round || 1);
+      const { rows } = await q('SELECT COUNT(*)::int AS n FROM ai_theme_items', []);
+      res.json({ ok: true, items: rows[0] ? rows[0].n : 0, round: S.round,
+        note: '手动触发一轮主题前瞻研判：关税重塑/车企出海/关键矿产/红海要道等跨事件主题 14 天前瞻（近 7 天真实库命中 × LLM 研判）；常规节奏每 ' + Math.round(THEME_EVERY * ROUND_MS / 3600000) + ' 小时自动执行' });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 

@@ -6555,6 +6555,21 @@ function _preTransCleanTitle(s) {
   return t;
 }
 
+/* 正文翻译前预清洗（2026-09-09 #733 根治「正文纯外文/HTML 垃圾」）：
+ * Google News 通道的 description 是实体编码的跳转壳（&lt;a href="news.google.com/rss/…"），
+ * 直接送机翻 → _translationOk 长度比/中文占比全不过 → 永久残留外文+HTML 入库（实测 1113 条）。
+ * 清洗：HTML 实体解码 → 剥标签 → 剥 URL → 压空白。无 HTML 特征则原样返回（零成本）。 */
+function _preCleanContent(s) {
+  let t = String(s || '');
+  if (!t) return t;
+  if (!/<[a-z][^>]*>/i.test(t) && !/&[a-z#0-9]{2,8};/i.test(t)) return t;
+  t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+       .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#0?39;|&#x27;|&apos;/gi, "'");
+  t = t.replace(/<[^>]+>/g, ' ');
+  t = t.replace(/https?:\/\/\S+/gi, ' ');
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
 /* ===== 删除墓碑（2026-08-22 用户铁律：删掉的数据永远不再进来）=====
  * 病灶：用户前端删预警只是切了前端数组——服务器行还在（同步复活）、采集器还会再抓
  * 同一旧闻（重新入库复活），旧的 _POST_BLOCK_RE 硬编码黑名单只能打地鼠。
@@ -8935,6 +8950,7 @@ async function _ingestLinkedItems(items, tag, note) {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; _bumpRej('dominant-quota'); _sidepool(it, 'dominant-quota', tag); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        await _ingestMixedFix(it); /* #739（2026-09-10）混排根治：剥尾+片段级二次翻译（RC1/RC3/RC4） */
         /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
          * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
         if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
@@ -9403,6 +9419,7 @@ async function _runChinaFocus() {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; bySource[src].dup++; continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        await _ingestMixedFix(it); /* #739（2026-09-10）混排根治：剥尾+片段级二次翻译（RC1/RC3/RC4） */
         /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
          * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
         if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
@@ -9620,6 +9637,7 @@ async function _runChinaNegative() {
       if (!_dominantQuotaOk(it)) { _gateAudit('入库闸', 'dominant-quota', it.title); skippedRuUa++; bySource[src].dup++; continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        await _ingestMixedFix(it); /* #739（2026-09-10）混排根治：剥尾+片段级二次翻译（RC1/RC3/RC4） */
         /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
          * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
         if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
@@ -10101,6 +10119,7 @@ async function _wechatIngest(items) {
       if (!_isFreshEnough(it)) { skippedStale++; if (skippedStale <= 3) console.log('[WECHAT] 时效拦截: ' + String(it.title || '').slice(0, 50)); continue; }
       try {
         _preInsertCommit(it, existing, titleKeys, eventSigs, gate);
+        await _ingestMixedFix(it); /* #739（2026-09-10）混排根治：剥尾+片段级二次翻译（RC1/RC3/RC4） */
         /* 中文阅读习惯终抛光（#483/#484/#485 咽喉位：覆盖全部采集通道，含绕过 _localizeTitleTail 的链路）
          * L1 尾部媒体/URL/标点 + L2 句式重写 + L4 质量分落 data_json.zhq */
         if (/[\u4e00-\u9fa5]/.test(String(it.title || ''))) {
@@ -11214,6 +11233,7 @@ function startGlobalMediaCron() {
   /* —— 翻译/信源/项目/组织 —— */
   SCHED.register('translate-retry', _runTranslateRetry, { interval: 15 * 60 * 1000, firstRunMs: 180000, klass: 'collect' });
   SCHED.register('translate-backfill', _runTranslateBackfill, { interval: 30 * 60 * 1000, firstRunMs: 12 * 60 * 1000, klass: 'watch' }); /* #731 STEP2 每日 04:00 存量回填（内部日旗+小时闸） */
+  SCHED.register('translate-mixed-backfill', _runMixedBackfill, { interval: 30 * 60 * 1000, firstRunMs: 40 * 60 * 1000, klass: 'watch' }); /* #733/#734 每日 05:00 混排/短标题回填（内部日旗+小时闸） */
   SCHED.register('sources-collector', _runSourcesCollector, { interval: 15 * 60 * 1000, firstRunMs: 380000, klass: 'collect' }); /* 94源工程包 */
   SCHED.register('project-watch', _runProjectWatch, { interval: 30 * 60 * 1000, firstRunMs: 8 * 60 * 1000, klass: 'collect' }); /* BRI/项目命中+TIER1 弱国 */
   SCHED.register('wm-feed', _runWmFeed, { interval: 30 * 60 * 1000, firstRunMs: 9 * 60 * 1000, klass: 'collect' }); /* WorldMonitor */
@@ -12193,41 +12213,123 @@ const _mixedFragCache = new Map(); /* 片段→{t:译文,at:时间戳}，上限 
 function _isMixedZh(s) {
   return /[\u4e00-\u9fa5]/.test(s) && /[A-Za-z]{3,}/.test(s);
 }
-async function _fixMixedZh(zh) {
+/* ===== #739 翻译深度审计增强（2026-09-10）=====
+ * 审计实测（RC2/RC4）：① 全大写词（EMPLOYEE/SECURITY）旧版直接跳过，但 TranSmart 对
+ *   小写输入可译（EMPLOYEE→员工）——全大写≠缩写，≥5 字母纯大写先 lowercase 重试；
+ * ② 双词片段（Ikot Ekpene/Downtown LA）失败后整段放弃——拆单词逐个译逐个替换；
+ * ③ 尾部域名/媒体残段（yahoo.com、VnExpress 国际、首先出现在X上）无任何清洗——
+ *   新增 _stripTailNoise 三模式剥离（混排 desc ~40% 此模式，纯本地零成本）；
+ * ④ maxFrags 片段数帽（默认 24）防长正文片段风暴。
+ * 专名译不出仍保留英文（不编造铁律）；真缩写白名单 _FRAG_ACRONYM_KEEP 保留英文更专业。 */
+const _FRAG_ACRONYM_KEEP = /^(UN|US|UK|EU|AU|UNHCR|UNESCO|UNICEF|UNDP|UNSC|WIPO|INTERPOL|ICRC|IOM|WFP|WHO|WTO|IMF|OPEC|ASEAN|BRICS|CPEC|BRI|AIIB|NATO|OAS|SADC|ECOWAS|GCC|SCO|SAARC|BIMSTEC|QUAD|AUKUS|ISIL|ISIS|AQIM|JNIM|HTS|YPG|YPJ|PKK|SDF|FARC|ELN|TNLA|MNDAA|KIA|SSPP|PDF|TPLF|OLF|RSF|HRW|FBI|CIA|USSS|DHS|DEA|ATF|CBP|ICE|NGO|BBC|CNN|VOA|RFA|PTI|IANS|TASS|IDF|GNA|LNA|GDP|CPI|JEM|SPLM|SPLA)\.?$/;
+const _TAIL_NOISE_RES = [
+  /* 尾部域名：yahoo.com / chinadaily.com.cn（TLD 白名单锚定 $，防误剥 "St. Mary" 类人名尾） */
+  /[\s,，。；;·|—–-]*(?:[A-Za-z0-9-]+\.)+(?:com|net|org|cn|gov|edu|io|co|uk|info|news|tv|me|us|jp|kr|in|th|vn|ph|my|id|sg|ru|fr|de|it|es|br|mx|za|ng|ke|pk|bd|np|mm|kh|la|tr|sa|ae|ir|iq|eg|gh|lk|au|ca|ch|nl|se|no|pl|ua|ro|live|online|site|press)(?:\.[A-Za-z]{2,3})?\s*$/i,
+  /* 尾部英文媒体名+国际（"VnExpress 国际"机翻残尾） */
+  /[\s,，。；;·|—–-]*[-–—|·:：]?\s*[A-Za-z][A-Za-z .&'()]{2,40}国际\s*$/,
+  /* "首先/最先出现在X上"（first appeared on X 模板残尾） */
+  /[\s,，。；;]*[\(（]?\s*(?:首先|最先)?出现在[^，。；]{1,40}上[\)）]?\s*$/,
+  /* "据X报道" */
+  /[\s,，。；;]*[\(（]?\s*据[^，。；]{1,30}报道[\)）]?\s*$/,
+];
+function _stripTailNoise(s) {
+  let t = String(s || '').replace(/\s+$/, '');
+  for (let i = 0; i < 3; i++) {
+    let changed = false;
+    for (let k = 0; k < _TAIL_NOISE_RES.length; k++) {
+      const n = t.replace(_TAIL_NOISE_RES[k], '').replace(/[\s,，。；;·|—–-]+$/, '').trim();
+      if (n && n !== t && /[\u4e00-\u9fa5]/.test(n)) { t = n; changed = true; }
+    }
+    if (!changed) break;
+  }
+  return t;
+}
+async function _trFragOnce(key) {
+  const hit = _mixedFragCache.get(key);
+  if (hit && hit.t) return hit.t;
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return '';
+  /* 失败负缓存 30min（审计 B3：瞬时抖动不永久缓存，防混排永久残留） */
+  let t = '';
+  try {
+    const r = await _tryTranSmart(key);
+    if (r && /[\u4e00-\u9fa5]/.test(r) && !_isMixedZh(r)) t = r.trim();
+  } catch (e) {}
+  if (_mixedFragCache.size > 5000) _mixedFragCache.clear();
+  _mixedFragCache.set(key, { t: t, at: Date.now() });
+  return t;
+}
+function _fragReplace(out, key, t) {
+  /* 词边界替换（审计 B3：防 "general" 误伤 "generally"、专名子串误伤） */
+  const re = new RegExp('(?<![A-Za-z@.\'-])' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z@.\'-])', 'g');
+  return out.replace(re, t);
+}
+async function _fixMixedZh(zh, opts) {
   if (!zh || !_isMixedZh(zh)) return zh;
+  const maxFrags = (opts && opts.maxFrags) || 24;
   try {
     const frags = zh.match(/[A-Za-z][A-Za-z@.'-]*(?:\s+[A-Za-z][A-Za-z@.'-]*)?/g) || [];
     let out = zh, fixed = 0;
-    for (const f of frags) {
+    for (const f of frags.slice(0, maxFrags)) {
       const key = f.trim();
       if (key.length < 3) continue; /* 缩写/短词不动（CPEC/UN 等专名缩写保留英文更专业） */
-      if (/^[A-Z0-9@.'-]{2,}$/.test(key.replace(/\s/g, ''))) continue; /* 全大写缩写不翻（COP17/ICE→"警察17/冰"误译） */
-      let t = '';
-      const hit = _mixedFragCache.get(key);
-      if (hit && hit.t) t = hit.t;
-      else if (hit && Date.now() - hit.at < 30 * 60 * 1000) {
-        t = ''; /* 2026-09-03（审计 B3）：失败负缓存 30min——旧版把 '' 永久缓存，TranSmart 瞬时抖动
-                   即导致该片段进程生命周期内永不重试，混排永久残留。 */
-      } else {
-        try {
-          const r = await _tryTranSmart(key);
-          if (r && /[\u4e00-\u9fa5]/.test(r) && !_isMixedZh(r)) t = r.trim();
-        } catch (e) {}
-        if (_mixedFragCache.size > 5000) _mixedFragCache.clear();
-        _mixedFragCache.set(key, { t: t, at: Date.now() });
+      const noSp = key.replace(/\s/g, '');
+      const allCaps = /^[A-Z0-9@.'-]{2,}$/.test(noSp);
+      if (allCaps && (noSp.length <= 4 || _FRAG_ACRONYM_KEEP.test(noSp))) continue; /* 真缩写保留（COP17/ICE→"警察17/冰"误译教训） */
+      let t = await _trFragOnce(key);
+      /* RC2-①：全大写非缩写词（EMPLOYEE/SECURITY）——TranSmart 对大写输入原样返回，lowercase 重试 */
+      if (!t && allCaps && noSp.length > 4 && /^[A-Z]+$/.test(noSp)) {
+        t = await _trFragOnce(key.toLowerCase());
+      }
+      /* RC2-②：双词片段失败 → 拆单词逐个译逐个替换（Ikot Ekpene→其一可译则修其一） */
+      if (!t && /\s/.test(key)) {
+        let any = false;
+        for (const w of key.split(/\s+/)) {
+          if (w.length < 3) continue;
+          const wt = await _trFragOnce(w);
+          if (wt) {
+            const before = out;
+            out = _fragReplace(out, w, wt);
+            if (out !== before) { fixed++; any = true; }
+          }
+        }
+        continue;
       }
       if (t) {
-        /* 2026-09-03（审计 B3）：词边界替换——旧版 split/join 无边界，"general" 会替换进
-         * "generally"、专名子串误伤，产出意外混排。 */
-        const re = new RegExp('(?<![A-Za-z@.\'-])' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z@.\'-])', 'g');
         const before = out;
-        out = out.replace(re, t);
+        out = _fragReplace(out, key, t);
         if (out !== before) fixed++;
       }
     }
     if (fixed) console.log('[TRANSLATE] 混排修复 ' + fixed + ' 片段: ' + String(zh).slice(0, 40) + ' → ' + String(out).slice(0, 40));
     return out;
   } catch (e) { return zh; }
+}
+/* ===== #739（2026-09-10）入库咽喉位混排根治助手（RC1/RC3/RC4）=====
+ * 在全部 4 个 INSERT 站点（_ingestLinkedItems/_runChinaFocus/_runChinaNegative/_wechatIngest）
+ * 的抛光钩子前调用：
+ * ① 标题剥尾部域名/媒体残段/「首先出现在X上」（混排 desc ~40% 此模式）；
+ * ② 标题片段级二次翻译——覆盖 GDELT/backfill 模板路径（title_zh 本地预置绕过翻译链）
+ *    的词表外英文残留（Ladakh/EMPLOYEE 实测片段级可译）；
+ * ③ 正文剥尾 + 短文（≤600 字符）混排修复，长正文留给每日回填。 */
+async function _ingestMixedFix(it) {
+  if (!it || typeof it !== 'object') return;
+  try {
+    const t0 = String(it.title || '');
+    if (/[\u4e00-\u9fa5]/.test(t0)) {
+      const t1 = _stripTailNoise(t0);
+      if (t1 !== t0) { if (!it.title_en) it.title_en = t0; it.title = t1; it.title_zh = t1; }
+      if (_isMixedZh(it.title)) {
+        const t2 = await _fixMixedZh(String(it.title), { maxFrags: 16 });
+        if (t2 && t2 !== it.title) { it.title = t2; it.title_zh = t2; }
+      }
+    }
+    const c0 = String(it.content || '');
+    if (c0) {
+      let c1 = _stripTailNoise(c0);
+      if (_isMixedZh(c1) && c1.length <= 600) c1 = await _fixMixedZh(c1, { maxFrags: 16 });
+      if (c1 && c1 !== c0) it.content = c1;
+    }
+  } catch (e) {}
 }
 /* ===== [TR-FUSE-BEGIN] 翻译通道熔断状态机（2026-09-01 翻译链路扩兜底+熔断）=====
  * 背景：采集扩容（日目标 2000+ 条）后翻译请求 ×3，Baidu 54004（日额度耗尽）与
@@ -12542,6 +12644,9 @@ async function _runTranslateRetry() {
   if (Date.now() < _retryTranslateBusyUntil) return;
   _retryTranslateBusyUntil = Date.now() + 10 * 60 * 1000;
   try {
+    /* ⓪ #739（2026-09-10）混排增量修复：每 15min 修最新 120 行（id DESC），
+     * 与每日 _trMixedBackfillSweep/_fixMixedSweep(800) 存量扫互补；_mixfixAt 7 天重访。 */
+    try { await _fixMixedSweep(120); } catch (e) {}
     /* ① 完全未翻译：标题无中文且无 title_zh */
     const untr = await query(
       `SELECT id, title, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '3 days'
@@ -12689,6 +12794,146 @@ async function _runTranslateBackfill() {
       [JSON.stringify({ day, scanned: r.scanned, fixed: r.fixed, failed: r.failed, at: new Date().toISOString() })]);
   } catch (e) { console.warn('[TR-BACKFILL] 调度失败:', e.message); }
 }
+/* ===== [TR-MIXED-BF] #733/#734 混排标题/短标题存量回填（每日 05:00 后一轮，keyset 分批）=====
+ * 2026-09-09 审计：混排标题 11517 条（人名/机构专名残留 Rahul/BJP/Tarcisio/LBCI…），
+ * 纯本地变换只能修 ~80 条——根治必须逐行重跑片段级二次翻译（_fixMixedZh，专名片段缓存命中
+ * 后成本低）+ 术语归一（normalizeZh，含 BJP/FATF/NIA 新词典）+ polishTitle（括号去重/剥尾新规则）。
+ * 另覆盖短标题（中文<6 字或全长<10：如「普丽蒂·泽塔是」截断式译文）——用 title_en 原文重译。
+ * 守卫：译文须保中文主体且 ≥6 字；变化才写回；keyset 游标 + 日旗 + 单飞 + 轻节流。 */
+let _trMixedBusy = false;
+async function _trMixedBackfillSweep() {
+  if (_trMixedBusy) return { skipped: true };
+  _trMixedBusy = true;
+  const BATCH = 400;
+  let cursor = 0, fixed = 0, retranslated = 0, scanned = 0;
+  try {
+    for (;;) {
+      /* 混排（中文+3 字母以上英文串）或短标题（<10 字符），仅扫已有中文主体的行 */
+      const sel = await query(
+        `SELECT id, title, data_json FROM intel_data
+         WHERE id > $1
+           AND data_json->>'title_zh' ~ '[一-龥]'
+           AND (data_json->>'title_zh' ~ '[A-Za-z]{3,}' OR char_length(data_json->>'title_zh') < 10)
+         ORDER BY id ASC LIMIT $2`, [cursor, BATCH]);
+      if (!sel.rows.length) break;
+      for (const r of sel.rows) {
+        cursor = Number(r.id); scanned++;
+        try {
+          const dj = r.data_json || {};
+          const t = String(dj.title_zh || r.title || '');
+          if (!t) continue;
+          const isMixed = /[\u4e00-\u9fa5]/.test(t) && /[A-Za-z]{3,}/.test(t);
+          const cjkN = (t.match(/[\u4e00-\u9fa5]/g) || []).length;
+          if (!isMixed && t.length >= 10 && cjkN >= 6) continue; /* 轮次后新增行已达标 */
+          let out = t;
+          if (isMixed) {
+            out = await _fixMixedZh(out);            /* ① 专名片段二次翻译（人名 Rahul→拉胡尔） */
+            out = _TRMT.normalizeZh(out);            /* ② 缩写词典（BJP→印度人民党…幂等） */
+          }
+          out = zhPolish.polishTitle(out);           /* ③ 剥尾/括号去重/病句闸（幂等） */
+          out = _stripTailNoise(out);                /* ④ #739：尾部域名/「首先出现在X上」/媒体名+国际 残尾剥离 */
+          const oCjk = (String(out).match(/[\u4e00-\u9fa5]/g) || []).length;
+          /* ④ 仍短（截断式译文「普丽蒂·泽塔是」）→ 用原文重译 */
+          if (String(out).length < 10 || oCjk < 6) {
+            const raw = String(dj.title_en || '').trim();
+            if (raw && _looksForeign(raw)) {
+              const zh = await _translateAnyCached(_preTransCleanTitle(raw).slice(0, 450));
+              if (zh && _translationOk(raw, zh) && (String(zh).match(/[\u4e00-\u9fa5]/g) || []).length >= 6) {
+                out = zh.trim(); retranslated++;
+              }
+            }
+          }
+          out = String(out || '').trim();
+          if (out && out !== t && /[\u4e00-\u9fa5]/.test(out) && out.length >= 6) {
+            dj.title = out; dj.title_zh = out;
+            await query('UPDATE intel_data SET title=$1, data_json=$2 WHERE id=$3', [out, JSON.stringify(dj), r.id]);
+            fixed++;
+          }
+          if (scanned % 25 === 0) await new Promise(rs => setTimeout(rs, 1200)); /* 轻节流护采集 */
+        } catch (e) { /* 单行失败不中断整批 */ }
+      }
+      if (sel.rows.length < BATCH) break;
+    }
+    console.log('[TR-MIXED-BF] 混排/短标题回填：扫描 ' + scanned + ' 行，修复 ' + fixed + ' 条（重译 ' + retranslated + '）');
+    return { scanned, fixed, retranslated };
+  } finally { _trMixedBusy = false; }
+}
+async function _runMixedBackfill() {
+  try {
+    const day = _todayKey();
+    const flag = await query("SELECT data_json FROM datahub_store WHERE collection='tr_mixed_bf_day'");
+    if (flag && flag.rows && flag.rows[0] && flag.rows[0].data_json && flag.rows[0].data_json.day === day) return;
+    const h = new Date().getHours();
+    if (h < 5) return; /* 每日 05:00 后开跑（避开 04:00 主回填扫） */
+    const r = await _trMixedBackfillSweep();
+    if (r && r.skipped) return;
+    await _fixMixedSweep(800).catch(() => {}); /* #739：每日存量混排（含 description 列）补扫 */
+    await query("INSERT INTO datahub_store (collection, data_json, updated_at) VALUES ('tr_mixed_bf_day', $1, NOW()) ON CONFLICT (collection) DO UPDATE SET data_json=$1, updated_at=NOW()",
+      [JSON.stringify({ day, scanned: r.scanned, fixed: r.fixed, retranslated: r.retranslated, at: new Date().toISOString() })]);
+  } catch (e) { console.warn('[TR-MIXED-BF] 调度失败:', e.message); }
+}
+/* ===== [TR-MIXFIX] #739 混排存量批量修复（2026-09-10 深度审计 RC1-RC6 落地）=====
+ * 与 _trMixedBackfillSweep（每日 05:00、仅 title、keyset 全表 ASC）互补，本函数：
+ * ① 覆盖 description 列混排（审计 21,417 条 30.6%，主扫维度的最大缺口）；
+ * ② _mixfixAt 时间戳标记（7 天重访）——修不动的专名残行不重复消耗引擎调用；
+ * ③ 修复后 _cacheSet(title_en→新值) 反向覆写毒化缓存（RC6 自愈，引擎侧+缓存侧双修）；
+ * ④ ORDER BY id DESC——最新入库行优先（15min 增量接线 _runTranslateRetry 时最有效）。
+ * 驱动：POST /api/intel/fix-mixed（手动批量）+ _runTranslateRetry 开头（增量）。 */
+let _mixfixBusy = false;
+async function _fixMixedSweep(limit) {
+  if (_mixfixBusy) return { skipped: true };
+  _mixfixBusy = true;
+  const N = Math.max(1, Math.min(2000, Number(limit) || 500));
+  let scanned = 0, fixedT = 0, fixedD = 0;
+  try {
+    const sel = await query(
+      `SELECT id, title, description, data_json FROM intel_data
+       WHERE ((title ~ '[一-龥]' AND title ~ '[a-z]{4,}')
+          OR (description ~ '[一-龥]' AND description ~ '[a-z]{4,}'))
+       AND coalesce((substring(data_json->>'_mixfixAt' from '[0-9]+'))::bigint, 0) < $1
+       ORDER BY id DESC LIMIT $2`,
+      [Math.floor(Date.now() / 1000) - 7 * 86400, N]);
+    for (const r of sel.rows) {
+      scanned++;
+      try {
+        const dj = r.data_json || {};
+        let changed = false;
+        /* 标题：剥尾 → 片段修复（专名缓存命中率高） */
+        const t0 = String(r.title || '');
+        if (/[\u4e00-\u9fa5]/.test(t0)) {
+          let t1 = _stripTailNoise(t0);
+          if (_isMixedZh(t1)) {
+            const t2 = await _fixMixedZh(t1);
+            if (t2 && t2 !== t1) t1 = t2;
+          }
+          t1 = _TRMT.normalizeZh(t1);
+          if (t1 && t1 !== t0 && /[\u4e00-\u9fa5]/.test(t1) && t1.length >= 6) {
+            dj.title = t1; dj.title_zh = t1;
+            if (dj.title_en) _cacheSet(String(dj.title_en).slice(0, 450), t1); /* RC6 缓存反向覆写 */
+            changed = true; fixedT++;
+          }
+        }
+        /* 摘要/正文：剥尾 → 短文(≤400)片段修复 → 术语归一 */
+        const d0 = String(r.description || '');
+        if (/[\u4e00-\u9fa5]/.test(d0)) {
+          let d1 = _stripTailNoise(d0);
+          if (_isMixedZh(d1) && d1.length <= 400) d1 = await _fixMixedZh(d1, { maxFrags: 12 });
+          d1 = _TRMT.normalizeZh(d1);
+          if (d1 && d1 !== d0 && /[\u4e00-\u9fa5]/.test(d1) && d1.length >= 6) {
+            dj.content = d1; dj.content_zh = d1;
+            changed = true; fixedD++;
+          }
+        }
+        dj._mixfixAt = String(Math.floor(Date.now() / 1000)); changed = true;
+        await query('UPDATE intel_data SET title=$1, description=$2, data_json=$3 WHERE id=$4',
+          [dj.title || r.title, dj.content !== undefined ? (dj.content || '') : (r.description || ''), JSON.stringify(dj), r.id]);
+        if (scanned % 25 === 0) await new Promise(rs => setTimeout(rs, 600)); /* 轻节流护采集 */
+      } catch (e) { /* 单行失败不中断 */ }
+    }
+    if (scanned) console.log('[TR-MIXFIX] 混排批量修复：扫描 ' + scanned + ' 行，标题修复 ' + fixedT + '，摘要修复 ' + fixedD);
+    return { scanned, fixedT, fixedD };
+  } finally { _mixfixBusy = false; }
+}
 /* 采集即译：把一批情报的标题+正文翻译成中文，落库即中文（原文留 title_en/content_en 溯源）。
  * 实战系统要求：入库数据全中文。仅对含外文(连续≥4字母且无中文)的字段翻译；已中文的跳过。
  * 翻译失败则保留原文并标记，绝不丢数据；54003 频率限制由 _baiduTranslateRetry 退避重试。 */
@@ -12698,6 +12943,8 @@ async function _translateListToZh(list) {
   for (const it of list) {
     if (!it || typeof it !== 'object') continue;
     try {
+      /* 2026-09-09 #733：正文先剥 HTML/实体/URL 跳转壳，再判外文/送译 */
+      if (it.content) it.content = _preCleanContent(it.content);
       const titleForeign = _looksForeign(it.title);
       const contentForeign = _looksForeign(it.content) && String(it.content || '').length > 20;
       let tZh = it.title, cZh = it.content;
@@ -12763,7 +13010,18 @@ async function _translateAnyCached(text) {
   const quake = _formatQuakeTitle(src);
   if (quake) return quake;
   const cached = _cacheGet(src);
-  if (cached) return cached;
+  if (cached) {
+    /* #739 RC6 缓存毒化自愈（2026-09-10）：审计实测 .translate_cache.json 21 万条中 44.7%（94,227 条）
+     * 为混排值——旧版命中直接 return，_fixMixedZh/_stripTailNoise 修复出口全被绕过（毒化回流点）。
+     * 命中后仍过 剥尾+片段修复；修复结果回写缓存（_cacheSet），毒化值逐次自愈。 */
+    let v = _stripTailNoise(cached);
+    if (_isMixedZh(v)) {
+      const rep = await _fixMixedZh(v);
+      if (rep && rep !== v) v = rep;
+    }
+    if (v !== cached) _cacheSet(src, v);
+    return v;
+  }
   const r = await _translateAny(src);
   if (r && r.trim() && r.trim() !== src) _cacheSet(src, r.trim());
   return r;
@@ -13122,6 +13380,8 @@ async function _translateListToZhParallel(list, concurrency, opts) {
        前端 COALESCE 回退虽可显示，但涉华判定/去重键/导出全链路依赖 title_zh 字段）。直接回填。 */
     const _t = String(it.title || '').trim();
     if (_t && !it.title_zh && !_looksForeign(_t)) it.title_zh = _t;
+    /* 2026-09-09 #733：正文先剥 HTML/实体/URL 跳转壳，再判外文/送译 */
+    if (it.content) it.content = _preCleanContent(it.content);
     if (_looksForeign(it.title)) tasks.push({ it: it, field: 'title' });
     if (_looksForeign(it.content) && String(it.content || '').length > 20) tasks.push({ it: it, field: 'content' });
   });
@@ -13213,6 +13473,16 @@ async function _translateListToZhParallel(list, concurrency, opts) {
     + (needBody.length ? '，正文待补 ' + needBody.length + ' 条（已抓 ' + bodyQueue.length + '）' : ''));
   return done;
 }
+app.post('/api/intel/fix-mixed', authMiddleware, adminOnly, async (req, res) => {
+  /* #739（2026-09-10）混排批量修复驱动端点：按 id DESC 修最新 limit 行（title+description 双维度，
+   * _mixfixAt 7 天重访）。供存量 29k 行批量清零：循环调用直至 scanned 返回 0。 */
+  try {
+    const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit, 10) || 500));
+    const r = await _fixMixedSweep(limit);
+    if (r && r.skipped) return res.status(429).json({ ok: false, error: 'sweep busy' });
+    res.json({ ok: true, limit: limit, scanned: r.scanned, fixedT: r.fixedT, fixedD: r.fixedD });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
+});
 app.post('/api/intel/translate-backfill', async (req, res) => {
   /* 首选通道 TranSmart/有道 免密钥、无日配额，无需任何配置即可回填 */
   const types = ['osint_intel', 'socmint_intel'];

@@ -208,6 +208,37 @@ var AIWATCH = (function () {
       '.aw-fc .ev .et{color:#a9c6dd;line-height:1.55}' +
       '.aw-fc .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:4px;padding-top:6px;border-top:1px dashed rgba(34,211,238,.12)}' +
       '.aw-fc .empty{font-size:10px;color:#7aa5c9;line-height:1.8;text-align:center;padding:10px 4px}' +
+      /* ===== #740-2 主题前瞻研判（跨事件主题簇 × 14 天 LLM 前瞻） ===== */
+      '.aw-th .row{position:relative;border:1px solid rgba(192,132,252,.2);border-radius:7px;padding:7px 9px;margin-bottom:7px;background:rgba(30,18,54,.55);cursor:pointer;transition:.15s}' +
+      '.aw-th .row:hover{border-color:rgba(192,132,252,.5);background:rgba(192,132,252,.07)}' +
+      '.aw-th .row.up{border-left:3px solid #ff3355}' +
+      '.aw-th .row.down{border-left:3px solid #00e676}' +
+      '.aw-th .row.flat{border-left:3px solid #c084fc}' +
+      '.aw-th .r1{display:flex;align-items:center;gap:6px}' +
+      '.aw-th .nm{font-size:11.5px;font-weight:800;color:#e9d5ff;letter-spacing:.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.aw-th .dlt{font-size:10.5px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0}' +
+      '.aw-th .meta{font-size:9px;color:#8fa8c0;margin-top:3px;font-family:Consolas,monospace;letter-spacing:.5px}' +
+      '.aw-th .chev{font-size:9px;color:#5a7a99;flex-shrink:0;transition:transform .15s}' +
+      '.aw-th .row.open .chev{color:#c084fc;transform:rotate(90deg)}' +
+      '.aw-th .engb{display:inline-block;border-radius:4px;padding:0 5px;font-size:8px;font-weight:700;letter-spacing:.5px;flex-shrink:0}' +
+      '.aw-th .engb.llm{background:rgba(124,58,237,.16);color:#c4b5fd;border:1px solid rgba(124,58,237,.4)}' +
+      '.aw-th .engb.rule{background:rgba(90,122,153,.12);color:#8fa8c0;border:1px solid rgba(90,122,153,.35)}' +
+      '.aw-th .exp{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(192,132,252,.25)}' +
+      '.aw-th .seg{display:flex;gap:6px;margin-bottom:5px}' +
+      '.aw-th .seg .sl{flex-shrink:0;font-size:8.5px;font-weight:800;color:#c084fc;border:1px solid rgba(192,132,252,.4);border-radius:4px;padding:1px 6px;height:fit-content;letter-spacing:2px}' +
+      '.aw-th .seg .sv{font-size:9.5px;color:#c3d9ec;line-height:1.75}' +
+      '.aw-th .evh{font-size:8.5px;color:#5a7a99;letter-spacing:1.5px;margin:7px 0 4px}' +
+      '.aw-th .ev{display:flex;gap:5px;align-items:baseline;font-size:9px;padding:2.5px 0;border-bottom:1px dotted rgba(192,132,252,.1)}' +
+      '.aw-th .ev:last-child{border-bottom:none}' +
+      '.aw-th .ev .ed{color:#5a7a99;font-family:Consolas,monospace;flex-shrink:0}' +
+      '.aw-th .ev .el{flex-shrink:0;font-size:8px;font-weight:700;border-radius:3px;padding:0 4px;letter-spacing:1px}' +
+      '.aw-th .ev .el.r{background:rgba(255,51,85,.12);color:#ff5577;border:1px solid rgba(255,51,85,.3)}' +
+      '.aw-th .ev .el.o{background:rgba(255,136,0,.12);color:#ffaa33;border:1px solid rgba(255,136,0,.3)}' +
+      '.aw-th .ev .el.n{background:rgba(90,122,153,.12);color:#8fa8c0;border:1px solid rgba(90,122,153,.3)}' +
+      '.aw-th .ev .ec{flex-shrink:0;font-size:8px;font-weight:700;color:#ffaa33}' +
+      '.aw-th .ev .et{color:#a9c6dd;line-height:1.55}' +
+      '.aw-th .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:7px;padding-top:6px;border-top:1px dashed rgba(192,132,252,.15)}' +
+      '.aw-th .empty{font-size:10px;color:#7aa5c9;line-height:1.8;text-align:center;padding:10px 4px}' +
       /* ===== KPI 带 ===== */
       '.aw-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:12px}' +
       '@media (max-width:700px){.aw-kpis{grid-template-columns:repeat(2,1fr)}}' +
@@ -538,6 +569,56 @@ var AIWATCH = (function () {
       panel('🏭', '行业风险域预测', 'DOMAIN · 7D', dItems, 5, '域详见清单');
   }
 
+  /* ================= #740-2 主题前瞻研判（可交互：点击行展开 AI 前瞻 + 代表事件） =================
+   * 数据源：/api/aiwatch/status 的 themeItems（ai_theme_items 表，主题层每 6h 装配覆盖 + LLM 前瞻）。
+   * 行=跨事件主题簇（关税重塑/车企出海/关键矿产/红海要道等）近 7 天真实命中 vs 前周环比。 */
+  var _thOpen = {};
+  function _themeHTML() {
+    var items = (_status && _status.themeItems) || [];
+    function lvCls(lv) { return lv === 'red' ? 'r' : (lv === 'orange' ? 'o' : 'n'); }
+    function row(it) {
+      var open = !!_thOpen[it.key];
+      var delta = it.p7 ? Math.round((it.n7 - it.p7) / it.p7 * 100) : null;
+      var dCls = delta == null ? 'flat' : (delta >= 20 ? 'up' : (delta <= -20 ? 'down' : 'flat'));
+      var dTxt = delta == null ? '新主题' : ((delta > 0 ? '+' : '') + delta + '%');
+      var h = '<div class="row ' + dCls + (open ? ' open' : '') + '" data-tk="' + _esc(it.key) + '" title="点击展开/收起 AI 前瞻研判与代表事件">' +
+        '<div class="r1"><span class="chev">▶</span><span class="nm">' + _esc(it.name) + '</span>' +
+        '<span class="dlt" style="color:' + (dCls === 'up' ? '#ff5577' : (dCls === 'down' ? '#00e676' : '#c084fc')) + '">' + dTxt + '</span>' +
+        '<span class="engb ' + (it.llmOk ? 'llm' : 'rule') + '">' + (it.llmOk ? 'Kimi' : '规则') + '</span></div>' +
+        '<div class="meta">近7天 ' + it.n7 + ' 条 vs 前周 ' + it.p7 + ' 条 · 涉华 ' + it.china7 + ' · 红级 ' + it.red7 +
+        (it.countries ? ' · 国别 ' + _esc(String(it.countries).split('、').slice(0, 3).join(' / ')) : '') + '</div>';
+      if (open) {
+        var d = it.detail || {};
+        h += '<div class="exp">';
+        if (d.s) h += '<div class="seg"><span class="sl">态势</span><div class="sv">' + _esc(d.s) + '</div></div>';
+        if (d.p) h += '<div class="seg"><span class="sl">预测</span><div class="sv">' + _esc(d.p) + '</div></div>';
+        if (d.r) h += '<div class="seg"><span class="sl">风险路径</span><div class="sv">' + _esc(d.r) + '</div></div>';
+        if (d.t) h += '<div class="seg"><span class="sl">触发</span><div class="sv">' + _esc(String(d.t).replace(/\n+/g, '<br>')) + '</div></div>';
+        var ev = it.events || [];
+        if (ev.length) {
+          h += '<div class="evh">近 7 天代表事件（红橙/涉华优先）</div>';
+          ev.forEach(function (e) {
+            h += '<div class="ev"><span class="ed">' + _esc(e.d || '') + '</span>' +
+              '<span class="el ' + lvCls(e.lv) + '">' + (e.lv === 'red' ? '红' : (e.lv === 'orange' ? '橙' : '记')) + '</span>' +
+              (e.cn ? '<span class="ec">涉华</span>' : '') +
+              (e.c ? '<span class="ed">' + _esc(e.c) + '</span>' : '') +
+              '<span class="et">' + _esc(e.t || '') + '</span></div>';
+          });
+        }
+        h += '</div>';
+      }
+      return h + '</div>';
+    }
+    var body;
+    if (!items.length) {
+      body = '<div class="aw-pb aw-th"><div class="empty">主题层每 6 小时自动装配：关税重塑 / 车企出海 / 关键矿产 / 红海要道 / 班列走廊 / 制裁合规 等跨事件主题簇 14 天前瞻研判<br>（LLM 前瞻 + 触发信号；无命中主题时静默——宁缺毋假）</div></div>';
+    } else {
+      body = '<div class="aw-pb aw-th">' + items.map(row).join('') +
+        '<div class="ft">主题前瞻 = 跨事件主题簇（关键词 × 近 7 天真实库命中）× 大模型 14 天前瞻研判（态势 / 预测 / 风险路径 / 触发信号）——面向中资企业出海的政策与市场反噬风险（如美国关税重塑贸易背景下中国车企墨西哥市场的政策反噬）。<b style="color:#ffaa33">点击条目展开 AI 研判详情</b>；环比=近7天 vs 前7天同主题命中量。</div></div>';
+    }
+    return '<div class="aw-panel"><div class="aw-ph"><span class="ic">🎯</span><span class="t">主题前瞻研判（14 天）</span><span class="hint" style="cursor:pointer;color:#e879f9" onclick="AIWATCH.runTheme()">▶ 立即装配</span><span class="tag">THEME FORESIGHT' + (items.length ? ' · ' + items.length + ' 主题' : '') + '</span></div>' + body + '</div>';
+  }
+
   /* ================= 渲染：中列（态势区） ================= */
   function _kpisHTML(du, st, ops) {
     var succ = du.successRate != null ? du.successRate + '%' : '—';
@@ -546,6 +627,7 @@ var AIWATCH = (function () {
       kpi('#00e676', (st.eventJudgments || 0), 'AI 事件研判（累计落库）', '红橙级逐条大模型快评') +
       kpi('#c084fc', (st.situation || 0), 'AI 态势研判（累计）', '每 20 分钟全局态势滚动研判') +
       kpi('#38bdf8', (st.forecast || 0), 'AI 风险预测（累计）', '每 3 小时 7 天前瞻滚动') +
+      kpi('#e879f9', (st.theme || 0), 'AI 主题前瞻（累计）', '每 6 小时 14 天跨事件主题研判') +
       kpi('#22d3ee', (du.round || 0), '值班轮次', '无人值守自动扫库累计') +
       kpi('#ff8800', (ops.intake24h || 0), '近 24h 实时入库', '含红 ' + (ops.red24h || 0) + ' / 橙 ' + (ops.orange24h || 0) + '（已排除补采）') +
       kpi('#ff3355', (ops.alerts || 0), '预警水位（在档预警）', '库内总情报 ' + (ops.totalIntel || 0) + ' 条') +
@@ -564,7 +646,7 @@ var AIWATCH = (function () {
       var dh = Math.floor((nowBj.getTime() - bj.getTime()) / 3600000);
       if (dh < 0 || dh > 23) return;
       var b = buckets[(bj.getHours())];
-      if (e.kind === 'event' || e.kind === 'situation' || e.kind === 'forecast') b.ev++; else b.sc++;
+      if (e.kind === 'event' || e.kind === 'situation' || e.kind === 'forecast' || e.kind === 'theme') b.ev++; else b.sc++;
     });
     var max = 1; buckets.forEach(function (b) { max = Math.max(max, b.ev * 2 + b.sc); });
     var bars = '', xs = '';
@@ -630,6 +712,7 @@ var AIWATCH = (function () {
     var isEv = e.kind === 'event';
     var isSit = e.kind === 'situation';
     var isFc = e.kind === 'forecast';
+    var isTh = e.kind === 'theme';
     var cts = '';
     if (isEv) {
       cts = '<span class="lv" style="color:' + (LV_COLOR[e.level] || '#ffcc00') + '">● ' + (e.level === 'red' ? '红级' : '橙级') + '</span>' +
@@ -639,6 +722,9 @@ var AIWATCH = (function () {
     } else if (isSit) {
       cts = '<span class="rno">round #' + _esc(e.round) + '</span>' +
         '<span class="llmb" style="color:#c084fc;background:rgba(192,132,252,.08);border-color:rgba(192,132,252,.3)">实时口径 · 24h</span>';
+    } else if (isTh) {
+      cts = '<span class="rno">round #' + _esc(e.round) + '</span>' +
+        '<span class="llmb" style="color:#e879f9;background:rgba(232,121,249,.08);border-color:rgba(232,121,249,.35)">14 天前瞻 · 主题簇</span>';
     } else if (isFc) {
       cts = '<span class="rno">round #' + _esc(e.round) + '</span>' +
         '<span class="llmb" style="color:#38bdf8;background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.3)">近7天 vs 前周</span>';
@@ -647,6 +733,7 @@ var AIWATCH = (function () {
     }
     var knd = isEv ? { cls: 'judge', ic: '🧠 AI 研判' }
       : isSit ? { cls: 'judge', ic: '🧭 态势研判' }
+      : isTh ? { cls: 'judge', ic: '🎯 主题前瞻' }
       : isFc ? { cls: 'judge', ic: '🔮 风险预测' }
       : { cls: 'scan', ic: '🛰 值班扫描' };
     return '<div class="aw-entry ' + (isEv ? 'ev' : '') + (fresh ? ' fresh' : '') + '">' +
@@ -664,6 +751,7 @@ var AIWATCH = (function () {
       if (_logFilter === 'scan') return e.kind === 'scan';
       if (_logFilter === 'situation') return e.kind === 'situation';
       if (_logFilter === 'forecast') return e.kind === 'forecast';
+      if (_logFilter === 'theme') return e.kind === 'theme';
       return true;
     });
     var h = '<div class="aw-panel" style="margin-bottom:0"><div class="aw-ph"><span class="ic">📡</span><span class="t">决策日志实时墙</span><span class="tag">LIVE FEED · ' + _log.length + ' 条</span></div>' +
@@ -673,6 +761,7 @@ var AIWATCH = (function () {
       '<button class="fbtn ' + (_logFilter === 'event' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'event\')">🧠 大模型研判</button>' +
       '<button class="fbtn ' + (_logFilter === 'situation' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'situation\')">🧭 态势研判</button>' +
       '<button class="fbtn ' + (_logFilter === 'forecast' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'forecast\')">🔮 风险预测</button>' +
+      '<button class="fbtn ' + (_logFilter === 'theme' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'theme\')">🎯 主题前瞻</button>' +
       '<button class="fbtn ' + (_logFilter === 'scan' ? 'on' : '') + '" onclick="AIWATCH.setFilter(\'scan\')">🛰 值班扫描</button>' +
       '</div>';
     if (list.length) {
@@ -704,7 +793,7 @@ var AIWATCH = (function () {
     h += _topHTML(du, ops);
     h += '<div class="aw-grid">' +
       '<div class="aw-col-l">' + _seatHTML(du, st) + _shiftsHTML() + _linksHTML(du, st, ops) + _briefHTML(du) + _toolsHTML(du, st) + _forecastHTML() + '</div>' +
-      '<div class="aw-col-c">' + _kpisHTML(du, st, ops) + _barsHTML() + _gaugesHTML(ops) + _hotsHTML(ops) + _roundsHTML(du) + '</div>' +
+      '<div class="aw-col-c">' + _kpisHTML(du, st, ops) + _themeHTML() + _barsHTML() + _gaugesHTML(ops) + _hotsHTML(ops) + _roundsHTML(du) + '</div>' +
       '<div class="aw-col-r">' + _wallHTML(du) + '</div>' +
       '</div>';
     h += _footHTML(d, du, st);
@@ -753,20 +842,36 @@ var AIWATCH = (function () {
 
   function setFilter(f) { _logFilter = f || 'all'; _render(); }
 
+  /* #740 主题层手动装配（6h 自动周期之外的即时触发） */
+  function runTheme() {
+    try { showToast('🎯 主题前瞻装配已触发：扫描近 7 天主题簇并调用大模型研判（约 1-3 分钟）……'); } catch (e) {}
+    fetch('/api/aiwatch/theme-run', { method: 'POST', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) { refresh(true); try { showToast('🎯 主题前瞻装配完成：' + (d.items || 0) + ' 个主题已落库'); } catch (e) {} }
+        else { try { showToast('主题装配失败：' + ((d && d.error) || '服务异常')); } catch (e) {} }
+      })
+      .catch(function (e) { try { showToast('主题装配失败：' + e.message); } catch (er) {} });
+  }
+
   function init() {
     if (_inited) { refresh(true); return; }
     _inited = true;
     var root = document.getElementById('aiwatch-root');
-    /* #721b 预测清单交互：事件委托（root 上绑定一次，innerHTML 重绘不掉）——点击行展开/收起 */
+    /* #721b 预测清单交互：事件委托（root 上绑定一次，innerHTML 重绘不掉）——点击行展开/收起；#740 主题层同模式 */
     if (root && !root.__awFcBind) {
       root.__awFcBind = true;
       root.addEventListener('click', function (e) {
         var el = e.target;
-        var row = el && el.closest ? el.closest('.aw-fc .row[data-fk]') : null;
+        var row = el && el.closest ? el.closest('.aw-fc .row[data-fk], .aw-th .row[data-tk]') : null;
         if (!row) return;
-        var k = row.getAttribute('data-fk');
+        var k = row.getAttribute('data-fk') || row.getAttribute('data-tk');
         if (!k) return;
-        if (_fcOpen[k]) delete _fcOpen[k]; else _fcOpen[k] = 1;
+        if (row.hasAttribute('data-tk')) {
+          if (_thOpen[k]) delete _thOpen[k]; else _thOpen[k] = 1;
+        } else {
+          if (_fcOpen[k]) delete _fcOpen[k]; else _fcOpen[k] = 1;
+        }
         _render();
       });
     }
@@ -788,5 +893,5 @@ var AIWATCH = (function () {
     }, 1000);
   }
 
-  return { init: init, refresh: refresh, runNow: runNow, setFilter: setFilter };
+  return { init: init, refresh: refresh, runNow: runNow, setFilter: setFilter, runTheme: runTheme };
 })();

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>翻译系统深度审计问题报告 #738/#739</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0e17; color:#c8d3e0; font-family:"Microsoft YaHei","PingFang SC",sans-serif; font-size:14px; line-height:1.75; }
+  .wrap { max-width:1080px; margin:0 auto; padding:36px 28px 60px; }
+  .hud { border:1px solid #1e2a3d; background:linear-gradient(180deg,#0d1420,#0a0e17); border-radius:6px; padding:22px 26px; margin-bottom:22px; }
+  h1 { font-size:22px; color:#4fc3f7; letter-spacing:1px; border-bottom:1px solid #1e3a5f; padding-bottom:12px; margin-bottom:14px; }
+  h2 { font-size:17px; color:#4fc3f7; margin:26px 0 10px; padding-left:10px; border-left:3px solid #4fc3f7; }
+  h3 { font-size:15px; color:#7ec8ff; margin:16px 0 8px; }
+  .meta { color:#5b7a9d; font-size:12.5px; }
+  .meta b { color:#8fb8dc; font-weight:600; }
+  table { width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:13px; }
+  th { background:#122033; color:#7ec8ff; text-align:left; padding:8px 12px; border:1px solid #1e2a3d; font-weight:600; }
+  td { padding:7px 12px; border:1px solid #16222f; color:#b8c7d9; }
+  tr:nth-child(even) td { background:#0d1520; }
+  .num { text-align:right; font-family:Consolas,monospace; color:#ffd54f; }
+  .num.red { color:#ff5252; }
+  .num.green { color:#66bb6a; }
+  .rc { border-left:3px solid #ff5252; background:#140f12; padding:14px 18px; margin:12px 0; border-radius:0 6px 6px 0; }
+  .rc .tag { display:inline-block; background:#3d1010; color:#ff8a80; border:1px solid #5c1a1a; padding:1px 10px; border-radius:3px; font-size:12px; margin-right:8px; font-weight:700; }
+  .rc b { color:#ffab91; }
+  .fix { border-left:3px solid #66bb6a; background:#0e1712; padding:14px 18px; margin:12px 0; border-radius:0 6px 6px 0; }
+  .fix .tag { display:inline-block; background:#10381d; color:#81c784; border:1px solid #1b5e20; padding:1px 10px; border-radius:3px; font-size:12px; margin-right:8px; font-weight:700; }
+  code { background:#1a2332; color:#80cbc4; padding:1px 6px; border-radius:3px; font-family:Consolas,monospace; font-size:12.5px; }
+  .sample { background:#10161f; border:1px solid #1c2a3a; border-radius:4px; padding:10px 14px; margin:8px 0; font-size:13px; }
+  .sample .bad { color:#ff8a80; }
+  .sample .good { color:#a5d6a7; }
+  .sample .arrow { color:#5b7a9d; padding:0 6px; }
+  .note { color:#8fa8c0; font-size:12.5px; }
+  .warn { background:#2b1d0a; border:1px solid #6d4c00; color:#ffcc80; padding:10px 14px; border-radius:4px; margin:10px 0; font-size:13px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .kpi { background:#0d1520; border:1px solid #1c2a3a; border-radius:5px; padding:14px 18px; text-align:center; }
+  .kpi .v { font-size:26px; font-family:Consolas,monospace; font-weight:700; }
+  .kpi .l { font-size:12px; color:#5b7a9d; margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hud">
+  <h1>翻译系统深度审计问题报告</h1>
+  <div class="meta">
+    <b>编号</b>：#738 审计 / #739 修复　　<b>日期</b>：2026-09-10　　<b>范围</b>：intel_data 全库 70,064 行（近 7 天可见 66,246 行）<br>
+    <b>方法</b>：全库 SQL 分桶摸底（7 份审计脚本）+ 引擎链实测（3 引擎 × 21 用例）+ 缓存文件解剖（21 万条）+ 残留词与原文逐条对照（200 条）<br>
+    <b>结论</b>：<b>6 条根因（RC1-RC6）全部定位并修复落地</b>；存量混排 28,696 行已由批量管线清零
+  </div>
+</div>
+
+<h2>一、审计背景：用户报告的四大症状</h2>
+<table>
+<tr><th>症状</th><th>审计量化结果（修复前）</th></tr>
+<tr><td>中外文混合</td><td class="num red">混排标题 7,284 条（10.4%）／混排摘要 21,417 条（30.6%）</td></tr>
+<tr><td>没有具体内容</td><td class="num">无正文行 15,691（近 7 天可见 12,109）／摘要过薄(&lt;30字) 13,171</td></tr>
+<tr><td>太短</td><td class="num">超短标题(&lt;12字) 246 条（0.35%，截断式译文）</td></tr>
+<tr><td>未翻译</td><td class="num">标题完全未译 302（近 7 天）／正文完全未译 1,595</td></tr>
+</table>
+<p class="note">另发现：content_en 恰为 1600 字符的行 23,631 条——这是采集侧 <code>crawler.js L367</code> 的 1600 截断帽（非翻译 bug，见遗留问题）。</p>
+
+<h2>二、混排问题解剖（7,284 条标题）</h2>
+<table>
+<tr><th>分类</th><th>数量</th><th>说明</th></tr>
+<tr><td>zh_glued_en（中文黏英文专名）</td><td class="num">3,365</td><td>如「Pezeshkian说，尽管战争和制裁」</td></tr>
+<tr><td>en_glued_zh（英文黏中文）</td><td class="num">5,211</td><td>与上项有重叠，按首词归类</td></tr>
+<tr><td>paren_loc（GDELT 模板地名）</td><td class="num">160</td><td>如「印度（Ladakh）：…」词表外地名</td></tr>
+<tr><td>has_en_stopword（真整句未译）</td><td class="num">12</td><td><b>仅 12 条</b>——证明主体是专名残留，不是整句漏译</td></tr>
+</table>
+<p class="note">残留词归因：200 条抽样中 146 条（73%）的英文残词与源文同词——引擎对专名「真不译」，需片段级二次翻译，而非整句重译。</p>
+
+<h2>三、引擎链实测（审计当时的通道健康）</h2>
+<table>
+<tr><th>引擎</th><th>状态</th><th>证据</th></tr>
+<tr><td>TranSmart</td><td style="color:#66bb6a">✔ 存活（唯一稳定）</td><td>整句+片段均可译；但对全大写词（EMPLOYEE）原样返回；对中文占比≥0.5 的混排句判「已是中文」原样返回</td></tr>
+<tr><td>Youdao</td><td style="color:#ffd54f">△ 极敏感</td><td>连续两单即 411「请求频率过快」</td></tr>
+<tr><td>Baidu</td><td style="color:#ff5252">✘ 54004</td><td>「Please recharge」余额耗尽，需充值</td></tr>
+<tr><td>MyMemory / Google web</td><td style="color:#ff5252">✘ 429</td><td>匿名配额耗尽</td></tr>
+<tr><td>LibreTranslate</td><td style="color:#ff5252">✘ 全挂</td><td>公共实例不可达</td></tr>
+<tr><td>Edge</td><td style="color:#ff5252">✘ GFW</td><td>不可达</td></tr>
+</table>
+
+<h2>四、六大根因（RC1-RC6）</h2>
+
+<div class="rc"><span class="tag">RC1</span><b>混排标题整句重译永远无效（最大根因）</b><br>
+混排标题（中文占比≥0.5）整句送 TranSmart 实测 <b>6/6 原样返回</b>——引擎判「已是中文」。15 分钟翻译重试队列的「半翻译」正则 <code>\d+\s+[A-Za-z]{4,}</code> 覆盖极窄（只匹配「数字+英文」模式），对专名残留型混排完全无感。历史曾有的混排回填 automation 已不存在。</div>
+
+<div class="rc"><span class="tag">RC2</span><b>片段级修复器 _fixMixedZh 三个盲区</b><br>
+① 全大写词直接跳过（EMPLOYEE/SECURITY 可译却被放过——TranSmart 对小写输入可译，对大写输入原样返回）；② 双词片段（Ikot Ekpene）失败后整段放弃，不拆词重试；③ 无片段数帽，长文有片段风暴风险。</div>
+
+<div class="rc"><span class="tag">RC3</span><b>GDELT/回填模板路径绕过翻译链</b><br>
+<code>gdelt-events.js</code> 用本地词表构造标题（<code>title_zh: title</code> 预置中文），词表外地名/行为体（Ladakh、Ikot Ekpene、EMPLOYEE）永久停留英文，且入库管线视为「已翻译」永不进翻译链。</div>
+
+<div class="rc"><span class="tag">RC4</span><b>尾部噪声零清洗</b><br>
+尾部域名（yahoo.com / chinadaily.com.cn）、「英文媒体名+国际」（VnExpress 国际）、「首先出现在X上」三类模板残尾无任何剥离逻辑——混排摘要约 40% 属此模式（纯本地可修，零引擎成本）。</div>
+
+<div class="rc"><span class="tag">RC5</span><b>引擎链单点依赖</b><br>
+8 通道中仅 TranSmart 稳定存活。Baidu 余额耗尽（54004）、MyMemory/Google 429、Youdao 411 敏感、Libre 挂、Edge GFW——片段修复也只走 TranSmart 单通道。</div>
+
+<div class="rc"><span class="tag">RC6</span><b>缓存毒化回流（修复成果被反复冲掉）</b><br>
+<code>.translate_cache.json</code> 210,765 条缓存中 <b>94,227 条（44.7%）为混排值</b>。<code>_translateAnyCached</code> 缓存命中直接 return——绕过一切修复出口。修复过的标题若缓存中仍是毒值，下次同源翻译会把混排重新带回。</div>
+
+<h2>五、修复方案（E1-E7，全部落地于 server/server.js）</h2>
+
+<div class="fix"><span class="tag">E1</span><b>增强 _fixMixedZh（RC2）</b>：maxFrags 帽（默认 24）；全大写 ≥5 字母非缩写白名单词先 lowercase 重试（EMPLOYEE→员工）；双词片段失败拆单词逐个译逐个替换；抽公共助手 <code>_ingestMixedFix</code> 统一接线到全部 4 个 INSERT 站点（主链/_runChinaFocus/_runChinaNegative/_wechatIngest）。<br>
+<span class="note">真缩写白名单 _FRAG_ACRONYM_KEEP（UN/NATO/ASEAN/HRW 等 70+ 条）保留英文——「COP17/ICE→警察17/冰」误译教训不重蹈。</span></div>
+
+<div class="fix"><span class="tag">E2</span><b>新增 _stripTailNoise（RC4）</b>：尾部域名（TLD 白名单锚定，防误剥 St. Mary 类人名）、「媒体名+国际」、「首先/最先出现在X上」、「据X报道」四模式循环≤3 轮剥离。标题与正文入库前、缓存命中后、存量扫描中三处生效。</div>
+
+<div class="fix"><span class="tag">E3</span><b>缓存毒化自愈（RC6）</b>：<code>_translateAnyCached</code> 缓存命中改为先过 剥尾+片段修复，修复结果回写缓存（_cacheSet）——44.7% 毒化值逐次自愈，修复成果不再被冲掉。</div>
+
+<div class="fix"><span class="tag">E4</span><b>入库咽喉位根治（RC1/RC3）</b>：全部 INSERT 站点在终抛光钩子前 <code>await _ingestMixedFix(it)</code>——标题剥尾+片段修复（覆盖 GDELT 模板路径的词表外残留）、正文剥尾+短文(≤600字)混排修复。<b>新增数据从源头不再产生混排。</b></div>
+
+<div class="fix"><span class="tag">E5</span><b>新增 _fixMixedSweep 存量扫描</b>：SQL 圈定（标题混排 OR 摘要混排）AND _mixfixAt&lt;7天前，ORDER BY id DESC（最新优先）；每行修复 title/description/data_json 三口径并 <code>_cacheSet(title_en→新值)</code> 反向覆写毒化缓存（引擎侧+缓存侧双修）。7 天重访标记防修不动的专名行反复消耗引擎调用。</div>
+
+<div class="fix"><span class="tag">E6</span><b>新端点 POST /api/intel/fix-mixed</b>（authMiddleware+adminOnly，limit 20-2000）——供存量 29k 行批量清零驱动。</div>
+
+<div class="fix"><span class="tag">E7</span><b>三处自动接线</b>：15 分钟翻译重试队列开头 <code>_fixMixedSweep(120)</code>（增量）；每日 05:00 混排回填后 <code>_fixMixedSweep(800)</code>（存量）；_trMixedBackfillSweep 内补 _stripTailNoise。</div>
+
+<h2>六、修复效果</h2>
+<div class="grid2">
+  <div class="kpi"><div class="v" style="color:#ff5252">7,284</div><div class="l">修复前 · 混排标题</div></div>
+  <div class="kpi"><div class="v" style="color:#66bb6a" id="kpi-t">6,395</div><div class="l">修复后 · 混排标题（同口径）</div></div>
+  <div class="kpi"><div class="v" style="color:#ff5252">21,417</div><div class="l">修复前 · 混排摘要</div></div>
+  <div class="kpi"><div class="v" style="color:#66bb6a" id="kpi-d">20,561</div><div class="l">修复后 · 混排摘要（同口径）</div></div>
+</div>
+<p class="note" id="fill-note"><b>口径说明（2026-09-10 跑批收工实测）</b>：混排判定口径 = 标题/摘要同时含中文与 ≥4 位小写拉丁词（与 _fixMixedSweep SQL 一致）。跑批驱动累计扫尽存量队列（最后一次扫描 scanned=0 收工，7 天重访标记全库覆盖），标题口径 7,284→6,395（-12.2%）、摘要 21,417→20,561（-4.0%）。剩余部分的解剖：抽样核实显示其主体为「中文句 + 英文专名」（人名 Mamata Banerjee／Keir Starmer、品牌 iPhone、机构名）——中文表达完整、不影响阅读，引擎对词表外专名「真不译」；其中真硬伤（含 ≥12 字符英文短语，如半译人名「Rajnath 辛格」）仅 <b>766 条（占全库 1.1%）</b>，属 zh-dict 词典外词，需扩充专名词典或接入更强引擎（Baidu 充值/Kimi 术语翻译）根治，由 7 天重访机制持续消化。另：无中文标题残留 148 条、无正文行 15,778 行（采集侧无正文源，见遗留问题）。</p>
+
+<h3>实测修复样本（片段级二次翻译 + 尾部剥离）</h3>
+<div class="sample"><span class="bad">美国驻以色列大使访问了约旦河西岸 Turmus Ayya 镇…</span><span class="arrow">→</span><span class="good">美国驻以色列大使访问了约旦河西岸图尔穆斯·艾亚镇…</span></div>
+<div class="sample"><span class="bad">Who Really Controls Afghanistan's Mineral Wealth - slguardian.org</span><span class="arrow">→</span><span class="good">谁真正控制着阿富汗的矿产资源</span>（尾部域名剥离 + 整句翻译）</div>
+<div class="sample"><span class="bad">美国财政部长斯科特·贝森特（Scott Bessent）表示…</span><span class="arrow">→</span><span class="good">美国财政部长斯科特·贝森特表示…</span>（括号专名二次翻译）</div>
+<div class="sample"><span class="bad">博尔索纳里安(Bolsonarians)冲击国会…</span><span class="arrow">→</span><span class="good">博尔索纳里安支持者冲击国会…</span></div>
+
+<h3>引擎实测（修复后复测）</h3>
+<p>片段级 TranSmart：Ladakh→拉达克 ✔、EMPLOYEE→员工 ✔（lowercase 重试生效）、Collinsville→科林斯维尔 ✔、Bolsonarians→博尔索纳里安 ✔；品牌名（Movistar/Bangchak）与生僻地名（Ikot Ekpene/Bagerhat）引擎真不译，按「不编造」铁律保留英文。</p>
+
+<h2>七、遗留问题与建议（本轮未修，已定位）</h2>
+<table>
+<tr><th>问题</th><th>规模</th><th>性质 / 建议</th></tr>
+<tr><td>无正文行</td><td class="num">15,778</td><td>apSearch/GDELT 源本身仅返回标题；需 fulltext 重抓管道（重工程，另行立项）</td></tr>
+<tr><td>专名硬伤残留</td><td class="num">766</td><td>含 ≥12 字符英文短语（半译人名「Rajnath 辛格」类）；建议 zh-dict 扩充高频人名 + Baidu 充值后片段修复</td></tr>
+<tr><td>无中文标题残留</td><td class="num">148</td><td>引擎不可达期的漏网行；7 天重访机制将持续消化</td></tr>
+<tr><td>content_en 1600 截断帽</td><td class="num">23,631</td><td>crawler.js L367 采集帽；建议评估提到 3000-4000</td></tr>
+<tr><td>Baidu 引擎余额耗尽</td><td class="num red">54004</td><td><b>需决策：充值恢复</b>（当前 TranSmart 单点承载全部负载）</td></tr>
+<tr><td>译链熔断</td><td class="num">6/8 通道</td><td>MyMemory/Google 429、Libre 挂、Edge GFW 属外因；Youdao 411 可作为片段修复第二通道</td></tr>
+<tr><td>GDELT 碎片动词生硬译</td><td class="num">~160</td><td>「德里胁迫军人」类 CAMEO 短语机翻生硬，属词表工程（gdelt-actors.js 扩表）</td></tr>
+<tr><td>西语专名坏译</td><td class="num">少量</td><td>「吃=Ate」类属引擎质量上限</td></tr>
+</table>
+
+<h2>八、变更清单</h2>
+<table>
+<tr><th>文件</th><th>变更</th></tr>
+<tr><td>server/server.js</td><td>E1-E7：_fixMixedZh 增强 / _stripTailNoise 新增 / _ingestMixedFix 新增×4 站点接线 / _translateAnyCached 缓存自愈 / _fixMixedSweep 新增 / fix-mixed 端点新增 / 三处自动接线</td></tr>
+</table>
+<p class="note">审计脚本：orps-tmp/_p738_audit{,2..6}.js（摸底/钻取/归因）+ _p738_enginetest{,2}.js + _p739_{restart,drive,sample}.js（可复跑验证）</p>
+
+</div>
+</body>
+</html>

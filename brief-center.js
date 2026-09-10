@@ -49,7 +49,14 @@
     '.lb-adv{font-size:12px;color:#dff3ff;line-height:1.8;padding:4px 0}' +
     '.lb-foot{font-size:10px;color:#5a7a99;margin-top:10px;border-top:1px dashed rgba(0,212,255,.2);padding-top:8px}' +
     '.lb-empty{font-size:11.5px;color:#5a7a99;padding:10px 4px}' +
-    '.lb-loading{padding:40px 0;text-align:center;color:#22d3ee;font-size:13px}';
+    '.lb-loading{padding:40px 0;text-align:center;color:#22d3ee;font-size:13px}' +
+    /* #740-1 AI 深度研判 / 未来趋势预测卡片 */
+    '.lb-fc{border:1px solid rgba(124,58,237,.25);border-left:3px solid #c084fc;border-radius:8px;padding:9px 12px;margin-bottom:8px;background:linear-gradient(120deg,rgba(124,58,237,.06),rgba(13,28,54,.4))}' +
+    '.lb-fc-hd{display:flex;align-items:center;gap:8px;margin-bottom:5px}' +
+    '.lb-fc-tt{font-size:13px;font-weight:800;color:#e9d5ff;flex:1}' +
+    '.lb-fc-conf{font-size:10px;font-weight:800;border:1px solid currentColor;border-radius:9px;padding:1px 8px;white-space:nowrap}' +
+    '.lb-fc-tx{font-size:11.5px;color:#d7e9f9;line-height:1.8}' +
+    '.lb-fc-trig{font-size:10px;color:#ffaa33;margin-top:5px;border-top:1px dashed rgba(255,136,0,.25);padding-top:4px}';
   document.head.appendChild(st);
 })();
 var LEADERBRIEF = {
@@ -66,15 +73,33 @@ var LEADERBRIEF = {
     var self = this;
     if (this._loading) return;
     this._loading = true;
+    this._ai = null;   /* #740-1 每次刷新重取 AI 研判（服务端 30min 缓存，常态秒回） */
     this._renderBody('<div class="lb-loading">⟳ 领导要报装配中（真实库 24h 聚合）…</div>');
-    fetch('/api/insight/leader-brief').then(function (r) { return r.json(); }).then(function (d) {
-      self._loading = false;
-      self._data = (d && d.ok) ? d : null;
-      self._renderBody(null);
-    }).catch(function () {
-      self._loading = false;
-      self._renderBody('<div class="lb-empty">⚠️ 情报洞察服务不可达，请确认后端运行后刷新</div>');
-    });
+    /* #740-1 AI 深度研判 + 未来趋势预测并行拉取（独立 90s 超时：LLM 首算最长 60s） */
+    fetch('/api/insight/leader-brief-ai').then(function (r) { return r.json(); })
+      .then(function (a) { self._ai = (a && a.ok) ? a : null; if (self._data) self._renderBody(null); })
+      .catch(function () {});
+    /* 2026-09-07 #670：30s 超时兜底 + 一次自动重试（连接疏通后正常 <1s） */
+    var ac = ('AbortController' in window) ? new AbortController() : null;
+    var timer = ac ? setTimeout(function () { try { ac.abort(); } catch (e) {} }, 30000) : null;
+    fetch('/api/insight/leader-brief', ac ? { signal: ac.signal } : undefined)
+      .then(function (r) { if (timer) clearTimeout(timer); return r.json(); })
+      .then(function (d) {
+        self._loading = false;
+        self._data = (d && d.ok) ? d : null;
+        self._renderBody(null);
+      })
+      .catch(function () {
+        if (timer) clearTimeout(timer);
+        self._loading = false;
+        if (!self._retried) {
+          self._retried = true;
+          setTimeout(function () { self.load(); }, 2000); /* 静默重试一次 */
+          return;
+        }
+        self._retried = false;
+        self._renderBody('<div class="lb-empty">⚠️ 情报洞察服务不可达，请点击右上角「刷新」重试</div>');
+      });
   },
 
   render: function () {
@@ -122,6 +147,35 @@ var LEADERBRIEF = {
     ].map(function (x) {
       return '<div class="lb-kpi"><div class="v" style="color:' + x[2] + '">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>';
     }).join('');
+    /* ===== #740-1 AI 深度研判 + 未来趋势预测（Kimi 参谋级；LLM 不可达回落规则模板） ===== */
+    var ai = this._ai;
+    var aiHtml;
+    if (!ai) {
+      aiHtml = '<div class="lb-panel" style="margin-top:10px">' +
+        '<div class="lb-sec-tt">🧠 AI 深度研判与未来趋势预测</div>' +
+        '<div class="lb-loading" style="padding:16px 0;font-size:12px">⟳ 大模型参谋级研判生成中（基于近 24h 真实库要情，首算约 30-60 秒；生成后 30 分钟内直接复用）…</div>' +
+        '</div>';
+    } else {
+      var confC = { '高': '#ff3355', '中': '#ff8800', '低': '#7aa5c9' };
+      aiHtml = '<div class="lb-panel" style="margin-top:10px">' +
+        '<div class="lb-sec-tt">🧠 AI 深度研判' + (ai.llmOk ? '（Kimi 参谋级）' : '（规则模板 · 大模型暂不可达）') + '</div>' +
+        String(ai.judge || '').split('\n').filter(Boolean).map(function (p) {
+          return '<div class="lb-adv" style="white-space:pre-wrap">' + esc(p) + '</div>';
+        }).join('') +
+        '</div>' +
+        '<div class="lb-panel" style="margin-top:10px">' +
+        '<div class="lb-sec-tt">🔮 未来趋势预测（7-14 天 · AI 前瞻）</div>' +
+        ((ai.forecasts || []).length ? ai.forecasts.map(function (f) {
+          return '<div class="lb-fc">' +
+            '<div class="lb-fc-hd"><span class="lb-fc-tt">' + esc(f.title) + '</span>' +
+            '<span class="lb-fc-conf" style="color:' + (confC[f.conf] || confC['低']) + '">' + esc(f.conf || '中') + '置信</span></div>' +
+            '<div class="lb-fc-tx">' + esc(f.text) + '</div>' +
+            '<div class="lb-fc-trig">⚠ 触发信号：' + esc(f.trigger) + '</div>' +
+            '</div>';
+        }).join('') : '<div class="lb-empty">暂无预测条目</div>') +
+        '<div class="lb-foot">' + esc(ai.note || '') + '</div>' +
+        '</div>';
+    }
     var html =
       '<div class="lb-grid">' +
         '<div class="lb-panel">' +
@@ -138,6 +192,7 @@ var LEADERBRIEF = {
           }).join('') : '<div class="lb-empty">无待办风险项</div>') +
         '</div>' +
       '</div>' +
+      aiHtml +
       '<div class="lb-panel" style="margin-top:10px">' +
         '<div class="lb-sec-tt">💬 一句话决策建议（自动装配 · 引用真实数字）</div>' +
         (d.advice || []).map(function (a, n) { return '<div class="lb-adv">▸ ' + esc(a) + '</div>'; }).join('') +
@@ -146,9 +201,24 @@ var LEADERBRIEF = {
     el.innerHTML = stat ? '<div class="lb-kpis">' + stat + '</div>' + html : html;
   },
 
-  /* 导出一页纸：打开打印窗口（公文白底版式） */
+  /* 导出一页纸：先确保 AI 深度研判就绪（服务端 30min 缓存，常态秒回；首算最长 60s），
+   * 再打开打印窗口（公文白底版式，含 AI 深度研判 + 未来趋势预测章节） */
   printPage: function () {
+    var self = this;
     var d = this._data;
+    if (!d) { try { showToast('暂无可导出的要报数据'); } catch (e) {} return; }
+    if (this._ai || this._aiFetching) { this._printNow(); return; }
+    this._aiFetching = true;
+    try { showToast('正在装配 AI 深度研判与趋势预测（首算约 30-60 秒），完成后自动打开打印窗口…'); } catch (e) {}
+    fetch('/api/insight/leader-brief-ai').then(function (r) { return r.json(); })
+      .then(function (a) { self._ai = (a && a.ok) ? a : null; })
+      .catch(function () {})
+      .then(function () { self._aiFetching = false; self._printNow(); });
+  },
+
+  _printNow: function () {
+    var d = this._data;
+    var ai = this._ai;
     if (!d) { try { showToast('暂无可导出的要报数据'); } catch (e) {} return; }
     var s = d.stats || {};
     var w = window.open('', '_blank', 'width=900,height=1200');
@@ -160,6 +230,24 @@ var LEADERBRIEF = {
     var chinaRows = (d.chinaTop || []).map(function (i, n) {
       return '<tr><td>' + (n + 1) + '</td><td>' + esc(i.title) + '</td><td>' + esc(i.country || '—') + '</td></tr>';
     }).join('');
+    /* #740-1 AI 深度研判 + 未来趋势预测章节（LLM 不可达时用规则模板，均引用真实数字） */
+    var aiSecs = '';
+    if (ai) {
+      if (ai.judge) {
+        aiSecs += '<h2>四、深度研判（AI 参谋级）</h2>' +
+          String(ai.judge).split('\n').filter(Boolean).map(function (p) {
+            return '<p class="adv">' + esc(p) + '</p>';
+          }).join('');
+      }
+      if ((ai.forecasts || []).length) {
+        aiSecs += '<h2>五、未来趋势预测（7-14 天 · AI 前瞻）</h2>' +
+          ai.forecasts.map(function (f) {
+            return '<div class="fc"><h3>' + esc(f.title) + '（' + esc(f.conf || '中') + '置信）</h3>' +
+              '<p class="fc-tx">' + esc(f.text) + '</p>' +
+              '<p class="fc-trig">触发信号：' + esc(f.trigger) + '</p></div>';
+          }).join('');
+      }
+    }
     w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>领导要报速览</title><style>' +
       'body{font-family:"FangSong","仿宋",serif;margin:46px;color:#000;background:#fff}' +
       'h1{text-align:center;font-size:22px;font-family:"SimHei","黑体";margin:0 0 4px;letter-spacing:6px}' +
@@ -167,6 +255,10 @@ var LEADERBRIEF = {
       'h2{font-size:15px;font-family:"SimHei","黑体";border-left:4px solid #a00;padding-left:8px;margin:18px 0 8px}' +
       'table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #999;padding:5px 8px;text-align:left}th{background:#f2f2f2;font-family:"SimHei","黑体"}' +
       '.adv{font-size:13px;line-height:2;text-indent:2em}.foot{margin-top:24px;text-align:right;font-size:12px}' +
+      '.fc{margin:10px 0;padding:8px 10px;border:1px solid #999;border-left:4px solid #a00;background:#fafafa}' +
+      '.fc h3{font-size:13px;font-family:"SimHei","黑体";margin:0 0 5px}' +
+      '.fc .fc-tx{font-size:12px;line-height:2;text-indent:2em;margin:0}' +
+      '.fc .fc-trig{font-size:11px;color:#833;margin:4px 0 0}' +
       '</style></head><body>' +
       '<h1>领导要报速览</h1>' +
       '<div class="meta">' + esc(d.generatedAt || '') + ' · 数据窗口近 24 小时 · 海外利益保护情报预警平台</div>' +
@@ -176,7 +268,8 @@ var LEADERBRIEF = {
       (rows ? '<table><tr><th>#</th><th>事件</th><th>国别</th><th>类别</th></tr>' + rows + '</table>' : '<p style="font-size:13px">近24小时无红橙事件。</p>') +
       '<h2>三、涉华要点</h2>' +
       (chinaRows ? '<table><tr><th>#</th><th>事件</th><th>国别</th></tr>' + chinaRows + '</table>' : '<p style="font-size:13px">近24小时无涉华关联情报。</p>') +
-      '<h2>四、决策建议</h2>' +
+      aiSecs +
+      '<h2>' + (ai ? '六' : '四') + '、决策建议</h2>' +
       (d.advice || []).map(function (a) { return '<p class="adv">' + esc(a) + '。</p>'; }).join('') +
       '<div class="foot">海外利益保护情报预警平台<br>' + esc(String(d.generatedAt || '').split(' ')[0] || '') + '</div>' +
       '</body></html>');
@@ -307,7 +400,7 @@ var INSIGHT = {
       }).join('');
       self._modal('🔍 相似历史事件匹配',
         '<div style="font-size:12px;color:#dff3ff;font-weight:700;margin-bottom:4px">' + esc(a.title || '') + '</div>' +
-        '<div style="font-size:10px;color:#7aa5c9;margin-bottom:12px">类别 ' + esc(a.type || '—') + ' · ' + esc(a.country || '未标注') + ' · 匹配口径：同类别 + 标题实质词元重合（同国加成）· 近 90 天</div>' +
+        '<div style="font-size:10px;color:#7aa5c9;margin-bottom:12px">类别 ' + esc(a.type || '—') + ' · ' + esc(a.country || '未标注') + ' · 匹配口径：同类别 + 标题实质词元重合（同国加成）· 全库不限时</div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
           '<div style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:6px 12px;font-size:11px;color:#dff3ff">相似事件 <b style="color:#22d3ee">' + (d.matchCount || 0) + '</b> 起</div>' +
           '<div style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:6px 12px;font-size:11px;color:#dff3ff">同类总量(90天) <b style="color:#22d3ee">' + (st.total90d || 0) + '</b> 条</div>' +
