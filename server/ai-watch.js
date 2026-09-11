@@ -1026,6 +1026,68 @@ function aiWatch(ctx) {
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
+  /* ---------- #743 P0-1 预测核验命中率公示牌（聚合端点：45s 缓存；overall + 分维度 + 分条目累计榜 + 最近核验明细） ---------- */
+  let _accCache = null, _accCacheAt = 0;
+  router.get('/accuracy', async (req, res) => {
+    try {
+      await ensureTables();
+      if (_accCache && Date.now() - _accCacheAt < 45000) return res.json(_accCache);
+      const out = { ok: true, generatedAt: new Date().toLocaleString('zh-CN') };
+      /* 总体 + 待核验透明度（pending=滚动留底未到期；nextDueAt=最早一批满 7 天时间） */
+      const { rows: ov } = await q(`SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE verify_status IS NOT NULL)::int AS verified,
+          COUNT(*) FILTER (WHERE verify_status='hit')::int AS hit,
+          COUNT(*) FILTER (WHERE verify_status='near')::int AS near,
+          COUNT(*) FILTER (WHERE verify_status='miss')::int AS miss,
+          COUNT(*) FILTER (WHERE verify_status IS NULL)::int AS pending,
+          MIN(ts)::text AS first_at,
+          (MIN(ts) FILTER (WHERE verify_status IS NULL) + INTERVAL '7 days')::text AS next_due,
+          MAX(verified_at)::text AS last_verified
+        FROM ai_forecast_history`, []);
+      const o = ov[0] || {};
+      const vd = o.verified || 0;
+      out.overall = {
+        total: o.total || 0, verified: vd, hit: o.hit || 0, near: o.near || 0, miss: o.miss || 0,
+        rate: vd ? Math.round((o.hit || 0) / vd * 100) : null,
+        nearInclusive: vd ? Math.round(((o.hit || 0) + (o.near || 0)) / vd * 100) : null,
+        pending: o.pending || 0, firstAt: o.first_at || null, nextDueAt: o.next_due || null, lastVerifiedAt: o.last_verified || null
+      };
+      /* 分维度（国别/风险域） */
+      const { rows: bk } = await q(`SELECT kind,
+          COUNT(*) FILTER (WHERE verify_status IS NOT NULL)::int AS verified,
+          COUNT(*) FILTER (WHERE verify_status='hit')::int AS hit,
+          COUNT(*) FILTER (WHERE verify_status='near')::int AS near,
+          COUNT(*) FILTER (WHERE verify_status='miss')::int AS miss
+        FROM ai_forecast_history GROUP BY 1`, []);
+      out.byKind = {};
+      bk.forEach(r => {
+        out.byKind[r.kind] = { verified: r.verified, hit: r.hit, near: r.near, miss: r.miss, rate: r.verified ? Math.round(r.hit / r.verified * 100) : null };
+      });
+      /* 分条目累计榜（kind+name 聚合，命中+半分near 排序） */
+      const { rows: bi } = await q(`SELECT kind, name,
+          COUNT(*) FILTER (WHERE verify_status IS NOT NULL)::int AS verified,
+          COUNT(*) FILTER (WHERE verify_status='hit')::int AS hit,
+          COUNT(*) FILTER (WHERE verify_status='near')::int AS near,
+          COUNT(*) FILTER (WHERE verify_status='miss')::int AS miss,
+          (ARRAY_agg(verify_status ORDER BY ts DESC) FILTER (WHERE verify_status IS NOT NULL))[1] AS last
+        FROM ai_forecast_history GROUP BY 1,2`, []);
+      out.items = bi.map(r => ({ kind: r.kind, name: r.name, verified: r.verified, hit: r.hit, near: r.near, miss: r.miss, rate: r.verified ? Math.round(r.hit / r.verified * 100) : null, last: r.last || null }))
+        .sort((a, b) => ((b.hit || 0) + (b.near || 0) * 0.5) - ((a.hit || 0) + (a.near || 0) * 0.5));
+      /* 最近核验明细（15 条） */
+      const { rows: rc } = await q(`SELECT kind, name, direction, verify_status, verify_actual, verified_at::text AS vat
+        FROM ai_forecast_history WHERE verify_status IS NOT NULL ORDER BY verified_at DESC LIMIT 15`, []);
+      out.recent = rc.map(r => {
+        let ad = null;
+        try { ad = r.verify_actual ? JSON.parse(r.verify_actual) : null; } catch (e) { ad = null; }
+        return { kind: r.kind, name: r.name, direction: r.direction, verdict: r.verify_status, actualDelta: ad ? ad.actual_delta : null, a7: ad ? ad.a7 : null, n7: ad ? ad.n7_base : null, verifiedAt: r.vat };
+      });
+      out.note = '预测核验闭环公示牌（#743）：每条 7 天方向预测满期后按预测窗实际入库回算，判 hit / near（方向对幅度不足）/ miss 三档；连续 3 轮 miss 的条目自动降置信度并在装配层生效。零模拟——机制上线（' + String(out.overall.firstAt || '').slice(0, 10) + '）之前的预测未留底、不回溯构造。';
+      _accCache = out; _accCacheAt = Date.now();
+      res.json(out);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
   router.post('/run', async (req, res) => {
     const r = await runRound(true);
     res.json(Object.assign({ note: '手动触发一轮 AI 值班扫描研判（常规节奏 ' + Math.round(ROUND_MS / 60000) + ' 分钟/轮自动执行）' }, r));

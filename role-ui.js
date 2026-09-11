@@ -10,7 +10,7 @@
   const ROLES = {
     mfa: { key: 'mfa', name: '外交部领事保护', icon: '🛂', defaultView: 'situation', focus: ['人员','领保案件','使领馆'], maxClearance: 'sensitive' },
     mofcom: { key: 'mofcom', name: '商务部海外安全', icon: '🏭', defaultView: 'country', focus: ['企业','项目','供应链'], maxClearance: 'sensitive' },
-    mps: { key: 'mps', name: '公安部海保局', icon: '🛡️', defaultView: 'threatorgs', focus: ['威胁','案件','线索'], maxClearance: 'secret' },
+    mps: { key: 'mps', name: '公安部海保局', icon: '🛡️', defaultView: 'terjudge', focus: ['威胁','案件','线索'], maxClearance: 'secret' },
     enterprise: { key: 'enterprise', name: '中企海外安全', icon: '🏢', defaultView: 'country', focus: ['本企业','项目风险','上级指令'], maxClearance: 'internal' }
   };
 
@@ -32,6 +32,8 @@
     models:'风险预测模型', reportsc:'专题分析中心', aireport:'AI智能研判',
     datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
     'manual-entry':'情报录入', thinktank:'智库报告库',
+    'exec-travel':'高管出境风险监测', myrisk:'我的风险工作台', impact:'影响传导研判', sanctions:'制裁名单碰撞',
+    supply:'供应链中断传导预测', barrier:'国别准入壁垒日历', evac:'统一应急中心', socpulse:'境外社媒舆情监测',
     /* 合并前的旧键（兼容跳转用） */
     autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报',
     explain:'可解释审计', role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池',
@@ -45,7 +47,7 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','myfocus','threatroom','command','monitor','intel','alerts','terjudge','brief','aiwatch','evjudge','entrisk','country','countryfile','reports','reportsc','aireport','models','datapool','datagov','manual-entry','thinktank','settings']
+    enterprise: ['situation','threatroom','command','monitor','intel','alerts','terjudge','brief','aiwatch','evjudge','entrisk','country','myrisk','reports','reportsc','aireport','models','datapool','datagov','manual-entry','thinktank','settings']
   };
 
   const PERMISSION_MATRIX = [

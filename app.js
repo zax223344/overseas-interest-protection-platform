@@ -4177,8 +4177,16 @@ const VIEW_MAP={
   brief:{t:'领导要报速览',b:'分析研判 / 领导要报速览（30秒一页纸 · 红橙置顶 · 涉华优先）'},
   evjudge:{t:'事件研判中心',b:'分析研判 / 事件研判中心（事件时间流研判 · 历史相似事件分析 · 智能研判 · 公文输出）'},
   entrisk:{t:'涉企风险预警研判',b:'分析研判 / 涉企风险预警研判（七域全风险：管控制裁·冲突波及·恐袭遇袭·社会动荡·政局政策·经济金融·灾害设施 · AI大盘研判 · 国别下钻 · 30天前瞻）'},
-  terjudge:{t:'全球恐袭态势监测中心',b:'监测中心 / 全球恐袭态势监测中心（常开雷达 · 威胁实体活跃度异动 · 红橙预警 · AI智库研判 · 反恐态势通报）'},
-  country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · 企业资产）'},
+  'exec-travel':{t:'高管出境风险监测',b:'分析研判 / 高管出境风险监测（孟晚舟式三层闭环：事前预警·事中监测·事后复盘 · 硬规则H01-H04命中即红 · 六维加权评分可解释下钻 · 制裁名单70k实体比对 · 90天执法动态池）'},
+  myrisk:{t:'我的风险工作台',b:'分析研判 / 我的风险工作台（企业订阅画像 · 三维过滤 · 24H 企业专属预警流 · 重点目标监测）'},
+  impact:{t:'影响传导研判',b:'分析研判 / 影响传导研判（红级事件 → 中资资产传导 · 三维匹配（同国别/地理邻近/行业定向）· AI 三段式：传导路径 / 影响量级 / 建议动作）'},
+  sanctions:{t:'制裁名单碰撞',b:'分析研判 / 制裁名单碰撞筛查（OpenSanctions us_sanctions 12 源 27k 实体 · 撞中资 35 企/项目 + intel_data 事件/供应商 · 致命/高/中 三级严重度 · 自由搜索）'},
+  supply:{t:'供应链中断传导预测',b:'分析研判 / 供应链中断传导预测（六大咽喉点 + 六大走廊 30d 中断事件 → 中资项目暴露匹配 · AI 传导链 / 中断概率 / 建议动作）'},
+  barrier:{t:'国别准入壁垒日历',b:'分析研判 / 国别准入壁垒日历（贸易救济 × 出口管制 × 投资审查 × 制裁清单 · 60d 国别生效日历 · 涉华前瞻预警）'},
+  evac:{t:'统一应急中心',b:'分析研判 / 双轨应急：结构化基线预案（国别应急档案：撤离路线/使领馆/空港海港/避难所）+ AI 深度预案（真实项目档案 + 红橙事件 → Kimi 参谋级五段式）'},
+  socpulse:{t:'境外社媒舆情监测',b:'分析研判 / 境外社媒舆情监测（7d social_media/socmint 涉华舆情聚合 · 平台/频道/国别趋势）'},
+  terjudge:{t:'全球恐袭态势监测中心',b:'监测中心 / 全球恐袭态势监测中心（恐袭监测雷达 · 威胁实体异动 · 红橙预警 · AI智库研判 · 组织图谱）'},
+  country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · COSRI 画像 · 企业资产 · 档案总表）'},
   countryfile:{t:'国别档案总表',b:'分析研判 / 国别档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
   reports:{t:'周期简报中心',b:'分析研判 / 周期简报中心（研判简报 · 每日简报 · 每月/每季/半年/全年简报）'},
   'pb-monthly':{t:'每月简报',b:'分析研判 / 周期简报中心 / 每月简报（月度综合态势 · 公文版导出）'},
@@ -4220,6 +4228,9 @@ const VIEW_MAP={
  * 数据中枢 = 数据源库(datasources) + 公众号采集(wechat)
  * 数据治理 = 数据中心(datacenter) + 非预警数据池(sidepool) + 可解释审计(explain)
  * 系统设置 = 设置 + 角色分级(role)
+ * 国别风险研判(country) += 档案总表(countryfile)   [#760 P0-D 2026-09-11]
+ * 恐袭监测中心(terjudge) = 恐袭雷达 + 组织图谱(threatorgs)   [#760 P0-E]
+ * 我的风险工作台(myrisk) = 企业订阅画像 + 重点目标监测(myfocus)   [#760 P0-F]
  * ============================================================ */
 const VIEW_MERGE_ALIAS={
   autoalert:'alerts', anomaly:'alerts',
@@ -4228,6 +4239,7 @@ const VIEW_MERGE_ALIAS={
   matrix:'country', forecast:'country', assets:'country', cosri:'country',
   datasources:'datapool', wechat:'datapool',
   datacenter:'datagov', sidepool:'datagov', funnel:'datagov', archive:'datagov', explain:'datagov',
+  countryfile:'country', threatorgs:'terjudge', myfocus:'myrisk',
   role:'settings'
 };
 const VIEW_MERGE_TABS={
@@ -4247,7 +4259,16 @@ const VIEW_MERGE_TABS={
     {k:'matrix',label:'📊 风险矩阵'},
     {k:'forecast',label:'🔮 预测推演'},
     {k:'cosri',label:'🌐 COSRI 风险画像'},
-    {k:'assets',label:'🏢 企业资产'}
+    {k:'assets',label:'🏢 企业资产'},
+    {k:'countryfile',label:'📋 档案总表'}
+  ],
+  terjudge:[
+    {k:'terjudge',label:'📡 恐袭监测雷达'},
+    {k:'threatorgs',label:'🎯 组织图谱'}
+  ],
+  myrisk:[
+    {k:'myrisk',label:'🏢 企业订阅画像'},
+    {k:'myfocus',label:'⭐ 重点目标监测'}
   ],
   datapool:[
     {k:'datasources',label:'🛰️ 数据源库'},
@@ -4280,8 +4301,8 @@ function installViewMerge(){
       content.appendChild(el);
     }
   });
-  /* 2. 既有伞形（alerts/settings）：原内容包一层 subview */
-  ['alerts','settings'].forEach(function(u){
+  /* 2. 既有伞形（alerts/settings/terjudge/myrisk）：原内容包一层 subview */
+  ['alerts','settings','terjudge','myrisk'].forEach(function(u){
     var host=document.getElementById('view-'+u);
     if(!host||document.getElementById('sv-'+u)) return;
     var wrap=document.createElement('div');
@@ -4372,6 +4393,14 @@ function runViewInit(v){
       else if(v==='evjudge'){ if(typeof EVENTINSIGHT!=='undefined')EVENTINSIGHT.init(); }
       else if(v==='terjudge'){ if(typeof TERRORCENTER!=='undefined')TERRORCENTER.init(); }
       else if(v==='entrisk'){ if(typeof ENTRISK!=='undefined')ENTRISK.init(); }
+      else if(v==='exec-travel'){ if(typeof EXECTRAVEL!=='undefined')EXECTRAVEL.init(); }
+      else if(v==='myrisk'){ if(typeof MYRISK!=='undefined')MYRISK.init(); }
+      else if(v==='impact'){ if(typeof IMPACTCHAIN!=='undefined')IMPACTCHAIN.init(); }
+      else if(v==='sanctions'){ if(typeof SANCTIONS!=='undefined')SANCTIONS.init(); }
+      else if(v==='supply'){ if(typeof SUPPLY!=='undefined')SUPPLY.init(); }
+      else if(v==='barrier'){ if(typeof BARRIER!=='undefined')BARRIER.init(); }
+      else if(v==='evac'){ if(typeof EVACPLAN!=='undefined')EVACPLAN.init(); }
+      else if(v==='socpulse'){ if(typeof SOCPULSE!=='undefined')SOCPULSE.init(); }
       else if(v==='analysis'){ if(typeof DATACENTER!=='undefined')DATACENTER.renderAnalysis(false,'analysis-body'); }
       else if(v==='explain'){ if(typeof EXPLAINABILITY!=='undefined')EXPLAINABILITY.render(); }
       else if(v==='manual-entry'){ if(typeof MANUALENTRY!=='undefined')MANUALENTRY.init(); }
@@ -9038,7 +9067,14 @@ var INTELCENTER={
     var ge=c?c.geoint:null;
     if(window.GEOINTLIVE) html+=GEOINTLIVE.panelHtml();
     if(window.DEEPSEARCH) html+=DEEPSEARCH.panelHtml();
-    if(window.SOCMINT) html+=SOCMINT.panelHtml();
+    /* #759 P0-B：SOCMINT 采集面板不再在 GEOINT 内重复渲染（本体在数据源管理、聚合在社交脉搏） */
+    html+='<div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px dashed var(--border2);cursor:pointer" onclick="navigateTo(\'socpulse\')">'+
+      '<span style="font-size:20px">📱</span>'+
+      '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--purple)">社交媒体情报（SOCMINT）</div>'+
+      '<div style="font-size:11px;color:var(--text3)">社媒采集与舆情已集中管理，不再在 GEOINT 页重复展示</div></div>'+
+      '<span class="btn sm" onclick="event.stopPropagation();navigateTo(\'datasources\')">🛠️ 采集工具</span>'+
+      '<span class="btn primary sm">前往社交舆情监测 →</span>'+
+      '</div>';
     var chokeTotal=ge?ge.chokes.reduce(function(s,x){return s+x.n;},0):0;
     html+='<div class="grid" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">';
     var gstats=[
@@ -9103,7 +9139,6 @@ var INTELCENTER={
     el.innerHTML=html;
     if(window.GEOINTLIVE&&document.getElementById('gl-map')){try{GEOINTLIVE.initMap();}catch(e){console.warn('[GEOINTLIVE]',e);}}
     if(window.DEEPSEARCH) DEEPSEARCH.loadChannels();
-    if(window.SOCMINT) SOCMINT.loadChannels();
   },
   showLayerForm(name){
     if(!PERM.canUpload()){showToast('\u26a0\ufe0f \u8bf7\u5148\u767b\u5f55');return;}
@@ -11016,8 +11051,8 @@ function showSitEvents(){
 // ===== MONITOR VIEW (Map + Countries + Events + Chokepoints + Corridors) =====
 const MONITOR={
   tab:'map',
-  switch(t){if(t==='threats'){navigateTo('threatorgs');return;}this.tab=t;var _tabOrder=['map','countries','events','corridors'];document.querySelectorAll('#mon-tabs .dc-tab').forEach((e,i)=>{e.classList.toggle('active',_tabOrder[i]===t);});this.render();if(t!=='geoint')this._stopGeointCarousel();},
-  init(){this.switch(this.tab||'geoint');},
+  switch(t){if(t==='threats'){navigateTo('threatorgs');return;}this.tab=t;var _tabOrder=['map','countries','events','corridors'];document.querySelectorAll('#mon-tabs .dc-tab').forEach((e,i)=>{e.classList.toggle('active',_tabOrder[i]===t);});this.render();},
+  init(){this.switch(this.tab||'map');},
   render(){
     const el=document.getElementById('mon-content');
     if(this.tab==='map')this.renderMap(el);
@@ -11026,7 +11061,6 @@ const MONITOR={
     else if(this.tab==='chokepoints'){ if(window.STRAT_VIZ&&STRAT_VIZ.renderChokepoints){STRAT_VIZ.renderChokepoints(el);} else if(typeof WORLDMAP!=='undefined'){ WORLDMAP.activeLayer='chokepoints'; WORLDMAP.render(); } }
     else if(this.tab==='corridors'){ if(window.STRAT_VIZ&&STRAT_VIZ.renderCorridors){STRAT_VIZ.renderCorridors(el);} else if(typeof WORLDMAP!=='undefined'){ WORLDMAP.activeLayer='corridors'; WORLDMAP.render(); } }
     else if(this.tab==='flight-ais')this.renderFlightAis(el);
-    else if(this.tab==='geoint')this.renderGeoint(el);
     /* 应急指南始终固定在监测中心最下方（所有子tab共用） */
     this.renderEmergencyGuide();
   },
@@ -11434,27 +11468,43 @@ const MONITOR={
           +'<div style="color:var(--text3)">第三国中转：'+esc(r.third||'—')+(r.note?'　备注：'+esc(r.note):'')+'</div></div>';
       }).join('');
       html+='<div style="font-size:11px;color:var(--text3);line-height:1.7;margin-bottom:6px"><b style="color:var(--text1)">避难所：</b>'+(guide.shelters||[]).map(function(s){return esc(s.name)+(s.note?'（'+esc(s.note)+'）':'');}).join('；')+'</div>';
-      html+='<div style="text-align:right"><button class="btn sm primary" onclick="if(typeof EMERGENCY_CENTER!==\'undefined\'){EMERGENCY_CENTER.focusProject(\''+p.id+'\');}try{document.getElementById(\'modal\').classList.remove(\'show\');}catch(e){}">查看完整应急指南 →</button></div>';
+      html+='<div style="text-align:right"><button class="btn sm primary" onclick="MONITOR.showEmergencyGuideFor(\''+String(p.country||'').replace(/'/g,"\\'")+'\')">进入统一应急中心（基线+AI 预案）→</button></div>';
     }
     showModal('🏗️ '+p.name+' · 实时风险详情',html);
   },
 
   /* ===== 应急指南区块（监测中心最下方）===== */
   renderEmergencyGuide(country){
-    /* 2026-08-27：应急指南实战化重设计，统一由 EMERGENCY_CENTER 渲染 */
-    if (typeof EMERGENCY_CENTER !== 'undefined') {
-      EMERGENCY_CENTER.render(country);
-      return;
-    }
-    /* 兜底：旧版极简提示 */
+    /* 2026-09-11 #761：应急三处收编统一应急中心（evac 视图双 tab），
+     * 监测中心底部不再重复渲染，只留快捷跳转 + 高风险国别直达入口 */
     var el=document.getElementById('mon-emg-guide');if(!el)return;
-    el.innerHTML='<div style="padding:14px;font-size:11px;color:var(--text3)">应急指南模块加载中…</div>';
+    if(country){this.showEmergencyGuideFor(country);return;}
+    var cs=(typeof EMERGENCY_GUIDE!=='undefined'&&EMERGENCY_GUIDE.countries)?EMERGENCY_GUIDE.countries():[];
+    var hot=[];
+    cs.forEach(function(c){
+      var al=ALERTS.filter(function(a){return a&&a.status!=='resolved'&&a.country===c;});
+      var mx=al.reduce(function(m,a){return Math.max(m,a.risk_score||0);},0);
+      if(mx>0)hot.push({c:c,mx:mx,n:al.length});
+    });
+    hot.sort(function(a,b){return b.mx-a.mx;});
+    hot=hot.slice(0,8);
+    var chips=hot.map(function(h){
+      var zc=h.mx>=61?'var(--red)':h.mx>=31?'var(--yellow)':'var(--green)';
+      return '<button class="btn sm" style="font-size:10px;padding:3px 8px;border-left:3px solid '+zc+';margin:2px" onclick="MONITOR.showEmergencyGuideFor(\''+String(h.c).replace(/'/g,"\\'")+'\')">'+esc(h.c)+' <b style="color:'+zc+'">'+h.mx+'</b></button>';
+    }).join('');
+    el.innerHTML='<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px">'+
+      '<button class="btn primary" onclick="MONITOR.showEmergencyGuideFor()">🚁 进入统一应急中心</button>'+
+      '<span style="font-size:10px;color:var(--text3)">双轨应急：结构化基线预案（国别应急档案）+ AI 深度预案（Kimi 参谋级五段式）</span>'+
+      (chips?'<div style="margin-left:auto;max-width:560px">'+chips+'</div>':'')+
+      '</div>';
   },
-  /* 项目详情跳完整指南 */
+  /* 项目详情/国别 → 跳统一应急中心（evac 视图）并预选国别 */
   showEmergencyGuideFor(country){
-    this.renderEmergencyGuide(country);
-    var el=document.getElementById('mon-emg-guide');
-    if(el&&el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});
+    try{document.getElementById('modal').classList.remove('show');}catch(e){}
+    if(typeof navigateTo==='function')navigateTo('evac');
+    setTimeout(function(){
+      if(typeof EVACPLAN!=='undefined'&&EVACPLAN.preselectCountry)EVACPLAN.preselectCountry(country);
+    },250);
   },
 
   _renderMapRegion(){
@@ -11997,264 +12047,6 @@ const MONITOR={
   _faFly(lat,lon){
     if(!this._faMap||!this._faMap._container||!document.contains(this._faMap._container))return;
     try{ this._faMap.flyTo([lat,lon],7,{duration:1.2}); }catch(e){}
-  },
-
-  // ===== GEOINT 实时卫星影像板块 =====
-  _geointToggles:{enterprise:true,alert:true,country:true,chokepoint:true,corridor:true,geoint:true},
-  _geointRegion:'all',
-  _geointMap:null,
-  _geointLayers:[],
-  _geointSizeTimer:null,
-  _isValidLatLng(lat,lon){
-    return typeof lat==='number' && typeof lon==='number' && !isNaN(lat) && !isNaN(lon) && lat>=-90 && lat<=90 && lon>=-180 && lon<=180;
-  },
-  _safeFlyTo(lat,lon,z){
-    if(!this._geointMap || !this._isValidLatLng(lat,lon)) return;
-    try{ this._geointMap.flyTo([lat,lon], z||10, {duration:1.5}); }catch(e){}
-  },
-  toggleGeointLayer(l){
-    this._geointToggles[l]=!this._geointToggles[l];
-    var el=document.querySelector('.risk-map-ck[data-l="'+l+'"]');
-    if(el)el.classList.toggle('active',this._geointToggles[l]);
-    this._renderGeointOverlays();
-  },
-  filterGeointRegion(r){
-    this._geointRegion=r;
-    var map={'all':'reg-all','中东':'reg-mid','非洲':'reg-afr','南亚':'reg-sas','南美':'reg-sam','东南亚':'reg-sea'};
-    Object.keys(map).forEach(function(k){
-      var el=document.getElementById('geoint-'+map[k]);
-      if(el){el.style.background=k===r?'rgba(0,212,255,0.15)':'var(--bg2)';el.style.color=k===r?'var(--cyan)':'var(--text2)';}
-    });
-    this._renderGeointOverlays();
-  },
-  renderGeoint(el){
-    if(!this._geointToggles)this._geointToggles={enterprise:true,alert:true,country:true,chokepoint:true,corridor:true,geoint:true};
-    if(!this._geointRegion)this._geointRegion='all';
-    var me=this;
-    var projByCountry={};
-    ENTERPRISES.forEach(function(e){
-      e.projects.forEach(function(p){
-        var list=projByCountry[p.c]||[];
-        list.push({e:e,p:p});
-        projByCountry[p.c]=list;
-      });
-    });
-    var activeAlerts=ALERTS.filter(function(a){return a.status!=='resolved';});
-    var alertsByCountry={};
-    activeAlerts.forEach(function(a){
-      var list=alertsByCountry[a.country]||[];
-      list.push(a);
-      alertsByCountry[a.country]=list;
-    });
-    var highRisk=COUNTRIES.filter(function(c){return calcOverall(c.scores)>=7.5;});
-    var layers=(typeof INTELCENTER!=='undefined'&&INTELCENTER._geointLayers)?INTELCENTER._geointLayers:[];
-    var withPrev=layers.filter(function(l){return l.previews&&l.previews.length;}).slice(0,4);
-    var counts={enterprise:Object.keys(projByCountry).length,alert:activeAlerts.length,country:highRisk.length,chokepoint:CHOKEPOINTS.length,corridor:(typeof CORRIDORS!=='undefined'?CORRIDORS.length:0),geoint:GEOINTLIVE._presets.length};
-    var regionBtns='<button class="btn sm" id="geoint-reg-all" onclick="MONITOR.filterGeointRegion(\'all\')" style="font-size:10px;padding:3px 8px">全部</button>'+
-      '<button class="btn sm" id="geoint-reg-mid" onclick="MONITOR.filterGeointRegion(\'中东\')" style="font-size:10px;padding:3px 8px">中东</button>'+
-      '<button class="btn sm" id="geoint-reg-afr" onclick="MONITOR.filterGeointRegion(\'非洲\')" style="font-size:10px;padding:3px 8px">非洲</button>'+
-      '<button class="btn sm" id="geoint-reg-sas" onclick="MONITOR.filterGeointRegion(\'南亚\')" style="font-size:10px;padding:3px 8px">南亚</button>'+
-      '<button class="btn sm" id="geoint-reg-sam" onclick="MONITOR.filterGeointRegion(\'南美\')" style="font-size:10px;padding:3px 8px">南美</button>'+
-      '<button class="btn sm" id="geoint-reg-sea" onclick="MONITOR.filterGeointRegion(\'东南亚\')" style="font-size:10px;padding:3px 8px">东南亚</button>';
-    var layerCks=function(l,ic,label){return '<label class="risk-map-ck '+(me._geointToggles[l]?'active':'')+'" data-l="'+l+'"><input type="checkbox" '+(me._geointToggles[l]?'checked':'')+' onchange="MONITOR.toggleGeointLayer(\''+l+'\')">'+ic+' '+label+'</label>';};
-    var html='<div class="risk-map-layout">'+
-      '<div class="risk-map-main">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">'+
-      '<div class="risk-map-layers">'+
-      layerCks('enterprise','🏢','企业项目')+
-      layerCks('alert','🚨','活跃预警')+
-      layerCks('country','🌡️','高风险国家')+
-      layerCks('chokepoint','⚓','战略咽喉')+
-      layerCks('corridor','🛤️','一带一路')+
-      layerCks('geoint','🛰️','GEOINT重点区')+
-      '</div>'+
-      '<div style="display:flex;gap:4px">'+regionBtns+'</div>'+
-      '</div>'+
-      '<div id="mon-geoint-map" style="height:520px;background:#070b14;border:1px solid var(--border);border-radius:8px;overflow:hidden"></div>'+
-      '</div>'+
-      '<div class="risk-map-side">'+
-      '<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px">🛰️ GEOINT 态势统计</div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
-      '<div style="padding:8px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">重点监测区</div><div style="font-size:16px;font-weight:800;color:var(--purple)">'+counts.geoint+'</div></div>'+
-      '<div style="padding:8px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">影像图层</div><div style="font-size:16px;font-weight:800;color:var(--cyan)">'+layers.length+'</div></div>'+
-      '<div style="padding:8px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">企业项目</div><div style="font-size:16px;font-weight:800;color:var(--cyan)">'+counts.enterprise+'</div></div>'+
-      '<div style="padding:8px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">活跃预警</div><div style="font-size:16px;font-weight:800;color:var(--orange)">'+counts.alert+'</div></div>'+
-      '<div style="padding:8px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">高风险国家</div><div style="font-size:16px;font-weight:800;color:var(--red)">'+counts.country+'</div></div>'+
-      '<div style="padding:8px;background:var(--bg2);border-radius:6px"><div class="text-xs text-muted">通道/走廊</div><div style="font-size:16px;font-weight:800;color:var(--green)">'+(counts.chokepoint+counts.corridor)+'</div></div>'+
-      '</div></div>'+
-      '<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px">📍 快速定位</div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:5px">';
-    GEOINTLIVE._presets.forEach(function(p){
-      html+='<span class="chip" style="cursor:pointer;font-size:10px;padding:3px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;color:var(--text2)" onclick="MONITOR._flyGeoint('+p.lat+','+p.lon+',10)\">'+p.name+'</span>';
-    });
-    html+='<span class="chip" style="cursor:pointer;font-size:10px;padding:3px 8px;background:rgba(0,212,255,0.08);border:1px solid var(--cyan);border-radius:12px;color:var(--cyan)" onclick="INTELCENTER.switch(\'geoint\')">⚡ GEOINT中心</span>'+
-      '</div></div>';
-    if(withPrev.length){
-      html+='<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px">🖼️ 最新卫星影像预览</div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-      withPrev.forEach(function(l,idx){
-        html+='<div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#000;cursor:pointer" onclick="GEOINTLIVE.showLayerDetail('+idx+')" title="'+(l.name||'')+'">'+
-          '<img src="'+l.previews[0]+'" style="width:100%;height:70px;object-fit:cover;display:block" onerror="this.style.opacity=0.25">'+
-          '<div style="padding:3px 5px;font-size:9px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(l.name||'')+'</div></div>';
-      });
-      html+='</div></div>';
-    }else{
-      html+='<div class="card" style="margin:0"><div class="card-tt" style="font-size:12px">🖼️ 最新卫星影像预览</div>'+
-        '<div style="padding:10px;font-size:11px;color:var(--text3);background:var(--bg2);border-radius:6px">暂无实时影像图层<br><span style="font-size:10px">进入 GEOINT 中心拉取 Sentinel-2 / Maxar 真实卫星影像</span></div></div>';
-    }
-    html+='</div></div>';
-    el.innerHTML=html;
-    this.filterGeointRegion(this._geointRegion);
-    this._initGeointMap();
-    this._startGeointCarousel();
-  },
-  _geointCarouselTimer:null,
-  _geointPresetIndex:0,
-  _startGeointCarousel(){
-    this._stopGeointCarousel();
-    var me=this;
-    this._geointCarouselTimer=setInterval(function(){
-      if(!me._geointMap)return;
-      var presets=GEOINTLIVE._presets||[];
-      if(!presets.length)return;
-      me._geointPresetIndex=(me._geointPresetIndex+1)%presets.length;
-      var p=presets[me._geointPresetIndex];
-      if(!p || !me._isValidLatLng(p.lat,p.lon)) return;
-      me._safeFlyTo(p.lat,p.lon,10);
-      var tip=document.getElementById('mon-geoint-tip');
-      if(!tip){
-        tip=document.createElement('div');tip.id='mon-geoint-tip';tip.style.cssText='position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:500;background:rgba(0,0,0,.7);color:var(--cyan);padding:6px 14px;border-radius:20px;font-size:12px;border:1px solid var(--cyan);pointer-events:none';
-        var mapEl=document.getElementById('mon-geoint-map');if(mapEl){mapEl.style.position='relative';mapEl.appendChild(tip);}
-      }
-      if(tip){tip.textContent='🛰️ '+p.name+' ('+p.country+')';tip.style.opacity='1';}
-    },12000);
-  },
-  _stopGeointCarousel(){
-    if(this._geointCarouselTimer){clearInterval(this._geointCarouselTimer);this._geointCarouselTimer=null;}
-  },
-  _flyGeoint(lat,lon,z){
-    /* 容器已从 DOM 移除时 Leaflet 会抛 _leaflet_pos（2026-08-14 修复） */
-    if(!this._geointMap || !this._geointMap._container || !document.contains(this._geointMap._container)) return;
-    if(!this._isValidLatLng(lat,lon)) return;
-    try{ this._geointMap.setView([lat,lon], z||10); }catch(e){}
-  },
-  _initGeointMap(){
-    var el=document.getElementById('mon-geoint-map');if(!el)return;
-    if(typeof L==='undefined'){el.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">🗺️ 地图库加载失败（Leaflet 不可用）</div>';return;}
-    if(this._geointSizeTimer){clearTimeout(this._geointSizeTimer);this._geointSizeTimer=null;}
-    if(this._geointMap){try{this._geointMap.remove();}catch(e){}this._geointMap=null;}
-    var map=L.map(el,{zoomControl:true,attributionControl:true}).setView([25.11,62.35],4);
-    this._geointMap=map;
-    /* 天地图卫星影像底图（2026-08-14 用户密钥，合规白名单内）；失败自动回退本地矢量底图 */
-    el.style.background='#070d18';
-    if(typeof TDT_BASEMAP!=='undefined'){ TDT_BASEMAP.addTo(map,'sat'); }
-    else if(typeof LOCAL_BASEMAP!=='undefined'){ LOCAL_BASEMAP.addTo(map); }
-    this._renderGeointOverlays();
-    var me=this;
-    this._geointSizeTimer=setTimeout(function(){
-      me._geointSizeTimer=null;
-      if(me._geointMap && el && el.parentNode){ try{ me._geointMap.invalidateSize(); }catch(e){} }
-    },120);
-  },
-  _renderGeointOverlays(){
-    var map=this._geointMap;
-    if(!map || !map._container || !document.contains(map._container))return;
-    if(this._geointLayers&&this._geointLayers.length){this._geointLayers.forEach(function(l){try{map.removeLayer(l);}catch(e){}});}
-    this._geointLayers=[];
-    var me=this;
-    var region=this._geointRegion;
-    function add(l){l.addTo(map);me._geointLayers.push(l);}
-    function regionOk(c){return region==='all'||!c.region||(c.region===region);}
-    function valid(lat,lon){return me._isValidLatLng(lat,lon);}
-    // 企业项目
-    if(this._geointToggles.enterprise){
-      var projByCountry={};
-      ENTERPRISES.forEach(function(e){
-        e.projects.forEach(function(p){
-          var list=projByCountry[p.c]||[];
-          list.push({e:e,p:p});
-          projByCountry[p.c]=list;
-        });
-      });
-      Object.keys(projByCountry).forEach(function(cn){
-        var c=COUNTRIES.find(function(x){return x.name===cn;});
-        if(!c||!regionOk(c))return;
-        var list=projByCountry[cn];
-        if(!valid(c.lat,c.lon))return;
-        var popup='<div style="min-width:180px"><div style="font-size:12px;font-weight:700;color:var(--cyan);margin-bottom:6px">🏢 '+esc(cn)+' · 中资企业项目</div>'+list.map(function(o){return '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:11px"><div style="cursor:pointer;color:var(--text1)" onclick="showEntDetail('+o.e.id+')">'+esc(o.e.short)+' · '+esc(o.p.n)+'</div><div style="font-size:10px;color:var(--text3)">投资 '+o.p.inv+'亿$ · '+o.p.p+'人</div></div>';}).join('')+'</div>';
-        var m=L.circleMarker([c.lat,c.lon],{radius:7,color:'#00d4ff',fillColor:'#00d4ff',fillOpacity:0.7,weight:1.5}).bindPopup(popup);
-        add(m);
-      });
-    }
-    // 活跃预警
-    if(this._geointToggles.alert){
-      var alertsByCountry={};
-      ALERTS.filter(function(a){return a.status!=='resolved';}).forEach(function(a){
-        var list=alertsByCountry[a.country]||[];
-        list.push(a);
-        alertsByCountry[a.country]=list;
-      });
-      Object.keys(alertsByCountry).forEach(function(cn){
-        var c=COUNTRIES.find(function(x){return x.name===cn;});
-        if(!c||!regionOk(c))return;
-        var list=alertsByCountry[cn];
-        if(!valid(c.lat,c.lon))return;
-        var color=list.some(function(a){return a.level==='red';})?'#ff3355':list.some(function(a){return a.level==='orange';})?'#ff8800':'#ffcc00';
-        var popup='<div style="min-width:180px"><div style="font-size:12px;font-weight:700;color:'+color+';margin-bottom:6px">🚨 '+esc(cn)+' · 活跃预警</div>'+list.map(function(a){var lv=ALERT_LV[a.level]||ALERT_LV.blue;return '<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:11px;cursor:pointer" onclick="showAlertDetail(\''+String(a.id).replace(/'/g,"\\'")+'\')"><span class="badge '+lv.cls+'" style="font-size:9px">'+lv.label+'</span> '+esc(a.title||a.desc||'')+'</div>';}).join('')+'</div>';
-        var m=L.circleMarker([c.lat,c.lon],{radius:8,color:color,fillColor:color,fillOpacity:0.7,weight:1.5,pulse:true}).bindPopup(popup);
-        add(m);
-      });
-    }
-    // 高风险国家
-    if(this._geointToggles.country){
-      COUNTRIES.filter(function(c){return calcOverall(c.scores)>=7.5;}).forEach(function(c){
-        if(!regionOk(c))return;
-        var ov=calcOverall(c.scores);var lv=getLevel(ov);
-        if(!valid(c.lat,c.lon))return;
-        var popup='<div style="min-width:160px"><div style="font-size:13px;font-weight:700;color:'+lv.color+'">'+c.flag+' '+esc(c.name)+'</div><div style="font-size:11px;color:var(--text2);margin:4px 0">综合风险 '+ov.toFixed(1)+' · '+lv.label+'</div><div style="font-size:10px;color:var(--text3)">点击卡片查看国家详情</div></div>';
-        var m=L.circleMarker([c.lat,c.lon],{radius:6+ov,color:lv.color,fillColor:lv.color,fillOpacity:0.18,weight:1.5}).bindPopup(popup);
-        m.on('click',function(){showCtyDetail(c.name);});
-        add(m);
-      });
-    }
-    // 战略咽喉
-    if(this._geointToggles.chokepoint){
-      var cpCoords={'红海-曼德海峡':{lat:12.6,lon:43.4},'苏伊士运河':{lat:30.0,lon:32.5},'马六甲海峡':{lat:2.5,lon:101.0},'霍尔木兹海峡':{lat:26.5,lon:56.5},'巴拿马运河':{lat:9.0,lon:-80.0},'北极航道':{lat:75,lon:60}};
-      CHOKEPOINTS.forEach(function(cp,i){
-        var co=cpCoords[cp.name];
-        if(!co || !valid(co.lat,co.lon))return;
-        var color=cp.risk>=8?'#ff3355':cp.risk>=6?'#ff8800':'#ffcc00';
-        var popup='<div style="min-width:160px"><div style="font-size:13px;font-weight:700;color:'+color+'">⚓ '+esc(cp.name)+'</div><div style="font-size:11px;color:var(--text2);margin:4px 0">风险 '+cp.risk+' · '+esc(cp.level||'')+'</div><div style="font-size:10px;color:var(--text3);line-height:1.4">'+esc(cp.desc||'').substring(0,60)+'...</div></div>';
-        var m=L.circleMarker([co.lat,co.lon],{radius:7,color:color,fillColor:color,fillOpacity:0.6,weight:1.5}).bindPopup(popup);
-        m.on('click',function(){MONITOR.showChokepointDetail(i);});
-        add(m);
-      });
-    }
-    // 一带一路走廊
-    if(this._geointToggles.corridor && typeof CORRIDORS!=='undefined'){
-      CORRIDORS.forEach(function(co,i){
-        var pts=[];
-        var names=(co.countries||'').split(/[\/、，,]+/).map(function(s){return s.trim();}).filter(Boolean);
-        names.forEach(function(n){
-          var c=COUNTRIES.find(function(x){return x.name===n;});
-          if(c && valid(c.lat,c.lon))pts.push([c.lat,c.lon]);
-        });
-        if(pts.length<2)return;
-        var color=co.risk>=7?'#ff3355':co.risk>=5?'#ff8800':'#00ff9f';
-        var poly=L.polyline(pts,{color:color,weight:3,opacity:0.7,dashArray:'6,4'}).bindPopup('<div style="min-width:160px"><div style="font-size:13px;font-weight:700;color:'+color+'">🛤️ '+esc(co.name)+'</div><div style="font-size:11px;color:var(--text2);margin:4px 0">'+esc(co.countries||'')+' · 风险 '+co.risk+' · '+esc(co.status||'')+'</div></div>');
-        poly.on('click',function(){MONITOR.showCorridorDetail(i);});
-        add(poly);
-      });
-    }
-    // GEOINT重点区
-    if(this._geointToggles.geoint){
-      GEOINTLIVE._presets.forEach(function(p){
-        if(!valid(p.lat,p.lon))return;
-        var popup='<div style="min-width:160px"><div style="font-size:13px;font-weight:700;color:var(--purple)">🛰️ '+esc(p.name)+'</div><div style="font-size:11px;color:var(--text2);margin:4px 0">'+esc(p.country||'')+'</div><div style="font-size:10px;color:var(--text3)">'+p.lat+', '+p.lon+'</div><div style="margin-top:6px"><span class="chip" style="cursor:pointer;font-size:10px;padding:2px 6px;background:var(--bg2);border:1px solid var(--cyan);border-radius:10px;color:var(--cyan)" onclick="INTELCENTER.switch(\'geoint\')">进入GEOINT中心</span></div></div>';
-        var m=L.circleMarker([p.lat,p.lon],{radius:8,color:'#b366ff',fillColor:'#b366ff',fillOpacity:0.5,weight:1.5}).bindPopup(popup);
-        add(m);
-      });
-    }
   },
 
   // ===== 威胁组织板块 =====

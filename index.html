@@ -1079,21 +1079,25 @@ select.intel-input{cursor:pointer}
 <div class="sb-item active" data-view="situation" onclick="navigateTo('situation')"><span class="ic">🌍</span><span class="lb">全域态势感知</span></div>
 <div class="sb-item" data-view="workbench" onclick="navigateTo('workbench')"><span class="ic">🧭</span><span class="lb">智能协同作业台</span></div>
 <div class="sb-item" data-view="threatroom" onclick="navigateTo('threatroom')"><span class="ic">⚔️</span><span class="lb">专项情报作战室</span></div>
-<div class="sb-item" data-view="myfocus" onclick="navigateTo('myfocus')"><span class="ic">⭐</span><span class="lb">重点目标监测</span></div>
 <div class="sb-item" data-view="command" onclick="navigateTo('command')"><span class="ic">🎖️</span><span class="lb">指挥调度中心</span></div>
 <div class="sb-item" data-view="aiwatch" onclick="navigateTo('aiwatch')"><span class="ic">🤖</span><span class="lb">AI中枢控制台</span></div>
 <div class="sb-group">监测中心</div>
 <div class="sb-item" data-view="monitor" onclick="navigateTo('monitor')"><span class="ic">📡</span><span class="lb">实时风险监测</span><span class="badge zero" id="sb-mon-count">0</span></div>
 <div class="sb-item" data-view="intel" onclick="navigateTo('intel')"><span class="ic">📸</span><span class="lb">影像情报中心</span><span class="badge zero" id="sb-intel-count">0</span></div>
-<div class="sb-item" data-view="threatorgs" onclick="navigateTo('threatorgs')"><span class="ic">🎯</span><span class="lb">威胁组织图谱</span><span class="badge zero" id="sb-threat-count">0</span></div>
 <div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">智能预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
 <div class="sb-item" data-view="terjudge" onclick="navigateTo('terjudge')"><span class="ic">🛰️</span><span class="lb">全球恐袭态势监测中心</span></div>
 <div class="sb-group">分析研判</div>
 <div class="sb-item" data-view="brief" onclick="navigateTo('brief')"><span class="ic">🔴</span><span class="lb">领导要报速览</span></div>
 <div class="sb-item" data-view="evjudge" onclick="navigateTo('evjudge')"><span class="ic">🔬</span><span class="lb">事件研判中心</span></div>
 <div class="sb-item" data-view="entrisk" onclick="navigateTo('entrisk')"><span class="ic">🛡️</span><span class="lb">涉企风险预警研判</span></div>
+<div class="sb-item" data-view="exec-travel" onclick="navigateTo('exec-travel')"><span class="ic">🛫</span><span class="lb">高管出境风险监测</span></div>
+<div class="sb-item" data-view="myrisk" onclick="navigateTo('myrisk')"><span class="ic">🏢</span><span class="lb">我的风险工作台</span></div>
+<div class="sb-item" data-view="impact" onclick="navigateTo('impact')"><span class="ic">🔗</span><span class="lb">影响传导研判</span></div>
+<div class="sb-item" data-view="supply" onclick="navigateTo('supply')"><span class="ic">🚢</span><span class="lb">供应链中断传导预测</span></div>
+<div class="sb-item" data-view="barrier" onclick="navigateTo('barrier')"><span class="ic">🗓️</span><span class="lb">国别准入壁垒日历</span></div>
+<div class="sb-item" data-view="evac" onclick="navigateTo('evac')"><span class="ic">🚁</span><span class="lb">统一应急中心</span></div>
+<div class="sb-item" data-view="socpulse" onclick="navigateTo('socpulse')"><span class="ic">📡</span><span class="lb">境外社媒舆情监测</span></div>
 <div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别风险研判</span></div>
-<div class="sb-item" data-view="countryfile" onclick="navigateTo('countryfile')"><span class="ic">📊</span><span class="lb">国别档案总表</span></div>
 <div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">周期简报中心</span></div>
 <div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic">📚</span><span class="lb">专题分析中心</span></div>
 <div class="sb-item" data-view="aireport" onclick="navigateTo('aireport')"><span class="ic">🤖</span><span class="lb">AI智能研判</span><span class="badge zero" id="sb-aireport-nav-count">0</span></div>
@@ -1196,7 +1200,7 @@ select.intel-input{cursor:pointer}
 <div class="dc-tab" onclick="MONITOR.switch('corridors')">🛤️ 航运要道与一带一路</div>
 </div>
 <div id="mon-content"></div>
-<div class="card" style="margin-top:12px"><div class="card-tt"><span class="ic">🆘</span>应急指南 · 中资项目所在国撤离路线 / 避难所 / 使领馆
+<div class="card" style="margin-top:12px"><div class="card-tt"><span class="ic">🆘</span>统一应急中心 · 结构化基线预案 + AI 深度预案（撤离路线 / 避难所 / 使领馆）
 <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:8px">外交部全球领保热线 +86-10-12308（24小时）</span></div>
 <div id="mon-emg-guide"></div></div>
 </div>
@@ -1427,6 +1431,27 @@ select.intel-input{cursor:pointer}
 <div class="view" id="view-evjudge"><div id="evjudge-root"></div></div>
 <div class="view" id="view-terjudge"><div id="terjudge-root"></div></div>
 <div class="view" id="view-entrisk"><div id="entrisk-root"></div></div>
+<div class="view" id="view-exec-travel"><div id="exec-travel-root"></div></div>
+<!-- VIEW: 我的风险工作台（my-risk.js 整视图渲染：#744 企业订阅画像——三维过滤 + 项目档案 + 24H 预警流） -->
+<div class="view" id="view-myrisk"><div id="myrisk-root"></div></div>
+
+<!-- VIEW: 影响传导研判（impact-chain.js 整视图渲染：#746 P0-3 事件→资产——红级事件队列 + 暴露项目三维匹配 + AI 三段式） -->
+<div class="view" id="view-impact"><div id="impact-root"></div></div>
+
+<!-- VIEW: 制裁名单碰撞（sanctions.js 整视图渲染：#745 P1-4 OpenSanctions us_sanctions 12 源 27k 实体 × 中资 35 企/事件/供应商 三模式 + 自由搜索） -->
+<div class="view" id="view-sanctions"><div id="sanctions-root"></div></div>
+
+<!-- VIEW: 供应链中断传导预测（feature-suite4.js：#747 六咽喉点+六走廊 30d 事件→中资项目暴露→AI 传导链研判） -->
+<div class="view" id="view-supply"><div id="supply-root"></div></div>
+
+<!-- VIEW: 国别准入壁垒日历（feature-suite4.js：#748 贸易救济×出口管制×投资审查×制裁 60d 国别日历前瞻） -->
+<div class="view" id="view-barrier"><div id="barrier-root"></div></div>
+
+<!-- VIEW: 撤离与应急方案生成（feature-suite4.js：#749 选国别→真实项目/红橙事件+EMERGENCY_GUIDE→LLM 五段式预案） -->
+<div class="view" id="view-evac"><div id="evac-root"></div></div>
+
+<!-- VIEW: 境外社媒舆情监测（feature-suite4.js：#750 7d social_media/socmint 涉华舆情聚合） -->
+<div class="view" id="view-socpulse"><div id="socpulse-root"></div></div>
 
 <!-- VIEW: ANALYSIS (研判简报：周期研判 + 每日简报 合并视图) -->
 <div class="view" id="view-analysis">
@@ -1491,7 +1516,7 @@ function closeMobileMenu(){
 <script src="gate.js?v=17"></script>
 <script src="entities.js?v=10"></script>
 <script src="project-emergency.js?v=1"></script>
-<script src="emergency-center.js?v=2"></script>
+<script src="emergency-center.js?v=3"></script>
 <!-- 全球媒体注册表：必须在 scraper/datasources 之前加载 -->
 <script src="global-media-registry.js?v=1"></script>
 <!-- IndexedDB 持久层（同步外观）：必须在 app.js 之前加载 -->
@@ -1503,7 +1528,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=300"></script>
+<script src="app.js?v=306"></script>
 <script src="workbench.js?v=5"></script>
 <script src="threatroom.js?v=12"></script>
 <script src="foresee.js?v=3"></script>
@@ -1520,7 +1545,7 @@ function closeMobileMenu(){
 <script src="thinktank.js?v=1"></script>
 <script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=14"></script>
+<script src="role-ui.js?v=15"></script>
 <script src="model-analysis.js?v=5"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
@@ -1535,8 +1560,13 @@ function closeMobileMenu(){
 <script src="brief-center.js?v=3"></script>
 <script src="event-insight.js?v=6"></script>
 <script src="terror-center.js?v=10"></script>
-<script src="enterprise-risk.js?v=5"></script>
-<script src="ai-watch.js?v=13"></script>
+<script src="enterprise-risk.js?v=6"></script>
+<script src="exec-travel.js?v=1"></script>
+<script src="ai-watch.js?v=14"></script>
+<script src="my-risk.js?v=1"></script>
+<script src="impact-chain.js?v=2"></script>
+<script src="sanctions.js?v=1"></script>
+<script src="feature-suite4.js?v=2"></script>
 <!-- 跨模块关联中枢：打通各功能区之间的数据关联（必须在所有模块之后加载） -->
 <script src="linkgraph.js?v=6"></script>
 
@@ -1809,9 +1839,11 @@ function initAIAnalysisHook(){
   if(!detailEl) return;
 
   // 用MutationObserver监听预警详情区域内容变化
+  /* #754 修复：原判断 mutation.type === 'childNodes' 永远为假（MutationObserver 合法类型是 'childList'），
+   * AI 按钮从未被注入过——这正是预警详情看不到 AI 研判入口的根因。 */
   AI_DETAIL_OBSERVER = new MutationObserver(function(mutations){
     mutations.forEach(function(mutation){
-      if(mutation.type === 'childNodes' && detailEl.children.length > 0){
+      if(mutation.type === 'childList' && detailEl.children.length > 0){
         // 检查是否已有AI分析按钮，避免重复注入
         if(detailEl.querySelector('.ai-analysis-inline')) return;
         if(detailEl.querySelector('#ai-analyze-btn')) return;
@@ -1834,7 +1866,7 @@ function initAIAnalysisHook(){
         var aiBtn = document.createElement('button');
         aiBtn.className = 'btn ai-btn sm';
         aiBtn.id = 'ai-analyze-btn';
-        aiBtn.innerHTML = '🤖 AI分析';
+        aiBtn.innerHTML = '🤖 AI 深度研判';
         aiBtn.onclick = function(){ runAIAnalysisOnCurrentAlert(); };
         actionsEl.appendChild(aiBtn);
       }
@@ -1844,88 +1876,117 @@ function initAIAnalysisHook(){
   AI_DETAIL_OBSERVER.observe(detailEl, {childList:true, subtree:true});
 }
 
-function runAIAnalysisOnCurrentAlert(){
-  var detailEl = document.getElementById('alert-cmd-detail');
-  if(!detailEl) return;
-
-  // 尝试从详情区域提取当前预警信息
-  var titleEl = detailEl.querySelector('.alert-detail-hd, [style*="font-size:14px"]') || detailEl.querySelector('div');
-  var title = titleEl ? titleEl.textContent.trim().split('\n')[0] : '当前预警';
-  var idEl = detailEl.querySelector('.alert-detail-id');
-  var alertId = idEl ? idEl.textContent.split('|')[0].trim() : 'ALT-CURRENT';
-
-  // 查找风险评分
-  var scoreEl = null;
-  var infoItems = detailEl.querySelectorAll('.alert-detail-info-val');
-  var score = 7.0;
-  if(infoItems.length > 0){
-    var scoreText = infoItems[0].textContent.trim();
-    var parsed = parseFloat(scoreText);
-    if(!isNaN(parsed)) score = parsed;
-  }
-
-  // 查找等级
-  var badgeEl = detailEl.querySelector('.badge');
-  var level = 'orange';
-  if(badgeEl){
-    if(badgeEl.classList.contains('b-red')) level='red';
-    else if(badgeEl.classList.contains('b-orange')) level='orange';
-    else if(badgeEl.classList.contains('b-yellow')) level='yellow';
-    else if(badgeEl.classList.contains('b-blue')) level='blue';
-  }
-
-  var btn = document.getElementById('ai-analyze-btn');
-  if(btn){ btn.innerHTML='⏳ 分析中...'; btn.disabled=true; }
-
-  setTimeout(function(){
-    showAIAnalysisInline(detailEl, {title:title, id:alertId, score:score, level:level});
-    if(btn){ btn.innerHTML='✅ AI已分析'; btn.disabled=true; }
-    showToast('🤖 AI分析完成');
-  }, 1200);
+/* #754 单事件 AI 深度研判（2026-09-10）：真调后端 /api/insight/ai-judge（Kimi 参谋级 150s 硬超时
+ * 回落规则模板 + 按事件 10min 缓存 + in-flight 合并）。废除原 setTimeout 假模拟——研判内容全部
+ * 来自大模型对真实事件全文 + 同国/同类/项目暴露真实统计的外推，零模拟。 */
+function _aiEsc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function showAIAnalysisInline(detailEl, alertInfo){
-  // 移除已有的AI分析面板
+function runAIAnalysisOnCurrentAlert(){
+  var detailEl = document.getElementById('alert-cmd-detail');
+  var a = window._curAlertDetail || null;
+  if(!detailEl || !a){ showToast('请先从左侧选择一条预警'); return; }
+
+  var btn = document.getElementById('ai-analyze-btn');
+  if(btn){ btn.innerHTML='⏳ AI 深度研判中（约30-150秒）…'; btn.disabled=true; }
+
+  // 移除旧面板，挂加载态
+  var existing = detailEl.querySelector('.ai-analysis-inline');
+  if(existing) existing.remove();
+  var panel = document.createElement('div');
+  panel.className = 'ai-analysis-inline';
+  panel.innerHTML =
+    '<div class="ai-analysis-hd">'+
+      '<div class="tt"><span class="ic">🤖</span> AI 深度研判（单事件 · 参谋级）</div>'+
+      '<div class="meta">'+new Date().toLocaleString('zh-CN',{hour12:false})+'</div>'+
+    '</div>'+
+    '<div class="ai-loading" style="padding:14px 10px;font-size:11.5px;color:var(--text2);line-height:1.9">'+
+      '⏳ 正在调用大模型对事件全文进行深度研判…<br>'+
+      '<span style="font-size:10px;color:var(--text3)">研判基于真实事件全文 + 同国 7 天事件密度 + 同类全球量 + 中资项目暴露三维匹配（真实库统计），产出：深度研判 / 未来发展趋势 / 对华影响真实性评估。Kimi 推理模型耗时约 30-150 秒，请勿关闭面板。</span>'+
+    '</div>';
+  detailEl.appendChild(panel);
+
+  var body = {
+    id: String(a.id||''), alert_no: String(a.alert_no||''),
+    title: String(a.title_zh||a.title||''), titleRaw: String(a.title||''),
+    desc: String(a.desc||a.detail||'').slice(0,500),
+    content: String(a.content||'').slice(0,3000),
+    country: String(a.country||''), type: String(a.type||''), level: String(a.level||''),
+    url: String(a.url||a.ext_url||''), source: String(a.siteName||a.source||''),
+    time: String(a.time||''), chinaRelated: !!(a.chinaRelated)
+  };
+  var headers = {'Content-Type':'application/json'};
+  try{
+    var tok=(typeof APIClient!=='undefined'&&APIClient.getToken)?APIClient.getToken():(localStorage.getItem('orps_api_token')||localStorage.getItem('orps_token')||'');
+    if(tok) headers['Authorization']='Bearer '+tok;
+  }catch(e){}
+
+  fetch('/api/insight/ai-judge',{method:'POST',headers:headers,body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return {status:r.status,j:j};});})
+    .then(function(res){
+      if(res.status===200 && res.j && res.j.ok){
+        showAIAnalysisInline(detailEl, a, res.j);
+        if(btn){ btn.innerHTML='✅ AI 已研判'; btn.disabled=true; }
+        showToast('🤖 AI 深度研判完成');
+      }else{
+        var ld = panel.querySelector('.ai-loading');
+        if(ld) ld.innerHTML='❌ AI 研判失败：'+_aiEsc(String((res.j&&res.j.error)||res.status).slice(0,80))+'<br><span style="font-size:10px;color:var(--text3)">可稍后重试（大模型链路波动时自动回落规则模板，不会无输出）。</span>';
+        if(btn){ btn.innerHTML='🤖 AI 深度研判'; btn.disabled=false; }
+      }
+    })
+    .catch(function(){
+      var ld = panel.querySelector('.ai-loading');
+      if(ld) ld.innerHTML='❌ AI 通道网络错误，请稍后重试';
+      if(btn){ btn.innerHTML='🤖 AI 深度研判'; btn.disabled=false; }
+    });
+}
+
+function _aiSecHtml(icon, label, body, color){
+  return '<div style="margin-top:10px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-left:3px solid '+color+';border-radius:8px">'+
+    '<div style="font-size:11px;font-weight:700;color:'+color+';margin-bottom:6px">'+icon+' '+label+'</div>'+
+    '<div style="font-size:11.5px;line-height:1.85;color:var(--text2);white-space:pre-wrap">'+_aiEsc(body)+'</div>'+
+  '</div>';
+}
+
+function showAIAnalysisInline(detailEl, alertInfo, d){
+  // 移除已有的AI分析面板（含加载态）
   var existing = detailEl.querySelector('.ai-analysis-inline');
   if(existing) existing.remove();
 
-  var color = alertInfo.level==='red'?'var(--red)':alertInfo.level==='orange'?'var(--orange)':'var(--yellow)';
-  var factors = alertInfo.level==='red'?
-    ['地缘政治紧张','军事冲突风险','人员安全威胁','供应链中断','国际舆论压力']:
-    alertInfo.level==='orange'?
-    ['安全事件频发','区域局势不稳','经济利益受损','物流效率下降']:
-    ['局部风险上升','项目进度影响','贸易成本增加'];
-  var recs = alertInfo.level==='red'?
-    ['立即启动应急响应预案','评估人员撤离方案','协调使领馆资源','加强安保力量部署']:
-    alertInfo.level==='orange'?
-    ['加强安全监测','准备应急方案','减少非必要活动','与当地安全部门协调']:
-    ['持续跟踪态势','评估潜在影响','制定预防措施'];
+  var engineBadge = d.llmOk
+    ? '<span style="font-size:9px;padding:2px 8px;border-radius:8px;background:rgba(0,212,255,.12);border:1px solid var(--cyan);color:var(--cyan)">Kimi 大模型</span>'
+    : '<span style="font-size:9px;padding:2px 8px;border-radius:8px;background:rgba(255,170,0,.1);border:1px solid var(--orange);color:var(--orange)">规则模板（真实统计装配）</span>';
+  var cs = d.ctxStats || {};
+  var ctxStrip = '<div style="display:flex;flex-wrap:wrap;gap:4px 12px;margin-bottom:4px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:10px;color:var(--text3)">'+
+    '<span>🌍 同国 7 天 <b style="color:var(--text2)">'+_aiEsc(cs.country7d!=null?cs.country7d:'—')+'</b> 条</span>'+
+    '<span>🔴 红级 <b style="color:var(--red)">'+_aiEsc(cs.red7d!=null?cs.red7d:'—')+'</b></span>'+
+    '<span>🇨🇳 涉华 <b style="color:var(--cyan)">'+_aiEsc(cs.china7d!=null?cs.china7d:'—')+'</b></span>'+
+    '<span>🗂 同类全球 <b style="color:var(--text2)">'+_aiEsc(cs.type7d!=null?cs.type7d:'—')+'</b> 条/7天</span>'+
+    '<span>🏢 暴露项目 <b style="color:var(--orange)">'+_aiEsc(cs.projCount!=null?cs.projCount:'—')+'</b> 个</span>'+
+    '<span style="flex-basis:100%">（全部真实库统计，零模拟）</span>'+
+  '</div>';
 
   var panel = document.createElement('div');
   panel.className = 'ai-analysis-inline';
   panel.innerHTML =
     '<div class="ai-analysis-hd">'+
-      '<div class="tt"><span class="ic">🤖</span> AI分析结果（单条预警 · 战术级微分析）</div>'+
-      '<div class="meta">AI引擎 v3.2 | '+new Date().toLocaleString('zh-CN',{hour12:false})+'</div>'+
+      '<div class="tt"><span class="ic">🤖</span> AI 深度研判（单事件 · 参谋级） '+engineBadge+'</div>'+
+      '<div class="meta">'+_aiEsc(d.generatedAt||'')+'</div>'+
     '</div>'+
-    '<div class="ai-score-box">'+
-      '<div><div class="ai-score-val" style="color:'+color+'">'+alertInfo.score.toFixed(1)+'</div>'+
-      '<div class="ai-score-label">综合风险评分<br>(0-10)</div></div>'+
-      '<div class="ai-score-bar"><div class="ai-score-bar-fill" style="width:'+(alertInfo.score*10)+'%;background:'+color+'"></div></div>'+
-    '</div>'+
-    '<div class="ai-analysis-section"><div class="lb">🔑 关键风险因素</div>'+
-      '<div class="ct">'+factors.map(function(f){return '<span class="tag">'+f+'</span>'}).join('')+'</div></div>'+
-    '<div class="ai-analysis-section"><div class="lb">💡 建议措施</div>'+
-      '<div class="ct">'+recs.map(function(r,i){return '<div style="margin:2px 0">'+(i+1)+'. '+r+'</div>'}).join('')+'</div></div>'+
-    '<div class="ai-analysis-section"><div class="lb">📊 置信度</div>'+
-      '<div class="ct">分析置信度: <b style="color:var(--green)">85%</b> | 分析耗时: 1.2s</div></div>'+
+    ctxStrip+
+    _aiSecHtml('🧠','深度研判', d.judge||'', 'var(--cyan)')+
+    _aiSecHtml('📈','未来发展趋势（24h / 7d / 30d · 模型外推预测）', d.trend||'', 'var(--purple)')+
+    _aiSecHtml('🎯','对中国影响真实性评估', d.impact||'', 'var(--red)')+
+    '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.6">'+_aiEsc(d.note||'')+'</div>'+
     '<div class="ai-escalate-bar">'+
-      '<div class="lb">此为<b>单条预警</b>的AI分析。可纳入<b>AI情报综合分析报告</b>进行跨事件宏观研判 →</div>'+
-      '<button class="btn escalate-btn sm" onclick="escalateToReport(\''+alertInfo.id+'\',\''+alertInfo.title.replace(/'/g,'')+'\')">📋 纳入综合报告 →</button>'+
+      '<div class="lb">此为<b>单事件</b>的AI深度研判。可纳入<b>AI情报综合分析报告</b>进行跨事件宏观研判 →</div>'+
+      '<button class="btn escalate-btn sm" onclick="escalateToReport(\''+String(alertInfo.alert_no||alertInfo.id||'').replace(/'/g,'')+'\',\''+_aiEsc(String(alertInfo.title_zh||alertInfo.title||'')).replace(/'/g,'')+'\')">📋 纳入综合报告 →</button>'+
     '</div>';
 
   // 插入到详情区域末尾
   detailEl.appendChild(panel);
+  try{ panel.scrollIntoView({behavior:'smooth',block:'nearest'}); }catch(e){}
 }
 
 function escalateToReport(alertId, alertTitle){

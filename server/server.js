@@ -61,9 +61,11 @@ const projectWatch = require('./project-watch'); /* 重点项目与TIER1弱国�
 const specialMatrix = require('./special-matrix'); /* 专项采集矩阵（2026-09-03 任务 #531：涉华/项目/组织/咽喉/制裁五类 48h 深度补捞，无体积上限，60分钟一轮） */
 const reportsEngine = require('./reports-engine'); /* 智库报告产品线引擎（2026-09-03：9类专业分析报告统一后端，自注册路由+定时器） */
 const intelInsight = require('./intel-insight');
+const sanctionsWatch = require('./sanctions-watch'); /* #745 P1-4 制裁/管制名单碰撞筛查（OpenSanctions us_sanctions 70k 实体 × 中资 35 企+项目） */
 const terrorCenter = require('./terror-center'); /* #672 全球恐怖组织动态预警研判中心（常开雷达：数据库聚合+组织碰撞，零采集触发） */ /* 情报洞察服务（2026-09-05 用户指令三：领导要报速览/生命周期时间线/相似历史事件匹配） */
 const chinaTerror = require('./china-terror'); /* #689 涉华恐袭数据集（2010以来全球针对中国驻外机构/中资企业/中国公民的恐袭专项采集+聚合，10分钟实时+15天切片历史回补） */
 const enterpriseRisk = require('./enterprise-risk'); /* #698 涉企风险预警研判（六维分类：出口管制/投资审查/歧视性执法/制裁清单/数字管控/政策突变，库内真实数据聚合+单国AI研判+30天前瞻） */
+const execTravel = require('./exec-travel'); /* #753 高管出境风险监测（孟晚舟式三层闭环：硬规则 H01-H04 + 六维评分 + 人工复核台账） */
 const backfill = require('./backfill'); /* 历史补采引擎（2026-09-06 用户指令三 #649：2026-01-01→首采日逐日回扫，1500条/日，backfill_progress 断点续跑） */
 const aiWatch = require('./ai-watch'); /* #703 ② AI 情报中枢：值班分析师 20 分钟/轮无人扫库研判，决策日志落库（/api/aiwatch/*） */
 const collectCommanderMod = require('./collect-commander'); /* #717 采集总指挥哨兵：断网/关机恢复追采+昨日落账+开机自检，5min/轮无人值守（/api/commander/*） */
@@ -14206,6 +14208,9 @@ app.use('/api/models', modelsAnalysis({ query }));
 /* ===== 情报洞察 API（2026-09-05 用户指令三：领导要报速览/事件全生命周期时间线/相似历史事件匹配）===== */
 app.use('/api/insight', intelInsight({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
 
+/* ===== 制裁名单碰撞 API（#745 P1-4：OpenSanctions us_sanctions 70k 实体 × 中资底数）===== */
+app.use('/api/sanctions', sanctionsWatch({ query }));
+
 /* ===== 全球恐怖组织动态预警研判中心 API（#672：常开雷达——terror_events 数据库聚合 × 87组织档案碰撞 + AI研判公文，与 threatroom 搜集触发式差异化）===== */
 app.use('/api/terror', terrorCenter({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
 
@@ -14214,6 +14219,9 @@ app.use('/api/terror', chinaTerror({ query, isChinaRelated: scrapers.isChinaRela
 
 /* ===== 涉企风险预警研判 API（#698：/overview 六维全景 + /country-judge 单国AI研判 + /forecast 30天前瞻；纯库内真实数据聚合，零采集触发）===== */
 app.use('/api/entrisk', enterpriseRisk({ query, isChinaRelated: scrapers.isChinaRelatedStrict, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } }));
+
+/* ===== 高管出境风险监测 API（#753：孟晚舟式三层闭环——硬规则 H01-H04 + 六维加权评分（可解释）+ 人工复核；制裁名单复用 #745 缓存，事件信源 intel_data 90 天池）===== */
+app.use('/api/exec-travel', authMiddleware, execTravel({ query }));
 
 /* ===== #702 ① 企业资产维度端点（/assets 暴露面矩阵 + /asset-judge 单企业参谋级研判）与 #703 ② AI 情报中枢（值班分析师，无人值守扫库研判+决策日志）===== */
 const aiWatchMod = aiWatch({ query, llm: { callMsg: (pv, system, user) => _callOpenAiCompatMsg(pv, system, user) } });

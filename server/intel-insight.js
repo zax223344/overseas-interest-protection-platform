@@ -19,6 +19,7 @@ const scrapers = require('./scrapers');
 const INTEREST_BASE = require('./interest-base'); /* 要道通道正则（与 reports-engine 同源单一来源） */
 const reportsEngine = require('./reports-engine'); /* #664 公文版式引擎复用（govdoc.renderGovHtml，红头版式+图表复合分析与周期简报同源） */
 const RL = require('./risk-level'); /* #724 P0-3：定级读取归一单一来源——与 ai-watch/恐袭/涉企同源，杜绝功能区口径漂移 */
+const ENT_ASSETS = require('./ent-assets'); /* #746 P0-3：35 企注册表（项目/投资/人员档案口径），影响传导资产底数 */
 
 /* 情报类别中文名（leader-brief 与 intel-center 共用） */
 const _CAT_CN = {
@@ -282,6 +283,19 @@ module.exports = function intelInsight(ctx) {
       else advice.push('近24小时无红橙预警，各方向按常态监测运行');
       if (chinas.length >= 5) advice.push('涉华情报 ' + chinas.length + ' 条，集中在' + (chinas[0] && chinas[0].country ? chinas[0].country : '重点国别') + '等方向，建议领事保护条线今日专项过筛');
       if (topTypes.length) advice.push('事件量前三类：' + topTypes.map(t => (_CAT_CN[t[0]] || t[0]) + ' ' + t[1] + ' 条').join('、'));
+      /* #743 预测核验公示（真实对账数据；尚无已核验时公示机制运行状态与首批到期日） */
+      try {
+        const { rows: fr } = await q(`SELECT
+            COUNT(*) FILTER (WHERE verify_status IS NOT NULL)::int AS verified,
+            COUNT(*) FILTER (WHERE verify_status='hit')::int AS hit,
+            COUNT(*) FILTER (WHERE verify_status='near')::int AS near,
+            COUNT(*) FILTER (WHERE verify_status IS NULL)::int AS pending,
+            (MIN(ts) FILTER (WHERE verify_status IS NULL) + INTERVAL '7 days')::text AS nd
+          FROM ai_forecast_history`, []);
+        const f = fr[0] || {};
+        if (f.verified) advice.push('预测核验公示：' + f.verified + ' 条 7 天预测已满期回算，方向命中率 ' + Math.round(f.hit / f.verified * 100) + '%（命中 ' + f.hit + '，方向对/幅度不足 ' + f.near + '）');
+        else if (f.pending) advice.push('预测对账机制运行中：' + f.pending + ' 条预测滚动留底，首批 ' + String(f.nd || '').slice(5, 10).replace('-', '月') + '日 满 7 天自动核验公示');
+      } catch (e) { /* 表未建/权限静默 */ }
       const out = {
         ok: true, generatedAt: _nowCn(), window: '24h',
         stats: { total: items.length, red: reds.length, orange: oranges.length, china: chinas.length, dedupEvents: picked.length },
@@ -1103,6 +1117,765 @@ module.exports = function intelInsight(ctx) {
         note: '口径：研判队列=近72小时红橙事件 × 复合研判价值评分（级别权重×时近衰减 + 涉华加成 + 信源印证加成 + 链条长度加成，全库真实计算）· #712 事件时效闸：候选须事件发生于近7日内（event_date/publish_time 优先判定，补采回灌/旧文重发不进主面板，历史数据走 lifecycle/similar/案卷历史复盘）；突发事件链=48小时国别×类别红橙聚合簇（≥4条，同受时效闸约束）；矩阵=近7日国别×类别事件量。零模拟。'
       });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ---------- #744 P0-2 企业风险订阅画像「我的风险」工作台 ----------
+   * 三维过滤（企业/行业/国别，默认全集）→ 项目档案卡 + 近 24h 涉企预警流 + 企业定制要报摘要。
+   * 数据源：enterprise_projects（项目档案）+ intel_data（近 24h 红橙/涉华）。
+   * 缓存：按入参 key 45s；无模拟——空选中项返回 empty projects。 */
+  let _mrCache = null;
+  function _csv(qs) { return String(qs || '').split(',').map(s => s.trim()).filter(Boolean); }
+  router.get('/my-risk', async (req, res) => {
+    try {
+      const wantEnterprises = _csv(req.query.enterprises);
+      const wantSectors = _csv(req.query.sectors);
+      const wantCountries = _csv(req.query.countries);
+      const cacheKey = JSON.stringify([wantEnterprises, wantSectors, wantCountries]);
+      const now = Date.now();
+      if (_mrCache && _mrCache.key === cacheKey && now - _mrCache.at < 45000) return res.json(_mrCache.data);
+      /* ① 元数据全集（取库内真实全集，非入参子集） */
+      const { rows: ents } = await q(`SELECT enterprise, COUNT(*)::int AS n FROM enterprise_projects WHERE enterprise<>'' GROUP BY 1 ORDER BY 2 DESC, 1`, []);
+      const { rows: sctrs } = await q(`SELECT data_json->>'sector' AS sector, COUNT(*)::int AS n FROM enterprise_projects GROUP BY 1 ORDER BY 2 DESC, 1`, []);
+      const { rows: ctrs } = await q(`SELECT country, COUNT(*)::int AS n FROM enterprise_projects WHERE country<>'' GROUP BY 1 ORDER BY 2 DESC, 1`, []);
+      /* ② 过滤命中项目 */
+      let projSql = `SELECT id, enterprise, project, country, location, status, data_json, updated_at
+        FROM enterprise_projects WHERE enterprise<>''`;
+      const projParams = []; const projCond = [];
+      if (wantEnterprises.length) { projParams.push(wantEnterprises); projCond.push('enterprise = ANY($' + projParams.length + '::text[])'); }
+      if (wantCountries.length) { projParams.push(wantCountries); projCond.push('country = ANY($' + projParams.length + '::text[])'); }
+      if (projCond.length) projSql += ' AND ' + projCond.join(' AND ');
+      projSql += ' ORDER BY updated_at DESC LIMIT 200';
+      const { rows: projs } = await q(projSql, projParams);
+      /* 行业在 data_json 里，过滤后再筛 */
+      let filtered = projs;
+      if (wantSectors.length) filtered = projs.filter(p => wantSectors.indexOf(String((p.data_json || {}).sector || '')) >= 0);
+      /* ③ 项目所在国（去重） */
+      const projCountries = Array.from(new Set(filtered.map(p => p.country).filter(Boolean)));
+      /* ④ 近 24h 红橙/涉华事件流（仅查命中项目所在国；涉华判定在 JS 层用 isChina()——与 leader-brief 同口径） */
+      let alerts24 = [];
+      if (projCountries.length) {
+        const { rows: al } = await q(`SELECT id, collect_time, country, severity, data_type, source, title,
+            COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+          FROM intel_data
+          WHERE collect_time >= NOW() - INTERVAL '24 hours'
+            AND audit_status='approved' AND ${FRESH}
+            AND COALESCE(country,'') <> '中国'
+            AND country = ANY($1::text[])
+            AND severity IN ('red','orange','yellow')
+          ORDER BY collect_time DESC LIMIT 150`, [projCountries]);
+        alerts24 = al.map(r => {
+          const cn = isChina(String(r.title || '') + ' ' + String(r.title_cn || ''));
+          return {
+            id: r.id, time: new Date(r.collect_time).toISOString().replace('T', ' ').slice(0, 16) + 'Z',
+            country: r.country || '—', level: r.severity, type: _CAT_CN[r.data_type] || r.data_type,
+            source: r.source || '', title: (r.title_cn || '').slice(0, 90), china: cn
+          };
+        }).filter(a => a.level === 'red' || a.level === 'orange' || a.china);
+      }
+      /* ⑤ 项目档案卡（解析 data_json） + 风险等级分布 */
+      const riskDist = { high: 0, medium: 0, low: 0, unrated: 0 };
+      const projects = filtered.map(p => {
+        const j = p.data_json || {};
+        const rl = String(j.risk_level || '').toLowerCase();
+        if (riskDist[rl] != null) riskDist[rl]++; else riskDist.unrated++;
+        const lastEv = Array.isArray(j.risk_events) && j.risk_events.length ? j.risk_events[j.risk_events.length - 1] : null;
+        return {
+          id: String(p.id), enterprise: p.enterprise || j.enterprise || '',
+          project: p.project || j.project_name || '', country: p.country || '',
+          location: p.location || j.city || '', sector: j.sector || '—',
+          status: p.status || j.status || '—',
+          investment: j.investment || '—', startDate: j.start_date || '',
+          riskLevel: rl || 'unrated', riskLabel: ({ high: '高', medium: '中', low: '低' }[rl] || '未评级'),
+          desc: (j.desc || '').slice(0, 140),
+          lastEvent: lastEv ? { t: lastEv.t, level: lastEv.level, evt: (lastEv.evt || '').slice(0, 80) } : null,
+          updatedAt: p.updated_at
+        };
+      });
+      /* ⑥ 定制要报摘要 */
+      const brief = {
+        selectedEnterprises: wantEnterprises.length, selectedSectors: wantSectors.length, selectedCountries: wantCountries.length,
+        projects: projects.length,
+        red24: alerts24.filter(a => a.level === 'red').length,
+        orange24: alerts24.filter(a => a.level === 'orange').length,
+        china24: alerts24.filter(a => a.china).length,
+        riskDist: riskDist,
+        topCountries: (() => {
+          const m = {};
+          alerts24.forEach(a => { m[a.country] = (m[a.country] || 0) + 1; });
+          return Object.entries(m).sort((x, y) => y[1] - x[1]).slice(0, 5).map(([c, n]) => ({ country: c, n }));
+        })()
+      };
+      const out = {
+        ok: true, generatedAt: _nowCn(),
+        meta: {
+          enterprises: ents.map(r => ({ name: r.enterprise, n: r.n })),
+          sectors: sctrs.map(r => ({ name: r.sector || '未分类', n: r.n })),
+          countries: ctrs.map(r => ({ name: r.country, n: r.n }))
+        },
+        selected: { enterprises: wantEnterprises, sectors: wantSectors, countries: wantCountries },
+        brief, projects, alerts24,
+        note: '「我的风险」工作台：按企业/行业/国别三维过滤 enterprise_projects 69 项目 + 近 24h 红橙/涉华事件流；项目档案=企业/项目/国别/行业/状态/投资额/风险等级/最近一次预警；零模拟——选中项为空时 projects 为空、alerts24 按项目国去空返回。'
+      };
+      _mrCache = { key: cacheKey, at: now, data: out };
+      res.json(out);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ---------- #746 P0-3 事件→资产影响传导研判（红级事件 × 中资项目 proximity 关联 + AI 三段式） ----------
+   * 端点A GET /impact-chain        近 72h 红级事件 → 自动关联同国别/地理邻近/行业定向中资项目（含匹配依据），45s 缓存
+   * 端点B GET /impact-chain/ai?id= 单事件 AI 三段式研判（传导路径→影响量级→建议动作），Kimi 参谋级，
+   *        150s 硬超时回落规则模板；按事件 id 10min 缓存 + in-flight 合并（AI 研判类现算端点铁律）。
+   * 资产底数：enterprise_projects（库内动态在册）+ ent-assets.js 35 企注册表（平台档案口径，补充覆盖，按项目名去重）。
+   * 匹配三维：同国别（必选）+ 项目驻地词命中事件标题（地理邻近加成）+ 事件类型×行业定向冲击。 */
+  const _ENT_REG = ENT_ASSETS.ENTERPRISES || [];
+  /* 事件类型 → 定向冲击行业（缺省=该类型对全行业构成普遍安全暴露） */
+  const _IC_SECTOR_HIT = {
+    regime_change: ['建筑工程', '矿业资源', '能源石化', '能源电力', '能源核电', '工程承包'],
+    election_events: ['建筑工程', '矿业资源', '能源石化', '农业食品'],
+    policy_shift: ['通信科技', '新能源汽车', '农业食品', '综合贸易', '综合投资'],
+    sanctions_data: ['通信科技', '能源石化', '矿业资源', '能源核电', '物流运输'],
+    infrastructure: ['建筑工程', '物流运输', '能源电力'],
+    environmental_event: ['矿业资源', '能源电力', '农业食品'],
+    industrial_accident: ['建筑工程', '能源石化', '能源电力'],
+    financial_market: ['综合投资', '物流运输', '建筑工程'],
+    business_climate: ['建筑工程', '工程承包', '综合贸易']
+  };
+  let _icListCache = null;
+
+  /* 事件行 → 标准事件对象（列表/详情共用） */
+  function _icEvObj(r) {
+    const j = r.data_json || {};
+    return {
+      id: r.id, type: r.data_type, typeCn: _CAT_CN[r.data_type] || r.data_type,
+      title: String(r.title_cn || r.title || '').slice(0, 120),
+      rawTitle: String(r.title || ''),
+      country: _iso2cnTry(r.country || j.country_cn || ''),
+      level: _lv(j, r.severity),
+      source: r.source || '', url: j.url || '',
+      time: _fmtTime(j.publish_time || r.event_date || r.collect_time),
+      china: !!isChina(String(r.title || '') + ' ' + String(r.title_cn || '')),
+      _r: r
+    };
+  }
+  /* 资产底数：库内在册 + 注册表（全量加载，量级 <500 行，单请求内复用） */
+  async function _icLoadBases() {
+    const { rows: projRows } = await q(`SELECT enterprise, project, country, location, status, data_json FROM enterprise_projects WHERE enterprise<>''`, []);
+    const dbProj = projRows.map(p => {
+      const j = p.data_json || {};
+      return {
+        src: 'db', name: p.project || j.project_name || p.enterprise, enterprise: p.enterprise,
+        country: _iso2cnTry(p.country || ''), location: p.location || j.city || '',
+        sector: j.sector || '—', status: p.status || j.status || '—',
+        investment: Number(j.investment) || 0, invTxt: j.investment ? String(j.investment) + ' 亿美元' : '', personnel: 0
+      };
+    });
+    const regProj = [];
+    _ENT_REG.forEach(en => (en.projects || []).forEach(p => regProj.push({
+      src: 'reg', name: p.n, enterprise: en.short || en.name, enterpriseFull: en.name,
+      country: p.c, location: '', sector: en.industry || '—', status: '在营（注册表档案口径）',
+      investment: Number(p.inv) || 0, invTxt: p.inv ? String(p.inv) + ' 亿美元' : '', personnel: Number(p.p) || 0
+    })));
+    const seen = new Set(dbProj.map(p => p.name + '|' + p.country));
+    return { dbProj, regProj: regProj.filter(p => !seen.has(p.name + '|' + p.country)), regProjAll: regProj };
+  }
+  /* 单事件匹配（地理邻近 = 项目驻地词命中事件标题；行业定向 = 事件类型→行业映射） */
+  function _icMatch(ev, bases) {
+    const sectorHit = _IC_SECTOR_HIT[ev.type];
+    const hit = bases.dbProj.filter(p => p.country === ev.country)
+      .concat(bases.regProj.filter(p => p.country === ev.country));
+    const tLow = ev.rawTitle.toLowerCase();
+    const projects = hit.map(p => {
+      const reasons = ['同国别（' + ev.country + '）'];
+      if (p.location && p.location.length >= 2 && (ev.title.indexOf(p.location) >= 0 || tLow.indexOf(p.location.toLowerCase()) >= 0)) reasons.push('事件提及项目驻地「' + p.location + '」（地理邻近）');
+      if (sectorHit == null) reasons.push('该事件类型对全行业构成普遍安全暴露');
+      else if (sectorHit.indexOf(p.sector) >= 0) reasons.push('事件类型定向冲击 ' + p.sector + ' 行业');
+      return { src: p.src, name: p.name, enterprise: p.enterprise, country: p.country, location: p.location, sector: p.sector, status: p.status, investment: p.investment, invTxt: p.invTxt, personnel: p.personnel, reasons, score: 1 + reasons.length };
+    }).sort((a, b) => b.score - a.score).slice(0, 8);
+    return {
+      projects, projCount: projects.length,
+      enterprises: Array.from(new Set(projects.map(p => p.enterprise))).length,
+      investment: Math.round(projects.reduce((s, p) => s + (p.investment || 0), 0) * 10) / 10,
+      personnel: projects.reduce((s, p) => s + (p.personnel || 0), 0)
+    };
+  }
+  async function _icScan() {
+    if (_icListCache && Date.now() - _icListCache.at < 45000) return _icListCache.data;
+    /* ① 近 72h 候选（#712 事件时效闸：publish_time/event_date 优先判定，补采回灌/旧文重发出局） */
+    const { rows: evRows } = await q(
+      `SELECT id, data_type, title, country, severity, source, collect_time, event_date, data_json,
+              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+       FROM intel_data
+       WHERE collect_time >= NOW() - INTERVAL '72 hours' AND audit_status='approved' AND ${FRESH}
+         AND COALESCE(country,'') NOT IN ('中国','')
+       ORDER BY collect_time DESC LIMIT 400`, []
+    );
+    const evs = evRows.map(_icEvObj).filter(e => e.level === 'red' && _evFresh(e._r, 3)).slice(0, 30);
+    /* ② 资产底数 + ③ 逐事件匹配 */
+    const bases = await _icLoadBases();
+    const events = evs.map(ev => {
+      const m = _icMatch(ev, bases);
+      const o = { id: ev.id, type: ev.type, typeCn: ev.typeCn, title: ev.title, country: ev.country, level: ev.level, source: ev.source, url: ev.url, time: ev.time, china: ev.china };
+      return Object.assign(o, m);
+    }).sort((a, b) => (b.projCount - a.projCount) || (String(b.time).localeCompare(String(a.time))));
+    /* 汇总（按 项目名|国别 去重） */
+    const pSet = new Set(), eSet = new Set();
+    events.forEach(e => (e.projects || []).forEach(p => { pSet.add(p.name + '|' + p.country); eSet.add(p.enterprise); }));
+    const out = {
+      ok: true, generatedAt: _nowCn(),
+      stats: {
+        redEvents: events.length, eventsWithProjects: events.filter(e => e.projCount > 0).length,
+        exposedProjects: pSet.size, enterprises: eSet.size
+      },
+      events,
+      note: '影响传导研判：近 72h 红级事件（#712 事件时效闸，publish_time/event_date 优先）× 中资资产（enterprise_projects 在册 + 35 企注册表档案，按项目名去重）；匹配三维=同国别（必选）+ 项目驻地词命中事件标题（地理邻近）+ 事件类型×行业定向；投资/人员为注册表档案口径。零模拟——事件全部来自实时采集库。'
+    };
+    _icListCache = { at: Date.now(), data: out };
+    return out;
+  }
+  router.get('/impact-chain', async (req, res) => {
+    try { res.json(await _icScan()); }
+    catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ---------- #746 端点B：单事件 AI 三段式（传导路径→影响量级→建议动作） ---------- */
+  const _icAiCache = new Map(), _icAiBusy = new Map();
+  function _icAiFallback(ev) {
+    const ps = ev.projects || [];
+    const entStr = Array.from(new Set(ps.map(p => p.enterprise))).slice(0, 5).join('、') || '—';
+    const path = '【传导路径】' + ev.country + '发生' + ev.typeCn + '红级事件「' + String(ev.title).slice(0, 60) + '」，按同国别/地理邻近/行业暴露三维匹配，' + ps.length + ' 个中资项目处于暴露半径内（涉及 ' + entStr + ' 等）。传导链路：现场安全威胁（人员遇袭/营地受扰/交通中断）→ 项目运营中断（施工停滞/物流受阻/工期承压）→ 商务与合规连锁（违约金、保险费率上调、驻在国审查收紧）。';
+    const mag = '【影响量级】总体档位：' + (ev.china ? '高（事件涉华直接关联）' : ((ps.length >= 3 || (ev.investment || 0) >= 10) ? '中（多项目/高投资暴露）' : '低（单项目有限暴露）')) + '。量化口径：关联项目 ' + ps.length + ' 个、企业 ' + (ev.enterprises || 0) + ' 家，账面投资合计约 ' + (ev.investment || 0) + ' 亿美元，驻外人员合计约 ' + (ev.personnel || 0) + ' 人（注册表档案口径）。';
+    const act = '【建议动作】一是对暴露半径内项目立即执行人员安全清点与营地安防加固，对接项目现场应急预案；二是向驻' + ev.country + '使领馆报备人员分布并保持联络机制热更新；三是对人员密集项目预置撤离预案（集合点、撤离路线、包机通道三要素）；四是评估供应链替代方案，关键物资运输改道或提前备货；五是建立事件专项案卷，跟踪后续 72 小时同类事件密度，密度上升即上调关联项目风险等级并触发复核。';
+    return { ok: true, llmOk: false, path, magnitude: mag, actions: act, generatedAt: _nowCn(), note: '大模型研判暂不可用，本段为规则模板装配（事件、项目、投资、人员数字全部引用真实库与注册表档案）；链路恢复后自动升级 Kimi 参谋级研判。' };
+  }
+  async function _icAiGen(ev) {
+    const pv = reportsEngine._test.pvKimi();
+    const sys = '你是海外利益保护情报预警平台的首席情报参谋，执行「事件→资产影响传导」专项研判任务。严格按以下三段格式输出，段首标记必须逐字一致：【传导路径】2-4 句，从事件本体出发，写清传导机制（安全威胁→运营中断→商务合规连锁），落到具体受影响项目；【影响量级】先给总体档位（高/中/低）及定档依据，再引用给定的关联项目数、投资额、人员数量化口径；【建议动作】3-5 条，每条以「一是/二是/三是」开头，具体可执行（人员清点、使领馆报备、撤离预案预置、供应链备份、风险等级复核），对接应急预案与处置闭环。全部基于给定真实数据外推，禁止编造事件与数字；信息不足处写「样本不足」。';
+    const usr = '【红级事件（真实采集库）】\n国别：' + ev.country + '\n类别：' + ev.typeCn + '\n标题：' + ev.title + '\n发生时间：' + ev.time + (ev.china ? '\n涉华关联：是' : '') + '\n\n【暴露半径内中资项目（同国别/地理邻近/行业定向匹配，真实档案）】\n' + ((ev.projects || []).map((p, i) => (i + 1) + '. ' + p.name + '（' + p.enterprise + '，' + p.country + (p.location ? '·' + p.location : '') + '，' + p.sector + (p.invTxt ? '，投资' + p.invTxt : '') + (p.personnel ? '，人员' + p.personnel + '人' : '') + '；匹配依据：' + p.reasons.join('；') + '）').join('\n') || '（无匹配项目）') + '\n\n汇总：关联项目 ' + (ev.projCount || 0) + ' 个、企业 ' + (ev.enterprises || 0) + ' 家，账面投资合计约 ' + (ev.investment || 0) + ' 亿美元，驻外人员合计约 ' + (ev.personnel || 0) + ' 人。\n请输出三段式影响传导研判。';
+    try {
+      /* #740 实测：kimi-k2.7 真实研判 prompt 需 >60s，放宽到 150s（10min 缓存兜底） */
+      const r = await Promise.race([llmCall(pv, sys, usr), new Promise((_, rej) => setTimeout(() => rej(new Error('LLM_TIMEOUT_150s')), 150000))]);
+      if (r && r.text && String(r.text).length > 250) {
+        const txt = String(r.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+        const pB = txt.split(/【传导路径】/)[1] || '';
+        const mB = pB.split(/【影响量级】/);
+        const aB = txt.split(/【建议动作】/);
+        const path = String(mB[0] || '').trim();
+        const magnitude = String((mB[1] || '').split(/【建议动作】/)[0] || '').trim();
+        const actions = String(aB[1] || '').trim();
+        if (path.length > 60 && actions.length > 40) {
+          return { ok: true, llmOk: true, path, magnitude: magnitude || '（模型未按格式输出量级段，请结合项目数字复核）', actions, generatedAt: _nowCn(), note: 'Kimi 大模型基于真实事件与项目档案生成（事件与项目全部真实，研判为模型外推，事实以原文链接为准）；按事件 10 分钟缓存。' };
+        }
+      }
+    } catch (e) { console.warn('[INSIGHT] impact-chain-ai LLM 失败，回落规则模板:', e.message); }
+    return _icAiFallback(ev);
+  }
+  router.get('/impact-chain/ai', async (req, res) => {
+    try {
+      const id = String(req.query.id || '').trim();
+      if (!id) return res.status(400).json({ ok: false, error: '缺少事件 id' });
+      const cached = _icAiCache.get(id);
+      if (cached && Date.now() - cached.at < 600000) return res.json(cached.data);
+      if (_icAiBusy.has(id)) return res.json(await _icAiBusy.get(id));
+      /* in-flight 合并：busy promise 必须在任何 await 之前入表（并发窗口归零） */
+      const job = (async () => {
+        /* 事件 + 匹配装配（不依赖列表缓存，单查） */
+        const { rows } = await q(`SELECT id, data_type, title, country, severity, source, collect_time, event_date, data_json,
+            COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn FROM intel_data WHERE id=$1`, [id]);
+        if (!rows.length) throw Object.assign(new Error('未找到事件 id=' + id), { statusCode: 404 });
+        const ev = _icEvObj(rows[0]);
+        const bases = await _icLoadBases();
+        const obj = { id: ev.id, type: ev.type, typeCn: ev.typeCn, title: ev.title, country: ev.country, level: ev.level, source: ev.source, url: ev.url, time: ev.time, china: ev.china };
+        Object.assign(obj, _icMatch(ev, bases));
+        const data = await _icAiGen(obj);
+        return Object.assign({ event: obj }, data);
+      })();
+      _icAiBusy.set(id, job);
+      try {
+        const out = await job;
+        _icAiCache.set(id, { at: Date.now(), data: out });
+        res.json(out);
+      } finally { _icAiBusy.delete(id); }
+    } catch (e) {
+      const sc = e && e.statusCode ? e.statusCode : 500;
+      res.status(sc).json({ ok: false, error: e.message });
+    }
+  });
+
+  /* ---------- #754 智能预警中心·单事件 AI 深度研判：深度研判→未来发展趋势→对华影响真实性评估 ----------
+   * POST /api/insight/ai-judge  body={id(SRV-<n>|裸id), alert_no, title, desc, content, country, type, level, url, source, time, chinaRelated}
+   * 库内事件回源 intel_data 取全文；语境全部真实库统计（同国 7d 密度/红级/涉华、同类全球量、同国同类近 30d、
+   * 中资项目暴露复用影响传导三维匹配）。Kimi 参谋级 150s 硬超时回落规则模板；按事件 10min 缓存 + in-flight 合并。
+   * 2026-09-10 铁律：替代前端原 setTimeout 假模拟 AI 分析——研判必须真调大模型/真引统计，零模拟。 */
+  const _ajCache = new Map(), _ajBusy = new Map();
+  function _ajParseIntelId(id) {
+    const s = String(id || '');
+    const m = s.match(/^SRV-(\d+)$/);
+    if (m) return Number(m[1]);
+    if (/^\d+$/.test(s)) return Number(s);
+    return null;
+  }
+  /* 规则模板回落：数字全部引用真实库统计与注册表档案，零虚构 */
+  function _ajFallback(ev, ctx) {
+    const trendDir = ctx.recent3d > ctx.prev4d ? '上升' : (ctx.recent3d < ctx.prev4d ? '回落' : '持平');
+    const entStr = ctx.projects && ctx.projects.length ? Array.from(new Set(ctx.projects.map(p => p.enterprise))).slice(0, 3).join('、') : '';
+    const judge = '【深度研判】' + (ev.country || '未知地区') + '发生' + (ev.typeCn || '安全') + '类' + (ev.level === 'red' ? '红级' : ev.level === 'orange' ? '橙级' : '监测级') + '事件「' + String(ev.title).slice(0, 60) + '」。真实库背景：同国近 7 天事件 ' + ctx.country7d + ' 条（红级 ' + ctx.red7d + ' 条、涉华关联 ' + ctx.china7d + ' 条），近 3 天 ' + ctx.recent3d + ' 条对比前 4 天 ' + ctx.prev4d + ' 条，事件密度' + trendDir + '；该类别全球近 7 天 ' + ctx.type7d + ' 条。' + (ev.china ? '事件命中涉华严格检测（isChinaRelatedStrict），存在明确涉华要素。' : '事件未命中涉华严格检测，涉华关联待核。') + (ctx.projects && ctx.projects.length ? '同国别在册中资项目 ' + ctx.projCount + ' 个（账面投资合计约 ' + ctx.investment + ' 亿美元、驻外人员约 ' + ctx.personnel + ' 人）处于国别暴露半径。' : '同国别暂无在册中资项目档案。');
+    const trend = '【未来发展趋势】短期（24 小时）：以事件现场处置与信息扩散为主，关注同源后续报道密度；中期（7 天）：同国事件密度呈' + trendDir + '态势' + (trendDir === '上升' ? '，不排除同类事件连锁' : '，预计按既有密度演化') + '；长期（30 天）：视驻在国局势结构性因素而定，样本期内以持续监测为主。观察指标：① 同国 72 小时内同类事件新增量（≥3 条视为升级信号）；② 是否出现中方机构/人员直接卷入的报道；③ 驻在国政府/军方表态是否升级。';
+    const impact = '【对华影响真实性评估】涉华关联性质：' + (ev.china ? '检测命中（存在直接关联要素）' : '未命中涉华检测（无直接关联，影响为间接国别暴露）') + '。信息可信度：来源 ' + (ev.source || '未知') + '，多源印证数 ' + (ev.corr || 0) + ((ev.corr || 0) >= 2 ? '（多源交叉）' : '（单源线索）') + '。实质影响：' + (ctx.projects && ctx.projects.length ? '同国 ' + ctx.projCount + ' 个在册中资项目存在国别级安全暴露（涉及 ' + entStr + ' 等）' : '无在册项目暴露记录，影响以人员安全提示与国别风险等级为主') + '。真实性评级：' + (ev.china && (ev.corr || 0) >= 2 ? '高（涉华要素明确且多源印证）' : ev.china ? '中（涉华要素明确但单源）' : '低（无直接涉华关联）') + '。';
+    return { ok: true, llmOk: false, judge, trend, impact, generatedAt: _nowCn(), note: '大模型研判暂不可用，本段为规则模板装配（事件、同国密度、暴露项目、印证数全部引用真实库与注册表档案）；链路恢复后自动升级 Kimi 参谋级研判（10 分钟缓存周期后重试）。' };
+  }
+  /* 事件装配：库内回源全文 + 同国/同类真实统计 + 项目暴露三维匹配 */
+  async function _ajLoad(p) {
+    const intelId = _ajParseIntelId(p.id);
+    let row = null;
+    if (intelId != null) {
+      const { rows } = await q(`SELECT id, data_type, title, country, severity, source, collect_time, event_date, data_json,
+          COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn FROM intel_data WHERE id=$1`, [intelId]);
+      row = rows[0] || null;
+    }
+    let ev;
+    if (row) {
+      const j = row.data_json || {};
+      ev = _icEvObj(row);
+      ev.corr = Number(j.corroboration || 0);
+      ev.content = String(j.content || j.desc || '').slice(0, 2600);
+    } else {
+      /* 手动录入/已清扫条目：以前端真实载荷为准（仍是真实数据，零模拟） */
+      ev = {
+        id: String(p.id || ''), type: '', typeCn: String(p.type || '安全风险'), title: String(p.title || '未命名事件').slice(0, 120),
+        rawTitle: String(p.titleRaw || ''), country: String(p.country || ''), level: String(p.level || ''),
+        source: String(p.source || ''), url: String(p.url || ''), time: String(p.time || ''),
+        china: !!p.chinaRelated, corr: 0, content: String(p.content || p.desc || '').slice(0, 2600)
+      };
+    }
+    const ctx = { country7d: 0, red7d: 0, china7d: 0, type7d: 0, recent3d: 0, prev4d: 0, similar: [], projects: [], projCount: 0, enterprises: 0, investment: 0, personnel: 0 };
+    if (ev.country) {
+      /* 精确总量/红级/3d/4d 窗口拆分（独立 COUNT 聚合，防 LIMIT 300 截断把 recent3d 撑满、红级漏检） */
+      const { rows: aggRows } = await q(`SELECT COUNT(*)::int n,
+          COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '3 days')::int recent3d,
+          COUNT(*) FILTER (WHERE severity='red' OR COALESCE(data_json->>'risk_zone','') IN ('红','red')
+            OR ((data_json->>'risk_score') ~ '^[0-9]+(\\.[0-9]+)?$' AND (data_json->>'risk_score')::float >= 61))::int reds
+          FROM intel_data WHERE country=$1 AND collect_time >= NOW() - INTERVAL '7 days' AND audit_status='approved'`, [ev.country]);
+      ctx.country7d = Number((aggRows[0] && aggRows[0].n) || 0);
+      ctx.recent3d = Number((aggRows[0] && aggRows[0].recent3d) || 0);
+      ctx.prev4d = Math.max(ctx.country7d - ctx.recent3d, 0);
+      ctx.red7d = Number((aggRows[0] && aggRows[0].reds) || 0);
+      const { rows: cRows } = await q(`SELECT id, data_type, title, country, severity, source, collect_time, event_date, data_json,
+          COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn FROM intel_data
+          WHERE country=$1 AND collect_time >= NOW() - INTERVAL '7 days' AND audit_status='approved' ORDER BY collect_time DESC LIMIT 300`, [ev.country]);
+      ctx.china7d = cRows.filter(r => isChina(String(r.title || '') + ' ' + String(r.title_cn || ''))).length;
+      if (ev.type) {
+        ctx.similar = cRows.filter(r => r.data_type === ev.type).slice(0, 5)
+          .map(r => ({ title: String(r.title_cn || r.title || '').slice(0, 80), time: _fmtTime((r.data_json || {}).publish_time || r.event_date || r.collect_time) }));
+      }
+    }
+    if (ev.type) {
+      const { rows: tRows } = await q(`SELECT COUNT(*) n FROM intel_data WHERE data_type=$1 AND collect_time >= NOW() - INTERVAL '7 days' AND audit_status='approved'`, [ev.type]);
+      ctx.type7d = Number((tRows[0] && tRows[0].n) || 0);
+    }
+    try {
+      const bases = await _icLoadBases();
+      const m = _icMatch(ev, bases);
+      ctx.projects = m.projects; ctx.projCount = m.projCount; ctx.enterprises = m.enterprises; ctx.investment = m.investment; ctx.personnel = m.personnel;
+    } catch (e) { console.warn('[INSIGHT] ai-judge 项目暴露装配失败:', e.message); }
+    return { ev, ctx };
+  }
+  async function _ajGen(ev, ctx) {
+    if (!llmCall) return _ajFallback(ev, ctx);
+    const pv = reportsEngine._test.pvKimi();
+    const sys = '你是海外利益保护情报预警平台的首席情报参谋，执行「单事件深度研判」任务。严格按以下三段格式输出，段首标记必须逐字一致：【深度研判】3-5 句，判断事件本质与性质（偶发/蓄意/系统性风险）、直接动因与背后结构性因素、现阶段最需要关注的要点；【未来发展趋势】必须分三个时段（24小时内／7天内／30天内），每时段给出走向判断（升级/僵持/缓和）、概率估计（百分比）与 1-2 个可观察的升级或缓和信号；【对华影响真实性评估】先判定涉华关联性质（直接关联/间接关联/无实质关联），再评实质影响（人员安全/项目运营/供应链/合规声誉，凡提及必须落到给定事实），再评信息可信度（来源立场、多源印证数），最后给真实性评级（高/中/低）与一句依据；若涉华关联被媒体夸大或无实质影响，必须明确指出，不得迎合。全部基于给定真实数据外推，禁止编造事件、数字与来源；信息不足处写「样本不足」。';
+    const usr = '【事件（真实采集库）】\n标题：' + ev.title + '\n国别：' + (ev.country || '—') + ' | 类别：' + (ev.typeCn || '—') + ' | 级别：' + (ev.level || '—') + ' | 时间：' + (ev.time || '—') + '\n来源：' + (ev.source || '—') + ' | 多源印证数：' + (ev.corr || 0) + ' | 涉华严格检测：' + (ev.china ? '命中' : '未命中') + (ev.rawTitle ? '\n原文标题：' + ev.rawTitle : '') + '\n正文摘录：' + (ev.content && ev.content.length > 30 ? ev.content : '（无正文，仅有标题级信息）') + '\n\n【同国真实库背景（近 7 天）】\n同国事件 ' + ctx.country7d + ' 条（红级 ' + ctx.red7d + ' 条、涉华关联 ' + ctx.china7d + ' 条）；近 3 天 ' + ctx.recent3d + ' 条 vs 前 4 天 ' + ctx.prev4d + ' 条；\n该类别全球近 7 天 ' + ctx.type7d + ' 条；\n同国近期同类事件：\n' + (ctx.similar.length ? ctx.similar.map((s, i) => (i + 1) + '. ' + s.title + '（' + s.time + '）').join('\n') : '（样本不足）') + '\n\n【中资项目暴露（同国别/地理邻近/行业定向匹配，真实档案）】\n' + ((ctx.projects || []).map((p2, i) => (i + 1) + '. ' + p2.name + '（' + p2.enterprise + '，' + p2.sector + (p2.invTxt ? '，投资' + p2.invTxt : '') + (p2.personnel ? '，人员' + p2.personnel + '人' : '') + '）').join('\n') || '（无匹配项目）') + '\n汇总：项目 ' + ctx.projCount + ' 个、企业 ' + ctx.enterprises + ' 家，账面投资约 ' + ctx.investment + ' 亿美元，驻外人员约 ' + ctx.personnel + ' 人。\n\n请输出三段式深度研判（【深度研判】【未来发展趋势】【对华影响真实性评估】）。';
+    try {
+      /* #740 实测：kimi-k2.7 真实研判 prompt 需 >60s，放宽到 150s（10min 缓存兜底） */
+      const r = await Promise.race([llmCall(pv, sys, usr), new Promise((_, rej) => setTimeout(() => rej(new Error('LLM_TIMEOUT_150s')), 150000))]);
+      if (r && r.text && String(r.text).length > 300) {
+        const txt = String(r.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+        const jB = String(txt.split(/【深度研判】/)[1] || '').split(/【未来发展趋势】/)[0].trim();
+        const tB = String(txt.split(/【未来发展趋势】/)[1] || '').split(/【对华影响真实性评估】/)[0].trim();
+        const iB = String(txt.split(/【对华影响真实性评估】/)[1] || '').trim();
+        if (jB.length > 100 && iB.length > 60) {
+          return { ok: true, llmOk: true, judge: jB, trend: tB || '（模型未按格式输出趋势段，请结合观察指标复核）', impact: iB, generatedAt: _nowCn(), note: 'Kimi 大模型基于真实事件全文与同国/同类/项目暴露真实统计生成；趋势与影响为模型外推预测，事实以原文链接为准；按事件 10 分钟缓存。' };
+        }
+      }
+    } catch (e) { console.warn('[INSIGHT] ai-judge LLM 失败，回落规则模板:', e.message); }
+    return _ajFallback(ev, ctx);
+  }
+  router.post('/ai-judge', async (req, res) => {
+    try {
+      const p = req.body || {};
+      const key = String(p.id || p.alert_no || p.title || '').slice(0, 60);
+      if (!key) return res.status(400).json({ ok: false, error: '缺少事件标识' });
+      const cached = _ajCache.get(key);
+      if (cached && Date.now() - cached.at < 600000) return res.json(cached.data);
+      if (_ajBusy.has(key)) return res.json(await _ajBusy.get(key));
+      /* in-flight 合并：busy promise 必须在任何 await 之前入表（并发窗口归零） */
+      const job = (async () => {
+        const { ev, ctx } = await _ajLoad(p);
+        const data = await _ajGen(ev, ctx);
+        return Object.assign({
+          event: { id: ev.id, title: ev.title, country: ev.country, level: ev.level, url: ev.url },
+          ctxStats: { country7d: ctx.country7d, red7d: ctx.red7d, china7d: ctx.china7d, type7d: ctx.type7d, recent3d: ctx.recent3d, prev4d: ctx.prev4d, projCount: ctx.projCount, enterprises: ctx.enterprises, investment: ctx.investment, personnel: ctx.personnel }
+        }, data);
+      })();
+      _ajBusy.set(key, job);
+      try {
+        const out = await job;
+        _ajCache.set(key, { at: Date.now(), data: out });
+        res.json(out);
+      } finally { _ajBusy.delete(key); }
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /* ============================================================
+   * #747 供应链中断传导预测 — GET /api/insight/supply-chain
+   * 物流/港口/运河/罢工/地缘中断事件（真实库 30d）→ 六大咽喉点 + 六大走廊映射
+   * → 事件密度/红级/涉华/趋势 → 受影响中资项目与行业（复用影响传导资产底数）
+   * → 规则式传导链（中断→运价/绕行→交期→项目物资→成本）。零模拟。
+   * ============================================================ */
+  const SC_KW = '(港口|海运|航运|运河|红海|曼德|巴拿马|马六甲|霍尔木兹|苏伊士|北极航道|物流|供应链|罢工|封锁|航道|海峡|货轮|集装箱|货船|运输中断|改道|滞留|停摆|堵|port|canal|strait|shipping|freight|container|strike|blockade|supply chain|logistics|rerout|stranded)';
+  /* 咽喉点档案（事实与前端 CHOKEPOINTS 同源；risk 为档案静态值，动态=近 7d 事件命中） */
+  const SC_CHOKES = [
+    { key: 'hormuz', name: '霍尔木兹海峡', risk: 7, ents: ['中石油', '中石化'], re: /(霍尔木兹|Hormuz)/, impact: '全球约 20% 石油运输要道，封锁将冲击能源运输' },
+    { key: 'babelmandeb', name: '红海-曼德海峡', risk: 9.5, ents: ['中远海运', '招商局'], re: /(红海|曼德|胡塞|也门袭击|Red Sea|Bab el-Mandeb|Houthi)/, impact: '亚欧集装箱主通道，袭击即触发绕行好望角（运价↑、交期+7~14 天）' },
+    { key: 'suez', name: '苏伊士运河', risk: 7.5, ents: ['中远海运'], re: /(苏伊士|Suez)/, impact: '受红海局势联动，通行量下降传导欧亚航线运力' },
+    { key: 'malacca', name: '马六甲海峡', risk: 5.5, ents: ['中远海运', '中石油'], re: /(马六甲|Malacca)/, impact: '中国约 80% 能源进口经此通道' },
+    { key: 'panama', name: '巴拿马运河', risk: 4, ents: ['中远海运'], re: /(巴拿马运河|Panama Canal)/, impact: '干旱/通行管制时太平洋航线延误' },
+    { key: 'arctic', name: '北极航道', risk: 5, ents: ['中远海运'], re: /(北极航道|Arctic (?:route|passage))/, impact: '新兴战略通道，基础设施与地缘博弈并存' }
+  ];
+  const SC_CORRIDORS = [
+    { key: 'cpec', name: '中巴经济走廊', countries: ['巴基斯坦'], ents: 5, inv: 62 },
+    { key: 'cmec', name: '中缅经济走廊', countries: ['缅甸'], ents: 4, inv: 19 },
+    { key: 'chinaeu', name: '中欧班列通道', countries: ['俄罗斯', '哈萨克斯坦', '波兰', '德国'], ents: 3, inv: 30 },
+    { key: 'laosrail', name: '中老铁路走廊', countries: ['老挝'], ents: 2, inv: 17 },
+    { key: 'jakartahsr', name: '雅万高铁走廊', countries: ['印度尼西亚'], ents: 3, inv: 16 },
+    { key: 'piraeus', name: '比雷埃夫斯港走廊', countries: ['希腊', '塞尔维亚'], ents: 3, inv: 16 }
+  ];
+  let _scCache = null, _scCacheAt = 0;
+  async function _scLoad() {
+    if (_scCache && Date.now() - _scCacheAt < 300000) return _scCache;
+    const { rows } = await q(
+      `SELECT id, data_type, title, country, severity, source, collect_time, data_json,
+              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+       FROM intel_data
+       WHERE collect_time >= NOW() - INTERVAL '30 days' AND audit_status='approved' AND ${FRESH}
+         AND (COALESCE(NULLIF(data_json->>'title_zh',''), title) ~ '${SC_KW}' OR title ~ '${SC_KW}')
+       ORDER BY collect_time DESC LIMIT 2000`, []);
+    const evs = rows.map(_icEvObj);
+    const now = Date.now();
+    const chokes = SC_CHOKES.map(c => {
+      const hit = evs.filter(e => c.re.test(e.title) || c.re.test(e.rawTitle));
+      const d7 = hit.filter(e => now - Date.parse(String(e.time).replace(' ', 'T') + '+08:00') < 7 * 86400000 || now - _evTs(e._r) < 7 * 86400000);
+      const prev7 = hit.filter(e => { const a = now - _evTs(e._r); return a >= 7 * 86400000 && a < 14 * 86400000; });
+      return {
+        key: c.key, name: c.name, risk: c.risk, ents: c.ents, impact: c.impact,
+        events30d: hit.length, events7d: d7.length, prev7d: prev7.length,
+        red7d: d7.filter(e => e.level === 'red').length,
+        china7d: d7.filter(e => e.china).length,
+        trend: d7.length > prev7.length ? 'up' : d7.length < prev7.length ? 'down' : 'flat',
+        hot: d7.length >= 3 || d7.some(e => e.level === 'red'),
+        samples: d7.slice(0, 3).map(e => ({ id: e.id, title: e.title.slice(0, 70), level: e.level, time: String(e.time).slice(0, 16), url: e.url }))
+      };
+    });
+    const corridors = SC_CORRIDORS.map(c => {
+      const hit = evs.filter(e => c.countries.includes(e.country));
+      const d7 = hit.filter(e => now - _evTs(e._r) < 7 * 86400000);
+      return {
+        key: c.key, name: c.name, countries: c.countries.join('/'), ents: c.ents, inv: c.inv,
+        events30d: hit.length, events7d: d7.length,
+        red7d: d7.filter(e => e.level === 'red').length,
+        china7d: d7.filter(e => e.china).length,
+        hot: d7.length >= 5 || d7.some(e => e.level === 'red'),
+        samples: d7.slice(0, 2).map(e => ({ id: e.id, title: e.title.slice(0, 70), level: e.level, time: String(e.time).slice(0, 16), url: e.url }))
+      };
+    });
+    /* 受影响中资项目（同国别匹配：走廊国 + 咽喉点事件国） */
+    const bases = await _icLoadBases();
+    const hotCountries = new Set();
+    chokes.forEach(c => { if (c.hot) c.samples.forEach(s => hotCountries.add(s.title)); });
+    corridors.filter(c => c.hot).forEach(c => c.countries.split('/').forEach(x => hotCountries.add(x)));
+    const exposed = [];
+    bases.dbProj.concat(bases.regProj).forEach(p => {
+      if (p.country && hotCountries.has(p.country)) exposed.push(p);
+    });
+    const byCountry = {};
+    evs.forEach(e => { if (e.country) byCountry[e.country] = (byCountry[e.country] || 0) + 1; });
+    const out = {
+      ok: true, generatedAt: _nowCn(), window: '30d',
+      stats: {
+        total30d: evs.length,
+        total7d: evs.filter(e => now - _evTs(e._r) < 7 * 86400000).length,
+        red30d: evs.filter(e => e.level === 'red').length,
+        china30d: evs.filter(e => e.china).length,
+        hotChokes: chokes.filter(c => c.hot).length,
+        hotCorridors: corridors.filter(c => c.hot).length
+      },
+      chokes, corridors,
+      topCountries: Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 12).map(x => ({ country: x[0], n: x[1] })),
+      exposedProjects: exposed.slice(0, 30).map(p => ({ name: p.name, enterprise: p.enterprise, country: p.country, sector: p.sector, invTxt: p.invTxt || '—', personnel: p.personnel || '—' })),
+      events: evs.filter(e => e.level === 'red' || e.china).slice(0, 30).map(e => ({ id: e.id, title: e.title.slice(0, 80), country: e.country, level: e.level, china: e.china, time: String(e.time).slice(0, 16), url: e.url, source: e.source }))
+    };
+    _scCache = out; _scCacheAt = Date.now();
+    return out;
+  }
+  router.get('/supply-chain', async (req, res) => {
+    try { res.json(await _scLoad()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* #747 单咽喉点/走廊 AI 传导链研判（150s 超时 + 10min 缓存 + in-flight 合并 + 规则回落） */
+  const _scAiCache = new Map(), _scAiBusy = new Map();
+  function _scAiFallback(unit, evs) {
+    const dir = unit.events7d > unit.prev7d ? '上升' : unit.events7d < unit.prev7d ? '回落' : '持平';
+    const chain = '【传导链】' + unit.name + '近 30 天命中中断类事件 ' + unit.events30d + ' 条（近 7 天 ' + (unit.events7d != null ? unit.events7d : unit.events30d) + ' 条、红级 ' + (unit.red7d || 0) + ' 条、涉华 ' + (unit.china7d || 0) + ' 条，密度较前 7 天' + dir + '）。一级传导（运输层）：' + (unit.impact || '通道通行受阻') + '；二级传导（贸易层）：运价上行与交期延长，高时效货物（电子、生鲜、合同违约敏感件）率先承压；三级传导（项目层）：依赖该通道进口物资/设备的中资海外项目施工节奏与成本预算受压，需评估替代路线与提前备货。';
+    const pred = '【中断概率】短期（7 天）：' + (unit.hot ? '中高——通道处于活跃事件窗口，保持逐日跟踪' : '低——事件密度处于基线水平') + '。中期（30 天）：取决于驻在国局势与航运公司绕行决策；若红级事件再现或出现中方船只直接卷入，上调一级。观察信号：① 72 小时内同类事件新增量；② 主要班轮公司是否公告绕行/停航；③ 驻在国政府/军方对通道通行表态。';
+    const act = '【建议动作】一是对经' + unit.name + '的在建项目物资排程做压力测试，关键设备识别替代路线（好望角/中欧班列/空运）并测算交期增量；二是与航运代理建立运价周报机制，锁定中长期舱位对冲即期涨价；三是涉通道船舶投保战争险条款复核；四是把该通道列入供应链专项监测清单，红级事件即触发项目层重排产评估。';
+    return { ok: true, llmOk: false, chain, prediction: pred, actions: act, generatedAt: _nowCn(), note: '大模型暂不可用，本段为规则模板装配（事件数/红级/涉华/密度趋势全部引用真实库统计）；链路恢复后自动升级 Kimi 参谋级研判。' };
+  }
+  router.post('/supply-chain/ai', async (req, res) => {
+    try {
+      const p = req.body || {};
+      const key = 'sc:' + String(p.name || '').slice(0, 40);
+      if (!p.name) return res.status(400).json({ ok: false, error: '缺少通道/走廊名称' });
+      const cached = _scAiCache.get(key);
+      if (cached && Date.now() - cached.at < 600000) return res.json(cached.data);
+      if (_scAiBusy.has(key)) return res.json(await _scAiBusy.get(key));
+      const job = (async () => {
+        const sc = await _scLoad();
+        const unit = sc.chokes.find(c => c.name === p.name) || sc.corridors.find(c => c.name === p.name);
+        if (!unit) throw Object.assign(new Error('未找到通道/走廊：' + p.name), { statusCode: 404 });
+        const evs = (unit.samples || []).map(s => s.title);
+        if (!llmCall) return Object.assign({ unit }, _scAiFallback(unit, evs));
+        const pv = reportsEngine._test.pvKimi();
+        const sys = '你是海外利益保护情报预警平台的首席供应链情报参谋，执行「通道中断→供应链传导」专项研判。严格按以下三段格式输出，段首标记逐字一致：【传导链】从运输层→贸易层→项目层逐级写清传导机制与时效，落到中资海外项目；【中断概率】给出短期 7 天/中期 30 天两档判断与观察信号（逐条编号）；【建议动作】3-5 条，每条以「一是/二是」开头，具体可执行（替代路线、舱位锁定、战争险、排产重评）。全部基于给定真实统计外推，禁止编造事件与数字；信息不足写「样本不足」。';
+        const usr = '【通道/走廊档案】' + unit.name + '：' + (unit.impact || '') + '\n【真实库统计（30 天窗口）】命中中断类事件 ' + unit.events30d + ' 条；近 7 天 ' + (unit.events7d != null ? unit.events7d : '—') + ' 条（红级 ' + (unit.red7d || 0) + '，涉华 ' + (unit.china7d || 0) + '）。\n【近 7 天代表事件】\n' + (evs.map((t, i) => (i + 1) + '. ' + t).join('\n') || '（近 7 天无代表事件）') + '\n请输出三段式供应链传导研判。';
+        try {
+          const r = await Promise.race([llmCall(pv, sys, usr), new Promise((_, rej) => setTimeout(() => rej(new Error('LLM_TIMEOUT_150s')), 150000))]);
+          if (r && r.text && String(r.text).length > 250) {
+            const txt = String(r.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+            const cB = String(txt.split(/【传导链】/)[1] || '').split(/【中断概率】/)[0].trim();
+            const pB = String(txt.split(/【中断概率】/)[1] || '').split(/【建议动作】/)[0].trim();
+            const aB = String(txt.split(/【建议动作】/)[1] || '').trim();
+            if (cB.length > 80 && aB.length > 40) {
+              return Object.assign({ unit }, { ok: true, llmOk: true, chain: cB, prediction: pB, actions: aB, generatedAt: _nowCn(), note: 'Kimi 大模型基于真实通道档案与库内中断事件统计生成；研判为模型外推，事实以事件原文链接为准；按通道 10 分钟缓存。' });
+            }
+          }
+        } catch (e) { console.warn('[INSIGHT] supply-chain-ai LLM 失败，回落规则模板:', e.message); }
+        return Object.assign({ unit }, _scAiFallback(unit, evs));
+      })();
+      _scAiBusy.set(key, job);
+      try { const out = await job; _scAiCache.set(key, { at: Date.now(), data: out }); res.json(out); }
+      finally { _scAiBusy.delete(key); }
+    } catch (e) {
+      const sc = e && e.statusCode ? e.statusCode : 500;
+      res.status(sc).json({ ok: false, error: e.message });
+    }
+  });
+
+  /* ============================================================
+   * #748 国别准入壁垒日历 — GET /api/insight/barrier-calendar
+   * 贸易救济（反倾销/反补贴/关税）× 出口管制 × 投资审查 × 制裁清单
+   * 按国别×日历聚合（60d），涉华标记 + 国别×类别矩阵 + 14 天前瞻跟踪。零模拟。
+   * ============================================================ */
+  const BC_CATS = [
+    { key: 'trade_remedy', name: '贸易救济', re: /(反倾销|反补贴|保障措施|关税|加征|税则|anti-?dumping|countervailing|tariff|duties)/ },
+    { key: 'export_control', name: '出口管制', re: /(出口管制|两用物项|技术出口|禁运|export control|dual-?use)/ },
+    { key: 'investment_screen', name: '投资审查', re: /(投资审查|外资安全|国家安全审查|并购审查|投资限制|investment screen|CFIUS|FDI)/ },
+    { key: 'sanctions', name: '制裁与清单', re: /(制裁|实体清单|黑名单|未经验证|制裁名单|sanction|entity list|blacklist|embargo|SDN)/ }
+  ];
+  const BC_KW_ALL = BC_CATS.map(c => c.re.source).join('|');
+  let _bcCache = null, _bcCacheAt = 0;
+  async function _bcLoad() {
+    if (_bcCache && Date.now() - _bcCacheAt < 300000) return _bcCache;
+    const { rows } = await q(
+      `SELECT id, data_type, title, country, severity, source, collect_time, event_date, data_json,
+              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+       FROM intel_data
+       WHERE collect_time >= NOW() - INTERVAL '60 days' AND audit_status='approved' AND ${FRESH}
+         AND (COALESCE(NULLIF(data_json->>'title_zh',''), title) ~ '${BC_KW_ALL}' OR title ~ '${BC_KW_ALL}')
+       ORDER BY collect_time DESC LIMIT 3000`, []);
+    const evs = rows.map(_icEvObj).map(e => {
+      const cat = BC_CATS.find(c => c.re.test(e.title) || c.re.test(e.rawTitle));
+      return Object.assign(e, { cat: cat ? cat.key : '', catName: cat ? cat.name : '其他壁垒' });
+    }).filter(e => e.cat);
+    /* 日历（按天 × 类别） */
+    const cal = {};
+    evs.forEach(e => {
+      const d = String(e.time).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      if (!cal[d]) cal[d] = { date: d, n: 0, china: 0, red: 0, cats: {} };
+      cal[d].n++; if (e.china) cal[d].china++; if (e.level === 'red') cal[d].red++;
+      cal[d].cats[e.cat] = (cal[d].cats[e.cat] || 0) + 1;
+    });
+    /* 国别 × 类别矩阵 */
+    const matrix = {};
+    evs.forEach(e => {
+      const c = e.country || '未知';
+      if (!matrix[c]) matrix[c] = { country: c, trade_remedy: 0, export_control: 0, investment_screen: 0, sanctions: 0, total: 0, china: 0, red: 0 };
+      matrix[c][e.cat]++; matrix[c].total++; if (e.china) matrix[c].china++; if (e.level === 'red') matrix[c].red++;
+    });
+    const chinas = evs.filter(e => e.china);
+    const out = {
+      ok: true, generatedAt: _nowCn(), window: '60d',
+      stats: {
+        total: evs.length, china: chinas.length, red: evs.filter(e => e.level === 'red').length,
+        countries: Object.keys(matrix).length,
+        byCat: BC_CATS.map(c => ({ key: c.key, name: c.name, n: evs.filter(e => e.cat === c.key).length }))
+      },
+      calendar: Object.values(cal).sort((a, b) => b.date.localeCompare(a.date)),
+      matrix: Object.values(matrix).sort((a, b) => b.total - a.total).slice(0, 20),
+      chinaList: chinas.slice(0, 30).map(e => ({ id: e.id, title: e.title.slice(0, 80), country: e.country, cat: e.catName, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
+      recent: evs.slice(0, 40).map(e => ({ id: e.id, title: e.title.slice(0, 80), country: e.country, cat: e.catName, level: e.level, china: e.china, time: String(e.time).slice(0, 16), url: e.url }))
+    };
+    _bcCache = out; _bcCacheAt = Date.now();
+    return out;
+  }
+  router.get('/barrier-calendar', async (req, res) => {
+    try { res.json(await _bcLoad()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ============================================================
+   * #749 撤离与应急方案自动生成 — POST /api/insight/evac-plan
+   * body={country, projectId?} → 同国在册项目档案 + 近 14d 红级事件 + 30d 事件统计
+   * → LLM 五段式撤离预案（形势研判/撤离分级/路线与交通/驻留保障/联络机制），
+   * 150s 超时 + 10min 缓存 + in-flight 合并 + 规则回落（引用真实项目/事件，零模拟）。
+   * ============================================================ */
+  const _evCache = new Map(), _evBusy = new Map();
+  function _evFallback(country, ctx) {
+    const ps = ctx.projects || [];
+    const entStr = Array.from(new Set(ps.map(p => p.enterprise))).slice(0, 4).join('、') || '—';
+    const situ = '【形势研判】' + country + '近 30 天入库事件 ' + ctx.total30d + ' 条（近 14 天红级 ' + ctx.red14d + ' 条、涉华 ' + ctx.china14d + ' 条）。在册中资项目 ' + ps.length + ' 个（涉及 ' + entStr + ' 等，账面投资合计约 ' + ctx.investment + ' 亿美元、注册表口径驻外人员约 ' + ctx.personnel + ' 人）。' + (ctx.red14d >= 3 ? '红级事件密度高，建议进入撤离预备状态。' : ctx.red14d >= 1 ? '存在红级事件，建议按条件撤离准备执行。' : '红级事件稀少，建议维持常态应急戒备。');
+    const lvl = '【撤离分级】一级（建议撤离）：非必要人员及家属先行转移；二级（准备撤离）：关键岗位轮换压缩至最小运营单元，证件物资预置；三级（就地避险）：全员营地集结令演练，避难所路线熟悉。当前建议档位：' + (ctx.red14d >= 5 ? '一级' : ctx.red14d >= 1 ? '二级' : '三级') + '（依据近 14 天红级 ' + ctx.red14d + ' 条真实事件密度）。';
+    const route = '【撤离路线与交通】以最近国际机场/口岸为主通道、陆路邻国口岸为备份通道（具体口岸以国别应急指南真实档案为准）；包机/商业航班并行评估，撤离车队按 3 车编组（前导警戒/人员/物资）昼间机动；路线避开事件聚集区（近 14 天红级事件分布见下）。';
+    const stay = '【驻留与保障】最小运营单元预置 30 天水、食品、燃油与医药物资；营地安防加固（外围警戒/门禁双人制/通信冗余：卫星电话+本地双运营商）；现金与关键证照随身化管理制度。';
+    const comm = '【联络与应急机制】撤离指挥长—安全官—后勤官三级指挥链定人定责；与中国驻' + country + '使领馆报备人员名册并保持 24h 联络（外交部全球领保热线 +86-10-12308 兜底）；每 4 小时全员点名一次，撤离期间提升至每 2 小时。';
+    return { ok: true, llmOk: false, situ, level: lvl, route, stay, comm, generatedAt: _nowCn(), note: '大模型暂不可用，本段为规则模板装配（项目/投资/人员/红级事件密度全部引用真实库与注册表档案）；链路恢复后自动升级 Kimi 参谋级预案（10 分钟缓存周期后重试）。' };
+  }
+  router.post('/evac-plan', async (req, res) => {
+    try {
+      const p = req.body || {};
+      const country = String(p.country || '').trim();
+      if (!country) return res.status(400).json({ ok: false, error: '缺少国别参数' });
+      const key = 'evac:' + country + ':' + String(p.projectId || '');
+      const cached = _evCache.get(key);
+      if (cached && Date.now() - cached.at < 600000) return res.json(cached.data);
+      if (_evBusy.has(key)) return res.json(await _evBusy.get(key));
+      const job = (async () => {
+        const bases = await _icLoadBases();
+        let projects = bases.dbProj.concat(bases.regProj).filter(b => b.country === country);
+        if (p.projectId) {
+          const one = projects.find(b => String(b.name).includes(String(p.projectId)));
+          if (one) projects = [one];
+        }
+        const agg = await q(`SELECT COUNT(*)::int total30d,
+            COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '14 days')::int total14d,
+            COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '14 days' AND severity='red')::int red14d,
+            COUNT(*) FILTER (WHERE collect_time >= NOW() - INTERVAL '14 days' AND severity='orange')::int orange14d
+          FROM intel_data WHERE country=$1 AND collect_time >= NOW() - INTERVAL '30 days' AND audit_status='approved' AND ${FRESH}`, [country]);
+        const reds = await q(`SELECT id, data_type, title, severity, collect_time, data_json,
+              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+          FROM intel_data WHERE country=$1 AND severity IN ('red','orange') AND collect_time >= NOW() - INTERVAL '14 days' AND audit_status='approved' AND ${FRESH}
+          ORDER BY collect_time DESC LIMIT 6`, [country]);
+        const chinaAgg = await q(`SELECT COUNT(*)::int n FROM intel_data WHERE country=$1 AND collect_time >= NOW() - INTERVAL '14 days' AND audit_status='approved' AND ${FRESH}`, [country]);
+        const ctx = {
+          total30d: agg.rows[0].total30d, total14d: agg.rows[0].total14d,
+          red14d: agg.rows[0].red14d, orange14d: agg.rows[0].orange14d,
+          china14d: chinaAgg.rows[0].n, projects,
+          investment: Math.round(projects.reduce((s, x) => s + (x.investment || 0), 0)),
+          personnel: projects.reduce((s, x) => s + (x.personnel || 0), 0),
+          redEvents: reds.rows.map(_icEvObj)
+        };
+        let data;
+        if (!llmCall) {
+          data = _evFallback(country, ctx);
+        } else {
+          const pv = reportsEngine._test.pvKimi();
+          const sys = '你是海外利益保护情报预警平台的首席应急处置参谋，执行「驻外人员与项目撤离应急预案」生成任务。严格按以下五段格式输出，段首标记逐字一致：【形势研判】基于给定的真实事件统计与项目档案给出现场形势判断；【撤离分级】给出一级建议撤离/二级准备撤离/三级就地避险三档定义，并依据真实红级事件密度明确当前建议档位与依据；【撤离路线与交通】主通道+备份通道+编队原则（信息不足写「以使领馆指引为准」）；【驻留与保障】最小运营单元物资/安防/通信冗余要求；【联络与应急机制】指挥链、使领馆报备、点名节奏（明确小时数）。全部基于给定真实数据外推，禁止编造事件与数字。';
+          const usr = '【国别】' + country + '\n【真实库统计（近 30 天）】事件 ' + ctx.total30d + ' 条；近 14 天 ' + ctx.total14d + ' 条（红级 ' + ctx.red14d + ' 条、橙级 ' + ctx.orange14d + ' 条）。\n【近 14 天红/橙级代表事件（真实采集）】\n' + (ctx.redEvents.map((e, i) => (i + 1) + '. [' + (e.level === 'red' ? '红' : '橙') + '] ' + e.title.slice(0, 60) + '（' + String(e.time).slice(0, 10) + '）').join('\n') || '（无）') + '\n\n【在册中资项目档案（真实）】\n' + (projects.map((x, i) => (i + 1) + '. ' + x.name + '（' + x.enterprise + '，' + (x.location || x.country) + '，' + x.sector + (x.invTxt ? '，投资' + x.invTxt : '') + (x.personnel ? '，人员' + x.personnel + '人' : '') + '）').join('\n') || '（无在册项目档案）') + '\n汇总：项目 ' + projects.length + ' 个，账面投资合计约 ' + ctx.investment + ' 亿美元，注册表口径驻外人员约 ' + ctx.personnel + ' 人。\n请输出五段式撤离应急预案。';
+          try {
+            const r = await Promise.race([llmCall(pv, sys, usr), new Promise((_, rej) => setTimeout(() => rej(new Error('LLM_TIMEOUT_150s')), 150000))]);
+            if (r && r.text && String(r.text).length > 400) {
+              const txt = String(r.text).replace(/\*\*/g, '').replace(/^#{1,4}\s*/gm, '').replace(/^\s*[-*]\s+/gm, '').trim();
+              const cut = (h) => String(txt.split(h)[1] || '').split(/【/)[0].trim();
+              const situ = cut('【形势研判】'), level = cut('【撤离分级】'), route = cut('【撤离路线与交通】'), stay = cut('【驻留与保障】'), comm = cut('【联络与应急机制】');
+              if (situ.length > 60 && level.length > 40) {
+                data = { ok: true, llmOk: true, situ, level, route: route || '（以使领馆指引为准）', stay, comm, generatedAt: _nowCn(), note: 'Kimi 大模型基于真实事件统计与项目档案生成；预案为模型推演，执行以使领馆与现场指挥为准；按国别 10 分钟缓存。' };
+              }
+            }
+          } catch (e) { console.warn('[INSIGHT] evac-plan LLM 失败，回落规则模板:', e.message); }
+          if (!data) data = _evFallback(country, ctx);
+        }
+        return Object.assign({
+          country,
+          ctxStats: { total30d: ctx.total30d, total14d: ctx.total14d, red14d: ctx.red14d, orange14d: ctx.orange14d, china14d: ctx.china14d, projCount: projects.length, investment: ctx.investment, personnel: ctx.personnel },
+          projects: projects.slice(0, 20).map(x => ({ name: x.name, enterprise: x.enterprise, location: x.location, sector: x.sector, invTxt: x.invTxt || '', personnel: x.personnel || 0 })),
+          redEvents: ctx.redEvents.map(e => ({ id: e.id, title: e.title.slice(0, 70), level: e.level, time: String(e.time).slice(0, 16), url: e.url }))
+        }, data);
+      })();
+      _evBusy.set(key, job);
+      try { const out = await job; _evCache.set(key, { at: Date.now(), data: out }); res.json(out); }
+      finally { _evBusy.delete(key); }
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /* ============================================================
+   * #750 境外社媒舆情监测 — GET /api/insight/social-pulse
+   * 库内社媒通道（social_media TG/Reddit 采集 + socmint_watch 哨兵）7d 聚合：
+   * 平台/频道分布、国别分布、涉华占比、红级数、日趋势、涉华舆情流 TOP。
+   * 零模拟：库内有多少算多少，通道不可达即如实为 0。
+   * ============================================================ */
+  let _spCache = null, _spCacheAt = 0;
+  async function _spLoad() {
+    if (_spCache && Date.now() - _spCacheAt < 120000) return _spCache;
+    const { rows } = await q(
+      `SELECT id, data_type, title, country, severity, source, collect_time, data_json,
+              COALESCE(NULLIF(data_json->>'title_zh',''), title) AS title_cn
+       FROM intel_data
+       WHERE collect_time >= NOW() - INTERVAL '7 days' AND audit_status='approved'
+         AND (COALESCE(data_json->>'_sourceType','') IN ('social_media','socmint_watch')
+              OR data_type='socmint_intel')
+       ORDER BY collect_time DESC LIMIT 1500`, []);
+    const evs = rows.map(r => {
+      const j = r.data_json || {};
+      const e = _icEvObj(r);
+      e.platform = String(j.social_platform || (String(r.source).includes('Reddit') ? 'reddit' : j._sourceType === 'socmint_watch' ? 'mastodon' : 'telegram'));
+      return e;
+    });
+    const byPlat = {}, byChan = {}, byCountry = {}, byDay = {};
+    evs.forEach(e => {
+      byPlat[e.platform] = (byPlat[e.platform] || 0) + 1;
+      byChan[e.source] = (byChan[e.source] || 0) + 1;
+      const c = e.country || '未知';
+      byCountry[c] = (byCountry[c] || 0) + 1;
+      const d = String(e.time).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        if (!byDay[d]) byDay[d] = { date: d, n: 0, china: 0, red: 0 };
+        byDay[d].n++; if (e.china) byDay[d].china++; if (e.level === 'red') byDay[d].red++;
+      }
+    });
+    const chinas = evs.filter(e => e.china);
+    const out = {
+      ok: true, generatedAt: _nowCn(), window: '7d',
+      stats: {
+        total: evs.length, china: chinas.length,
+        red: evs.filter(e => e.level === 'red').length,
+        orange: evs.filter(e => e.level === 'orange').length,
+        platforms: Object.keys(byPlat).length, channels: Object.keys(byChan).length,
+        chinaPct: evs.length ? Math.round(chinas.length / evs.length * 100) : 0
+      },
+      byPlatform: Object.entries(byPlat).sort((a, b) => b[1] - a[1]).map(x => ({ platform: x[0], n: x[1] })),
+      byChannel: Object.entries(byChan).sort((a, b) => b[1] - a[1]).slice(0, 20).map(x => ({ channel: x[0], n: x[1] })),
+      byCountry: Object.entries(byCountry).sort((a, b) => b[1] - a[1]).slice(0, 12).map(x => ({ country: x[0], n: x[1] })),
+      byDay: Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date)),
+      chinaFeed: chinas.slice(0, 30).map(e => ({ id: e.id, title: e.title.slice(0, 90), country: e.country, platform: e.platform, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
+      feed: evs.slice(0, 40).map(e => ({ id: e.id, title: e.title.slice(0, 90), country: e.country, platform: e.platform, level: e.level, china: e.china, time: String(e.time).slice(0, 16), url: e.url, source: e.source }))
+    };
+    _spCache = out; _spCacheAt = Date.now();
+    return out;
+  }
+  router.get('/social-pulse', async (req, res) => {
+    try { res.json(await _spLoad()); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
   return router;

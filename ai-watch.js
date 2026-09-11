@@ -14,7 +14,7 @@
 'use strict';
 var AIWATCH = (function () {
   var _inited = false, _timer = null, _clock = null, _toolTimer = null;
-  var _status = null, _log = [], _maxLogId = 0, _logFilter = 'all';
+  var _status = null, _log = [], _maxLogId = 0, _logFilter = 'all', _accuracy = null;
   var _tools = {};   /* #720 深度工具值班矩阵：各 AI 引擎最近产出（真实端点探测） */
 
   function _esc(s) {
@@ -162,6 +162,43 @@ var AIWATCH = (function () {
       '.aw-dm .cell .l{font-size:9px;color:#8fa8c0;margin-top:3px;letter-spacing:.5px;line-height:1.5}' +
       '.aw-dm .cell.hot{border-color:rgba(255,51,85,.25)}' +
       '.aw-dm .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:7px;padding-top:6px;border-top:1px dashed rgba(124,58,237,.15)}' +
+      /* ===== #743 预测核验命中率公示牌 ===== */
+      '.aw-bd .top{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}' +
+      '.aw-bd .big{font-size:30px;font-weight:800;font-family:Consolas,monospace;color:#00e676;text-shadow:0 0 14px rgba(0,230,118,.45);line-height:1;flex-shrink:0}' +
+      '.aw-bd .big small{font-size:13px}' +
+      '.aw-bd .sub{font-size:9.5px;color:#8fa8c0;line-height:1.6}' +
+      '.aw-bd .sub b{color:#c3d9ec}' +
+      '.aw-bd .bar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:6px 0 4px;background:rgba(90,122,153,.15)}' +
+      '.aw-bd .bar span{display:block;height:100%}' +
+      '.aw-bd .bar .bh{background:#00e676}' +
+      '.aw-bd .bar .bn{background:#ffaa33}' +
+      '.aw-bd .bar .bm{background:#ff5577}' +
+      '.aw-bd .lg{display:flex;gap:12px;font-size:8.5px;color:#7aa5c9;margin-bottom:7px}' +
+      '.aw-bd .lg .d{display:flex;align-items:center;gap:4px}' +
+      '.aw-bd .lg .d::before{content:"";width:7px;height:7px;border-radius:2px}' +
+      '.aw-bd .lg .d.h::before{background:#00e676}' +
+      '.aw-bd .lg .d.n::before{background:#ffaa33}' +
+      '.aw-bd .lg .d.m::before{background:#ff5577}' +
+      '.aw-bd .kgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px}' +
+      '.aw-bd .kc{border:1px solid rgba(34,211,238,.14);border-radius:7px;padding:6px 8px;background:rgba(13,28,54,.6)}' +
+      '.aw-bd .kc .kv{font-size:18px;font-weight:800;font-family:Consolas,monospace;color:#e2e8f0;line-height:1.2}' +
+      '.aw-bd .kc .kv small{font-size:9px}' +
+      '.aw-bd .kc .kl{font-size:9px;color:#c3d9ec;margin-top:2px;font-weight:700}' +
+      '.aw-bd .kc .kn{font-size:8.5px;color:#7aa5c9;margin-top:1px;font-family:Consolas,monospace}' +
+      '.aw-bd .rh{font-size:8.5px;color:#5a7a99;letter-spacing:1.5px;margin:6px 0 3px}' +
+      '.aw-bd .rr{display:flex;gap:6px;align-items:baseline;font-size:9px;padding:2px 0;border-bottom:1px dotted rgba(34,211,238,.08)}' +
+      '.aw-bd .rr:last-child{border-bottom:none}' +
+      '.aw-bd .rr .vn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a9c6dd}' +
+      '.aw-bd .rr .vd{font-family:Consolas,monospace;font-weight:800;flex-shrink:0}' +
+      '.aw-bd .rr .vd.u{color:#ff3355}' +
+      '.aw-bd .rr .vd.d{color:#00e676}' +
+      '.aw-bd .rr .vd.f{color:#22d3ee}' +
+      '.aw-bd .rr .va{font-family:Consolas,monospace;color:#7aa5c9;flex-shrink:0}' +
+      '.aw-bd .rr .vv{flex-shrink:0;font-size:8px;font-weight:800;border-radius:3px;padding:0 5px;letter-spacing:1px}' +
+      '.aw-bd .rr .vv.g{background:rgba(0,230,118,.12);color:#00e676;border:1px solid rgba(0,230,118,.3)}' +
+      '.aw-bd .rr .vv.n{background:rgba(255,136,0,.12);color:#ffaa33;border:1px solid rgba(255,136,0,.3)}' +
+      '.aw-bd .rr .vv.m{background:rgba(255,51,85,.12);color:#ff5577;border:1px solid rgba(255,51,85,.3)}' +
+      '.aw-bd .ft{font-size:8.5px;color:#5a7a99;line-height:1.7;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(34,211,238,.12)}' +
       /* ===== #721 结构化风险预测清单 ===== */
       '.aw-fc .row{position:relative;border:1px solid rgba(34,211,238,.12);border-radius:7px;padding:6px 8px;margin-bottom:6px;background:rgba(13,28,54,.6);transition:.15s}' +
       '.aw-fc .row:hover{border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.06)}' +
@@ -474,6 +511,62 @@ var AIWATCH = (function () {
     return '<div class="aw-panel"><div class="aw-ph"><span class="ic">🧰</span><span class="t">AI 深度工具值班矩阵</span><span class="tag">TOOL MATRIX · ' + rows.length + ' 引擎</span></div>' +
       '<div class="aw-pb aw-tools"><div class="tl">' + rows.join('') + '</div>' +
       '<div class="ft">全平台 AI 研判引擎统一列装值班：事件层逐条快评 → 态势层 20min 滚动 → 预测层 3h 前瞻 → 专项通报（反恐/涉华/涉企/要报）红头公文输出。状态灯按各引擎真实产出时间点亮，每 5 分钟自动巡检一次。</div>' +
+      '</div></div>';
+  }
+
+  /* ================= #743 预测核验命中率公示牌 =================
+   * 数据源：/api/aiwatch/accuracy（ai_forecast_history 满期回算聚合）。
+   * 已核验>0：总命中率大数字 + hit/near/miss 三色比例条 + 分维度 + 最近核验明细；
+   * 尚无已核验：诚实公示机制上线状态与首批到期日（零模拟，不回溯构造）。 */
+  function _fcBoardHTML() {
+    var a = _accuracy;
+    if (!a || !a.ok) return '';
+    var o = a.overall || {};
+    var vd = o.verified || 0;
+    var big, sub;
+    if (vd > 0) {
+      big = (o.rate != null ? o.rate : '—') + '<small>%</small>';
+      sub = '命中 ' + (o.hit || 0) + ' / 已核验 ' + vd + ' 条 · 方向对含幅度不足 ' + (o.nearInclusive != null ? o.nearInclusive : '—') + '%';
+    } else {
+      big = '—';
+      sub = (o.pending
+        ? '对账机制已上线 · <b>' + o.pending + '</b> 条预测滚动留底，首批 <b>' + String(o.nextDueAt || '').slice(5, 10).replace('-', '月') + '日</b> 满 7 天自动核验公示'
+        : '暂无留底数据');
+    }
+    var bar = '';
+    if (vd > 0) {
+      var pw = function (n) { return (n / vd * 100).toFixed(1) + '%'; };
+      bar = '<div class="bar">' +
+        '<span class="bh" style="width:' + pw(o.hit || 0) + '"></span>' +
+        '<span class="bn" style="width:' + pw(o.near || 0) + '"></span>' +
+        '<span class="bm" style="width:' + pw(o.miss || 0) + '"></span></div>' +
+        '<div class="lg"><span class="d h">命中 ' + (o.hit || 0) + '</span><span class="d n">幅度不足 ' + (o.near || 0) + '</span><span class="d m">未命中 ' + (o.miss || 0) + '</span></div>';
+    }
+    var bk = a.byKind || {};
+    function kindCell(k, label) {
+      var x = bk[k];
+      if (!x || !x.verified) return '<div class="kc"><div class="kv">—</div><div class="kl">' + label + '</div><div class="kn">待首批核验</div></div>';
+      return '<div class="kc"><div class="kv">' + (x.rate != null ? x.rate : '—') + '<small>%</small></div><div class="kl">' + label + '</div><div class="kn">命中 ' + x.hit + '/' + x.verified + ' · 不足 ' + x.near + ' · 未中 ' + x.miss + '</div></div>';
+    }
+    var rec = '';
+    var rc = a.recent || [];
+    if (rc.length) {
+      rec = '<div class="rh">最近核验</div>' + rc.map(function (r) {
+        var vc = r.verdict === 'hit' ? 'g' : (r.verdict === 'near' ? 'n' : 'm');
+        var vt = r.verdict === 'hit' ? '命中' : (r.verdict === 'near' ? '幅度不足' : '未命中');
+        return '<div class="rr"><span class="vn">' + _esc(r.name) + '</span>' +
+          '<span class="vd ' + (r.direction === 'up' ? 'u' : (r.direction === 'down' ? 'd' : 'f')) + '">' + (r.direction === 'up' ? '↑' : (r.direction === 'down' ? '↓' : '→')) + '</span>' +
+          '<span class="va" title="预测窗实际环比">' + (r.actualDelta != null ? ((r.actualDelta > 0 ? '+' : '') + r.actualDelta + '%') : '—') + '</span>' +
+          '<span class="vv ' + vc + '">' + vt + '</span></div>';
+      }).join('');
+    }
+    return '<div class="aw-panel aw-board"><div class="aw-ph"><span class="ic">🏅</span><span class="t">预测命中率公示牌</span><span class="tag">FORECAST VERIFIED</span></div>' +
+      '<div class="aw-pb aw-bd">' +
+      '<div class="top"><div class="big">' + big + '</div><div class="sub">' + sub + '</div></div>' +
+      bar +
+      '<div class="kgrid">' + kindCell('country', '国别预测') + kindCell('domain', '风险域预测') + '</div>' +
+      rec +
+      '<div class="ft">口径：每条 7 天方向预测满期后按预测窗实际入库回算（hit / near / miss 三档，幅度阈值 ±30%）；连续 3 轮未命中的条目自动降置信度并在装配层生效。机制 ' + String(o.firstAt || '').slice(0, 10) + ' 上线，此前预测未留底、不回溯构造（零模拟铁律）。</div>' +
       '</div></div>';
   }
 
@@ -792,7 +885,7 @@ var AIWATCH = (function () {
     var h = '<div class="aw-screen">';
     h += _topHTML(du, ops);
     h += '<div class="aw-grid">' +
-      '<div class="aw-col-l">' + _seatHTML(du, st) + _shiftsHTML() + _linksHTML(du, st, ops) + _briefHTML(du) + _toolsHTML(du, st) + _forecastHTML() + '</div>' +
+      '<div class="aw-col-l">' + _seatHTML(du, st) + _shiftsHTML() + _linksHTML(du, st, ops) + _briefHTML(du) + _toolsHTML(du, st) + _fcBoardHTML() + _forecastHTML() + '</div>' +
       '<div class="aw-col-c">' + _kpisHTML(du, st, ops) + _themeHTML() + _barsHTML() + _gaugesHTML(ops) + _hotsHTML(ops) + _roundsHTML(du) + '</div>' +
       '<div class="aw-col-r">' + _wallHTML(du) + '</div>' +
       '</div>';
@@ -821,7 +914,14 @@ var AIWATCH = (function () {
   }
 
   function refresh(silent) {
-    return Promise.all([loadLog(true), loadStatus(silent)]);
+    return Promise.all([loadLog(true), loadStatus(silent), loadAccuracy(true)]);
+  }
+
+  /* #743 预测核验命中率公示牌数据（/api/aiwatch/accuracy，45s 服务端缓存） */
+  function loadAccuracy(silent) {
+    return _fetch('/api/aiwatch/accuracy', 20000)
+      .then(function (d) { _accuracy = d; _render(); })
+      .catch(function () { /* 公示牌独立失败不影响主屏 */ });
   }
 
   function runNow() {

@@ -17,11 +17,13 @@
  * 四步注册：index.html 侧边栏 data-view → view-entrisk 容器 → app.js VIEW_MAP + runViewInit → role-ui.js。 */
 'use strict';
 var ENTRISK = (function () {
-  var _inited = false, _ov = null, _abort = null, _brAbort = null, _fcAbort = null, _asAbort = null;
+  var _inited = false, _ov = null, _abort = null, _brAbort = null, _fcAbort = null, _asAbort = null, _efAbort = null;
   var _openCountry = null, _judgeCache = {}, _judgeAbort = {};
   var _brData = null, _fcData = null, _asData = null, _showAllEnts = false;
   var _openEnt = null, _entCache = {}, _entAbort = {};
   var _domFilter = null;   /* 七域过滤（null=全部） */
+  var _efData = null;      /* 实战化涉企定向风险流 */
+  var _efLink = null;      /* 锚点档过滤：null/A/B/C/D */
 
   function _fetch(url, ms, extCtrl) {
     var ctrl = extCtrl || new AbortController();
@@ -153,6 +155,27 @@ var ENTRISK = (function () {
       '.er-crow .bw i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#f59e0b,#ef4444)}' +
       '.er-crow .nv{color:#ff8800;font-weight:800;width:34px;text-align:right;flex-shrink:0;font-size:12px}' +
       '.er-crow .hint{font-size:9px;color:#62809e;flex-shrink:0}' +
+      /* ⑥ 实战化涉企锚点（A/B/C/D 四档 + 涉企影响度评分） */
+      '.er-linkA{font-size:8.5px;border-radius:6px;padding:1px 7px;background:rgba(255,51,85,.18);color:#ff5577;border:1px solid rgba(255,51,85,.45);font-weight:800;letter-spacing:.5px}' +
+      '.er-linkB{font-size:8.5px;border-radius:6px;padding:1px 7px;background:rgba(245,158,11,.15);color:#fbbf24;border:1px solid rgba(245,158,11,.4);font-weight:800;letter-spacing:.5px}' +
+      '.er-linkC{font-size:8.5px;border-radius:6px;padding:1px 7px;background:rgba(124,58,237,.15);color:#c4b5fd;border:1px solid rgba(124,58,237,.4);font-weight:800;letter-spacing:.5px}' +
+      '.er-linkD{font-size:8.5px;border-radius:6px;padding:1px 7px;background:rgba(56,189,248,.15);color:#7dd3fc;border:1px solid rgba(56,189,248,.4);font-weight:800;letter-spacing:.5px}' +
+      '.er-impact{font-size:10px;font-weight:800;color:#ffcc00;font-family:Consolas,monospace;background:rgba(255,204,0,.08);border:1px solid rgba(255,204,0,.3);border-radius:5px;padding:1px 6px}' +
+      '.er-enttag{font-size:8.5px;border-radius:6px;padding:1px 7px;background:rgba(0,212,255,.13);color:#22d3ee;border:1px solid rgba(0,212,255,.35);font-weight:800}' +
+      /* 涉企定向风险流筛选器 */
+      '.er-eflow-bar{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:6px 0 9px;border-bottom:1px dashed rgba(0,212,255,.13);margin-bottom:9px}' +
+      '.er-fchip{font-size:10px;border-radius:14px;padding:3px 11px;background:rgba(143,168,192,.08);color:#8fa8c0;border:1px solid rgba(143,168,192,.2);cursor:pointer;font-weight:700;transition:.12s}' +
+      '.er-fchip:hover{background:rgba(0,212,255,.13);border-color:rgba(0,212,255,.35);color:#22d3ee}' +
+      '.er-fchip.on{background:rgba(0,212,255,.18);border-color:#22d3ee;color:#22d3ee}' +
+      '.er-fchip.lkA.on{background:rgba(255,51,85,.18);border-color:#ff3355;color:#ff5577}' +
+      '.er-fchip.lkB.on{background:rgba(245,158,11,.18);border-color:#f59e0b;color:#fbbf24}' +
+      '.er-fchip.lkC.on{background:rgba(124,58,237,.18);border-color:#7c3aed;color:#c4b5fd}' +
+      '.er-fchip.lkD.on{background:rgba(56,189,248,.18);border-color:#38bdf8;color:#7dd3fc}' +
+      '.er-eflow-meta{font-size:10px;color:#7aa5c9;margin-bottom:6px;display:flex;gap:11px;flex-wrap:wrap;align-items:center}' +
+      '.er-eflow-meta b{color:#ffcc00;font-weight:800;font-family:Consolas,monospace}' +
+      /* 价值闸拒绝提示 */
+      '.er-gate-note{font-size:10px;color:#5a7a99;line-height:1.7;padding:5px 8px;background:rgba(255,204,0,.05);border:1px dashed rgba(255,204,0,.2);border-radius:6px;margin-top:8px}' +
+      '.er-gate-note b{color:#ffcc00}' +
       /* 单国研判展开盒 */
       '.er-jbox{background:rgba(0,0,0,.24);border:1px solid rgba(124,58,237,.3);border-radius:8px;margin:6px 0 10px;padding:10px 12px}' +
       '.er-jhdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}' +
@@ -182,14 +205,38 @@ var ENTRISK = (function () {
   }
 
   /* ---------- 渲染 ---------- */
+  var LINK_CN = { A: '企业直击', B: '涉企动作', C: '人员资产', D: '经营环境' };
   function _evCard(e) {
+    var link = e.link;
+    var linkTag = link ? '<span class="er-link' + link.tier + '">A/B/C/D ' + link.tier + '·' + LINK_CN[link.tier] + '</span>' : '';
+    var impact = link ? '<span class="er-impact" title="涉企影响度评分 = 锚点档+动作烈度+时效+来源可信度">★ ' + link.score + '</span>' : '';
+    var entTag = link && link.ent ? '<span class="er-enttag">🏷 ' + _esc(link.ent) + '</span>' : '';
     return '<div class="er-alert ' + (e.level === 'red' ? 'rd' : 'ro') + '" onclick="ENTRISK.judge(\'' + _cq(e.country) + '\')">' +
       '<div class="tt">' + _esc(e.title) + '</div>' +
       '<div class="mt"><span class="dot" style="background:' + (LV_COLOR[e.level] || '#facc15') + '"></span>' +
       '<span class="er-ltag" style="color:' + (LV_COLOR[e.level] || '#facc15') + ';border:1px solid ' + (LV_COLOR[e.level] || '#facc15') + '55">' + (LV_CN[e.level] || e.level) + '</span>' +
+      linkTag + impact + entTag +
       '<span>📍' + _esc(e.country) + '</span>' +
       (e.dim && e.dim !== e.domain ? '<span class="er-domtag">' + _esc(e.dim) + '</span>' : '<span class="er-domtag">' + (DOM_ICONS[e.domain] || '') + ' ' + _esc(e.domain || '') + '</span>') +
       '<span class="er-cnflag">涉华</span><span class="tm">🕐' + _esc(String(e.time).slice(5, 16)) + '</span>' +
+      (e.url ? '<a href="' + _esc(e.url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#22d3ee">原文↗</a>' : '') +
+      '</div></div>';
+  }
+
+  /* 实战化涉企定向风险流卡片（来自 /api/entrisk/enterprise-flow） */
+  function _efCard(e) {
+    var link = e.link || {};
+    var linkTag = '<span class="er-link' + link.tier + '">' + link.tier + '·' + (LINK_CN[link.tier] || link.tier) + '</span>';
+    var impact = '<span class="er-impact" title="涉企影响度评分 = 锚点档 + 动作烈度 + 时效 + 来源可信度">★ ' + link.score + '</span>';
+    var entTag = link.ent ? '<span class="er-enttag">🏷 ' + _esc(link.ent) + '</span>' : '';
+    var actionTag = link.action ? '<span class="er-domtag">' + _esc(link.action) + '</span>' : '';
+    return '<div class="er-alert" onclick="ENTRISK.judge(\'' + _cq(e.country) + '\')">' +
+      '<div class="tt">' + _esc(e.title) + '</div>' +
+      '<div class="mt">' +
+      linkTag + impact + entTag + actionTag +
+      '<span>📍' + _esc(e.country) + '</span>' +
+      (e.dim && e.dim !== e.domain ? '<span class="er-domtag">' + _esc(e.dim) + '</span>' : '<span class="er-domtag">' + (DOM_ICONS[e.domain] || '') + ' ' + _esc(e.domain || '') + '</span>') +
+      '<span class="tm">🕐' + _esc(String(e.time).slice(5, 16)) + '</span>' +
       (e.url ? '<a href="' + _esc(e.url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#22d3ee">原文↗</a>' : '') +
       '</div></div>';
   }
@@ -262,14 +309,34 @@ var ENTRISK = (function () {
     }
 
     h += '<div class="er-main">';
-    /* 左列：72h 红橙预警流（核心重点） + 最新事件 */
+    /* 左列：72h 涉企红橙预警（实战化过滤后） + 涉企定向风险流（替换原"最新涉企风险事件"） */
     h += '<div>' +
-      '<div class="er-panel warm"><div class="er-sec">🚨 72h 涉企红橙预警 <span class="mut">当前最需关注 · 点击卡片 → 该国 AI 研判' + (_domFilter ? ' · 已过滤：' + _esc(_domFilter) : '') + '</span><span class="sp"></span>' +
+      '<div class="er-panel warm"><div class="er-sec">🚨 72h 涉企红橙预警 <span class="mut">实战化涉企锚点过滤后 · 点击卡片 → 该国 AI 研判' + (_domFilter ? ' · 已过滤：' + _esc(_domFilter) : '') + '</span><span class="sp"></span>' +
       (_domFilter ? '<button class="er-btn" onclick="ENTRISK.domFilter(null)">✕ 清除域过滤</button>' : '') + '</div>' +
-      (alerts.length ? alerts.slice(0, 10).map(_evCard).join('') : '<div class="er-empty" style="padding:20px 0">' + (_domFilter ? '该域近72小时无红橙预警' : '近72小时无红橙级涉企预警——风险以黄级常规监控为主') + '</div>') +
+      (alerts.length ? alerts.slice(0, 10).map(_evCard).join('') : '<div class="er-empty" style="padding:20px 0">' + (_domFilter ? '该域近72小时无红橙涉企预警' : '近72小时无红橙级<strong style="color:#ffcc00">涉企</strong>预警（个人犯罪/正面新闻/中方作主语/外交讲话/GDELT模板已过闸拒收）') + '</div>') +
       '</div>' +
-      '<div class="er-panel"><div class="er-sec">🆕 最新涉企风险事件 <span class="mut">点击卡片 → 该国 AI 研判</span></div>' +
-      (latest.length ? latest.slice(0, 8).map(_evCard).join('') : '<div class="er-empty" style="padding:16px 0">暂无</div>') + '</div></div>';
+      '<div class="er-panel violet"><div class="er-sec">🎯 涉企定向风险流 <span class="mut">实战化重设计 · 四档涉企锚点（A 企业直击 40 / B 涉企动作 25 / C 人员资产 30 / D 经营环境 12）+ 动作烈度 + 时效 + 来源可信度 · 排序按影响度</span></div>' +
+      '<div class="er-eflow-bar">' +
+      '<span style="font-size:10px;color:#5a7a99;margin-right:4px">锚点过滤：</span>' +
+      '<span class="er-fchip ' + (_efLink === null ? 'on' : '') + '" onclick="ENTRISK.efLinkFilter(null)">全部</span>' +
+      '<span class="er-fchip lkA ' + (_efLink === 'A' ? 'on' : '') + '" onclick="ENTRISK.efLinkFilter(\'A\')">A·企业直击</span>' +
+      '<span class="er-fchip lkB ' + (_efLink === 'B' ? 'on' : '') + '" onclick="ENTRISK.efLinkFilter(\'B\')">B·涉企动作</span>' +
+      '<span class="er-fchip lkC ' + (_efLink === 'C' ? 'on' : '') + '" onclick="ENTRISK.efLinkFilter(\'C\')">C·人员资产</span>' +
+      '<span class="er-fchip lkD ' + (_efLink === 'D' ? 'on' : '') + '" onclick="ENTRISK.efLinkFilter(\'D\')">D·经营环境</span>' +
+      '<span class="sp" style="flex:1"></span>' +
+      (_efData && _efData.kpi ? '<span style="font-size:10px;color:#7aa5c9">' +
+        '命中 <b style="color:#ffcc00">' + _efData.kpi.total + '</b> 条 · ' +
+        '<span style="color:#ff5577">A ' + _efData.kpi.linkA + '</span> / ' +
+        '<span style="color:#fbbf24">B ' + _efData.kpi.linkB + '</span> / ' +
+        '<span style="color:#c4b5fd">C ' + _efData.kpi.linkC + '</span> / ' +
+        '<span style="color:#7dd3fc">D ' + _efData.kpi.linkD + '</span>' +
+      '</span>' : '') +
+      '</div>' +
+      (_efData && _efData.items && _efData.items.length ? _efData.items.slice(0, 12).map(_efCard).join('') :
+       (_efData ? '<div class="er-empty" style="padding:20px 0">该锚点档暂无事件</div>' :
+        '<div class="er-empty" style="padding:20px 0">涉企定向风险流装配中（90 天池 · 四档涉企锚点过闸）……</div>')) +
+      '<div class="er-gate-note">实战化价值闸：<b>个人犯罪</b>（中国公民绑架/贩毒等无企业属性）、<b>正面新闻</b>（中企合作/对话/扩张/一带一路）、<b>中方作主语</b>（我方管制/反制）、<b>国内媒体</b>（百度/新浪/澎湃/观察者网等）、<b>外交讲话</b>（大使/外交部/使馆）<b>拒收</b>。仅命中 35 企布局国重大事件 + 中资主体（企业/项目/人员）+ 管控执法动作的真实风险入面板。</div>' +
+      '</div></div>';
 
     /* 右列：七域雷达 + 国别压力榜 + 逐月趋势 */
     h += '<div>' +
@@ -540,7 +607,7 @@ var ENTRISK = (function () {
     var root = document.getElementById('entrisk-root');
     if (root && _ov) root.innerHTML = '<div class="er-loading">涉企风险数据刷新中……</div>';
     _fetch('/api/entrisk/overview', 30000, ctrl)
-      .then(function (d) { _ov = d; _render(); })
+      .then(function (d) { _ov = d; _render(); loadEflow(); })
       .catch(function (e) {
         if (String(e && e.name) === 'AbortError') return;
         if (root) root.innerHTML = '<div class="er-empty">加载失败：' + _esc(e && e.message) + '　<button class="er-btn" onclick="ENTRISK.refresh()">重试</button></div>';
@@ -551,6 +618,18 @@ var ENTRISK = (function () {
       .catch(function () {});
   }
 
+  /* ---------- 实战化涉企定向风险流（按影响度降序） ---------- */
+  function loadEflow() {
+    if (_efAbort) { try { _efAbort.abort(); } catch (e) {} }
+    var ctrl = new AbortController(); _efAbort = ctrl;
+    var q = '/api/entrisk/enterprise-flow?limit=50';
+    if (_efLink) q += '&link=' + _efLink;
+    _fetch(q, 90000, ctrl)
+      .then(function (d) { if (d && d.ok) { _efData = d; _render(); } })
+      .catch(function (e) { if (String(e && e.name) !== 'AbortError') console.warn('[ENTRISK] eflow load failed', e && e.message); });
+  }
+  function efLinkFilter(t) { _efLink = (_efLink === t ? null : t); loadEflow(); }
+
   function init() {
     if (_inited && _ov) { _render(); return; }
     _inited = true;
@@ -559,5 +638,5 @@ var ENTRISK = (function () {
     if (!_fcData) forecast(false);   /* 前瞻自动装配（服务端 30min 缓存，命中秒回） */
   }
 
-  return { init: init, refresh: refresh, judge: judge, aiJudge: aiJudge, domFilter: domFilter, briefing: briefing, forecast: forecast, entJudge: entJudge, aiEntJudge: aiEntJudge, toggleAllEnts: toggleAllEnts };
+  return { init: init, refresh: refresh, judge: judge, aiJudge: aiJudge, domFilter: domFilter, briefing: briefing, forecast: forecast, entJudge: entJudge, aiEntJudge: aiEntJudge, toggleAllEnts: toggleAllEnts, efLinkFilter: efLinkFilter, loadEflow: loadEflow };
 })();

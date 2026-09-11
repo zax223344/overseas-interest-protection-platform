@@ -38,6 +38,158 @@ const UA_HDR = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleW
  * 实测 7429 条粗筛池中 5805 条 CAMEO 模板句；真实涉企管控新闻几乎为零。
  * 与 #697 同破局路：Google News RSS 定向实采，30 分钟一轮轮换 4 查询。）
  * ============================================================ */
+
+/* ============================================================
+ * 实战化重设计（2026-09-10 需求一）：从「涉华事件流」升级为「涉企定向风险流」
+ * 根因——「最新涉企风险事件」面板曾混入中国公民个人犯罪（绑架案）、正面新闻
+ * （一带一路/中企合作）、中方作主语（中国出口管制）、外交讲话（驻法大使发言）、
+ * 国内媒体（百度百家号）、GDELT 模板句（"（8 篇报道）"格式）等与中资企业无
+ * 直接/间接关系的数据。
+ *
+ * 核心设计：每事件必须答"影响哪家中资/项目/哪类主体"——四档涉企锚点。
+ *   A 企业直击（40）：命中 35 企品牌名/英文名 + 管控/执法动作
+ *   B 涉企动作（25）：chinese company/firm/executives + 管控动作
+ *   C 人员资产（30）：中资项目/园区/中方员工遇袭/中方人员伤亡
+ *   D 经营环境（12）：仅 35 企布局国 × 政局/冲突/灾害重大事件
+ * 价值闸：个人犯罪/正面新闻/中方作主语/国内媒体/外交讲话 拒收（不锚定）
+ * 影响度评分 = 锚点档 + 动作烈度 + 时效 + 来源可信度（可解释）
+ * 排序按影响度（实战化：从「时间流」转为「优先级流」）
+ * ================================================================ */
+
+/* 35 企品牌名（中英）→ 命中即 A 档企业直击 */
+const ENT_BRANDS_RE = (() => {
+  const brands = [
+    '华为', '中兴', '海康威视', '海康', '大华', '大疆', 'DJI', 'TikTok', '字节跳动',
+    '中石油', 'CNPC', '中石化', 'Sinopec', '中远海运', 'COSCO', '中交建', '中建', '中铁建',
+    '中铁', '中地海外', '中地', '中色', '中铝', '中粮', '中核', '中核工', '中核集团',
+    '中工国际', '中国电建', '电建', '中国能建', '能建', '中移动', '中国移动', '中通服',
+    '中信建设', '中信', '招商局', '招商', '葛洲坝', '中国路桥', '中土', '中纺', '中工',
+    '国电', '国家电网', '华能', '中航', '中船', '兵器', '中国五矿', '五矿', '紫金矿业',
+    '紫金', '比亚迪', 'BYD', '宁德时代', 'CATL', '联想', 'Lenovo', '小米', 'Xiaomi',
+    '中通', '圆通', '顺丰', '菜鸟', '中国银行', '工商银行', '建设银行', '农业银行',
+    '中投', '丝路基金', '国开行', '进出口银行'
+  ];
+  ENTERPRISES.forEach(e => {
+    if (e.short && brands.indexOf(e.short) < 0) brands.push(e.short);
+    if (e.name && brands.indexOf(e.name) < 0) brands.push(e.name);
+  });
+  return new RegExp(brands.filter(b => b && b.length >= 2).map(b => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
+})();
+
+/* C 档人员资产关键词：中资项目/园区/中方员工/承包商 */
+const CN_PROJECT_RE = /中资(项目|园区|企业|公司|员工|人员|工人|高管|承包商|代表团|游客|留学生|侨民)|中方(人员|员工|项目|企业|承包|机构|投资|驻.{0,12}机构|使领)|中国(员工|工人|游客|留学生|承包商|代表团|侨民)|中国工地|中国营地|中国商港|中国油田|中国电站|中国建筑工地|海外(中资|中企)|海外(项目|园区)遇袭|中国央企|中国国企/;
+
+/* 35 企布局国 → D 档经营环境判据 */
+const LAYOUT_COUNTRIES = new Set(ENTERPRISES.flatMap(e => e.countries));
+
+/* 价值闸：个人犯罪（中国公民自然人，无企业属性） */
+const PERSONAL_CRIME_RE = /中国公民.{0,20}(绑架|贩毒|诈骗|谋杀|洗钱|抢劫|凶杀|非法(务工|滞留|居留|入境)|涉黄|涉赌|被判)|中国(国民|游客|学生|工人).{0,15}(绑架|杀害|抢劫|性侵)|绑架|赎金|贩毒|凶杀|谋杀|非法(务工|滞留|居留|入境)|涉黄|涉赌/;
+
+/* 价值闸：国内媒体源（境内媒体视角非境外风险情报） */
+const DOMESTIC_MEDIA_DOMAINS = [
+  'baijiahao.baidu.com', 'baijiahao.com', 'sina.com.cn', 'sina.cn', 'qq.com',
+  'sohu.com', '163.com', 'chinanews.com', 'chinanews.com.cn', 'people.com.cn',
+  'xinhuanet.com', 'news.cn', 'thepaper.cn', 'huanqiu.com', 'guancha.cn',
+  'ifeng.com', 'cankaoxiaoxi.com', 'cnstock.com', 'stcn.com', 'cnfol.com',
+  '21jingji.com', 'yicai.com', 'jiemian.com', 'wallstreetcn.com',
+  'pconline.com.cn', 'zol.com.cn', 'bjnews.com.cn', 'ynet.com',
+  'takungpao.com', 'wenweipo.com', 'chinatimes.com'
+];
+
+/* 价值闸：低质/UGC 来源（论坛/聚合站） */
+const LOW_CRED_SOURCES = ['lemmy', 'reddit', 'twitter', 'facebook', 'youtube', 'tiktok', '微博', '知乎'];
+
+/* 价值闸：外交讲话/发言人/使馆动态（非企业风险） */
+const DIPLOMATIC_RE = /(驻.{1,12}大使|外交部(发言人|发言|记者会)|使馆(发布|通报|公告)|领事(提醒|保护|馆|发布会)|中国(驻.{1,12})?(大使|领事)|.{1,12}驻华大使|.{1,12}驻华(领事|代表)|.{1,12}大使.{0,8}(访问|会见|出席|举行|表示|称|说)|.{1,12}外长.{0,8}(访问|会见|通话|会晤))/;
+
+/* 价值闸：正面/中性合作新闻 */
+const POSITIVE_NEWS_RE = /(合作|拥抱|对话|高峰会|达成|签署|积极|正面|顺利|加强(对话|合作)|深化合作|共赢|互利|友好|战略伙伴|看好|赞许|欢迎)[\s\S]{0,15}(中国|中企|中方|华企)|中国(企业|公司|代表团).{0,12}(亮相|展示|参展|发布|签约|达成|出席)|一带一路.{0,8}(峰会|论坛|成果|合作)|海外(扩张|布局|拓展).{0,8}(中国|中企)/;
+
+/* 动作烈度（与管控/执法动作词映射分值） */
+const ACTION_SCORE = [
+  { re: /(detain|arrest|raided|dawn raid|seiz|羁押|拘捕|扣押|突击检查|逮捕|被拘留|被拘押|失踪)/i, v: 30, name: '人员执法/羁押' },
+  { re: /(entity list|export control|sanction|blacklist|实体清单|出口管制|制裁|黑名单|禁令|delist|除牌|摘牌|封禁|封杀|禁用)/i, v: 22, name: '制裁清单/出口管制' },
+  { re: /(ban\b|banned|bans|bar\b|barred|curb|restrict|screening|审查|投资审查|禁用|禁运|驱逐)/i, v: 18, name: '禁令/审查' },
+  { re: /(probe|investigat|scrutiny|raid|inspection|稽查|调查|搜查|约谈|质询)/i, v: 12, name: '调查/审查' }
+];
+
+/* 时效分 */
+function _timeScore(ts) {
+  if (!ts) return 0;
+  const h = (Date.now() - ts) / 3600000;
+  if (h <= 24) return 15;
+  if (h <= 72) return 10;
+  if (h <= 168) return 5;
+  return 2;
+}
+
+/* 来源可信度分 */
+function _credScore(domain) {
+  if (!domain) return 0;
+  if (globalmedia._sourceCredibility) {
+    const c = globalmedia._sourceCredibility(String(domain));
+    if (c >= 80) return 10;
+    if (c >= 60) return 5;
+    if (c >= 40) return 2;
+  }
+  return 0;
+}
+
+/**
+ * 涉企锚点分类 + 实战化价值闸
+ * @returns {object|null} { link, score, entName, reason, actionName, baseScore, actionScore, cred } 或 null（不入面板）
+ */
+function _entLink(title, rawTitle, country, sourceDomain) {
+  const t = String(title || ''), r = String(rawTitle || '');
+  const all = t + ' || ' + r;
+  const src = String(sourceDomain || '').toLowerCase();
+
+  /* ---- 价值闸 ---- */
+  if (src && DOMESTIC_MEDIA_DOMAINS.some(x => src.indexOf(x.toLowerCase()) >= 0)) return null;
+  if (sourceDomain && LOW_CRED_SOURCES.some(x => String(sourceDomain).toLowerCase().indexOf(x) >= 0)) return null;
+  if (DIPLOMATIC_RE.test(t) || DIPLOMATIC_RE.test(r)) return null;
+  if (CN_ACTOR_EN_RE.test(all) || CN_ACTOR_RE.test(all)) return null;
+  if (PERSONAL_CRIME_RE.test(t) && !ENT_BRANDS_RE.test(all) && !CN_PROJECT_RE.test(all)) return null;
+  if (POSITIVE_NEWS_RE.test(t)) return null;
+
+  /* ---- 涉企锚点分类 ---- */
+  let link = null, entName = null, baseScore = 0;
+  if (ENT_BRANDS_RE.test(all)) {
+    const m = all.match(ENT_BRANDS_RE);
+    entName = m ? m[0] : null;
+    const hasAction = ACTION_SCORE.some(a => a.re.test(all));
+    if (hasAction) { link = 'A'; baseScore = 40; }
+    else { link = 'B'; baseScore = 25; }
+  }
+  if (!link && /(chinese (compan|firm|entit|business|investor|tech|brand|bank|chipmak|manufacturer|chip|app|drone|stock|market)|china.?based)/i.test(all) && ACTION_SCORE.some(a => a.re.test(all))) {
+    link = 'B'; baseScore = 25;
+  }
+  if (!link && CN_PROJECT_RE.test(t) && ACTION_SCORE.some(a => a.re.test(all))) {
+    link = 'C'; baseScore = 30;
+  }
+  if (!link && country && LAYOUT_COUNTRIES.has(country)) {
+    const envHit = /(政变|内战|战争|武装冲突|恐袭|恐怖袭击|爆炸|骚乱|暴动|罢工|大选|选举|政府(垮台|倒台|解散)|国家(紧急状态|戒严)|.+(停电|断网|地震|洪水|台风|海啸)|山火|火山)/i.test(t);
+    if (envHit) { link = 'D'; baseScore = 12; }
+  }
+  if (!link) return null;
+
+  let actScore = 0, actName = '一般风险';
+  for (const a of ACTION_SCORE) {
+    if (a.re.test(all)) { actScore = a.v; actName = a.name; break; }
+  }
+  const cred = _credScore(sourceDomain);
+  return {
+    link, entName, baseScore,
+    actionScore: actScore, actionName: actName,
+    cred,
+    score: baseScore + actScore + cred,
+    reason: link === 'A' ? '企业直击' + (entName ? '·' + entName : '') :
+            link === 'B' ? '涉企动作（chinese company）' :
+            link === 'C' ? '中资人员/项目遇袭' :
+            link === 'D' ? '经营环境（布局国' + country + '）' : ''
+  };
+}
+
 const GNEWS_ENT_POOL = [
   { id: 'ent-sanction', q: '"Chinese company" OR "Chinese companies" sanctioned' },
   { id: 'ent-ban',      q: '"Chinese companies" banned OR barred' },
@@ -286,6 +438,9 @@ module.exports = function enterpriseRisk(ctx) {
       if (!country || country === '中国') continue;
       const time = j.publish_time || r.event_date || r.collect_time;
       const level = RL.assessLevel(j, r.severity || _sevOf(tAll)); /* #724 P0-3：定级单一来源（原本地三段兜底收敛，脏值回落 yellow 已内置） */
+      const sourceDomain = (String(r.source || j.source || '').match(/([a-z0-9-]+\.[a-z]{2,})/i) || ['', ''])[1];
+      /* 实战化：每事件必须通过涉企锚点闸——不锚定则不入"最新事件"/"红橙预警"面板 */
+      const link = _entLink(t, r.title_raw, country, sourceDomain);
       rel.push({
         id: r.id, title: t.slice(0, 110), country,
         domain, domainCn: DOMAIN_CN[domain] || domain,
@@ -293,7 +448,8 @@ module.exports = function enterpriseRisk(ctx) {
         level, /* #724 P0-3：assessLevel 已保证四色归一，本地脏值守卫收敛删除 */
         time: String(time), ts: _ts(time),
         source: r.source || j.source || '',
-        url: j.url || ''
+        sourceDomain, url: j.url || '',
+        link: link || null  /* 涉企锚点闸：null=不入"最新/预警"面板 */
       });
     }
     /* 聚合：七域分布 / 国别压力（近90天）/ 逐月 / 72h 红橙预警流 / 近30日 */
@@ -314,14 +470,41 @@ module.exports = function enterpriseRisk(ctx) {
     /* #718 铁律补闸：latest/研判证据必须按【事件时间】近期取数——档案级通道
      * （china_terror/gap_scheduler 历史回补，event_date 为 2022-2025 旧闻）虽非
      * backfill 标记，但绝不允许冒充当前涉企风险进入"最新事件"与 AI 研判证据。 */
-    const latest30 = rel.filter(e => e.ts >= t30).sort((a, b) => b.ts - a.ts).slice(0, 20);
-    return { rel, byDomain, byCountry, byMonth, fresh30, alerts72: alerts72.slice(0, 16), latest30 };
+    const latest30 = rel.filter(e => e.ts >= t30).sort((a, b) => b.ts - a.ts).slice(0, 100);
+
+    /* 实战化（需求一）："最新涉企风险事件"与"72h 红橙预警"仅展示有企业锚点的事件
+     * （A/B/C/D 四档）——按影响度评分（锚点档+动作烈度+时效+来源可信度）降序，
+     * 时效分现场计算（避免冷数据靠入池时间靠前）。 */
+    function _impact(e) {
+      if (!e.link) return 0;
+      return e.link.score + _timeScore(e.ts);
+    }
+    const latest30Ent = latest30.filter(e => e.link).sort((a, b) => _impact(b) - _impact(a)).slice(0, 14);
+    const alerts72Ent = alerts72.filter(e => e.link).sort((a, b) => _impact(b) - _impact(a)).slice(0, 16);
+    const enterpriseFlow = rel.filter(e => e.ts >= t90 && e.link).sort((a, b) => _impact(b) - _impact(a)).slice(0, 60);
+    const linkStats = { A: 0, B: 0, C: 0, D: 0 };
+    enterpriseFlow.forEach(e => { if (e.link && e.link.link) linkStats[e.link.link]++; });
+    return { rel, byDomain, byCountry, byMonth, fresh30, alerts72: alerts72Ent, latest30: latest30Ent, enterpriseFlow, linkStats };
+  }
+
+  /* #752 性能闸：_poolAgg 是 2 万行 × 多正则链的重型聚合（冷跑 2-4s，池满载时排队可达分钟级）。
+   * 浏览器打开涉企视图一次并发 overview/enterprise-flow/briefing/forecast 多路请求，裸跑会同时
+   * 触发多个 _poolAgg 把 PG 池打满（2026-09-10 实测 waiting=46/40 → eflow 请求 120s 无响应）。
+   * 统一走 45s 记忆化 + in-flight 合并：并发请求共享同一次聚合，命中缓存秒回。 */
+  const _aggMemo = { at: 0, p: null, data: null };
+  function _poolAggCached() {
+    if (_aggMemo.data && Date.now() - _aggMemo.at < 45 * 1000) return Promise.resolve(_aggMemo.data);
+    if (_aggMemo.p) return _aggMemo.p;
+    _aggMemo.p = _poolAgg()
+      .then(d => { _aggMemo.data = d; _aggMemo.at = Date.now(); return d; })
+      .finally(() => { _aggMemo.p = null; });
+    return _aggMemo.p;
   }
 
   /* ---------- GET /overview：七域涉企风险全景 ---------- */
   router.get('/overview', async (req, res) => {
     try {
-      const agg = await _poolAgg();
+      const agg = await _poolAggCached();
       const cTop = Object.entries(agg.byCountry).sort((a, b) => b[1] - a[1]).slice(0, 12);
       const t90 = Date.now() - 90 * 86400000;
       const cDims = {};   /* 各国域构成 */
@@ -338,15 +521,61 @@ module.exports = function enterpriseRisk(ctx) {
           countries: Object.keys(agg.byCountry).length,
           fresh30: agg.fresh30,
           alerts72: agg.alerts72.length,
+          enterpriseFlow: agg.enterpriseFlow.length,
+          linkA: agg.linkStats.A, linkB: agg.linkStats.B, linkC: agg.linkStats.C, linkD: agg.linkStats.D,
           topPressure: cTop.length ? cTop[0][0] : '—'
         },
         domains: DOMAINS.map(d => ({ id: d.id, cn: d.cn, n: agg.byDomain[d.cn] || 0 })),
         byCountry: cTop.map(([country, n]) => ({ country, n, dims: cDims[country] || {} })),
-        alerts72: agg.alerts72.map(e => ({ id: e.id, title: e.title.slice(0, 100), country: e.country, domain: e.domainCn, dim: e.dim, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
-        latest: agg.latest30.slice(0, 14).map(e => ({ id: e.id, title: e.title.slice(0, 100), country: e.country, domain: e.domainCn, dim: e.dim, level: e.level, time: String(e.time).slice(0, 16), url: e.url, source: e.source })),
+        alerts72: agg.alerts72.map(e => ({
+          id: e.id, title: e.title.slice(0, 100), country: e.country,
+          domain: e.domainCn, dim: e.dim, level: e.level,
+          time: String(e.time).slice(0, 16), url: e.url, source: e.source,
+          link: e.link ? { tier: e.link.link, score: e.link.score, ent: e.link.entName, reason: e.link.reason, action: e.link.actionName } : null
+        })),
+        latest: agg.latest30.slice(0, 14).map(e => ({
+          id: e.id, title: e.title.slice(0, 100), country: e.country,
+          domain: e.domainCn, dim: e.dim, level: e.level,
+          time: String(e.time).slice(0, 16), url: e.url, source: e.source,
+          link: e.link ? { tier: e.link.link, score: e.link.score, ent: e.link.entName, reason: e.link.reason, action: e.link.actionName } : null
+        })),
         byMonth: Object.keys(agg.byMonth).sort().slice(-14).map(m => ({ m, n: agg.byMonth[m] })),
-        note: '涉企风险预警研判（全风险域）：仅涉华海外利益相关数据，国别≠中国（境内事件零收录）；七域=管控与制裁（六维细分）/武装冲突波及/恐袭与遇袭/社会动荡与治安/政局与政策/经济与金融/灾害与设施；国别压力=近90天涉企风险事件量；72h 红橙=当前活跃涉企预警；GDELT 机翻模板句全池拒收；全部真实库数据，零模拟。'
+        note: '涉企风险预警研判（全风险域 + 实战化涉企锚点）：每事件过四档涉企锚点闸（A 企业直击/B 涉企动作/C 人员资产/D 经营环境），未通过则不入"最新/预警"面板；个人犯罪/正面新闻/中方作主语/国内媒体/外交讲话/GDELT 模板 拒收；仅涉华海外利益相关数据；GDELT 机翻模板句全池拒收；零模拟。'
       });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
+
+  /* ---------- GET /enterprise-flow：涉企定向风险流（实战化面板，排序按影响度） ---------- */
+  const _efCache = { at: 0, data: null };
+  router.get('/enterprise-flow', async (req, res) => {
+    try {
+      const { link, country, domain, level, limit } = req.query;
+      /* 不走短缓存：数据源是实时库 + 90 天池，过滤在内存中即时计算 */
+      if (!req.query.refresh && _efCache.data && Date.now() - _efCache.at < 45 * 1000) {
+        return res.json(Object.assign({ cached: true }, _efCache.data));
+      }
+      const agg = await _poolAggCached();
+      let flow = agg.enterpriseFlow;
+      if (link) flow = flow.filter(e => e.link && e.link.link === link);
+      if (country) flow = flow.filter(e => e.country === country);
+      if (domain) flow = flow.filter(e => e.domain === domain);
+      if (level) flow = flow.filter(e => e.level === level);
+      const lim = Math.min(120, Math.max(1, parseInt(limit) || 50));
+      const items = flow.slice(0, lim).map(e => ({
+        id: e.id, title: e.title, country: e.country,
+        domain: e.domainCn, dim: e.dim, level: e.level,
+        time: String(e.time).slice(0, 16), source: e.source, url: e.url,
+        link: { tier: e.link.link, score: e.link.score, ent: e.link.entName, reason: e.link.reason, action: e.link.actionName }
+      }));
+      const data = {
+        ok: true, generatedAt: new Date().toLocaleString('zh-CN'),
+        kpi: { total: flow.length, linkA: flow.filter(e => e.link.link === 'A').length, linkB: flow.filter(e => e.link.link === 'B').length, linkC: flow.filter(e => e.link.link === 'C').length, linkD: flow.filter(e => e.link.link === 'D').length },
+        items,
+        filters: { link: link || null, country: country || null, domain: domain || null, level: level || null },
+        note: '涉企定向风险流（90 天 · 实战化）：四档涉企锚点（A 企业直击 40 / B 涉企动作 25 / C 人员资产 30 / D 经营环境 12）+ 动作烈度（人员执法 30 / 制裁清单 22 / 禁令 18 / 调查 12）+ 时效（24h 15 / 72h 10 / 7d 5）+ 来源可信度（≥80 10 / ≥60 5 / ≥40 2）；按总分降序；价值闸：个人犯罪/正面新闻/中方作主语/国内媒体/外交讲话 拒收。'
+      };
+      _efCache.at = Date.now(); _efCache.data = data;
+      res.json(data);
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 
@@ -357,7 +586,7 @@ module.exports = function enterpriseRisk(ctx) {
       if (!req.query.refresh && _brCache.data && Date.now() - _brCache.at < 30 * 60 * 1000) {
         return res.json(Object.assign({ cached: true }, _brCache.data));
       }
-      const agg = await _poolAgg();
+      const agg = await _poolAggCached();
       const total = agg.rel.length;
       if (!total) {
         const d0 = { ok: true, empty: true, generatedAt: new Date().toLocaleString('zh-CN'), note: '库内暂无涉企风险记录——拒绝在空池上生成研判（零臆测原则）。' };
@@ -402,7 +631,7 @@ module.exports = function enterpriseRisk(ctx) {
     try {
       const country = String(req.query.country || '').trim().slice(0, 20);
       if (!country) return res.status(400).json({ ok: false, error: '缺少 country 参数' });
-      const agg = await _poolAgg();
+      const agg = await _poolAggCached();
       const evs = agg.rel.filter(e => e.country === country);
       if (!evs.length) return res.json({ ok: true, empty: true, country, note: '库内暂无该国涉企风险记录——拒绝在无数据国别上生成研判（零臆测原则）。' });
       const t90 = Date.now() - 90 * 86400000;
@@ -446,7 +675,7 @@ module.exports = function enterpriseRisk(ctx) {
       if (!req.query.refresh && _fcCache.data && Date.now() - _fcCache.at < 30 * 60 * 1000) {
         return res.json(Object.assign({ cached: true }, _fcCache.data));
       }
-      const agg = await _poolAgg();
+      const agg = await _poolAggCached();
       const total = agg.rel.length;
       if (!total) {
         const d0 = { ok: true, empty: true, generatedAt: new Date().toLocaleString('zh-CN'), note: '库内暂无涉企风险记录——拒绝在空池上生成预测（零臆测原则）。' };
@@ -532,7 +761,7 @@ module.exports = function enterpriseRisk(ctx) {
   /* ---------- GET /assets：35 企暴露面矩阵 ---------- */
   router.get('/assets', async (req, res) => {
     try {
-      const agg = await _poolAgg();
+      const agg = await _poolAggCached();
       const byC = _byCountry(agg);
       const now = Date.now(), t90 = now - 90 * 86400000, t30 = now - 30 * 86400000, t60 = now - 60 * 86400000;
       const assets = ENTERPRISES.map(ent => {
@@ -582,7 +811,7 @@ module.exports = function enterpriseRisk(ctx) {
       const key = String(req.query.ent || '').trim();
       const ent = ENTERPRISES.find(e => e.short === key || e.name === key || String(e.id) === key);
       if (!ent) return res.status(400).json({ ok: false, error: '未匹配到企业档案（支持简称/全名/档案ID）' });
-      const agg = await _poolAgg();
+      const agg = await _poolAggCached();
       const byC = _byCountry(agg);
       const now = Date.now(), t90 = now - 90 * 86400000, t30 = now - 30 * 86400000, t60 = now - 60 * 86400000;
       /* 分国明细（仅布局国中有风险的） */
