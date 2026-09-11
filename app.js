@@ -4167,56 +4167,57 @@ var AUDIT={
 // ===== VIEW MAP =====
 const VIEW_MAP={
   situation:{t:'全域态势感知',b:'态势感知 / 全域态势感知'},
-  workbench:{t:'智能协同作业台',b:'态势感知 / 智能协同作业台（任务工作区 · 情报图层 · 安全指数）'},
-  threatroom:{t:'专项情报作战室',b:'态势感知 / 专项情报作战室（实体专项采集 · 态势预警分析报告 · 预警图）'},
-  myfocus:{t:'重点目标监测',b:'态势感知 / 重点目标监测（订阅国家 · 项目 · 企业，定向预警流）'},
-  datapool:{t:'数据中枢',b:'数据管理 / 数据中枢（数据源库 · 公众号采集 · 数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
+  workbench:{t:'协同作业中心',b:'态势感知 / 协同作业中心（任务工作区 · 情报图层 · 安全指数）'},
+  threatroom:{t:'情报作战中心',b:'态势感知 / 情报作战中心（实体专项采集 · 态势预警分析报告 · 预警图）'},
+  myfocus:{t:'涉企风险研判 · 重点目标监测',b:'分析研判 / 涉企风险研判 / 重点目标监测（订阅国家 · 项目 · 企业，定向预警流）'},
+  datapool:{t:'数据治理中枢',b:'数据管理 / 数据治理中枢（数据源库 · 公众号采集 · 数据中心 · 非预警数据池 · 采集漏斗 · 归档检索 · 可解释审计）'},
   intel:{t:'影像情报中心',b:'监测中心 / 影像情报中心（影像图库 · 社媒监测 · 影像分析 · 地理空间情报）'},
   monitor:{t:'实时风险监测',b:'监测中心 / 实时风险监测'},
   alerts:{t:'智能预警中心',b:'监测中心 / 智能预警中心（实时队列 · 智能联动 · 异动信号）'},
+  aiwatch:{t:'智能控制中枢',b:'态势感知 / 智能控制中枢（AI 值班分析师：无人值守扫库 · 红橙事件大模型快评 · 决策日志审计）'},
   brief:{t:'情报报告中心 · 领导要报',b:'分析研判 / 情报报告中心 / 领导要报速览（30秒一页纸 · 红橙置顶 · 涉华优先）'},
-  evjudge:{t:'事件研判中心',b:'分析研判 / 事件研判中心（事件时间流研判 · 历史相似事件分析 · 智能研判 · 公文输出）'},
-  entrisk:{t:'涉企风险预警研判',b:'分析研判 / 涉企风险预警研判（七域全风险：管控制裁·冲突波及·恐袭遇袭·社会动荡·政局政策·经济金融·灾害设施 · AI大盘研判 · 国别下钻 · 30天前瞻）'},
-  'exec-travel':{t:'高管出境风险监测',b:'分析研判 / 高管出境风险监测（孟晚舟式三层闭环：事前预警·事中监测·事后复盘 · 硬规则H01-H04命中即红 · 六维加权评分可解释下钻 · 制裁名单70k实体比对 · 90天执法动态池）'},
-  myrisk:{t:'我的风险工作台',b:'分析研判 / 我的风险工作台（企业订阅画像 · 三维过滤 · 24H 企业专属预警流 · 重点目标监测）'},
-  impact:{t:'传导研判中心',b:'分析研判 / 传导研判中心（事件→资产传导：红级事件 × 中资资产三维匹配 + AI 三段式 · 供应链中断传导：六咽喉点+六走廊 30d 前瞻）'},
+  evjudge:{t:'事件研判中心',b:'分析研判 / 事件研判中心（事件时间流研判 · 历史相似事件分析 · 智能研判 · 公文输出 · 境外社媒舆情）'},
+  entrisk:{t:'涉企风险研判',b:'分析研判 / 涉企风险研判（七域全风险：管控制裁·冲突波及·恐袭遇袭·社会动荡·政局政策·经济金融·灾害设施 · AI大盘研判 · 国别下钻 · 30天前瞻 · 高管出境 · 我的订阅）'},
+  'exec-travel':{t:'涉企风险研判 · 高管出境风险',b:'分析研判 / 涉企风险研判 / 高管出境风险监测（孟晚舟式三层闭环：事前预警·事中监测·事后复盘 · 硬规则H01-H04命中即红 · 六维加权评分可解释下钻 · 制裁名单70k实体比对 · 90天执法动态池）'},
+  myrisk:{t:'涉企风险研判 · 我的订阅画像',b:'分析研判 / 涉企风险研判 / 我的订阅画像（企业订阅 · 三维过滤 · 24H 企业专属预警流）'},
+  impact:{t:'传导应急中心',b:'分析研判 / 传导应急中心（事件→资产传导：红级事件 × 中资资产三维匹配 + AI 三段式 · 供应链中断传导：六咽喉点+六走廊 30d 前瞻 · 应急撤离预案）'},
   sanctions:{t:'制裁名单碰撞',b:'分析研判 / 制裁名单碰撞筛查（OpenSanctions us_sanctions 12 源 27k 实体 · 撞中资 35 企/项目 + intel_data 事件/供应商 · 致命/高/中 三级严重度 · 自由搜索）'},
-  supply:{t:'传导研判中心 · 供应链中断',b:'分析研判 / 传导研判中心 / 供应链中断传导预测（六大咽喉点 + 六大走廊 30d 中断事件 → 中资项目暴露匹配 · AI 传导链 / 中断概率 / 建议动作）'},
-  barrier:{t:'国别准入壁垒日历',b:'分析研判 / 国别准入壁垒日历（贸易救济 × 出口管制 × 投资审查 × 制裁清单 · 60d 国别生效日历 · 涉华前瞻预警）'},
-  evac:{t:'统一应急中心',b:'分析研判 / 双轨应急：结构化基线预案（国别应急档案：撤离路线/使领馆/空港海港/避难所）+ AI 深度预案（真实项目档案 + 红橙事件 → Kimi 参谋级五段式）'},
-  socpulse:{t:'境外社媒舆情监测',b:'分析研判 / 境外社媒舆情监测（7d social_media/socmint 涉华舆情聚合 · 平台/频道/国别趋势）'},
-  terjudge:{t:'全球恐袭态势监测中心',b:'监测中心 / 全球恐袭态势监测中心（恐袭监测雷达 · 威胁实体异动 · 红橙预警 · AI智库研判 · 组织图谱）'},
-  country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · COSRI 画像 · 企业资产 · 档案总表）'},
-  countryfile:{t:'国别档案总表',b:'分析研判 / 国别档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
-  reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（领导要报 · 研判简报 · 每月/每季/半年/全年简报 · 专题分析 · AI智能研判）'},
+  supply:{t:'传导应急中心 · 供应链中断',b:'分析研判 / 传导应急中心 / 供应链中断传导预测（六大咽喉点 + 六大走廊 30d 中断事件 → 中资项目暴露匹配 · AI 传导链 / 中断概率 / 建议动作）'},
+  barrier:{t:'国别风险研判 · 准入壁垒日历',b:'分析研判 / 国别风险研判 / 准入壁垒日历（贸易救济 × 出口管制 × 投资审查 × 制裁清单 · 60d 国别生效日历 · 涉华前瞻预警）'},
+  evac:{t:'传导应急中心 · 应急撤离预案',b:'分析研判 / 传导应急中心 / 应急撤离（结构化基线预案（国别应急档案：撤离路线/使领馆/空港海港/避难所）+ AI 深度预案（真实项目档案 + 红橙事件 → Kimi 参谋级五段式））'},
+  socpulse:{t:'事件研判中心 · 境外社媒舆情',b:'分析研判 / 事件研判中心 / 境外社媒舆情监测（7d social_media/socmint 涉华舆情聚合 · 平台/频道/国别趋势）'},
+  terjudge:{t:'全球恐袭监测',b:'监测中心 / 全球恐袭监测（恐袭监测雷达 · 威胁实体异动 · 红橙预警 · AI智库研判 · 组织图谱）'},
+  country:{t:'国别风险研判',b:'分析研判 / 国别风险研判（风险矩阵 · 预测推演 · COSRI 画像 · 企业资产 · 档案总表 · 准入壁垒）'},
+  countryfile:{t:'国别风险研判 · 档案总表',b:'分析研判 / 国别风险研判 / 档案总表（风险值 · 预警量 · 项目 · 人员 · 趋势）'},
+  reports:{t:'情报报告中心',b:'分析研判 / 情报报告中心（领导要报 · 研判简报 · 每月/每季/半年/全年简报 · 专题分析 · AI智能研判 · 风险预测模型）'},
   'pb-monthly':{t:'情报报告中心 · 每月简报',b:'分析研判 / 情报报告中心 / 每月简报（月度综合态势 · 公文版导出）'},
   'pb-quarterly':{t:'情报报告中心 · 每季简报',b:'分析研判 / 情报报告中心 / 每季简报（季度综合态势 · 公文版导出）'},
   'pb-semiannual':{t:'情报报告中心 · 半年简报',b:'分析研判 / 情报报告中心 / 半年简报（半年度综合态势 · 公文版导出）'},
   'pb-yearly':{t:'情报报告中心 · 全年简报',b:'分析研判 / 情报报告中心 / 全年简报（年度综合态势 · 公文版导出）'},
-  models:{t:'风险预测模型',b:'分析研判 / 风险预测模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
+  models:{t:'情报报告中心 · 风险预测模型',b:'分析研判 / 情报报告中心 / 风险预测模型（组织行为 · 恐袭预测 · 绑架风险 · 地缘风险）'},
   reportsc:{t:'情报报告中心 · 专题分析',b:'分析研判 / 情报报告中心 / 专题分析中心（9类专业分析报告 · 全周期生成 / 阅读 / 修订 / 公文版导出）'},
   aireport:{t:'情报报告中心 · AI智能研判',b:'分析研判 / 情报报告中心 / AI智能研判（深度分层研判 · BLUF · 情景推演 · 对策建议）'},
-  datagov:{t:'数据中枢 · 数据治理',b:'数据管理 / 数据中枢 / 数据治理'},
-  'manual-entry':{t:'情报录入',b:'数据管理 / 情报录入（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
-  thinktank:{t:'智库报告库',b:'数据管理 / 智库报告库（PDF加密馆藏 · 密级分级可见 · 多维检索 · 全程审计）'},
-  settings:{t:'系统设置',b:'系统 / 系统设置（设置 · 角色与信息分级）'},
-  threatorgs:{t:'威胁组织图谱',b:'监测中心 / 威胁组织图谱'},
+  datagov:{t:'数据治理中枢 · 数据治理',b:'数据管理 / 数据治理中枢 / 数据治理'},
+  'manual-entry':{t:'情报录入中心',b:'数据管理 / 情报录入中心（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
+  thinktank:{t:'智库知识中心',b:'数据管理 / 智库知识中心（PDF加密馆藏 · 密级分级可见 · 多维检索 · 全程审计）'},
+  settings:{t:'系统管理中心',b:'系统 / 系统管理中心（设置 · 角色与信息分级）'},
+  threatorgs:{t:'全球恐袭监测 · 组织图谱',b:'监测中心 / 全球恐袭监测 / 组织图谱'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
   /* —— 以下为合并前的旧键：VIEW_MERGE_ALIAS 自动跳转到伞形视图，VIEW_MAP 保留供兼容 —— */
-  datasources:{t:'数据中枢 · 数据源库',b:'数据管理 / 数据中枢 / 数据源库'},
-  wechat:{t:'数据中枢 · 公众号采集',b:'数据管理 / 数据中枢 / 公众号采集'},
+  datasources:{t:'数据治理中枢 · 数据源库',b:'数据管理 / 数据治理中枢 / 数据源库'},
+  wechat:{t:'数据治理中枢 · 公众号采集',b:'数据管理 / 数据治理中枢 / 公众号采集'},
   analysis:{t:'情报报告中心 · 研判简报',b:'分析研判 / 情报报告中心 / 研判简报'},
-  matrix:{t:'国别档案 · 风险矩阵',b:'分析研判 / 国别档案 / 风险矩阵'},
-  forecast:{t:'国别档案 · 预测推演',b:'分析研判 / 国别档案 / 预测推演'},
-  assets:{t:'国别档案 · 企业资产',b:'分析研判 / 国别档案 / 企业资产'},
-  datacenter:{t:'数据中枢 · 数据中心',b:'数据管理 / 数据中枢 / 数据中心'},
-  sidepool:{t:'数据中枢 · 非预警数据池',b:'数据管理 / 数据中枢 / 非预警数据池'},
-  funnel:{t:'数据中枢 · 采集漏斗',b:'数据管理 / 数据中枢 / 采集漏斗'},
-  archive:{t:'数据中枢 · 归档检索',b:'数据管理 / 数据中枢 / 归档检索'},
-  anomaly:{t:'预警中心 · 异动信号',b:'监测中心 / 预警中心 / 异动信号'},
-  explain:{t:'数据中枢 · 可解释审计',b:'数据管理 / 数据中枢 / 可解释审计'},
-  autoalert:{t:'预警中心 · 智能联动预警',b:'监测中心 / 预警中心 / 智能联动预警'},
-  role:{t:'系统设置 · 角色分级',b:'系统 / 系统设置 / 角色与信息分级'}
+  matrix:{t:'国别风险研判 · 风险矩阵',b:'分析研判 / 国别风险研判 / 风险矩阵'},
+  forecast:{t:'国别风险研判 · 预测推演',b:'分析研判 / 国别风险研判 / 预测推演'},
+  assets:{t:'国别风险研判 · 企业资产',b:'分析研判 / 国别风险研判 / 企业资产'},
+  datacenter:{t:'数据治理中枢 · 数据中心',b:'数据管理 / 数据治理中枢 / 数据中心'},
+  sidepool:{t:'数据治理中枢 · 非预警数据池',b:'数据管理 / 数据治理中枢 / 非预警数据池'},
+  funnel:{t:'数据治理中枢 · 采集漏斗',b:'数据管理 / 数据治理中枢 / 采集漏斗'},
+  archive:{t:'数据治理中枢 · 归档检索',b:'数据管理 / 数据治理中枢 / 归档检索'},
+  anomaly:{t:'智能预警中心 · 异动信号',b:'监测中心 / 智能预警中心 / 异动信号'},
+  explain:{t:'数据治理中枢 · 可解释审计',b:'数据管理 / 数据治理中枢 / 可解释审计'},
+  autoalert:{t:'智能预警中心 · 智能联动预警',b:'监测中心 / 智能预警中心 / 智能联动预警'},
+  role:{t:'系统管理中心 · 角色分级',b:'系统 / 系统管理中心 / 角色与信息分级'}
 };
 
 /* ============================================================
@@ -4230,22 +4231,29 @@ const VIEW_MAP={
  * 系统设置 = 设置 + 角色分级(role)
  * 国别风险研判(country) += 档案总表(countryfile)   [#760 P0-D 2026-09-11]
  * 恐袭监测中心(terjudge) = 恐袭雷达 + 组织图谱(threatorgs)   [#760 P0-E]
- * 我的风险工作台(myrisk) = 企业订阅画像 + 重点目标监测(myfocus)   [#760 P0-F]
- * 情报报告中心(reports) = 领导要报(brief) + 研判简报 + 周期简报(pb-*) + 专题分析(reportsc) + AI智能研判(aireport)   [#762 P1-A]
- * 传导研判中心(impact) = 事件→资产传导 + 供应链中断传导(supply)   [#763 P1-B]
- * 数据中枢(datapool) = 数据源库 + 公众号采集 + 数据治理(datagov)全域（数据中心/非预警池/漏斗/归档/审计）   [#764 P1-C]
+ * 我的风险工作台(myrisk) 并入涉企风险研判(entrisk)   [#769 P2-D 2026-09-11]
+ * 情报报告中心(reports) = 领导要报(brief) + 研判简报 + 周期简报(pb-*) + 专题分析(reportsc) + AI智能研判(aireport) + 风险预测模型(models)   [#762 P1-A + #769]
+ * 传导应急中心(impact) = 事件→资产传导 + 供应链中断传导(supply) + 应急撤离预案(evac)   [#763 P1-B + #769]
+ * 国别风险研判(country) += 档案总表(countryfile) + 准入壁垒日历(barrier)   [#760 P0-D + #769]
+ * 涉企风险研判(entrisk) = 七域风险 + 高管出境(exec-travel) + 我的订阅(myrisk/myfocus)   [#769 P2-D]
+ * 事件研判中心(evjudge) += 境外社媒舆情(socpulse)   [#769 P2-D]
+ * —— #769 后分析研判收敛为 5 个伞形：evjudge / entrisk / country / impact / reports ——
  * ============================================================ */
 const VIEW_MERGE_ALIAS={
   autoalert:'alerts', anomaly:'alerts',
   analysis:'reports',
   'pb-monthly':'reports', 'pb-quarterly':'reports', 'pb-semiannual':'reports', 'pb-yearly':'reports',
-  brief:'reports', reportsc:'reports', aireport:'reports',          /* [#762 P1-A] 报告中心伞形：四报告视图合一 */
+  brief:'reports', reportsc:'reports', aireport:'reports', models:'reports',  /* [#762 + #769] 报告中心伞形 */
   matrix:'country', forecast:'country', assets:'country', cosri:'country',
+  barrier:'country',                                                  /* [#769] 壁垒日历并入国别研判 */
   datasources:'datapool', wechat:'datapool',
-  supply:'impact',                                                 /* [#763 P1-B] 传导研判中心：同一 #754 AI 传导范式合一 */
-  datagov:'datapool',                                              /* [#764 P1-C] 数据中枢合一：数据治理全域并入 */
+  supply:'impact',
+  evac:'impact',                                                      /* [#769] 应急撤离并入传导应急中心 */
+  datagov:'datapool',                                                /* [#764 P1-C] 数据中枢合一：数据治理全域并入 */
   datacenter:'datapool', sidepool:'datapool', funnel:'datapool', archive:'datapool', explain:'datapool',
-  countryfile:'country', threatorgs:'terjudge', myfocus:'myrisk',
+  countryfile:'country', threatorgs:'terjudge',
+  socpulse:'evjudge',                                                /* [#769] 社媒舆情并入事件研判 */
+  'exec-travel':'entrisk', myrisk:'entrisk', myfocus:'entrisk',      /* [#769] 涉企风险研判伞形：高管出境+订阅画像+重点目标 */
   role:'settings'
 };
 const VIEW_MERGE_TABS={
@@ -4253,6 +4261,16 @@ const VIEW_MERGE_TABS={
     {k:'alerts',label:'🚨 实时预警队列'},
     {k:'autoalert',label:'⚡ 智能联动预警'},
     {k:'anomaly',label:'📈 异动信号'}
+  ],
+  evjudge:[
+    {k:'evjudge',label:'🔬 事件时间流研判'},
+    {k:'socpulse',label:'📡 境外社媒舆情'}
+  ],
+  entrisk:[
+    {k:'entrisk',label:'🛡️ 七域风险研判'},
+    {k:'exec-travel',label:'🛫 高管出境风险'},
+    {k:'myrisk',label:'🏢 我的订阅画像'},
+    {k:'myfocus',label:'⭐ 重点目标监测'}
   ],
   reports:[
     {k:'brief',label:'⚡ 领导要报'},
@@ -4262,26 +4280,25 @@ const VIEW_MERGE_TABS={
     {k:'pb-semiannual',label:'📅 半年简报'},
     {k:'pb-yearly',label:'📕 全年简报'},
     {k:'reportsc',label:'📚 专题分析'},
-    {k:'aireport',label:'🤖 AI智能研判'}
+    {k:'aireport',label:'🤖 AI智能研判'},
+    {k:'models',label:'🧮 风险预测模型'}
   ],
   country:[
     {k:'matrix',label:'📊 风险矩阵'},
     {k:'forecast',label:'🔮 预测推演'},
     {k:'cosri',label:'🌐 COSRI 风险画像'},
     {k:'assets',label:'🏢 企业资产'},
-    {k:'countryfile',label:'📋 档案总表'}
+    {k:'countryfile',label:'📋 档案总表'},
+    {k:'barrier',label:'🗓️ 准入壁垒日历'}
   ],
   terjudge:[
     {k:'terjudge',label:'📡 恐袭监测雷达'},
     {k:'threatorgs',label:'🎯 组织图谱'}
   ],
-  myrisk:[
-    {k:'myrisk',label:'🏢 企业订阅画像'},
-    {k:'myfocus',label:'⭐ 重点目标监测'}
-  ],
   impact:[
     {k:'impact',label:'🎯 事件→资产传导'},
-    {k:'supply',label:'⛓️ 供应链中断传导'}
+    {k:'supply',label:'⛓️ 供应链中断传导'},
+    {k:'evac',label:'🚁 应急撤离预案'}
   ],
   datapool:[
     {k:'datasources',label:'🛰️ 数据源库'},
@@ -4312,8 +4329,9 @@ function installViewMerge(){
       content.appendChild(el);
     }
   });
-  /* 2. 既有伞形（alerts/settings/terjudge/myrisk/impact）：原内容包一层 subview */
-  ['alerts','settings','terjudge','myrisk','impact'].forEach(function(u){
+  /* 2. 既有伞形（alerts/settings/terjudge/evjudge/entrisk/impact）：原内容包一层 subview */
+  /*    myrisk 已退出伞形行列（#769 并入 entrisk 成 subview） */
+  ['alerts','settings','terjudge','evjudge','entrisk','impact'].forEach(function(u){
     var host=document.getElementById('view-'+u);
     if(!host||document.getElementById('sv-'+u)) return;
     var wrap=document.createElement('div');

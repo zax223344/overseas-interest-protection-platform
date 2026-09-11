@@ -27,14 +27,14 @@
   };
 
   const VIEW_LABELS = {
-    situation:'全域态势感知', workbench:'智能协同作业台', threatroom:'专项情报作战室', myfocus:'重点目标监测', command:'指挥调度中心', monitor:'实时风险监测', threatorgs:'威胁组织图谱',
-    intel:'影像情报中心', alerts:'智能预警中心', terjudge:'全球恐袭态势监测中心', brief:'领导要报速览', aiwatch:'AI中枢控制台', evjudge:'事件研判中心', entrisk:'涉企风险预警研判', country:'国别风险研判', countryfile:'国别档案总表', reports:'情报报告中心',
+    situation:'全域态势感知', workbench:'协同作业中心', threatroom:'情报作战中心', myfocus:'重点目标监测', command:'指挥调度中心', monitor:'实时风险监测', threatorgs:'威胁组织图谱',
+    intel:'影像情报中心', alerts:'智能预警中心', terjudge:'全球恐袭监测', brief:'领导要报速览', aiwatch:'智能控制中枢', evjudge:'事件研判中心', entrisk:'涉企风险研判', country:'国别风险研判', countryfile:'国别档案总表', reports:'情报报告中心',
     models:'风险预测模型', reportsc:'专题分析中心', aireport:'AI智能研判',
-    datapool:'数据中枢', datagov:'数据治理', settings:'系统设置',
-    'manual-entry':'情报录入', thinktank:'智库报告库',
-    'exec-travel':'高管出境风险监测', myrisk:'我的风险工作台', impact:'传导研判中心', sanctions:'制裁名单碰撞',
-    supply:'供应链中断传导预测', barrier:'国别准入壁垒日历', evac:'统一应急中心', socpulse:'境外社媒舆情监测',
-    /* 合并前的旧键（兼容跳转用；#762/#763/#764 后 brief/reportsc/aireport/supply/datagov 均并入伞形） */
+    datapool:'数据治理中枢', datagov:'数据治理', settings:'系统管理中心',
+    'manual-entry':'情报录入中心', thinktank:'智库知识中心',
+    'exec-travel':'高管出境风险监测', myrisk:'我的订阅画像', impact:'传导应急中心', sanctions:'制裁名单碰撞',
+    supply:'供应链中断传导预测', barrier:'国别准入壁垒日历', evac:'应急撤离预案', socpulse:'境外社媒舆情监测',
+    /* 合并前的旧键（兼容跳转用；#762/#763/#764/#769 后 brief/reportsc/aireport/supply/datagov/models 等均并入伞形） */
     autoalert:'智能联动预警', matrix:'风险矩阵', forecast:'预测推演', analysis:'研判简报',
     explain:'可解释审计', role:'角色分级', datasources:'数据源库', datacenter:'数据中心', sidepool:'非预警数据池',
     dailyreport:'每日简报', wechat:'公众号采集', assets:'企业资产',
@@ -52,24 +52,24 @@
 
   const PERMISSION_MATRIX = [
     { key: 'situation', label: '全域态势感知', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'workbench', label: '智能协同作业台（任务工作区+情报图层+安全指数）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'threatroom', label: '专项情报作战室（实体专项采集+态势预警分析报告+预警图）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'myfocus', label: '重点目标监测（订阅国家+项目+企业，定向预警流）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'workbench', label: '协同作业中心（任务工作区+情报图层+安全指数）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'threatroom', label: '情报作战中心（实体专项采集+态势预警分析报告+预警图）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'myfocus', label: '重点目标监测（订阅国家+项目+企业，定向预警流；涉企风险研判页签）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'alerts', label: '智能预警中心（实时队列+智能联动+异动信号）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'terjudge', label: '全球恐袭态势监测中心（常开雷达：威胁实体活跃度碰撞+红橙预警+AI研判+反恐态势通报）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'brief', label: '领导要报速览（30秒一页纸+事件时间线+相似历史事件匹配）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'aiwatch', label: 'AI中枢控制台（AI 值班分析师：无人值守扫库+红橙事件大模型快评+决策日志审计）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'evjudge', label: '事件研判中心（事件时间流研判+历史相似事件分析+智能研判+公文输出）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'entrisk', label: '涉企风险预警研判（七域全风险：管控制裁+冲突波及+恐袭遇袭+社会动荡+政局政策+经济金融+灾害设施；AI大盘研判+国别下钻+30天前瞻）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'country', label: '国别风险研判（单国下钻：矩阵+推演+企业资产）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'countryfile', label: '国别档案总表（风险值+预警+项目+人员）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'terjudge', label: '全球恐袭监测（常开雷达：威胁实体活跃度碰撞+红橙预警+AI研判+反恐态势通报+组织图谱）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'brief', label: '领导要报速览（30秒一页纸+事件时间线+相似历史事件匹配；情报报告中心页签）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'aiwatch', label: '智能控制中枢（AI 值班分析师：无人值守扫库+红橙事件大模型快评+决策日志审计）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'evjudge', label: '事件研判中心（事件时间流研判+历史相似事件分析+智能研判+公文输出+境外社媒舆情）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'entrisk', label: '涉企风险研判（七域全风险：管控制裁+冲突波及+恐袭遇袭+社会动荡+政局政策+经济金融+灾害设施；AI大盘研判+国别下钻+30天前瞻+高管出境风险+我的订阅画像+重点目标监测）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'country', label: '国别风险研判（单国下钻：矩阵+推演+企业资产+档案总表+准入壁垒日历）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'countryfile', label: '国别档案总表（风险值+预警+项目+人员；国别风险研判页签）', roles: ['mfa','mofcom','mps','enterprise'] },
     { key: 'command', label: '指挥调度', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'threatorgs', label: '威胁组织图谱', roles: ['mfa','mofcom','mps'] },
-    { key: 'datapool', label: '数据中枢（数据源库+公众号采集+数据中心+非预警数据池+采集漏斗+归档检索+可解释审计）', roles: ['mfa','mofcom','mps'] },
-    { key: 'thinktank', label: '智库报告库（加密馆藏+密级分级：秘密/机密仅管理员）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'reports', label: '情报报告中心（领导要报+研判简报+周期简报+专题分析+AI智能研判）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'impact', label: '传导研判中心（事件→资产传导+供应链中断传导）', roles: ['mfa','mofcom','mps','enterprise'] },
-    { key: 'settings', label: '系统设置', roles: ['mfa','mofcom','mps','enterprise'] }
+    { key: 'threatorgs', label: '威胁组织图谱（全球恐袭监测页签）', roles: ['mfa','mofcom','mps'] },
+    { key: 'datapool', label: '数据治理中枢（数据源库+公众号采集+数据中心+非预警数据池+采集漏斗+归档检索+可解释审计）', roles: ['mfa','mofcom','mps'] },
+    { key: 'thinktank', label: '智库知识中心（加密馆藏+密级分级：秘密/机密仅管理员）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'reports', label: '情报报告中心（领导要报+研判简报+周期简报+专题分析+AI智能研判+风险预测模型）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'impact', label: '传导应急中心（事件→资产传导+供应链中断传导+应急撤离预案）', roles: ['mfa','mofcom','mps','enterprise'] },
+    { key: 'settings', label: '系统管理中心（系统设置+角色与信息分级）', roles: ['mfa','mofcom','mps','enterprise'] }
   ];
 
   function _normClearance(c){
