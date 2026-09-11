@@ -1,0 +1,166 @@
+/* 早期信号监测模块 — earlysignal.js v1.0
+ * 功能：基于 DBCenter 已审核情报(audit_status==='approved')，按"情报分类"与"国家"两个维度，
+ *       检测近期(默认7天)相较基线(前7-14天)的异常陡增，输出早期预警信号。
+ * 设计原则（遵守系统铁律）：
+ *  - 仅消费真实已审核数据，零模拟、不编造；模拟数据(_sim/is_simulated)一律剔除
+ *  - 空态/平稳态明确显示，不伪造信号
+ *  - 纯前端计算，无外部依赖
+ */
+const EARLYSIGNAL = {
+  _collections: ['terror_events','security_events','military_conflicts','political_events',
+    'natural_disasters','public_health','sanctions_data','social_unrest','infrastructure',
+    'geopolitical_intel','osint_intel'],
+  _catLabels: {
+    terror_events:'恐怖袭击', security_events:'治安安全', military_conflicts:'武装冲突',
+    political_events:'政治事件', natural_disasters:'自然灾害', public_health:'公共卫生',
+    sanctions_data:'制裁合规', social_unrest:'社会动荡', infrastructure:'基础设施',
+    geopolitical_intel:'地缘政治', osint_intel:'开源情报'
+  },
+  _recentDays: 7,
+  _baselineDays: 14,
+  _minRecent: 2,
+  _threshold: 1.8,
+
+  /* 取所有已审核情报（真实数据，剔除模拟 + 国内噪声） */
+  collectApproved: function(){
+    if(typeof DBCenter==='undefined') return [];
+    var out=[];
+    var self=this;
+    this._collections.forEach(function(col){
+      var arr;
+      try{ arr = (typeof DBCenter._r==='function') ? DBCenter._r(col) : []; }catch(e){ arr=[]; }
+      if(!arr || !arr.length) return;
+      arr.forEach(function(r){
+        if(r.audit_status && r.audit_status!=='approved') return; // 仅已审核
+        if(r._sim===true || r.is_simulated===true) return;        // 铁律：剔模拟
+        /* 铁律：仅保留"中国海外利益安全"相关情报，剔除纯国内政务/民生噪声
+         * （与 DBCenter.purgeNonOverseas / gate.js 同源网关一致，防御性兜底） */
+        var txt=(r.title||'')+' '+(r.content||r.desc||r.summary||'');
+        if(typeof GATE!=='undefined' && GATE._isProtected && GATE._isProtected(r)){ /* GEOINT 等受保护记录跳过 */ }
+        else if(typeof GATE!=='undefined' && GATE.chinaOverseasGate && !GATE.chinaOverseasGate(txt).pass) return;
+        /* 体裁闸门：商业榜单/经济统计（500强/排行榜）、评论/学术论述不构成早期信号 */
+        if(typeof ENTITY!=='undefined' && ENTITY.nonIntelGenre){
+          var _g='';
+          try{ _g=ENTITY.nonIntelGenre(r)||''; }catch(e){}
+          if(_g) return;
+        }
+        out.push(r);
+      });
+    });
+    return out;
+  },
+
+  _parseTime: function(r){
+    var t = r.collect_time || r.audit_time || r.time || r.published_at || r.date;
+    if(!t) return 0;
+    var ms = Date.parse(t);
+    if(isNaN(ms)) ms = Date.parse(String(t).replace(' ','T')); // 兼容 'YYYY-MM-DD HH:MM'
+    return isNaN(ms)?0:ms;
+  },
+
+  _bucketKey: function(r, dim){
+    if(dim==='category') return r.category || r.data_type || r.type || r.event_type || '';
+    return r.country || r.coo_name || r.country_name || r.nation || '';
+  },
+
+  _labelOf: function(dim, key){
+    if(dim==='category') return this._catLabels[key] || key || '未分类';
+    return key || '未知地区';
+  },
+
+  /* 单维度检测：返回该维度下所有触发阈值的信号 */
+  _detectDim: function(recs, dim, opts){
+    var now=Date.now();
+    var recWin=(opts.recentDays||this._recentDays)*86400000;
+    var baseStart=now-(opts.baselineDays||this._baselineDays)*86400000;
+    var recEnd=now, recStart=now-recWin;
+    var baseWinCount=(opts.baselineDays||this._baselineDays)-(opts.recentDays||this._recentDays);
+    var minRecent=opts.minRecent||this._minRecent;
+    var thresh=opts.threshold||this._threshold;
+
+    var map={};
+    var self=this;
+    recs.forEach(function(r){
+      var k=self._bucketKey(r,dim);
+      if(!k) return;
+      (map[k]=map[k]||[]).push(r);
+    });
+
+    var signals=[];
+    for(var k in map){
+      var arr=map[k];
+      var recent=arr.filter(function(r){var t=self._parseTime(r);return t>=recStart && t<=recEnd;});
+      var base=arr.filter(function(r){var t=self._parseTime(r);return t>=baseStart && t<recStart;});
+      var recN=recent.length;
+      var baseN=base.length;
+      // 基线平均每个 recent 窗口的量
+      var basePerWin = baseWinCount>0 ? baseN/(baseWinCount/(opts.recentDays||self._recentDays)) : baseN;
+      if(basePerWin<1) basePerWin=1;
+      var ratio = recN/basePerWin;
+      if(recN>=minRecent && ratio>=thresh){
+        var samples=recent.sort(function(a,b){return self._parseTime(b)-self._parseTime(a);})
+          .slice(0,3).map(function(r){return r.title_zh||r.title||r.content||'(无标题)';});
+        var level = ratio>=3?'高':(ratio>=2?'中':'低');
+        signals.push({
+          dim:dim, key:k, label:self._labelOf(dim,k),
+          recent:recN, base:Math.round(baseN), ratio:Math.round(ratio*100)/100,
+          level:level, samples:samples, lastTime:self._parseTime(recent[0])
+        });
+      }
+    }
+    return signals;
+  },
+
+  /* 综合检测：分类 + 国家 双维度合并排序 */
+  detect: function(opts){
+    opts=opts||{};
+    var recs=this.collectApproved();
+    if(!recs.length) return {empty:true, signals:[]};
+    var c=this._detectDim(recs,'category',opts);
+    var n=this._detectDim(recs,'country',opts);
+    var all=c.concat(n);
+    all.sort(function(a,b){ return (b.ratio*b.recent)-(a.ratio*a.recent); });
+    var top=all.slice(0, opts.top||8);
+    return {empty:false, total:recs.length, signals:top};
+  },
+
+  /* 渲染到容器 */
+  renderInto: function(elId){
+    var el=document.getElementById(elId);
+    if(!el) return;
+    var res=this.detect();
+    if(res.empty){
+      el.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3);font-size:13px">📡 暂无实时数据，请先采集并审核情报后查看早期信号</div>';
+      return;
+    }
+    if(!res.signals.length){
+      el.innerHTML='<div style="padding:28px;text-align:center;color:var(--text2);font-size:13px">✅ 当前各维度情报量平稳，未检出异常陡增信号<br><span style="font-size:11px;color:var(--text3)">已分析 '+res.total+' 条已审核情报</span></div>';
+      return;
+    }
+    var lvColor={高:'var(--red)',中:'var(--orange)',低:'var(--yellow)'};
+    var lvBg={高:'rgba(255,51,85,0.12)',中:'rgba(255,136,0,0.12)',低:'rgba(255,204,0,0.12)'};
+    var html='<div style="display:flex;flex-direction:column;gap:10px">';
+    res.signals.forEach(function(s){
+      var tag = s.dim==='category'?'🗂 分类':'🌍 国家';
+      var samples=(s.samples||[]).map(function(t){
+        return '<li style="margin:2px 0;color:var(--text2)">· '+(t.length>78?t.substring(0,78)+'…':t)+'</li>';
+      }).join('');
+      html+='<div style="border-left:3px solid '+lvColor[s.level]+';background:'+lvBg[s.level]+';border-radius:6px;padding:10px 12px">'+
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">'+
+          '<span style="font-size:11px;font-weight:700;color:'+lvColor[s.level]+'">'+s.level+'风险信号</span>'+
+          '<span style="font-size:10px;color:var(--text3)">'+tag+'</span>'+
+          '<span style="font-size:13px;font-weight:600;color:var(--text1)">'+s.label+'</span>'+
+          '<span style="margin-left:auto;font-size:11px;color:var(--text2)">近7天 <b style="color:'+lvColor[s.level]+'">'+s.recent+'</b> 条 / 基线约 '+s.base+' 条 · 增幅 '+Math.round((s.ratio-1)*100)+'%</span>'+
+        '</div>'+
+        '<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;line-height:1.5">'+samples+'</ul>'+
+      '</div>';
+    });
+    html+='</div>';
+    html+='<div style="margin-top:8px;font-size:10px;color:var(--text3);text-align:right">基于 '+res.total+' 条已审核情报 · 维度：分类/国家 · 窗口：近7天 vs 前7-14天</div>';
+    el.innerHTML=html;
+  },
+
+  /* 外部便捷刷新 */
+  refresh: function(){ this.renderInto('sit-early-signals'); }
+};
+if(typeof window!=='undefined') window.EARLYSIGNAL=EARLYSIGNAL;

@@ -281,6 +281,7 @@
       else if (act === 'edit') openEdit();
       else if (act === 'ver-std') setVer('std');
       else if (act === 'ver-gov') setVer('gov');
+      else if (act === 'goto-models') { if (typeof navigateTo === 'function') navigateTo('models'); } /* #767 P2-② 交叉链接 */
     });
     var hist = $('rc-history');
     if (hist) hist.addEventListener('click', function (ev) {
@@ -511,6 +512,8 @@
       '</span>';
     var editBtn = d ? '<button class="rc-btn ghost" data-act="edit" title="人工修订当前版本 HTML 源码">✏️ 修订</button>' : '';
     var printBtn = d ? '<button class="rc-btn ghost" data-act="print" title="打印 / 导出（走浏览器打印，公文版自动白底）">🖨️ 打印 / 导出</button>' : '';
+    /* #767 P2-②：专题分析模型报告挂「模型矩阵」交叉链接 → models（风险预测模型：组织行为/恐袭预测/绑架风险/地缘风险交互矩阵） */
+    var modelsBtn = S.cur === 'model-export' ? '<button class="rc-btn ghost" data-act="goto-models" title="跳转风险预测模型：组织行为 / 恐袭预测 / 绑架风险 / 地缘风险 交互式模型矩阵（本报告的模型底座）">📊 模型矩阵交互 →</button>' : '';
     var state = busy ? '<span class="rc-genstate" id="rc-genstate">LLM 撰写中（kimi-k2.7）· 已等待 <span id="rc-elapsed">0</span>s · 最长 5 分钟</span>' : '';
     el.innerHTML =
       '<div class="rc-tb-row1">' +
@@ -521,7 +524,7 @@
         '<span class="rc-badge llm" title="本报告由 LLM 生成">🤖 ' + esc((d && d.llm_model) || 'kimi-k2.7') + '</span>' +
       '</div>' +
       '<div class="rc-tb-row2">' +
-        freqSel + genBtn + regenBtn + printBtn + editBtn + seg + state +
+        freqSel + genBtn + regenBtn + modelsBtn + printBtn + editBtn + seg + state +
       '</div>';
   }
 
