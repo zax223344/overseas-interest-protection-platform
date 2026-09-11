@@ -1087,30 +1087,25 @@ select.intel-input{cursor:pointer}
 <div class="sb-item" data-view="alerts" onclick="navigateTo('alerts')"><span class="ic">🚨</span><span class="lb">智能预警中心</span><span class="badge zero" id="sb-alert-count">0</span></div>
 <div class="sb-item" data-view="terjudge" onclick="navigateTo('terjudge')"><span class="ic">🛰️</span><span class="lb">全球恐袭态势监测中心</span></div>
 <div class="sb-group">分析研判</div>
-<div class="sb-item" data-view="brief" onclick="navigateTo('brief')"><span class="ic">🔴</span><span class="lb">领导要报速览</span></div>
 <div class="sb-item" data-view="evjudge" onclick="navigateTo('evjudge')"><span class="ic">🔬</span><span class="lb">事件研判中心</span></div>
 <div class="sb-item" data-view="entrisk" onclick="navigateTo('entrisk')"><span class="ic">🛡️</span><span class="lb">涉企风险预警研判</span></div>
 <div class="sb-item" data-view="exec-travel" onclick="navigateTo('exec-travel')"><span class="ic">🛫</span><span class="lb">高管出境风险监测</span></div>
 <div class="sb-item" data-view="myrisk" onclick="navigateTo('myrisk')"><span class="ic">🏢</span><span class="lb">我的风险工作台</span></div>
-<div class="sb-item" data-view="impact" onclick="navigateTo('impact')"><span class="ic">🔗</span><span class="lb">影响传导研判</span></div>
-<div class="sb-item" data-view="supply" onclick="navigateTo('supply')"><span class="ic">🚢</span><span class="lb">供应链中断传导预测</span></div>
+<div class="sb-item" data-view="impact" onclick="navigateTo('impact')"><span class="ic">🔗</span><span class="lb">传导研判中心</span></div>
 <div class="sb-item" data-view="barrier" onclick="navigateTo('barrier')"><span class="ic">🗓️</span><span class="lb">国别准入壁垒日历</span></div>
 <div class="sb-item" data-view="evac" onclick="navigateTo('evac')"><span class="ic">🚁</span><span class="lb">统一应急中心</span></div>
 <div class="sb-item" data-view="socpulse" onclick="navigateTo('socpulse')"><span class="ic">📡</span><span class="lb">境外社媒舆情监测</span></div>
 <div class="sb-item" data-view="country" onclick="navigateTo('country')"><span class="ic">🗂️</span><span class="lb">国别风险研判</span></div>
-<div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">周期简报中心</span></div>
-<div class="sb-item" data-view="reportsc" onclick="navigateTo('reportsc')"><span class="ic">📚</span><span class="lb">专题分析中心</span></div>
-<div class="sb-item" data-view="aireport" onclick="navigateTo('aireport')"><span class="ic">🤖</span><span class="lb">AI智能研判</span><span class="badge zero" id="sb-aireport-nav-count">0</span></div>
+<div class="sb-item" data-view="reports" onclick="navigateTo('reports')"><span class="ic">📑</span><span class="lb">情报报告中心</span></div>
 <div class="sb-item" data-view="models" onclick="navigateTo('models')"><span class="ic">🧮</span><span class="lb">风险预测模型</span></div>
 <div class="sb-group">数据管理</div>
 <div class="sb-item" data-view="datapool" onclick="navigateTo('datapool')"><span class="ic">🛰️</span><span class="lb">数据中枢</span><span class="badge zero" id="sb-ds-count">0</span></div>
-<div class="sb-item" data-view="datagov" onclick="navigateTo('datagov')"><span class="ic">🗄️</span><span class="lb">数据治理</span><span class="badge zero" id="sb-dc-count">0</span></div>
 <div class="sb-item" data-view="manual-entry" onclick="navigateTo('manual-entry')"><span class="ic">✍️</span><span class="lb">情报录入</span></div>
 <div class="sb-item" data-view="thinktank" onclick="navigateTo('thinktank')"><span class="ic">🏛️</span><span class="lb">智库报告库</span></div>
 <div class="sb-group">系统</div>
 <div class="sb-item" data-view="settings" onclick="navigateTo('settings')"><span class="ic">⚙️</span><span class="lb">系统设置</span><span class="badge zero" id="sb-settings-count" style="background:var(--orange)">0</span></div>
-<!-- 合并后保留的隐藏徽章（代码仍会更新计数，避免空指针） -->
-<span style="display:none"><span class="badge zero" id="sb-autoalert-count">0</span><span class="badge zero" id="sb-aireport-count">0</span><span class="badge zero" id="sb-wechat-count">0</span><span class="badge zero" id="sb-sp-count">0</span></span>
+<!-- 合并后保留的隐藏徽章（代码仍会更新计数，避免空指针）：#762 aireport 并入报告中心 / #764 datagov 并入数据中枢 -->
+<span style="display:none"><span class="badge zero" id="sb-autoalert-count">0</span><span class="badge zero" id="sb-aireport-count">0</span><span class="badge zero" id="sb-aireport-nav-count">0</span><span class="badge zero" id="sb-dc-count">0</span><span class="badge zero" id="sb-wechat-count">0</span><span class="badge zero" id="sb-sp-count">0</span></span>
 </div>
 </div>
 
@@ -1528,7 +1523,7 @@ function closeMobileMenu(){
 <script src="local-basemap.js?v=2"></script>
 <script src="myfocus.js?v=3"></script>
 <script src="sidepool.js?v=1"></script>
-<script src="app.js?v=306"></script>
+<script src="app.js?v=307"></script>
 <script src="workbench.js?v=5"></script>
 <script src="threatroom.js?v=12"></script>
 <script src="foresee.js?v=3"></script>
@@ -1545,7 +1540,7 @@ function closeMobileMenu(){
 <script src="thinktank.js?v=1"></script>
 <script src="command-center.js?v=9"></script>
 <script src="explanability.js?v=2"></script>
-<script src="role-ui.js?v=15"></script>
+<script src="role-ui.js?v=16"></script>
 <script src="model-analysis.js?v=5"></script>
 <script src="vendor/html2canvas.min.js"></script>
 <script src="vendor/jspdf.umd.min.js"></script>
@@ -1997,17 +1992,18 @@ function escalateToReport(alertId, alertTitle){
     if(typeof navigateTo === 'function'){
       navigateTo('aireport');
     } else {
-      // 手动切换视图
+      // 手动切换视图（#762 合并后 aireport 为报告中心伞形下的 subview，需激活伞形容器+页签）
       document.querySelectorAll('.view').forEach(function(v){v.classList.remove('active')});
-      var view = document.getElementById('view-aireport');
+      var view = document.getElementById('view-reports');
       if(view) view.classList.add('active');
+      if(typeof switchViewTab === 'function'){ switchViewTab('reports','aireport'); }
       document.querySelectorAll('.sb-item').forEach(function(s){s.classList.remove('active')});
-      var sbItem = document.querySelector('.sb-item[data-view="aireport"]');
+      var sbItem = document.querySelector('.sb-item[data-view="reports"]');
       if(sbItem) sbItem.classList.add('active');
       var titleEl = document.getElementById('pageTitle');
-      if(titleEl) titleEl.textContent = 'AI情报分析报告';
+      if(titleEl) titleEl.textContent = 'AI智能研判';
       var crumbEl = document.getElementById('pageCrumb');
-      if(crumbEl) crumbEl.textContent = '分析研判 / AI情报分析报告';
+      if(crumbEl) crumbEl.textContent = '分析研判 / 情报报告中心 / AI智能研判';
     }
 
     // 在综合报告区域顶部插入"已纳入预警"提示（不修改aireport.js的渲染）
