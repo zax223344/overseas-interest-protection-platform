@@ -31,6 +31,7 @@
     intel:'影像情报中心', alerts:'智能预警中心', terjudge:'全球恐袭监测', brief:'领导要报速览', aiwatch:'智能控制中枢', evjudge:'事件研判中心', entrisk:'涉企风险研判', country:'国别风险研判', countryfile:'国别档案总表', reports:'情报报告中心',
     models:'风险预测模型', reportsc:'专题分析中心', aireport:'AI智能研判',
     datapool:'数据治理中枢', datagov:'数据治理', settings:'系统管理中心',
+    landing:'系统入口总览', rules:'系统规则阅读',
     'manual-entry':'情报录入中心', thinktank:'智库知识中心',
     'exec-travel':'高管出境风险监测', myrisk:'我的订阅画像', impact:'传导应急中心', sanctions:'制裁名单碰撞',
     supply:'供应链中断传导预测', barrier:'国别准入壁垒日历', evac:'应急撤离预案', socpulse:'境外社媒舆情监测',
@@ -47,7 +48,7 @@
     mfa: Object.keys(VIEW_LABELS),
     mofcom: Object.keys(VIEW_LABELS),
     mps: Object.keys(VIEW_LABELS),
-    enterprise: ['situation','threatroom','command','monitor','intel','alerts','terjudge','brief','aiwatch','evjudge','entrisk','country','myrisk','reports','reportsc','aireport','models','datapool','datagov','manual-entry','thinktank','settings']
+    enterprise: ['landing','rules','situation','threatroom','command','monitor','intel','alerts','terjudge','brief','aiwatch','evjudge','entrisk','country','myrisk','reports','reportsc','aireport','models','datapool','datagov','manual-entry','thinktank','settings']
   };
 
   const PERMISSION_MATRIX = [

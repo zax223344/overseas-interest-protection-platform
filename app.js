@@ -4201,6 +4201,8 @@ const VIEW_MAP={
   'manual-entry':{t:'情报录入中心',b:'数据管理 / 情报录入中心（12类结构化录入 · 智能辅助 · 并发安全 · 提交即入预警中心）'},
   thinktank:{t:'智库知识中心',b:'数据管理 / 智库知识中心（PDF加密馆藏 · 密级分级可见 · 多维检索 · 全程审计）'},
   settings:{t:'系统管理中心',b:'系统 / 系统管理中心（设置 · 角色与信息分级）'},
+  landing:{t:'系统入口总览',b:'系统 / 系统入口总览（科技感着陆页 · 18 个功能区一键直达 · 实时态势 KPI）'},
+  rules:{t:'系统规则阅读',b:'系统 / 系统规则与数据铁律（8 章必读：数据来源 · 预警定级 · 时效筛选 · 处置闭环 · 公文规范 · 权限密级）'},
   threatorgs:{t:'全球恐袭监测 · 组织图谱',b:'监测中心 / 全球恐袭监测 / 组织图谱'},
   command:{t:'指挥调度中心',b:'态势感知 / 指挥调度中心'},
   /* —— 以下为合并前的旧键：VIEW_MERGE_ALIAS 自动跳转到伞形视图，VIEW_MAP 保留供兼容 —— */
@@ -4394,6 +4396,8 @@ function runViewInit(v){
   setTimeout(function(){
     try{
       if(v==='situation'){ if(SITUATION._needsRefresh){SITUATION._needsRefresh=false;} SITUATION.init(); }
+      else if(v==='landing'){ if(typeof LANDING!=='undefined')LANDING.init(); }
+      else if(v==='rules'){ if(typeof RULES!=='undefined')RULES.init(); }
       else if(v==='workbench'){ if(typeof WORKBENCH!=='undefined')WORKBENCH.init(); }
       else if(v==='threatroom'){ if(typeof THREATROOM!=='undefined')THREATROOM.init(); }
       else if(v==='myfocus'){ if(typeof MYFOCUS!=='undefined')MYFOCUS.init(); }
@@ -9799,6 +9803,15 @@ const SITUATION={
      * 新机制：单一引擎每 60s 推进轮转指针（焦点面板换一批真实数据 + 最新预警自动翻页），
      * 并以 1s 心跳驱动秒级时钟与轮换倒计时，面板肉眼可见地持续跳动。 */
     this._minuteCycleStart();
+    /* #771：ALERTS 异步到达后补齐两张研判卡（init 首帧可能早于预警同步，避免停留降级态） */
+    if(!this._alertRetryTimer){
+      var _self=this;
+      this._alertRetryTimer=setInterval(function(){
+        _self._alertRetryCount=(_self._alertRetryCount||0)+1;
+        try{ _self.renderTrend(); _self.renderAlertType(); }catch(e){}
+        if(ALERTS.length>0 || _self._alertRetryCount>=10){ clearInterval(_self._alertRetryTimer); _self._alertRetryTimer=null; }
+      },3000);
+    }
   },
   _dailyStats:{ total:0, china:0, chinaNegative:0, targetTotal:500, targetChinaMin:80, targetChinaMax:100, targetChinaNegativeMin:50 },
   fetchDailyStats(){
@@ -10109,6 +10122,11 @@ const SITUATION={
       self._alertPage=(self._alertPage||0)+1;    /* 最新预警：翻一页 */
       try{ self.renderIntelPanels(); }catch(e){}
       try{ self.renderLiveStats(); }catch(e){}
+      /* #771：预警池发生变化时才重绘两张研判卡（避免无变化时图表闪烁） */
+      try{
+        var sig=ALERTS.length+':'+(ALERTS[0]?String(ALERTS[0].id):'')+':'+(ALERTS[0]?String(ALERTS[0].time||''):'');
+        if(sig!==self._lastAlertSig){ self._lastAlertSig=sig; self.renderTrend(); self.renderAlertType(); }
+      }catch(e){}
     },60000);
     if(!this._heartTimer){
       this._heartTimer=setInterval(function(){
@@ -10370,81 +10388,144 @@ const SITUATION={
     el.innerHTML=items.join('<span class="sep">|</span>')+'<span class="sep">|</span>'+items.join('<span class="sep">|</span>');
   },
   renderTrend(){
-    var months=['1月','2月','3月','4月','5月','6月','7月'];
+    /* ===== #771 风险趋势研判卡：真实数据驱动（近30日预警活跃度 + 当前区域风险指数双模式） ===== */
+    var self=this;
+    if(!this._trendMode)this._trendMode='activity';
     var regs=['南亚','中东','东欧','非洲','东南亚','南美','中亚'];
     var colors=['#ff3355','#ff8800','#ffcc00','#00d4ff','#00ff9f','#b366ff','#e040fb'];
-    var ds=[]; var currentScores=[]; var prevScores=[];
-    regs.forEach(function(r,i){
-      var cs=COUNTRIES.filter(function(c){return c.region===r;});
-      if(!cs.length)return;
-      var baseAvg=cs.reduce(function(s,c){return s+calcOverall(c.scores);},0)/cs.length;
-      var regAlerts=ALERTS.filter(function(a){var ac=COUNTRIES.find(function(c){return c.name===a.country;});return ac&&cs.indexOf(ac)>=0&&a.status!=='resolved';}).length;var alertTrend=regAlerts*0.05;var data=months.map(function(_,j){return Math.round(Math.min(10,(baseAvg+(j-3)*0.08+alertTrend*(j/6)))*10)/10;});
-      currentScores.push({region:r,score:data[data.length-1],color:colors[i],count:cs.length});
-      prevScores.push({region:r,score:data[data.length-2],color:colors[i]});
-      ds.push({label:r,data:data,borderColor:colors[i],backgroundColor:colors[i]+'18',borderWidth:2,tension:.35,pointRadius:3,pointHoverRadius:6,fill:true});
+    var regColor={};regs.forEach(function(r,i){regColor[r]=colors[i];});
+    /* 预警池：ALERTS + LIVE_ALERTS 按 id 去重 */
+    var pool=[...ALERTS];
+    if(typeof LIVE_ALERTS!=='undefined'){LIVE_ALERTS.forEach(function(x){if(!pool.some(function(y){return String(y.id)===String(x.id);}))pool.push(x);});}
+    var _ts=function(v){if(!v)return 0;var d=new Date(String(v).replace(/ /g,'T'));return isNaN(d.getTime())?0:d.getTime();};
+    var _evTs=function(a){var c=['publishedAt','publish_time','seendate','event_date','time','collect_time'];for(var i=0;i<c.length;i++){var t=_ts(a[c[i]]);if(t>0)return t;}return 0;};
+    var _regionOf=function(a){var c=COUNTRIES.find(function(x){return x.name===a.country;});return c?c.region:'其他';};
+    var now=Date.now(),_day=new Date();
+    var _dkey=function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+    /* 近30日日桶（活跃度模式数据源，真实事件时间） */
+    var dayKeys=[],dayLabels=[];
+    for(var i=29;i>=0;i--){var d=new Date(now-i*86400000);dayKeys.push(_dkey(d));dayLabels.push(String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));}
+    var dayTotal={},dayReg={};
+    dayKeys.forEach(function(k){dayTotal[k]=0;dayReg[k]={};});
+    pool.forEach(function(a){
+      var t=_evTs(a);if(!t)return;
+      var age=(now-t)/86400000;if(age<0||age>30)return;
+      var k=_dkey(new Date(t));if(!(k in dayTotal))return;
+      dayTotal[k]++;var r=_regionOf(a);dayReg[k][r]=(dayReg[k][r]||0)+1;
     });
-    // Top stat chips
+    var total30=dayKeys.reduce(function(s,k){return s+dayTotal[k];},0);
+    var d7=0,d7prev=0,reg7={},type7={};
+    dayKeys.forEach(function(k,i){
+      var age=29-i,v=dayTotal[k];
+      if(age<7){d7+=v;for(var r in dayReg[k]){reg7[r]=(reg7[r]||0)+dayReg[k][r];}}
+      else if(age<14)d7prev+=v;
+    });
+    pool.forEach(function(a){
+      var t=_evTs(a);if(!t)return;var age=(now-t)/86400000;
+      if(age>=0&&age<7){var k=a.type||'其他';type7[k]=(type7[k]||0)+1;}
+    });
+    var deltaPct=d7prev>0?Math.round((d7-d7prev)/d7prev*100):(d7>0?100:0);
+    /* 区域指数（真实当前评分） */
+    var regIdx=regs.map(function(r){
+      var cs=COUNTRIES.filter(function(c){return c.region===r;});
+      if(!cs.length)return null;
+      var avg=Math.round(cs.reduce(function(s,c){return s+calcOverall(c.scores);},0)/cs.length*10)/10;
+      return {region:r,score:avg,count:cs.length,color:regColor[r]};
+    }).filter(Boolean);
+    var avgScore=regIdx.length?Math.round(regIdx.reduce(function(s,r){return s+r.score;},0)/regIdx.length*10)/10:0;
+    var maxS=regIdx.slice().sort(function(a,b){return b.score-a.score;})[0]||{region:'—',score:0,color:'#00d4ff'};
+    var hiRisk=COUNTRIES.filter(function(c){return calcOverall(c.scores)>=8;}).length;
+    /* 模式切换 chips */
+    var modesEl=document.getElementById('sit-trend-modes');
+    if(modesEl){
+      var mk=function(m,lb){var on=self._trendMode===m;return '<span onclick="SITUATION._trendMode=\''+m+'\';SITUATION.renderTrend()" style="cursor:pointer;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;border:1px solid '+(on?'var(--cyan)':'var(--border)')+';color:'+(on?'var(--cyan)':'var(--text3)')+';background:'+(on?'rgba(0,212,255,0.1)':'transparent')+'">'+lb+'</span>';};
+      modesEl.innerHTML=mk('activity','📊 预警活跃度')+mk('index','🎯 风险指数');
+    }
+    /* 顶部 4 KPI chips（全部真实数据） */
     var statsEl=document.getElementById('sit-trend-stats');
     if(statsEl){
-      var allScores=currentScores.map(function(s){return s.score;});
-      var avgScore=Math.round(allScores.reduce(function(a,b){return a+b;},0)/allScores.length*10)/10;
-      var maxS=currentScores.reduce(function(a,b){return a.score>b.score?a:b;});
-      var minS=currentScores.reduce(function(a,b){return a.score<b.score?a:b;});
       var avgClr=avgScore>=7?'#ff3355':avgScore>=5?'#ff8800':avgScore>=4?'#ffcc00':'#00ff9f';
-      var trndUp=avgScore>=(prevScores.reduce(function(a,b){return a.score+b.score;},0)/prevScores.length);
+      var dClr=deltaPct>0?'#ff3355':deltaPct<0?'#00ff9f':'#7a8ba3';
+      var chip=function(bg,label,val,sub,vclr,clk){
+        return '<div '+(clk?'onclick="'+clk+'" style="cursor:pointer"':'style="')+'flex:1;min-width:60px;background:'+bg+';border-radius:8px;padding:7px 8px;text-align:center;transition:.15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(0,212,255,0.10)\'" onmouseout="this.style.boxShadow=\'\'">'+
+          '<div style="font-size:9px;color:var(--text3);margin-bottom:2px">'+label+'</div>'+
+          '<div style="font-size:17px;font-weight:800;color:'+(vclr||'var(--text1)')+';line-height:1.2">'+val+'</div>'+
+          '<div style="font-size:9px;color:var(--text3)">'+sub+'</div></div>';
+      };
       statsEl.innerHTML=
-        '<div style="flex:1;min-width:60px;background:rgba(0,212,255,0.05);border-radius:8px;padding:8px 10px;text-align:center">'+
-          '<div style="font-size:9px;color:var(--text3);margin-bottom:3px">整体风险指数</div>'+
-          '<div style="font-size:20px;font-weight:800;color:'+avgClr+'">'+avgScore.toFixed(1)+'</div>'+
-          '<div style="font-size:10px;color:'+avgClr+'">'+getLevel(avgScore).label+'</div>'+
-        '</div>'+
-        '<div style="flex:1;min-width:60px;background:rgba(255,136,0,0.05);border-radius:8px;padding:8px 10px;text-align:center">'+
-          '<div style="font-size:9px;color:var(--text3);margin-bottom:3px">最高风险区域</div>'+
-          '<div style="font-size:15px;font-weight:700;color:'+maxS.color+'">'+maxS.region+'</div>'+
-          '<div style="font-size:10px;color:'+maxS.color+'">'+maxS.score.toFixed(1)+' · '+getLevel(maxS.score).label+'</div>'+
-        '</div>'+
-        '<div style="flex:1;min-width:60px;background:rgba(0,255,159,0.05);border-radius:8px;padding:8px 10px;text-align:center">'+
-          '<div style="font-size:9px;color:var(--text3);margin-bottom:3px">风险趋势</div>'+
-          '<div style="font-size:15px;font-weight:700;color:'+(trndUp?'#ff3355':'#00ff9f')+'">'+(trndUp?'📈 上升':'📉 下降')+'</div>'+
-          '<div style="font-size:10px;color:var(--text3)">最低 '+minS.region+' '+minS.score.toFixed(1)+'</div>'+
-        '</div>';
+        chip('rgba(0,212,255,0.05)','整体风险指数',avgScore.toFixed(1),getLevel(avgScore).label,avgClr)+
+        chip('rgba(255,136,0,0.05)','最高风险区域',maxS.region,maxS.score.toFixed(1)+' · '+getLevel(maxS.score).label,maxS.color)+
+        chip('rgba(255,51,85,0.05)','近7日预警',d7+'条','环比'+(deltaPct>0?'+':'')+deltaPct+'%',dClr)+
+        chip('rgba(0,255,159,0.05)','高风险国家',hiRisk+'个','风险指数≥8.0','var(--red)');
     }
-    // Enhanced line chart
-    var ctx=document.getElementById('chart-sit-trend').getContext('2d');
+    /* 图表：活跃度=真实30日日计数折线；指数=真实当前评分横条 */
+    var ctx=document.getElementById('chart-sit-trend');
+    if(!ctx)return;
+    ctx=ctx.getContext('2d');
     if(charts.sitTrend)charts.sitTrend.destroy();
-    charts.sitTrend=new Chart(ctx,{type:'line',data:{labels:months,datasets:ds},
-      options:{
-        responsive:true,maintainAspectRatio:false,
-        interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:false},
-          tooltip:{
-            backgroundColor:'rgba(0,0,0,.88)',titleFont:{size:11},bodyFont:{size:10},padding:10,
-            callbacks:{
-              title:function(ctx){return ctx[0].label;},
-              label:function(ctx){return ctx.dataset.label+': '+ctx.raw.toFixed(1)+' ('+getLevel(ctx.raw).label+')';}
-            }
-          }
-        },
-        scales:{
-          y:{min:2,max:10,grid:{color:'rgba(0,212,255,0.06)'},ticks:{color:'#7a8ba3',font:{size:9},stepSize:2,callback:function(v){return v.toFixed(0);}}},
-          x:{grid:{display:false},ticks:{color:'#7a8ba3',font:{size:9}}}
-        }
-      }});
-    // Bottom region summary cards
+    var useActivity=(this._trendMode==='activity'&&total30>0);
+    if(useActivity){
+      var regTot={};dayKeys.forEach(function(k){for(var r in dayReg[k]){regTot[r]=(regTot[r]||0)+dayReg[k][r];}});
+      var topRegs=Object.keys(regTot).sort(function(a,b){return regTot[b]-regTot[a];}).slice(0,3);
+      var ds=[{label:'预警总量',data:dayKeys.map(function(k){return dayTotal[k];}),borderColor:'#00d4ff',backgroundColor:'rgba(0,212,255,0.10)',borderWidth:2,tension:.35,pointRadius:0,pointHoverRadius:4,fill:true}];
+      topRegs.forEach(function(r){
+        ds.push({label:r,data:dayKeys.map(function(k){return dayReg[k][r]||0;}),borderColor:regColor[r]||'#b366ff',backgroundColor:'transparent',borderWidth:1.5,tension:.35,pointRadius:0,pointHoverRadius:4,fill:false});
+      });
+      charts.sitTrend=new Chart(ctx,{type:'line',data:{labels:dayLabels,datasets:ds},
+        options:{responsive:true,maintainAspectRatio:false,
+          interaction:{mode:'index',intersect:false},
+          plugins:{legend:{display:true,position:'top',align:'end',labels:{color:'#7a8ba3',font:{size:9},boxWidth:10,boxHeight:2,padding:6}},
+            tooltip:{backgroundColor:'rgba(0,0,0,.88)',titleFont:{size:11},bodyFont:{size:10},padding:8,
+              callbacks:{label:function(c){return c.dataset.label+': '+c.raw+' 条';}}}},
+          scales:{
+            y:{beginAtZero:true,grid:{color:'rgba(0,212,255,0.06)'},ticks:{color:'#7a8ba3',font:{size:9},precision:0}},
+            x:{grid:{display:false},ticks:{color:'#7a8ba3',font:{size:9},maxTicksLimit:10,maxRotation:0}}
+          }}});
+    }else{
+      var idxSorted=regIdx.slice().sort(function(a,b){return b.score-a.score;});
+      charts.sitTrend=new Chart(ctx,{type:'bar',
+        data:{labels:idxSorted.map(function(r){return r.region;}),
+          datasets:[{label:'风险指数',data:idxSorted.map(function(r){return r.score;}),
+            backgroundColor:idxSorted.map(function(r){return r.score>=7?'rgba(255,51,85,0.75)':r.score>=5?'rgba(255,136,0,0.7)':r.score>=4?'rgba(255,204,0,0.65)':'rgba(0,255,159,0.6)';}),
+            borderColor:idxSorted.map(function(r){return r.color;}),borderWidth:1,borderRadius:3,barThickness:14}]},
+        options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',
+          plugins:{legend:{display:false},
+            tooltip:{backgroundColor:'rgba(0,0,0,.88)',titleFont:{size:11},bodyFont:{size:10},padding:8,
+              callbacks:{label:function(c){var r=idxSorted[c.dataIndex];return '指数 '+r.score.toFixed(1)+' ('+getLevel(r.score).label+') · '+r.count+'国';}}}},
+          onClick:function(evt,els){if(els.length){var r=idxSorted[els[0].index];if(r)self.showRegion(r.region);}},
+          scales:{
+            x:{min:0,max:10,grid:{color:'rgba(0,212,255,0.06)'},ticks:{color:'#7a8ba3',font:{size:9},stepSize:2}},
+            y:{grid:{display:false},ticks:{color:'#7a8ba3',font:{size:10}}}
+          }}});
+    }
+    /* 自动研判洞察条（真实数据推导） */
+    var insEl=document.getElementById('sit-trend-insight');
+    if(insEl){
+      var topReg=Object.keys(reg7).sort(function(a,b){return reg7[b]-reg7[a];})[0];
+      var topType=Object.keys(type7).sort(function(a,b){return type7[b]-type7[a];})[0];
+      var txt='';
+      if(d7>0){
+        txt='📈 近7日预警 <b style="color:var(--cyan)">'+d7+'</b> 条（环比'+(deltaPct>0?'<b style="color:var(--red)">上升'+deltaPct+'%</b>':deltaPct<0?'<b style="color:var(--green)">下降'+Math.abs(deltaPct)+'%</b>':'持平')+'）'
+          +(topReg?'，<b style="color:'+(regColor[topReg]||'var(--orange)')+'">'+topReg+'</b> 占 '+Math.round(reg7[topReg]/d7*100)+'%':'')
+          +(topType?'，以<b style="color:var(--orange)">'+topType+'</b>类为主':'')
+          +(hiRisk>0?'；当前 <b style="color:var(--red)">'+hiRisk+'</b> 个国家风险指数≥8.0，建议优先盯防':'；当前无极高风险国家，保持常态监测')+'。';
+      }else{
+        txt='⚖️ 近7日暂无新增预警入库，当前整体风险指数 <b style="color:var(--cyan)">'+avgScore.toFixed(1)+'</b>（'+getLevel(avgScore).label+'）'+(hiRisk>0?'，仍有 <b style="color:var(--red)">'+hiRisk+'</b> 个高风险国家需持续关注':'，各区域风险处于可控区间')+'。';
+      }
+      insEl.innerHTML='<div style="padding:8px 10px;background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.15);border-left:3px solid var(--cyan);border-radius:6px;font-size:10.5px;color:var(--text2);line-height:1.7"><span style="color:var(--cyan);font-weight:700">🧠 趋势研判</span> · '+txt+'</div>';
+    }
+    /* 底部区域速览 chips（真实指数 + 真实近7日预警数，点击下钻） */
     var summaryEl=document.getElementById('sit-trend-summary');
     if(summaryEl){
       var html='';
-      currentScores.sort(function(a,b){return b.score-a.score;}).forEach(function(s,i){
-        var prev=prevScores.find(function(p){return p.region===s.region;});
-        var delta=prev?Math.round((s.score-prev.score)*10)/10:0;
-        var arrow=delta>0.1?'↑':delta<-0.1?'↓':'→';
-        var arrowClr=delta>0.1?'var(--red)':delta<-0.1?'var(--green)':'var(--text3)';
-        html+='<div style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:6px;background:rgba(0,212,255,0.04);font-size:10px;white-space:nowrap;cursor:pointer;transition:.15s" onmouseover="this.style.background=\'rgba(0,212,255,0.1)\'" onmouseout="this.style.background=\'rgba(0,212,255,0.04)\'" onclick="navigateTo(\'monitor\')">'+
+      regIdx.sort(function(a,b){return b.score-a.score;}).forEach(function(s){
+        var r7=reg7[s.region]||0;
+        var lv=getLevel(s.score);
+        html+='<div title="点击查看'+s.region+'区域详情" style="display:flex;align-items:center;gap:6px;padding:3px 7px;border-radius:6px;background:rgba(0,212,255,0.04);font-size:10px;white-space:nowrap;cursor:pointer;transition:.15s" onmouseover="this.style.background=\'rgba(0,212,255,0.1)\'" onmouseout="this.style.background=\'rgba(0,212,255,0.04)\'" onclick="SITUATION.showRegion(\''+s.region+'\')">'+
           '<span style="width:6px;height:6px;border-radius:50%;background:'+s.color+';flex-shrink:0"></span>'+
           '<span style="color:var(--text2);font-weight:600">'+s.region+'</span>'+
-          '<span style="font-weight:700;color:'+s.color+'">'+s.score.toFixed(1)+'</span>'+
-          '<span style="color:'+arrowClr+'">'+arrow+' '+Math.abs(delta).toFixed(1)+'</span>'+
+          '<span style="font-weight:700;color:'+lv.color+'">'+s.score.toFixed(1)+'</span>'+
+          '<span style="color:var(--red);font-size:9px">'+(r7>0?'7日'+r7+'条':'')+'</span>'+
           '<span style="color:var(--text3);font-size:9px">'+s.count+'国</span>'+
           '</div>';
       });
@@ -10529,9 +10610,21 @@ const SITUATION={
     el.innerHTML=html;
   },
   renderAlertType(){
-    var types={};ALERTS.forEach(function(a){types[a.type]=(types[a.type]||0)+1;});
-    var activeTypes={};ALERTS.filter(function(a){return a.status==='active'||a.status==='responding';}).forEach(function(a){activeTypes[a.type]=(activeTypes[a.type]||0)+1;});
-    var labels=Object.keys(types),data=Object.values(types);
+    /* ===== #771 预警类型研判卡：KPI 快筛 + 环形分布 + 等级堆叠条（真实数据） ===== */
+    var types={};ALERTS.forEach(function(a){var t=a.type||'其他';types[t]=(types[t]||0)+1;});
+    var activeTypes={};ALERTS.filter(function(a){return a.status==='active'||a.status==='responding';}).forEach(function(a){var t=a.type||'其他';activeTypes[t]=(activeTypes[t]||0)+1;});
+    var redTypes={};ALERTS.filter(function(a){return a.level==='red';}).forEach(function(a){var t=a.type||'其他';redTypes[t]=(redTypes[t]||0)+1;});
+    /* 近7日 vs 前7日环比（真实事件时间） */
+    var now=Date.now();
+    var _tsA=function(v){if(!v)return 0;var d=new Date(String(v).replace(/ /g,'T'));return isNaN(d.getTime())?0:d.getTime();};
+    var t7={},t7p={};
+    ALERTS.forEach(function(a){
+      var best=0,c=['publishedAt','publish_time','seendate','event_date','time','collect_time'];
+      for(var i=0;i<c.length;i++){var t=_tsA(a[c[i]]);if(t>best)best=t;}
+      if(!best)return;var age=(now-best)/86400000;var k=a.type||'其他';
+      if(age>=0&&age<7)t7[k]=(t7[k]||0)+1;else if(age>=7&&age<14)t7p[k]=(t7p[k]||0)+1;
+    });
+    var labels=Object.keys(types),data=labels.map(function(l){return types[l];});
     var total=ALERTS.length; var active=Object.values(activeTypes).reduce(function(s,v){return s+v;},0);
     var colors=['#ff3355','#ff8800','#ffcc00','#00d4ff','#00ff9f','#b366ff','#ff6b6b','#e040fb'];
     var self=this;
@@ -10544,10 +10637,40 @@ const SITUATION={
           var n=DBCenter.getAll(t.key).length;
           if(n>0) types[t.label.replace(/^[^\s]+\s/,'')]=n;
         });
-        labels=Object.keys(types); data=Object.values(types);
+        labels=Object.keys(types); data=labels.map(function(l){return types[l];});
         total=data.reduce(function(s,v){return s+v;},0);
         if(total>0){ isFallback=true; centerLabel='情报总数'; }
       }catch(e){}
+    }
+    /* 等级与涉华统计 */
+    var redN=ALERTS.filter(function(a){return a.level==='red';}).length;
+    var orangeN=ALERTS.filter(function(a){return a.level==='orange';}).length;
+    var yellowN=ALERTS.filter(function(a){return a.level==='yellow';}).length;
+    var blueN=ALERTS.filter(function(a){return a.level==='blue';}).length;
+    var cnN=ALERTS.filter(function(a){
+      if(a.chinaRelated===true||a.is_core===true)return true;
+      var txt=String(a.title||'')+String(a.title_zh||'');
+      if(typeof GATE!=='undefined'&&GATE.isChinaRelatedStrict)return GATE.isChinaRelatedStrict(txt);
+      return /中资|中企|中方|华人|华侨|中国公民|一带一路|涉华/.test(txt);
+    }).length;
+    /* KPI 快筛条（4 项，全部可点击下钻） */
+    var kpiEl=document.getElementById('sit-at-kpis');
+    if(kpiEl){
+      if(isFallback){
+        kpiEl.innerHTML='<div onclick="navigateTo(\'datacenter\')" style="flex:1;background:rgba(0,212,255,0.05);border-radius:8px;padding:7px 10px;text-align:center;cursor:pointer"><div style="font-size:9px;color:var(--text3);margin-bottom:2px">情报总数（数据中心）</div><div style="font-size:17px;font-weight:800;color:var(--cyan)">'+total+'</div><div style="font-size:9px;color:var(--text3)">点击进入数据中心 →</div></div>';
+      }else{
+        var kc=function(bg,label,val,sub,vclr,clk){
+          return '<div onclick="'+clk+'" style="flex:1;min-width:56px;background:'+bg+';border-radius:8px;padding:6px 8px;text-align:center;cursor:pointer;transition:.15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(0,212,255,0.10)\'" onmouseout="this.style.boxShadow=\'\'">'+
+            '<div style="font-size:9px;color:var(--text3);margin-bottom:2px">'+label+'</div>'+
+            '<div style="font-size:16px;font-weight:800;color:'+(vclr||'var(--text1)')+';line-height:1.2">'+val+'</div>'+
+            '<div style="font-size:9px;color:var(--text3)">'+sub+'</div></div>';
+        };
+        kpiEl.innerHTML=
+          kc('rgba(0,212,255,0.05)','预警总数',total,'点击查看全部','var(--cyan)',"SITUATION.filterAlertsByFilter('all')")+
+          kc('rgba(255,136,0,0.05)','活跃/处置中',active,'待响应','var(--orange)',"SITUATION.filterAlertsByFilter('active')")+
+          kc('rgba(255,51,85,0.05)','红橙高等级',redN+orangeN,'红'+redN+' · 橙'+orangeN,'var(--red)',"SITUATION.filterAlertsByFilter('red-orange')")+
+          kc('rgba(0,255,159,0.05)','涉华预警',cnN,'涉我海外利益','var(--red)',"SITUATION.filterAlertsByFilter('cn')");
+      }
     }
     // Doughnut chart
     var ctxEl=document.getElementById('chart-sit-alert-type');
@@ -10559,6 +10682,8 @@ const SITUATION={
       if(ce0)ce0.innerHTML='<div style="font-size:22px;font-weight:800;color:var(--text3);line-height:1">0</div><div style="font-size:10px;color:var(--text3)">暂无数据</div>';
       var le0=document.getElementById('sit-alert-type-list');
       if(le0)le0.innerHTML='<div style="padding:30px 10px;text-align:center;color:var(--text3);font-size:11px"><div style="font-size:26px;margin-bottom:6px">📭</div>暂无实时数据<br>请先在「数据源」采集，并在「数据中心」审核分发</div>';
+      var lv0=document.getElementById('sit-at-levels');
+      if(lv0)lv0.innerHTML='';
       return;
     }
     var ctx=ctxEl.getContext('2d');
@@ -10584,32 +10709,76 @@ const SITUATION={
     // Detailed type ranking list
     var listEl=document.getElementById('sit-alert-type-list');
     if(!listEl)return;
-    var sorted=labels.map(function(l,i){return{name:l,count:data[i],active:activeTypes[l]||0,color:colors[i%colors.length],pct:Math.round(data[i]/total*100)};}).sort(function(a,b){return b.count-a.count;});
+    var sorted=labels.map(function(l,i){return{name:l,count:data[i],active:activeTypes[l]||0,red:redTypes[l]||0,color:colors[i%colors.length],pct:Math.round(data[i]/total*100),d7:t7[l]||0,d7p:t7p[l]||0};}).sort(function(a,b){return b.count-a.count;});
     var maxCount=sorted[0]?sorted[0].count:1;
     var html='';
     if(isFallback){
       html+='<div style="font-size:10px;color:var(--text3);padding:4px 8px 8px">📊 当前暂无已分发预警，以下为数据中心（系统总库）真实情报分类分布，点击进入数据中心审核分发：</div>';
     }
     sorted.forEach(function(t){
-      html+='<div class="sit-type-row" onclick="'+(isFallback?'navigateTo(\'datacenter\')':'SITUATION.filterAlertsByType(\''+(t.name.replace(/'/g,"\\'"))+'\')')+'" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:.15s;margin-bottom:4px" onmouseover="this.style.background=\'rgba(0,212,255,0.06)\'" onmouseout="this.style.background=\'\'">'+
-        '<span style="width:8px;height:8px;border-radius:50%;background:'+t.color+';flex-shrink:0"></span>'+
-        '<span style="width:60px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:var(--text1)">'+t.name+'</span>'+
-        '<div style="flex:1;height:4px;background:rgba(0,212,255,0.08);border-radius:2px;overflow:hidden;min-width:20px"><div style="height:100%;width:'+Math.max(5,t.count/maxCount*100)+'%;background:'+t.color+';border-radius:2px;transition:.3s"></div></div>'+
-        '<span style="width:28px;text-align:right;font-weight:700;color:'+t.color+';flex-shrink:0">'+t.count+'</span>'+
-        '<span style="width:28px;text-align:right;font-size:10px;color:var(--text3);flex-shrink:0">'+t.pct+'%</span>'+
+      var delta=t.d7-t.d7p;
+      var dChip=delta>0?'<span style="width:34px;flex-shrink:0;text-align:right;font-size:9px;font-weight:700;color:var(--red)" title="近7日'+t.d7+'条 / 前7日'+t.d7p+'条">↑'+delta+'</span>'
+        :delta<0?'<span style="width:34px;flex-shrink:0;text-align:right;font-size:9px;font-weight:700;color:var(--green)" title="近7日'+t.d7+'条 / 前7日'+t.d7p+'条">↓'+Math.abs(delta)+'</span>'
+        :'<span style="width:34px;flex-shrink:0;text-align:right;font-size:9px;color:var(--text3)" title="近7日'+t.d7+'条">→0</span>';
+      html+='<div class="sit-type-row" onclick="'+(isFallback?'navigateTo(\'datacenter\')':'SITUATION.filterAlertsByType(\''+(t.name.replace(/'/g,"\\'"))+'\')')+'" style="display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:6px;cursor:pointer;transition:.15s;margin-bottom:3px" onmouseover="this.style.background=\'rgba(0,212,255,0.06)\'" onmouseout="this.style.background=\'\'">'+
+        '<span style="width:7px;height:7px;border-radius:50%;background:'+t.color+';flex-shrink:0"></span>'+
+        '<span style="width:58px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:var(--text1)" title="'+t.name+'（活跃'+t.active+'）">'+t.name+'</span>'+
+        '<div style="flex:1;height:4px;background:rgba(0,212,255,0.08);border-radius:2px;overflow:hidden;min-width:16px"><div style="height:100%;width:'+Math.max(5,t.count/maxCount*100)+'%;background:'+t.color+';border-radius:2px;transition:.3s"></div></div>'+
+        '<span style="width:24px;text-align:right;font-weight:700;color:'+t.color+';flex-shrink:0">'+t.count+'</span>'+
+        (t.red>0?'<span style="width:26px;flex-shrink:0;text-align:center;font-size:9px;font-weight:700;color:var(--red)" title="红色'+t.red+'条">红'+t.red+'</span>':'<span style="width:26px;flex-shrink:0"></span>')+
+        dChip+
         '</div>';
     });
     html+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text3)">'+
       (isFallback
         ?'<span>共 <b style="color:var(--cyan)">'+total+'</b> 条情报（数据中心）</span><span style="color:var(--cyan);cursor:pointer" onclick="navigateTo(\'datacenter\')">进入数据中心 →</span>'
-        :'<span>共 <b style="color:var(--cyan)">'+total+'</b> 条预警，<b style="color:var(--orange)">'+active+'</b> 条活跃</span><span style="color:var(--cyan);cursor:pointer" onclick="SITUATION.filterAlertsByType(\'all\')">查看全部 →</span>')+
+        :'<span>共 <b style="color:var(--cyan)">'+total+'</b> 条，<b style="color:var(--orange)">'+active+'</b> 活跃，<b style="color:var(--red)">'+redN+'</b> 红色</span><span style="color:var(--cyan);cursor:pointer" onclick="SITUATION.filterAlertsByType(\'all\')">查看全部 →</span>')+
       '</div>';
     listEl.innerHTML=html;
+    /* 等级分布堆叠条（可点击按等级筛选） */
+    var lvEl=document.getElementById('sit-at-levels');
+    if(lvEl){
+      if(isFallback||total===0){lvEl.innerHTML='';}
+      else{
+        var lvs=[['red','红色',redN,'#ff3355'],['orange','橙色',orangeN,'#ff8800'],['yellow','黄色',yellowN,'#ffcc00'],['blue','蓝色',blueN,'#00d4ff']];
+        var bars='',legend='';
+        lvs.forEach(function(l){
+          var w=total>0?Math.max(l[2]/total*100,0):0;
+          bars+='<div onclick="SITUATION.filterAlertsByFilter(\''+l[0]+'\')" title="'+l[1]+' '+l[2]+'条（点击筛选）" style="width:'+w+'%;min-width:'+(l[2]>0?2:0)+'px;height:10px;background:'+l[3]+';opacity:.85;cursor:pointer;transition:.15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.85"></div>';
+          legend+='<span onclick="SITUATION.filterAlertsByFilter(\''+l[0]+'\')" style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10px;color:var(--text2)"><span style="width:7px;height:7px;border-radius:2px;background:'+l[3]+'"></span>'+l[1]+' <b style="color:'+l[3]+'">'+l[2]+'</b></span>';
+        });
+        lvEl.innerHTML='<div style="display:flex;gap:2px;border-radius:4px;overflow:hidden;margin-bottom:6px">'+bars+'</div>'+
+          '<div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:12px">'+legend+'</div><span style="font-size:9px;color:var(--text3)">点击等级/色块筛选 →</span></div>';
+      }
+    }
+  },
+  filterAlertsByFilter(mode){
+    /* KPI/等级条统一快筛入口（#771） */
+    var list=[...ALERTS];
+    var lb='';
+    if(mode==='all'){lb='全部预警';}
+    else if(mode==='active'){list=list.filter(function(a){return a.status==='active'||a.status==='responding';});lb='活跃/处置中预警';}
+    else if(mode==='red-orange'){list=list.filter(function(a){return a.level==='red'||a.level==='orange';});lb='红/橙色高等级预警';}
+    else if(mode==='cn'){
+      list=list.filter(function(a){
+        if(a.chinaRelated===true||a.is_core===true)return true;
+        var txt=String(a.title||'')+String(a.title_zh||'');
+        if(typeof GATE!=='undefined'&&GATE.isChinaRelatedStrict)return GATE.isChinaRelatedStrict(txt);
+        return /中资|中企|中方|华人|华侨|中国公民|一带一路|涉华/.test(txt);
+      });
+      lb='涉华预警（涉我海外利益）';
+    }
+    else if(ALERT_LV[mode]){list=list.filter(function(a){return a.level===mode;});lb=ALERT_LV[mode].label+'预警';}
+    this._alertListModal(lb,list);
   },
   filterAlertsByType(t){
     var alerts=t==='all'?[...ALERTS]:ALERTS.filter(function(a){return a.type===t;});
-    var html='<div style="margin-bottom:12px"><span class="badge b-cyan" style="font-size:13px">🔍 '+(t==='all'?'全部预警类型':'类型: '+t)+'</span> <span style="color:var(--text2);font-size:12px">'+alerts.length+'条预警</span></div>';
-    alerts.sort(function(a,b){return b.time.localeCompare(a.time);});
+    this._alertListModal(t==='all'?'全部预警':t+' 预警',alerts);
+  },
+  _alertListModal(title,alerts){
+    /* 预警列表下钻弹窗共享渲染器（filterAlertsByType / filterAlertsByFilter 共用，#771） */
+    var html='<div style="margin-bottom:12px"><span class="badge b-cyan" style="font-size:13px">🔍 '+title+'</span> <span style="color:var(--text2);font-size:12px">'+alerts.length+'条预警</span></div>';
+    alerts=alerts.slice().sort(function(a,b){return String(b.time||'').localeCompare(String(a.time||''));});
     html+='<div style="display:grid;gap:6px;max-height:450px;overflow-y:auto">';
     alerts.forEach(function(a){
       var lv=ALERT_LV[a.level]||ALERT_LV.blue;
@@ -10620,7 +10789,7 @@ const SITUATION={
         '<div class="alert-item-meta"><span>🌍 '+a.country+'</span><span>🏢 '+a.enterprise+'</span><span>🕐 '+a.time+'</span><span style="color:'+sc+'">● '+stLabel+'</span></div></div>';
     });
     html+='</div>';
-    document.getElementById('modal-tt').textContent='🔍 '+(t==='all'?'全部预警':t+' 预警');
+    document.getElementById('modal-tt').textContent='🔍 '+title;
     document.getElementById('modal-bd').innerHTML=html;
     document.getElementById('modal').classList.add('show');
   },
@@ -16422,27 +16591,58 @@ const MATRIX={
     }).join('');
   },
   renderCases(){
-    const cases=[
-      {t:'苏丹中石油油田撤离',d:'2023年4月苏丹爆发全面武装冲突，中国组织1,500余名公民撤离。中石油6区、7区油田运营中断，资产损失约35亿美元。',l:'极高×极高',cat:'武装冲突',cty:'苏丹',ent:'中石油',yr:'2023'},
-      {t:'巴基斯坦达苏水电站遇袭',d:'2024年3月26日达苏水电站中方人员遭自杀式炸弹袭击，5名中国工程师遇难。此前2021年7月同项目已致9人遇难。',l:'高×高',cat:'恐怖袭击',cty:'巴基斯坦',ent:'中电建',yr:'2024'},
-      {t:'卡拉奇孔子学院班车遇袭',d:'2022年4月26日卡拉奇大学孔子学院班车遭自杀式袭击，3名中国教师遇难。BLA宣称负责。',l:'高×高',cat:'恐怖袭击',cty:'巴基斯坦',ent:'教育机构',yr:'2022'},
-      {t:'哥伦比亚紫金武里蒂卡金矿',d:'2024年1月紫金矿业公告金矿被非法采矿组织控制60%以上。2023年记录2,260次爆炸和2,450次枪击。',l:'高×高',cat:'武装占领',cty:'哥伦比亚',ent:'紫金矿业',yr:'2024'},
-      {t:'缅北战事波及中资项目',d:'2023-2025年缅北武装冲突升级，中资水电矿产项目受冲击，人员多次撤离。',l:'高×中',cat:'武装冲突',cty:'缅甸',ent:'中能建',yr:'2023-25'},
-      {t:'尼日利亚中资员工绑架案',d:'2024年6月拉各斯中资企业2名中国籍员工遭绑架，支付赎金后获释。',l:'中×高',cat:'绑架勒索',cty:'尼日利亚',ent:'多家中企',yr:'2024'},
-      {t:'俄罗斯北极LNG制裁案',d:'2023年11月美国制裁北极LNG 2项目，中石化、中海油宣布不可抗力退出。42亿美元中资滞留。',l:'中×中',cat:'经济制裁',cty:'俄罗斯',ent:'中石化',yr:'2023'},
-      {t:'乌克兰撤离行动',d:'2022年2月俄乌冲突爆发，中国撤离5,000余名公民及留学生。',l:'极高×高',cat:'战争',cty:'乌克兰',ent:'多家中企',yr:'2022'},
-      {t:'塞尔维亚紫金博尔铜矿',d:'中塞自贸协定2024年生效，紫金博尔铜矿推进顺利，8亿美元投资，400名中方人员安全作业。',l:'低×低',cat:'成功案例',cty:'塞尔维亚',ent:'紫金矿业',yr:'2024'},
-      {t:'阿富汗中资企业撤离',d:'2021年8月塔利班接管喀布尔，中色梅斯艾纳克铜矿项目无限期搁置，30亿美元投资面临不确定性。',l:'极高×极高',cat:'政权更迭',cty:'阿富汗',ent:'中色',yr:'2021'}
-    ];
+    /* #772 案例库扩充至 100 例：数据源 cases-library.js（window.CASE_LIBRARY，真实事件档案），
+     * 用户新增案例追加于其后（this._userCases）。新增分类筛选 chips + 关键词搜索 + 计数。 */
+    var self=this;
+    if(!this._userCases)this._userCases=[];
+    var lib=(typeof CASE_LIBRARY!=='undefined'&&Array.isArray(CASE_LIBRARY))?CASE_LIBRARY.filter(function(c){return !(self._deletedLib&&self._deletedLib[c.t]);}):[];
+    var cases=lib.concat(this._userCases);
     this._cases=cases;
-    document.getElementById('matrix-cases').innerHTML=CRUD.toolbar('共 '+cases.length+' 个案例','MATRIX.showCaseForm()','MATRIX.exportData()',null)+'<div class="grid" style="grid-template-columns:1fr 1fr">'+cases.map((c,i)=>{
-      const bc=c.cat==='恐怖袭击'||c.cat==='战争'?'var(--red)':c.cat==='武装冲突'||c.cat==='武装占领'?'var(--orange)':c.cat==='经济制裁'?'var(--yellow)':c.cat==='成功案例'?'var(--green)':'var(--cyan)';
-      const cls=c.l.includes('极高')?'b-red':c.l.includes('高')?'b-orange':c.l.includes('中')?'b-yellow':'b-green';
-      return '<div style="padding:12px;background:var(--panel2);border:1px solid var(--border);border-left:3px solid '+bc+';border-radius:8px;cursor:pointer;transition:.15s" onmouseover="this.style.borderColor=\''+bc+'\';this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'\'" onclick="MATRIX.showCase('+i+')"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px"><div><strong style="font-size:13px">'+c.t+'</strong><div class="text-xs text-muted">'+c.cty+' | '+c.ent+' | '+c.yr+'</div></div><div class="flex gap-8"><span class="badge '+cls+'">'+c.l+'</span><span class="badge b-blue">'+c.cat+'</span></div></div><div class="text-xs text-muted" style="line-height:1.6">'+c.d.substring(0,100)+'...</div><div style="margin-top:6px;font-size:10px;color:var(--cyan)">📌 点击查看完整案例分析 →</div>'+(PERM.isAdmin()?'<div style="display:flex;gap:2px"><button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();MATRIX.showCaseForm('+i+')">✏️</button><button class="btn sm danger" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();MATRIX.deleteCase('+i+')">🗑️</button></div>':'')+'</div>';
-    }).join('')+'</div>';
+    if(!this._caseCat)this._caseCat='全部';
+    var cats=['全部'].concat(Object.keys(cases.reduce(function(m,c){m[c.cat||'其他']=1;return m;},{})));
+    var chip=function(cat){
+      var on=self._caseCat===cat;
+      var n=cat==='全部'?cases.length:cases.filter(function(c){return (c.cat||'其他')===cat;}).length;
+      return '<span onclick="MATRIX._caseCat=\''+cat+'\';MATRIX.renderCases()" style="cursor:pointer;padding:2px 8px;border-radius:11px;font-size:10px;white-space:nowrap;border:1px solid '+(on?'var(--cyan)':'var(--border)')+';color:'+(on?'var(--cyan)':'var(--text3)')+';background:'+(on?'rgba(0,212,255,0.1)':'transparent')+'">'+cat+' <b>'+n+'</b></span>';
+    };
+    var bar='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">'+
+      cats.map(chip).join('')+
+      '<input id="case-kw" oninput="MATRIX._caseKw=this.value;MATRIX._renderCaseGrid()" value="'+String(this._caseKw||'').replace(/"/g,'&quot;')+'" placeholder="🔍 搜索案例/国别/企业" style="margin-left:auto;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:11px;padding:3px 9px;width:180px">'+
+      '</div>';
+    document.getElementById('matrix-cases').innerHTML=
+      CRUD.toolbar('共 '+cases.length+' 个案例','MATRIX.showCaseForm()','MATRIX.exportData()',null)+
+      bar+'<div id="case-count" style="font-size:10px;color:var(--text3);margin-bottom:6px"></div>'+
+      '<div id="matrix-cases-grid" class="grid" style="grid-template-columns:1fr 1fr;max-height:660px;overflow-y:auto;padding-right:4px"></div>';
+    this._renderCaseGrid();
+  },
+  _caseFmt(c){
+    var bc=c.cat==='恐怖袭击'||c.cat==='战争'?'var(--red)':c.cat==='武装冲突'||c.cat==='武装占领'?'var(--orange)':c.cat==='经济制裁'?'var(--yellow)':c.cat==='成功案例'?'var(--green)':'var(--cyan)';
+    var cls=String(c.l||'').includes('极高')?'b-red':String(c.l||'').includes('高')?'b-orange':String(c.l||'').includes('中')?'b-yellow':'b-green';
+    return '<div style="padding:12px;background:var(--panel2);border:1px solid var(--border);border-left:3px solid '+bc+';border-radius:8px;cursor:pointer;transition:.15s" onmouseover="this.style.borderColor=\''+bc+'\';this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'\'" onclick="MATRIX.showCase('+c._idx+')"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px"><div><strong style="font-size:13px">'+c.t+'</strong><div class="text-xs text-muted">'+c.cty+' | '+c.ent+' | '+c.yr+'</div></div><div class="flex gap-8"><span class="badge '+cls+'">'+c.l+'</span><span class="badge b-blue">'+c.cat+'</span></div></div><div class="text-xs text-muted" style="line-height:1.6">'+String(c.d||'').substring(0,100)+'...</div><div style="margin-top:6px;font-size:10px;color:var(--cyan)">📌 点击查看完整案例分析 →</div>'+(PERM.isAdmin()?'<div style="display:flex;gap:2px"><button class="btn sm" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();MATRIX.showCaseForm('+c._idx+')">✏️</button><button class="btn sm danger" style="font-size:9px;padding:1px 5px" onclick="event.stopPropagation();MATRIX.deleteCase('+c._idx+')">🗑️</button></div>':'')+'</div>';
+  },
+  _renderCaseGrid(){
+    var self=this;
+    var cases=this._cases||[];
+    var kw=String(this._caseKw||'').trim();
+    var list=cases.map(function(c,i){return Object.assign({_idx:i},c);}).filter(function(c){
+      if(self._caseCat&&self._caseCat!=='全部'&&(c.cat||'其他')!==self._caseCat)return false;
+      if(kw&&(String(c.t||'')+String(c.d||'')+String(c.cty||'')+String(c.ent||'')+String(c.cat||'')).indexOf(kw)<0)return false;
+      return true;
+    });
+    var cntEl=document.getElementById('case-count');
+    if(cntEl){
+      var cats=Object.keys(cases.reduce(function(m,c){m[c.cat||'其他']=1;return m;},{}));
+      cntEl.innerHTML='📚 库内 <b style="color:var(--cyan)">'+cases.length+'</b> 个真实案例 · 覆盖 <b style="color:var(--cyan)">'+new Set(cases.map(function(c){return c.cty;})).size+'</b> 个国家/地区 · <b style="color:var(--cyan)">'+cats.length+'</b> 个类别'+
+        (list.length!==cases.length?' · 当前筛选命中 <b style="color:var(--orange)">'+list.length+'</b> 个':'');
+    }
+    var grid=document.getElementById('matrix-cases-grid');
+    if(!grid)return;
+    if(!list.length){grid.innerHTML='<div style="grid-column:1/3;padding:30px;text-align:center;color:var(--text3);font-size:12px">未匹配到案例，请调整筛选条件</div>';return;}
+    grid.innerHTML=list.map(function(c){return self._caseFmt(c);}).join('');
   },
   showCase(i){
     const c=this._cases[i];
+    if(!c)return;
     var bc=c.cat==='恐怖袭击'||c.cat==='战争'?'var(--red)':c.cat==='武装冲突'||c.cat==='武装占领'?'var(--orange)':c.cat==='经济制裁'?'var(--yellow)':c.cat==='成功案例'?'var(--green)':'var(--cyan)';
     var cls=c.l.includes('极高')?'b-red':c.l.includes('高')?'b-orange':c.l.includes('中')?'b-yellow':'b-green';
     var timeline='';
@@ -16495,15 +16695,23 @@ const MATRIX={
     ];
     CRUD.showForm(c?'编辑案例':'新增案例',fields,function(obj){
       if(c){Object.assign(c,obj);showToast('✅ 案例已更新');}
-      else{this._cases=this._cases||[];this._cases.push(obj);showToast('✅ 案例已添加');}
+      else{this._userCases=this._userCases||[];this._userCases.push(obj);showToast('✅ 案例已添加');}
       this.renderCases();
     }.bind(this),c);
   },
   deleteCase(i){
     if(!PERM.guard('\u5220\u9664\u6848\u4f8b'))return;
+    var self=this;
     showConfirm('确定删除该案例？',function(){
-      if(this._cases&&this._cases[i]){this._cases.splice(i,1);showToast('🗑️ 已删除');this.renderCases();}
-    }.bind(this));
+      var libLen=(typeof CASE_LIBRARY!=='undefined'&&Array.isArray(CASE_LIBRARY))?CASE_LIBRARY.length:0;
+      if(i>=libLen){
+        if(self._userCases){self._userCases.splice(i-libLen,1);showToast('🗑️ 已删除');}
+      }else{
+        var c=self._cases&&self._cases[i];
+        if(c){self._deletedLib=self._deletedLib||{};self._deletedLib[c.t]=1;showToast('🗑️ 已从案例库移除');}
+      }
+      self.renderCases();
+    });
   },
   exportData(){
     DataHub.exportJSON(this._cases||[],'matrix_cases_export.json');
@@ -20599,6 +20807,8 @@ function initApp(){
   });
   // Init first view（异步，防止卡死页面）
   setTimeout(function(){try{SITUATION.init();}catch(e){console.error('SITUATION.init错误:',e);}},100);
+  /* #773 系统入口层：本次会话首次进入 → 先规则阅读（未确认）或直接落着陆页（已确认） */
+  setTimeout(function(){ try{ if(typeof LANDING_AUTOSHOW==='function') LANDING_AUTOSHOW(); }catch(e){ console.warn('[LANDING_AUTOSHOW]',e&&e.message); } }, 600);
   console.log('[initApp] 完成，SITUATION.init 已异步启动');
   /* 2026-08-30 全局日统计拉取（root fix）：fetchDailyStats 此前只在态势页渲染时启动，
    * 用户登录后直接进预测中心/专家研判页时 _dailyStats 恒为 0——专家页显示"今日全库采集 0 条"
