@@ -9707,6 +9707,220 @@ window._tierSortLive=function(a,b){
   try{return new Date(b.time||0).getTime()-new Date(a.time||0).getTime();}catch(e){return 0;}
 };
 
+/* ============================================================
+ * SDOPS — 全域态势感知「AI 无人值守指挥带」(#774)
+ * 四模块：①值班台 ②研判结论·证据置信度 ③感知图层矩阵 ④处置闭环 SLA
+ * 数据全部来自真实端点（零模拟）：
+ *   /api/engine/status · /api/org-watch/status · /api/special-matrix/status
+ *   /api/anomaly/signals · /api/alerts/disposition/stats · /api/sources
+ *   /api/social/channels · /api/geoint/change · /api/ais/all
+ * ============================================================ */
+const SDOPS={
+  _data:null,_at:0,_open:'',_busy:false,
+  init(){
+    ['sit-duty','sit-verdict','sit-layers','sit-loop'].forEach(function(id){
+      var el=document.getElementById(id);
+      if(el) el.innerHTML='<div style="padding:16px;font-size:11px;color:var(--text3)">正在读取真实运行数据…</div>';
+    });
+    return this.refresh(true);
+  },
+  refresh(force){
+    var self=this, now=Date.now();
+    if(!force && this._data && now-this._at<45000){ this._render(); return Promise.resolve(); }
+    if(this._busy) return Promise.resolve();
+    this._busy=true;
+    var eps=[['engine','/api/engine/status'],['orgw','/api/org-watch/status'],['matrix','/api/special-matrix/status'],['anom','/api/anomaly/signals'],['disp','/api/alerts/disposition/stats'],['src','/api/sources'],['social','/api/social/channels'],['geoint','/api/geoint/change'],['ais','/api/ais/all']];
+    return Promise.all(eps.map(function(e){ return self._get(e[1]); })).then(function(arr){
+      var o={}; eps.forEach(function(e,i){ o[e[0]]=arr[i]; });
+      self._data=o; self._at=Date.now(); self._busy=false; self._render();
+    }).catch(function(e){ self._busy=false; console.warn('[SDOPS]',e); });
+  },
+  _rel(iso){ try{ if(!iso)return ''; var d=Date.now()-new Date(iso).getTime(); if(!isFinite(d))return ''; if(d<0)d=0; var m=Math.floor(d/60000); if(m<1)return '刚刚'; if(m<60)return m+'分钟前'; var h=Math.floor(m/60); if(h<24)return h+'小时前'; return Math.floor(h/24)+'天前'; }catch(e){ return ''; } },
+  _hm(iso){ try{ if(!iso)return ''; var d=new Date(iso); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }catch(e){ return ''; } },
+  _n(v){ v=Number(v||0); return isFinite(v)?v.toLocaleString():'0'; },
+  /* 带鉴权 GET（部分端点需 Bearer；APIClient 不可用时回退 localStorage token） */
+  _get(path){
+    try{
+      if(typeof APIClient!=='undefined'&&APIClient._fetch){
+        return APIClient._fetch('GET',path).then(function(d){ return d; }).catch(function(){ return null; });
+      }
+    }catch(e){}
+    var h={};
+    try{ var t=localStorage.getItem('orps_api_token'); if(t) h['Authorization']='Bearer '+t; }catch(e){}
+    return fetch(path,{headers:h}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; });
+  },
+  /* 数组归一：端点偶有 {x:{channels:[...]}} 之类的嵌套，取第一个真数组 */
+  _arr(v){
+    if(Array.isArray(v)) return v;
+    if(v&&typeof v==='object'){ for(var k in v){ if(Array.isArray(v[k])) return v[k]; } }
+    return [];
+  },
+  _render(){
+    if(!this._data) return;
+    try{ this._duty(); }catch(e){ console.warn('[SDOPS duty]',e); }
+    try{ this._verdict(); }catch(e){ console.warn('[SDOPS verdict]',e); }
+    try{ this._layers(); }catch(e){ console.warn('[SDOPS layers]',e); }
+    try{ this._loop(); }catch(e){ console.warn('[SDOPS loop]',e); }
+  },
+  /* ---------- ① AI 无人值守值班台 ---------- */
+  _duty(){
+    var d=this._data||{}, e=(d.engine&&d.engine.engine)||{}, ow=d.orgw||{}, mx=d.matrix||{}, an=d.anom||{};
+    var lst=e.lastResult||{}, st=e.stats||{}, os=ow.lastStats||{}, ms=mx.lastStats||{}, cats=ms.categories||{};
+    var catTxt=['china','project','org','chokepoint','sanction'].map(function(k){ var c=cats[k]; return k+' '+(c?c.passed:0); }).join(' · ');
+    var units=[
+      { ic:'📡', n:'采集引擎', on:!!e.running, stt:e.running?'运行中':'已停止',
+        a:'本轮 '+this._n(lst.count)+' 条，入库 '+this._n(lst.linked)+' 条'+(lst.fulltext?'，全文 '+this._n(lst.fulltext.ok)+'/'+this._n(lst.fulltext.total):''),
+        b:'累计 '+this._n(st.crawlRuns)+' 轮 · 抓取 '+this._n(st.totalFetched)+' 条 · 错误 '+this._n(st.errors),
+        t:(this._rel(e.lastRun)||'—')+(e.nextCrawlIn?' · 下轮 '+e.nextCrawlIn:'') },
+      { ic:'🎯', n:'组织监测哨兵', on:!ow.busy, stt:ow.busy?'执行中':'待命',
+        a:'在册 '+this._n(os.orgsTotal)+' 组织，本轮查询 '+this._n(os.orgsQueried),
+        b:'GNews '+this._n(os.gnews)+' · RSS '+this._n(os.rss)+' · 语境过滤 '+this._n(os.dropped),
+        t:os.at?this._rel(os.at):'按轮次巡查' },
+      { ic:'🧭', n:'专项矩阵哨兵', on:!mx.busy, stt:mx.busy?'执行中':'待命',
+        a:'本轮通过 '+this._n(ms.passed)+' 条，耗时 '+Math.round((ms.ms||0)/1000)+'s',
+        b:catTxt,
+        t:ms.at?this._rel(ms.at):'' },
+      { ic:'📈', n:'异动信号引擎', on:true, stt:'运行中',
+        a:'扫描 '+this._n(an.scanned)+' 组，命中信号 '+this._n(an.total),
+        b:'已推送预警 '+this._n(an.pushed)+' 条 · 有效样本 '+(Array.isArray(an.signals)?an.signals.length:0),
+        t:an.at?this._hm(an.at)+' 刷新':'—' }
+    ];
+    var env=ALERTS.filter(function(a){ return a.status!=='resolved'; }).length;
+    var onN=units.filter(function(u){ return u.on; }).length;
+    var html='<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">'+
+      '<span class="badge '+((onN===units.length)?'b-green':'b-yellow')+'" style="font-size:10px">'+onN+'/'+units.length+' 单元在线</span>'+
+      '<span class="badge b-blue" style="font-size:10px">在库未闭环预警 '+this._n(env)+'</span>'+
+      '<span style="margin-left:auto;font-size:10px;color:var(--text3)">刷新于 '+this._hm(new Date(this._at).toISOString())+'</span></div>';
+    html+=units.map(function(u){
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'+
+        '<div style="width:26px;height:26px;flex-shrink:0;border-radius:7px;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:13px">'+u.ic+'</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;font-weight:600;color:var(--text1)">'+u.n+'</span>'+
+          '<span style="font-size:9px;color:'+(u.on?'var(--green)':'var(--red)')+'">● '+u.stt+'</span></div>'+
+          '<div style="font-size:10px;color:var(--text2);margin-top:2px;line-height:1.5">'+u.a+'</div>'+
+          '<div style="font-size:10px;color:var(--text3);margin-top:1px;line-height:1.5">'+u.b+'</div>'+
+        '</div>'+
+        '<div style="font-size:9px;color:var(--text3);white-space:nowrap;text-align:right">'+u.t+'</div>'+
+      '</div>';
+    }).join('');
+    var host=document.getElementById('sit-duty'); if(host) host.innerHTML=html;
+    var at=document.getElementById('sit-duty-at'); if(at) at.textContent='实时 · '+this._hm(new Date(this._at).toISOString());
+  },
+  /* ---------- ② AI 研判结论 · 证据置信度 ---------- */
+  _verdict(){
+    var an=(this._data||{}).anom||{};
+    var sigs=(an.signals||[]).slice().sort(function(a,b){ return (Number(b.risk_score)||0)-(Number(a.risk_score)||0) || (Number(b.today)||0)-(Number(a.today)||0); });
+    var host=document.getElementById('sit-verdict'); if(!host) return;
+    if(!sigs.length){
+      host.innerHTML='<div style="padding:20px;text-align:center;font-size:11px;color:var(--text3)">当前无异动信号，态势平稳<br><span style="font-size:10px">引擎本轮已全量扫描 '+this._n(an.scanned)+' 组 类别×国家 基线</span></div>';
+      return;
+    }
+    var top=sigs[0], al=top.alert||{};
+    var conf=45 + Math.min(20,Number(top.today)||0) + ((Number(top.avg)||0)>0?15:5) + (al.interestLinked?10:0) + (top.level==='red'?15:top.level==='orange'?10:top.level==='yellow'?6:3);
+    conf=Math.max(30,Math.min(95,conf));
+    var lvC={red:'var(--red)',orange:'var(--orange)',yellow:'var(--yellow)',blue:'var(--cyan)'}[top.level]||'var(--cyan)';
+    var tone=conf>=75?'高':conf>=55?'中':'低';
+    var advice=(top.level==='red'||top.level==='orange')?'建议立即核实并转入处置流程':'建议持续监测，暂不升级';
+    var aid=String(al.id||al.alert_no||'');
+    var aidJs=aid.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    var others=sigs.slice(1,4).map(function(s){ return '<span class="badge b-blue" style="font-size:9px;margin-right:4px">'+esc(String(s.country||'')+'·'+String(s.typeLabel||''))+'</span>'; }).join('');
+    var title=stripTags(_dedupeTitleConcat(al.title_zh||al.title||''))||(String(top.country||'')+'·'+String(top.typeLabel||'')+' 情报量异动');
+    host.innerHTML=
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<span style="font-size:11px;color:var(--text3)">证据置信度</span>'+
+        '<span style="font-size:22px;font-weight:800;color:'+lvC+';line-height:1">'+conf+'%</span>'+
+        '<span class="badge" style="font-size:9px;color:'+lvC+';border:1px solid '+lvC+'">'+tone+'可信</span>'+
+        '<span style="margin-left:auto;font-size:9px;color:var(--text3)" title="置信度 = 事件量 + 历史基线 + 中资利益关联 + 风险级别 加权计算，非人工填写">统计计算</span></div>'+
+      '<div style="font-size:12px;color:var(--text1);line-height:1.6;padding:10px;border-radius:8px;background:var(--panel2);border-left:3px solid '+lvC+'">'+esc(title)+'</div>'+
+      '<div style="display:flex;gap:12px;margin-top:10px;font-size:10px;color:var(--text2);flex-wrap:wrap">'+
+        '<span>今日 '+this._n(top.today)+' 条</span><span>7日均 '+(Number(top.avg)||0)+'</span><span>风险分 '+this._n(top.risk_score)+'</span>'+
+        '<span>'+(al.chinaRelated?'涉华 ✓':'非涉华')+'</span><span>'+(al.interestLinked?'利益关联 ✓':'无直接关联')+'</span></div>'+
+      '<div style="margin-top:10px;padding:9px 10px;border-radius:8px;background:'+(conf>=75?'var(--red-bg)':'var(--panel2)')+';font-size:11px;color:'+(conf>=75?'var(--red)':'var(--text2)')+'">研判建议：'+advice+'</div>'+
+      (others?'<div style="margin-top:8px;font-size:10px;color:var(--text3)">其他信号 '+others+'</div>':'')+
+      '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">'+
+        '<span class="btn sm" style="font-size:10px" onclick="SDOPS.dispose(\''+aidJs+'\',\'ack\')">✓ 标记已确认</span>'+
+        '<span class="btn sm" style="font-size:10px" onclick="SDOPS.dispose(\''+aidJs+'\',\'respond\')">▶ 转处置中</span>'+
+        '<span class="btn sm" style="font-size:10px" onclick="SDOPS.dispose(\''+aidJs+'\',\'dismiss\')">✕ 误报归档</span>'+
+      '</div>';
+  },
+  /* ---------- ③ 全域感知图层矩阵 ---------- */
+  _layers(){
+    var d=this._data||{}, s=(d.src&&d.src.stat)||{}, g=d.geoint||{}, os=(d.orgw&&d.orgw.lastStats)||{}, an=d.anom||{};
+    var sc=this._arr(d.social&&d.social.channels);
+    var ais=this._arr(d.ais);
+    var srcList=this._arr(d.src&&d.src.sources);
+    var geoCount=(g&&g.empty)?0:((g&&g.before!=null&&g&&g.after!=null)?2:1);
+    var defs=[
+      {k:'src', ic:'📚', n:'情报信源', c:s.total||0, sub:'待命 '+this._n(s.idle)+' · 已采 '+this._n(s.items),
+       list:srcList.slice(0,14).map(function(x){ return String((x.name||x.id||''))+(x.type?' · '+x.type:''); })},
+      {k:'social', ic:'📱', n:'境外社媒', c:sc.length, sub:'监测频道',
+       list:sc.slice(0,14).map(function(x){ return String(x.name||x.title||x.id||''); })},
+      {k:'org', ic:'🎯', n:'组织名录', c:os.orgsTotal||0, sub:'威胁组织在册',
+       list:(os.droppedSamples||[]).slice(0,6).map(function(x){ return String(x.org||'')+' · '+String(x.reason||''); })},
+      {k:'anom', ic:'📈', n:'异动信号', c:an.total||0, sub:'今日命中 · 扫描 '+this._n(an.scanned),
+       list:(an.signals||[]).slice(0,10).map(function(x){ return String(x.country||'')+' · '+String(x.typeLabel||'')+'（'+this._n(x.today)+' 条）'; }.bind(this))},
+      {k:'geo', ic:'🛰️', n:'卫星影像', c:geoCount, sub:(g&&g.empty)?'待接入真实影像源':(g&&g.message?String(g.message).slice(0,18):'有影像更新'), dim:!!(g&&g.empty), list:[]},
+      {k:'ais', ic:'🚢', n:'船舶 AIS', c:(ais.length||0), sub:ais.length?'实时船舶':'待接入 AIS 源', dim:!ais.length, list:[]}
+    ];
+    var open=this._open;
+    var html='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">图层状态与真实计数 · 点击行展开明细</div>';
+    html+=defs.map(function(L){
+      var on=(open===L.k);
+      var body=(L.list&&L.list.length)?L.list.map(function(t){ return '<div>· '+esc(String(t))+'</div>'; }).join(''):'<div style="color:var(--text3)">该图层暂无明细（真实源无数据）</div>';
+      return '<div style="border-bottom:1px solid var(--border)">'+
+        '<div onclick="SDOPS.toggle(\''+L.k+'\')" style="display:flex;align-items:center;gap:10px;padding:7px 0;cursor:pointer">'+
+          '<span style="width:22px;text-align:center;font-size:13px">'+L.ic+'</span>'+
+          '<span style="flex:1;font-size:12px;color:var(--text1)">'+L.n+'</span>'+
+          '<span style="font-size:10px;color:var(--text3)">'+L.sub+'</span>'+
+          '<span style="width:58px;text-align:right;font-size:13px;font-weight:700;color:'+(L.dim?'var(--text3)':'var(--cyan)')+'">'+this._n(L.c)+'</span>'+
+          '<span style="width:12px;text-align:right;font-size:9px;color:var(--text3)">'+(on?'▾':'▸')+'</span>'+
+        '</div>'+
+        (on?'<div style="padding:2px 0 10px 32px;font-size:10px;color:var(--text2);line-height:1.7">'+body+'</div>':'')+
+      '</div>';
+    }.bind(this)).join('');
+    var host=document.getElementById('sit-layers'); if(host) host.innerHTML=html;
+  },
+  toggle(k){ this._open=(this._open===k?'':k); this._layers(); },
+  /* ---------- ④ 处置闭环 · SLA ---------- */
+  _loop(){
+    var dp=(this._data||{}).disp||{};
+    var total=Number(dp.total)||0, ack=Number(dp.acknowledged)||0, resp=Number(dp.responding)||0, res=Number(dp.resolved)||0, act=Number(dp.active)||0;
+    var stages=[{n:'触发',v:total,c:'var(--cyan)'},{n:'已确认',v:ack,c:'var(--yellow)'},{n:'处置中',v:resp,c:'var(--orange)'},{n:'已闭环',v:res,c:'var(--green)'}];
+    var mx=Math.max(1,total);
+    var html='<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'+
+      '<span class="badge b-blue" style="font-size:10px">处置记录 '+this._n(total)+'</span>'+
+      (act?'<span class="badge b-red" style="font-size:10px">活跃未确认 '+this._n(act)+'</span>':'')+
+      '<span style="margin-left:auto;font-size:10px;color:var(--text3)">'+(total?('SLA 达标 '+this._n(dp.slaPct)+'% · 平均 '+this._n(dp.slaAvgMin)+' 分钟'):'SLA 暂无数据（库中无处置记录）')+'</span></div>';
+    var N=this._n.bind(this);
+    html+=stages.map(function(s){
+      var w=Math.round(s.v/mx*100);
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
+        '<span style="width:52px;font-size:10px;color:var(--text2)">'+s.n+'</span>'+
+        '<div style="flex:1;height:9px;background:var(--bg2);border-radius:5px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:'+s.c+'"></div></div>'+
+        '<span style="width:38px;text-align:right;font-size:11px;font-weight:700;color:'+s.c+'">'+N(s.v)+'</span></div>';
+    }).join('');
+    var pend=ALERTS.filter(function(a){ return a.status!=='resolved' && (a.level==='red'||a.level==='orange'); });
+    html+='<div style="margin-top:8px;padding:9px 10px;border-radius:8px;background:var(--panel2);font-size:10px;color:var(--text2);line-height:1.6">'+
+      (total===0
+        ? '库中暂无处置记录。按在库预警池统计：红/橙级且未闭环 <b style="color:var(--orange)">'+this._n(pend.length)+'</b> 起待确认 —— 可直接在上方研判卡一键处置（写入 alert_records 并触发推送通道）。'
+        : 'SLA 由预警确认/解除时间自动计算；红/橙级超时项优先派单。')+
+      '</div>';
+    var host=document.getElementById('sit-loop'); if(host) host.innerHTML=html;
+  },
+  /* 一键处置：写库 + 触发推送 */
+  dispose(id,action){
+    var self=this;
+    if(!id){ showToast('⚠️ 该信号未关联预警编号，无法处置'); return; }
+    if(typeof APIClient==='undefined'||!APIClient._fetch){ showToast('⚠️ 接口客户端未就绪'); return; }
+    showToast('提交处置中…');
+    APIClient._fetch('POST','/api/alerts/'+encodeURIComponent(id)+'/disposition',{action:action,notes:'[态势总览·AI指挥带一键处置]'}).then(function(){
+      showToast('✓ 已提交：'+({ack:'标记已确认',respond:'转处置中',dismiss:'误报归档'}[action]||action));
+      self._at=0; self.refresh(true);
+      if(typeof loadAlerts==='function'){ try{ loadAlerts(); }catch(e){} }
+    }).catch(function(e){ showToast('⚠️ 处置失败：'+((e&&e.message)||e)); });
+  }
+};
+
 const SITUATION={
   _needsRefresh:false,
   init(){
@@ -9792,6 +10006,8 @@ const SITUATION={
     if(typeof GEOINTLIVE!=='undefined'){ try{ GEOINTLIVE.renderSitCard(); }catch(e){ console.warn('[GEOINTLIVE sit]',e); } }
     this.renderIntelPanels();
     this.renderRiskLevelPanel();
+    /* #774 AI 无人值守指挥带（值班台/研判/图层/闭环） */
+    if(typeof SDOPS!=='undefined'){ try{ SDOPS.init(); }catch(e){ console.warn('[SDOPS init]',e); } }
     this.startRotation();
     this._enhanceHomePanels();
     this.fetchDailyStats();
@@ -10127,6 +10343,8 @@ const SITUATION={
         var sig=ALERTS.length+':'+(ALERTS[0]?String(ALERTS[0].id):'')+':'+(ALERTS[0]?String(ALERTS[0].time||''):'');
         if(sig!==self._lastAlertSig){ self._lastAlertSig=sig; self.renderTrend(); self.renderAlertType(); }
       }catch(e){}
+      /* #774 AI 指挥带：每轮刷新真实运行数据（内部 45s 缓存去重） */
+      try{ if(typeof SDOPS!=='undefined') SDOPS.refresh(); }catch(e){}
     },60000);
     if(!this._heartTimer){
       this._heartTimer=setInterval(function(){
