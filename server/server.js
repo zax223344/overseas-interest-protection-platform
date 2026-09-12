@@ -8809,7 +8809,24 @@ const _BF_CITY_COUNTRY = [
   [['渥太华', 'Ottawa', '多伦多', 'Toronto', '温哥华', 'Vancouver', '蒙特利尔', 'Montreal'], '加拿大'],
   [['京都', 'Kyoto', '名古屋', 'Nagoya', '福冈', 'Fukuoka', '横滨', 'Yokohama'], '日本'],
   [['北爱尔兰', 'Northern Ireland', '利物浦', 'Liverpool'], '英国'],
-  [['蒂华纳', 'Tijuana'], '墨西哥']
+  [['蒂华纳', 'Tijuana'], '墨西哥'],
+  /* 第三批（2026-09-12 #779 P1-2 观察驱动）——依据新增的 `[GATE] 未计数拒因` 台账反查：
+   * 类别腿 ~85% 条目死于 `no-country`，其中不少标题含**明确高置信地名证据**却被丢弃：
+   * 「Rooppur核电站内部服务器发生火灾」(孟加拉·鲁普尔核电站 中资项目)／「在塔甘罗格听到爆炸声：
+   * 工业设施着火」(俄·罗斯托夫州)／「嘉能可-摩科瑞竞购 Venalum」(委内瑞拉铝厂)／
+   * 「53岁男子在汤斯维尔死亡后被指控谋杀」(澳·昆士兰)／「内洛尔区生物能源厂火灾」(印度)。
+   * 铁律不变：证据必须真实出现在标题/URL 中，宁缺毋滥；仅 country 为空时回填。 */
+  [['Rooppur', '鲁普尔', '帕布纳', 'Pabna'], '孟加拉国'],
+  [['塔甘罗格', 'Taganrog', '罗斯托夫', 'Rostov', '别尔哥罗德', 'Belgorod', '库尔斯克', 'Kursk',
+    '布良斯克', 'Bryansk', '伏尔加格勒', 'Volgograd', '萨马拉', 'Samara', '叶卡捷琳堡', 'Yekaterinburg'], '俄罗斯'],
+  [['Venalum', '圭亚那城', 'Ciudad Guayana', '奥里诺科', 'Orinoco', '马拉开波', 'Maracaibo'], '委内瑞拉'],
+  [['汤斯维尔', 'Townsville', '达尔文', 'Darwin', '阿德莱德', 'Adelaide', '霍巴特', 'Hobart',
+    '昆士兰', 'Queensland', '新南威尔士', 'New South Wales', '塔斯马尼亚', 'Tasmania'], '澳大利亚'],
+  [['内洛尔', 'Nellore', '奥里萨邦', 'Odisha', '拉贾斯坦邦', 'Rajasthan', '特伦甘纳', 'Telangana',
+    '喀拉拉邦', 'Kerala', '泰米尔纳德邦', 'Tamil Nadu', '古吉拉特邦', 'Gujarat'], '印度'],
+  [['亚特兰大', 'Atlanta', '宾夕法尼亚', 'Pennsylvania', '威斯康星', 'Wisconsin', '佐治亚州',
+    '密歇根', 'Michigan', '俄亥俄', 'Ohio', '伊利诺伊', 'Illinois', '田纳西', 'Tennessee',
+    '北卡罗来纳', 'North Carolina', '科罗拉多', 'Colorado', '密苏里', 'Missouri'], '美国']
 ];
 /* 唯一性机构/货币/人物锚→国别（宁缺毋滥：仅收一国专属专名——CJNG 墨西哥贩毒集团/卡扎菲/
  * 韩元/奈拉/兰特/泰铢/澳航/Adnoc 阿联酋国家石油公司；同名歧义的一律不收） */
@@ -8919,6 +8936,10 @@ async function _ingestLinkedItems(items, tag, note) {
     _rj.bySource[tag].collected += items.length;
     const _bumpRej = (code) => { _rj.bySource[tag].rejected++; if (code === 'dup-url') _rj.dupUrl++; else if (code === 'dup-title' || code === 'dup-title-zh' || code === 'dup-entity') _rj.dupTitle++; else if (code === 'dup-event' || code === 'event-flood') _rj.dupEvent++; else if (code === 'domestic') _rj.domestic++; else if (code === 'bad-title') _rj.badTitle++; else if (code === 'historical') _rj.historical++; else if (code === 'stale') _rj.stale++; else if (code === 'ruua-quota' || code === 'dominant-quota') _rj.ruUa++; else if (code === 'cat-struct') _rj.catStruct++; else if (code === 'no-url') _rj.noUrl++; else if (code === 'insert-err') _rj.insertErr++; };
     let inserted = 0, backfilled = 0, skippedDup = 0, skippedNoUrl = 0, insertErr = 0, skippedDupTitle = 0, skippedStale = 0, skippedRuUa = 0, skippedDomestic = 0, skippedBadTitle = 0, skippedEventSig = 0, skippedHistorical = 0, skippedCatStruct = 0;
+    /* #779 P1-2 观测补口：`_preInsertGate` 返回 16+ 种 code，而上面的计数器只覆盖 11 种——
+     * 实测「基础设施中断」一批 待入库 55 → 入库 2，已计数拒因仅 23，**30 条（55%）静默消失**，
+     * 无台账无法定位。此处把未覆盖 code 一并计数并抽样打印，让缺口诊断不再靠猜。 */
+    let skippedOther = 0; const skippedOtherTop = {};
     let chinaInserted = 0, chinaNegativeInserted = 0;
     /* 2026-09-07 #661 补采去重集日维度隔离（root fix）：全局 preload 是近 7 天 collect_time
      * 全集——补采高峰期 4 worker 并行插数万条模板标题，缓存互相污染+跨日同题误杀
@@ -8966,6 +8987,8 @@ async function _ingestLinkedItems(items, tag, note) {
           else if (c === 'bad-title') { skippedBadTitle++; _bumpRej('bad-title'); }
           else if (c === 'stale-single-source') { skippedStale++; _bumpRej('stale'); } /* 2026-09-04：印证闸拦截计入日志（原静默消失，156→5 无法对账） */
           else if (c === 'historical-retrospect') { skippedHistorical++; _bumpRej('historical'); }
+          /* #779：未覆盖 code 统一入账（原静默消失，缺口头号盲区） */
+          else { skippedOther++; skippedOtherTop[c] = (skippedOtherTop[c] || 0) + 1; _bumpRej('gate-' + c); if (skippedOther <= 6) console.log('[GATE] 未计数拒因 [' + tag + ']: ' + c + ' | ' + String(it.title || '').slice(0, 70)); }
         });
         /* 2026-08-28：被拦条目入非预警数据池（url/标题重复除外——同条已有库内版本，入池即刷屏） */
         if (!gate.code.includes('url-dup') && !gate.code.includes('title-dup') && !gate.code.includes('title-zh-dup') && !gate.code.includes('entity-dup')) {
@@ -9016,7 +9039,8 @@ async function _ingestLinkedItems(items, tag, note) {
     _bumpDailyStats(inserted, linked.length, chinaInserted, chinaNegativeInserted);
     _logDailyStats();
     _saveRejectsSession();
-    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + ' / 国别回填 ' + backfilled + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，类别结构帽 ' + skippedCatStruct + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr + note);
+    console.log('[' + tag + '] 实时入库 osint_intel: ' + inserted + ' 条（涉华' + chinaInserted + ' / 境外涉华负面' + chinaNegativeInserted + ' / 国别回填 ' + backfilled + '），跳过URL重复 ' + skippedDup + '，标题/实体重复 ' + skippedDupTitle + '，事件签名重复 ' + skippedEventSig + '，国内数据 ' + skippedDomestic + '，低质标题 ' + skippedBadTitle + '，历史旧案 ' + skippedHistorical + '，超时旧闻 ' + skippedStale + '，俄乌超配额 ' + skippedRuUa + '，类别结构帽 ' + skippedCatStruct + '，无url ' + skippedNoUrl + '，插入失败 ' + insertErr +
+      (skippedOther ? '，其它未计数 ' + skippedOther + '（' + Object.keys(skippedOtherTop).map(k => k + '×' + skippedOtherTop[k]).join('+') + '）' : '') + note);
     return { inserted };
   } catch (e) {
     console.warn('[' + tag + '] PostgreSQL 入库异常（可能未启动），降级写入 osint_intel 文件缓存:', e.message);
@@ -10389,6 +10413,14 @@ async function _catGnewsRss(q, max) {
  * ② 非拉丁外文未翻译——孟加拉/乌克兰/罗马尼亚语等翻译链成功率低，翻译失败即拒绝
  *   （落库即中文铁律：不可读外文标题对中文预警平台是垃圾数据）。 */
 const _CAT_EVENT_RE = /死亡|遇难|身亡|伤亡|失踪|受伤|袭击|攻击|爆炸|枪击|交火|冲突|炮击|空袭|绑架|劫持|扣押|逮捕|拘留|制裁|管制|封禁|禁令|反倾销|政变|抗议|示威|骚乱|罢工|洪水|地震|海啸|台风|飓风|山火|干旱|塌方|溃坝|坠机|失事|沉船|火灾|疫情|撤离|撤侨|断供|停产|停运|封锁|中断|危机|紧张|对峙|通胀|贬值|违约|债务|破产|衰退|汇率|暴跌|暴涨|断网|宕机|漏洞|黑客|勒索|数据泄露|间谍|泄密|贿赂|腐败|丑闻|审判|判决|调查|指控|宵禁|边界|争端|选举|killed|dead|death|casualt|attack|bomb|blast|shoot|clash|conflict|kidnap|hostage|seiz|detain|arrest|sanction|embargo|tariff|coup|protest|riot|strike|unrest|flood|earthquake|typhoon|hurricane|wildfire|landslide|collapse|crash|outbreak|evacuat|crisis|inflation|devalu|default|bankrupt|recession|hacked|breach|ransom|spy|corrupt|scandal|investigat|indict|curfew|dispute|elect|仲裁|诉讼|起诉|上诉|裁决|庭审|开庭|罚款|罚金|没收|查封|冻结|充公|引渡|通缉|越狱|走私|贩运|洗钱|诈骗|抢劫|谋杀|凶杀|暗杀|刺杀|戒严|军管|停电|限电|断电|停摆|停工|铁路|高铁|港口|管道|油田|矿井|大坝|电网|基础设施|网络攻击|网络防御|网络威胁|威胁|军演|演习|试射|导弹|无人机|部署|进驻|巡逻|军舰|军机|战机|防空|峰会|会谈|谈判|对话|条约|断交|驱逐|遣返|难民|饥荒|霍乱|瘟疫|疫苗|中毒|辐射|泄漏|污染|短缺|涨价|失业|崩盘|抛售|挤兑|lawsuit|litigat|tribunal|verdict|arbitrat|sued|extradit|smuggl|traffick|launder|fraud|robber|murder|homicide|assassin|blackout|outage|pipeline|railway|railroad|refinery|grid|cyber|malware|phishing|threat|missile|drone|deploy|troop|warship|shelling|offensiv|summit|talks|negotiat|treaty|expel|deport|refugee|famine|cholera|epidemic|vaccine|radiation|leak|spill|shortage|layoff|unemploy|freez|frozen|confiscat|expropriat|nationaliz|customs|dumping|\bduty\b|\bduties\b|clearance|compliance|regulat|penalt|levy|levies|海关|关税|清关|通关|查扣|缉私|反补贴|保障措施|原产地|lithium|cobalt|rare earth|nickel|graphite|uranium|bauxite|manganese|tantalum|coltan|copper mine|mining|smelter|concession|royalt|锂|钴|稀土|镍矿|石墨|铀矿|铝土矿|锰矿|钽|铜矿|采矿|矿山|矿权|精矿|冶炼|\b(?:fined|port|dam|trial)\b|战争|\bwar\b|死于|病亡|\bdied\b|病例|\bcases\b|麻疹|measles|登革热|dengue|脊髓灰质炎|小儿麻痹|polio|猴痘|mpox|埃博拉|ebola|疟疾|malaria|骗局|\bscam\b/i;
+/* 2026-09-12 #779 P1-2 观察驱动补词（日志实证误杀）：从 `[GAP-SCHED] 无事件词拒` 逐条样本反推——
+ * 「涉嫌海盗登上亚丁湾希腊散货船」（海盗/登船缺词）、「女子因涉嫌贩毒被捕」（贩毒/被捕缺词）、
+ * 「男子在加州大学校园附近腹部中弹」（中弹缺词）、「联邦政府宣布环孢子虫爆发结束」（爆发/暴发缺词）。
+ * 均为本平台核心域（海上通道安全/治安/公共卫生）真实事件，却因词表盲区被整批丢弃。
+ * 本闸仅缺口调度器单点使用，不影响主管线；Latin 词一律 \b 锚定防误配（drugstore/dramatic/snapshot）。 */
+const _CAT_EVENT_RE_EXT = /海盗|劫船|登船|扣船|劫案|劫匪|抢船|贩毒|毒品|缉毒|制毒|吸毒|被捕|落网|抓获|缴获|缉获|突袭|枪伤|中弹|枪杀|开枪|射击|械斗|暴发|爆发|偷渡|非法移民|翻船|滞港|拥堵|停航|改道|改航|积压|加息|降息|通缩|禁运|出口管制|限制出口|泄洪|决堤|内涝|泥石流|拘押|扣留|公投|罢免|弹劾|断航|禁飞|禁航|空难|坠毁|迫降|怠工|罚没|处罚|海盗船|\bpirate|\bpiracy|\bhijack|\bdrugs?\b|\bnarcotic|\barrest|\bdetain|\bseiz|\bshot\b|\bfired upon|\boutbreak|\bcontagious|\bblockade|\brate hike|\brate cut|\binterest rate|\bdelist|\bblacklist|\bderail|\bscuttl/i;
+/* 合并进主闸：缺口调度单点使用，不改写原常量（便于回溯与单点回滚）。 */
+const _CAT_EVENT_RE_ALL = new RegExp(_CAT_EVENT_RE.source + '|' + _CAT_EVENT_RE_EXT.source, 'i');
 /* 2026-09-05 采集量根修：日志实证「无事件词」误杀——麻疹/登革热/脊髓灰质炎等疫情词、
  * 战争(war)、死于(died)、病例(cases)、骗局(scam) 双语均缺词，公共卫生/安全类缺口条目
  * 每轮 ~107 条被拒（"3100例麻疹病例""苏丹战争""六周大孩子死于麻疹"全灭）。补词只对
@@ -10517,7 +10549,25 @@ async function _runGapScheduler() {
     const nCountry = shortOfFloor > 0 ? 16 : 6;
     const nCat = (shortOfFloor > 0 ? 16 : 6) + (secShare > SEC_STRUCT_SHARE_MAX ? 2 : 0);
     const roundCap = shortOfFloor > 0 ? 60 : 20;
-    let pickCountries = countryGaps.slice(0, nCountry);
+    /* #779 P1-2：轮转游标基准（30 分钟一档）提前声明——国别/类别两条腿都要用它做轮转，
+     * 旧代码在本块之后才声明，导致「缺口排序稳定 → 同一批国家每轮空转」无法修复。 */
+    const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
+    /* 2026-09-12 #779 P1-2 国别腿轮转：旧逻辑 `countryGaps.slice(0, nCountry)` 每轮只取
+     * 缺口率最高的 16 国，而 rate=1.0 的零覆盖国数量远超 16、排序稳定（按 n 升序）→
+     * 同一批 16 国被反复空转，其余断粮国（TIER2/TIER3 小语种国）永远轮不到。
+     * 改为「固定前 4（最严重，保证重点）+ 轮转窗口 12」，58 国在 ⌈58/12⌉=5 轮内全部访问。 */
+    const _ROT_FIX = 4;
+    let pickCountries;
+    {
+      const _rotN = Math.max(0, nCountry - _ROT_FIX);
+      pickCountries = countryGaps.slice(0, _ROT_FIX);
+      if (_rotN > 0 && countryGaps.length > _ROT_FIX) {
+        const tail = countryGaps.slice(_ROT_FIX);
+        for (let i = 0; i < _rotN && i < tail.length; i++) pickCountries.push(tail[(cyc * _rotN + i) % tail.length]);
+      }
+      const _seenC = new Set();
+      pickCountries = pickCountries.filter(x => x && !_seenC.has(x.cn) && (_seenC.add(x.cn), true));
+    }
     let pickCats = catGaps.slice(0, nCat);
     /* 2026-09-01 白天验证修复：纯缺口率排序下 TIER2 断粮国（rate=1.0）永远压过 TIER1 半满国
      * （哈萨克 6/12、沙特 5/12、印尼 10/12 连续数日 0 补采）——TIER1 是利益极重+风险极高梯队，
@@ -10548,7 +10598,6 @@ async function _runGapScheduler() {
         .sort((a, b) => a.n - b.n).slice(0, 3);
       console.log('[GAP-SCHED] 矩阵全绿但总量 ' + dayTotal + ' < 下限4500，启动地板补采模式');
     }
-    const cyc = Math.floor(Date.now() / (30 * 60 * 1000));
     let fetched = 0, inserted = 0, rejected = 0;
     const titleKeysPre = await _getRecentTitleKeys();
     /* GDELT seendate → 标准日期 + 翻译 + 实体富化（与两代均衡器同源） */
@@ -10605,7 +10654,7 @@ async function _runGapScheduler() {
           }
           rejected++; rejBy.stale++; if (rejBy.stale <= 2) console.log('[GAP-SCHED] 超时拒: ' + String(it.title || '').slice(0, 80) + ' | ' + String(it.publish_time || it.seendate || '')); continue;
         }
-        if (!_CAT_EVENT_RE.test(ctext)) { rejected++; rejBy.noEvent++; if (rejBy.noEvent <= 3) console.log('[GAP-SCHED] 无事件词拒: ' + String(it.title || '').slice(0, 80) + (it.title_zh ? ' | 译:' + String(it.title_zh).slice(0, 40) : ' | 未译')); continue; }
+        if (!_CAT_EVENT_RE_ALL.test(ctext)) { rejected++; rejBy.noEvent++; if (rejBy.noEvent <= 3) console.log('[GAP-SCHED] 无事件词拒: ' + String(it.title || '').slice(0, 80) + (it.title_zh ? ' | 译:' + String(it.title_zh).slice(0, 40) : ' | 未译')); continue; }
         if ((String(it.title_zh || '').match(/[\u4e00-\u9fa5]/g) || []).length < 2 && _NONLATIN_RE.test(String(it.title || ''))) { rejected++; rejBy.nonLatin++; continue; }
         assign(it);
         it.interestLinked = true;
@@ -10662,34 +10711,60 @@ async function _runGapScheduler() {
       if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + g.cn + '·' + g.tier + '）'); inserted += (res && res.inserted) || 0; }
     }
     /* ⑤ 类别缺口回填：GNews 原子 → GDELT → AP 三级兜底 */
+    /* ⑤ 类别缺口回填 —— #779 P1-2 根修：GDELT/AP 两条腿是历史性死代码。
+     * 根因：CATEGORY_PACKS（= CAT_STD.GDELT_PACKS）的值是**查询字符串数组**
+     * （16 类 × 2~3 条 = 36 条富查询，形如 '(Pakistan OR Sri Lanka OR Egypt…)(debt crisis OR default…)'），
+     * 旧代码按 `pack.queries[cyc % pack.queries.length]` 访问 → `pack.queries` 为 undefined
+     * → 取 .length 抛 TypeError → 被 `catch(e){}` 静默吞掉 → 两腿每天 ~1,536 次空转，
+     * 类别回填实际只剩 GNews 一条腿（实测：gap_scheduler 近 24h 仅入库 203 条，
+     * 11 个「归档不可达类」几乎零产出 = 类别头尾差 643 倍的直接成因）。
+     * 修复：① 按数组下标取查询（pack[cyc % pack.length]）；② GNews/GDELT/AP 三腿**叠加**
+     * 而非互斥（旧逻辑 `if (!arts.length)` 只在 GNews 空时才跑 GDELT）；
+     * ③ GNews 腿跑 pack 全量（原只跑 3 条）、GDELT 腿每轮 1 条轮转（控 GDELT 5s/IP 配额）；
+     * ④ 显示名改取 CAT_STD.LABELS（旧 pack.name 为 undefined，日志全是 undefined）。 */
     for (const g of pickCats) {
       let arts = [];
+      const pack = CATEGORY_PACKS[g.ct];
+      const pname = (CAT_STD.LABELS && CAT_STD.LABELS[g.ct]) || g.ct;
+      /* 腿 1：GNews 原子查询（3 条轮转——#779 保持原负载上界：pack 全量会把单轮抓取从
+       * ~640 抬到 ~1310，翻译链路（GNews 条目无国别 → 85% 后续死于 no-country）白烧配额，
+       * 实测入库提升仅 0→7 条/轮，性价比为负。轮转即可覆盖全 pack 且不放大负载。） */
       const gpk = CAT_GNEWS_PACKS[g.ct];
       if (gpk && gpk.length) {
-        /* 三条轮换原子查询（pack 长度 4-5，跳过与已选下标重复的查询避免同词重复抓） */
         const _idx = [cyc % gpk.length, (cyc + 2) % gpk.length, (cyc + 4) % gpk.length]
           .filter((v, i, a) => a.indexOf(v) === i);
         for (const gq of _idx.map(i => gpk[i])) {
+          if (arts.length >= roundCap * 3) break;
           try { const a1 = await _catGnewsRss(gq, 25); if (a1.length) arts = arts.concat(a1); } catch (e) {}
         }
       }
-      const pack = CATEGORY_PACKS[g.ct];
-      if (!arts.length && pack) {
-        try { arts = await crawler.gdeltSearch(pack.queries[cyc % pack.queries.length], { timespan: '1d', maxrecords: 40 }); } catch (e) {}
+      /* 腿 2：GDELT 富查询（每轮一条轮转——36 条查询池，30 分钟一轮可全覆盖） */
+      if (pack && pack.length && arts.length < roundCap * 3) {
+        try {
+          const a2 = await crawler.gdeltSearch(pack[cyc % pack.length], { timespan: '1d', maxrecords: 40 });
+          if (a2.length) arts = arts.concat(a2);
+        } catch (e) {}
       }
-      if (!arts.length && pack) {
-        try { const apq = pack.queries[cyc % pack.queries.length].replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
+      /* 腿 3：AP 站内检索兜底（仍空时） */
+      if (!arts.length && pack && pack.length) {
+        try { const apq = pack[cyc % pack.length].replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim();
           arts = await crawler.apSearch(apq, { maxrecords: 20, pages: 1 }); } catch (e) {}
+      }
+      /* 三腿叠加后按 URL 去重（同一事件可能被多腿命中） */
+      if (arts.length) {
+        const _u = new Set();
+        arts = arts.filter(x => { const k = x.url || x.link; if (!k || _u.has(k)) return false; _u.add(k); return true; });
       }
       fetched += arts.length;
       await _postFetch(arts);
       const batch = _filterBatch(arts, it => {
         it._forceDataType = true; it.data_type = g.ct;   /* 类别权威指定 */
-        if (!it.source) it.source = '缺口调度·' + (pack ? pack.name : g.ct);
+        if (!it.source) it.source = '缺口调度·' + pname;
       });
-      if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + (pack ? pack.name : g.ct) + '）'); inserted += (res && res.inserted) || 0; }
+      if (arts.length || batch.length) console.log('[GAP-SCHED] 类别 ' + g.ct + '（' + g.n + '/' + g.target + '）: 抓取 ' + arts.length + ' 过闸 ' + batch.length);
+      if (batch.length) { const res = await _ingestLinkedItems(batch, 'GAP-SCHED', '（' + pname + '）'); inserted += (res && res.inserted) || 0; }
     }
-    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限' + GAP_FLOOR + '，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => (CATEGORY_PACKS[g.ct] ? CATEGORY_PACKS[g.ct].name : g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
+    console.log('[GAP-SCHED] 缺口调度(' + ((Date.now() - t0) / 1000).toFixed(1) + 's): 总量 ' + dayTotal + (shortOfFloor > 0 ? '（差' + shortOfFloor + ' 至下限' + GAP_FLOOR + '，加力）' : '（已达下限）') + ' | 安全面 ' + (secShare * 100).toFixed(0) + '%' + ' | 国别补 ' + (pickCountries.map(g => g.cn + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 类别补 ' + (pickCats.map(g => ((CAT_STD.LABELS && CAT_STD.LABELS[g.ct]) || g.ct) + '(' + g.n + '/' + g.target + ')').join('+') || '无') + ' | 抓取 ' + fetched + ' 入库 ' + inserted + ' 排除 ' + rejected + '（重复' + rejBy.dupTitle + '/库内已有' + rejBy.dupCache + '/超时' + rejBy.stale + '/无事件词' + rejBy.noEvent + '/噪声' + rejBy.noise + '/无链接' + rejBy.noUrl + '/未译' + rejBy.nonLatin + '）');
   } catch (e) { console.warn('[GAP-SCHED] 采集失败:', e.message); }
   finally { _gapSchedBusyUntil = 0; }
 }
