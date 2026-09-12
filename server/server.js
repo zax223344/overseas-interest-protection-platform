@@ -12,6 +12,8 @@ const https = require('https');
 const dotenv = require('dotenv');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
+/* #775 补充加载 .env.local（不入 git；用于承载新增局部密钥，如 AISSTREAM_KEY） */
+dotenv.config({ path: path.join(__dirname, '.env.local') });
 
 const { query, reportQuery, alertQuery, testConnection, healthPing, getStats: _dbGetStats } = require('./db'); /* #712 P0-4：reportQuery=报告池软读写分离（重查询走独立 max2 小池，不挤占 API 主池）；healthPing=health 专用微池；#724 P0-1：alertQuery=预警供血专用微池（根治预警三函数主池饿死 14 天停摆） */
 const netx = require('./netx'); /* 出网出口层统一 smartFetch（2026-08-29 补引入：原代码 6297 行已使用却未 require，隐性 ReferenceError） */
@@ -14547,6 +14549,10 @@ app.post('/api/audit-logs', authMiddleware, async (req, res) => {
 });
 
 /* ===== 航班与 AIS 数据代理 ===== */
+/* #775 AISStream 全球船位常驻订阅（免费 Key，server/.env 的 AISSTREAM_KEY） */
+const aisstream = require('./aisstream');
+try { aisstream.start(); } catch (e) { console.warn('[AISSTREAM] 启动失败:', e.message); }
+
 function _httpsGetJson(url) {
   return new Promise((resolve, reject) => {
     https.get(url, { timeout: 15000 }, (res) => {
@@ -14556,6 +14562,20 @@ function _httpsGetJson(url) {
         try { resolve(JSON.parse(data)); } catch (e) { reject(new Error('JSON parse error')); }
       });
     }).on('error', reject).on('timeout', () => reject(new Error('timeout')));
+  });
+}
+
+/* 二进制抓取（影像代理用） */
+function _httpsGetBuf(url, timeout) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: timeout || 30000 }, (res) => {
+      if (res.statusCode >= 400) { reject(new Error('HTTP ' + res.statusCode)); res.resume(); return; }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
   });
 }
 
@@ -14573,31 +14593,197 @@ app.get('/api/flight/opensky', async (req, res) => {
 
 app.get('/api/ais/all', async (req, res) => {
   try {
-    /* 公开 AIS 数据源受访问限制，先尝试 VesselFinder 免费层（无稳定开放接口）
-     * 此处作为通道预留：真实环境可接入 AISHub/MarineTraffic API key */
-    const vessels = [];
-    /* 若有 MARINETRAFFIC_KEY 则调用；否则返回空并提示 */
-    const key = process.env.MARINETRAFFIC_KEY || '';
-    if (key) {
-      const url = 'https://services.marinetraffic.com/api/exportvessels/v:8/protocol:json/' + encodeURIComponent(key) + '/timespan:10';
-      try {
-        const data = await _httpsGetJson(url);
-        if (Array.isArray(data)) {
-          data.slice(0, 200).forEach(v => {
-            vessels.push({
-              mmsi: v.MMSI, name: v.SHIPNAME, lat: parseFloat(v.LAT), lon: parseFloat(v.LON),
-              speed: v.SPEED, heading: v.HEADING, type: v.TYPE, status: v.STATUS,
-              fetchedAt: new Date().toISOString()
-            });
-          });
-        }
-      } catch (e) { console.warn('[API /ais/all] MarineTraffic 失败:', e.message); }
-    }
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 300));
+    const vessels = aisstream.getVessels({ limit: limit, area: req.query.area || '' });
     res.json(vessels);
   } catch (err) {
     console.warn('[API /ais/all] 失败:', err.message);
     res.status(503).json([]);
   }
+});
+
+/* AIS 通道状态（值班台/图层矩阵用） */
+app.get('/api/ais/stats', (req, res) => {
+  try { res.json(aisstream.stats()); }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/* ===== 卫星影像代理（NASA Worldview 快照，无 Key） ===== */
+const _eoCache = new Map();
+const EO_LAYERS = [
+  { id: 'MODIS_Terra_CorrectedReflectance_TrueColor', name: 'MODIS Terra 真彩' },
+  { id: 'VIIRS_SNPP_CorrectedReflectance_TrueColor', name: 'VIIRS 真彩' },
+  { id: 'MODIS_Terra_CorrectedReflectance_Bands721', name: 'MODIS 7-2-1 热异常' }
+];
+app.get('/api/eo/snapshot', async (req, res) => {
+  try {
+    const layer = String(req.query.layer || EO_LAYERS[0].id);
+    if (!EO_LAYERS.some(l => l.id === layer)) return res.status(400).json({ error: '图层不在白名单' });
+    const bbox = String(req.query.bbox || '-10,30,60,60').split(',').map(Number);
+    if (bbox.length !== 4 || bbox.some(n => !isFinite(n))) return res.status(400).json({ error: 'bbox 无效' });
+    if (bbox[0] < -180 || bbox[2] > 180 || bbox[1] < -90 || bbox[3] > 90 || bbox[0] >= bbox[2] || bbox[1] >= bbox[3]) return res.status(400).json({ error: 'bbox 越界或无面积' });
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const w = Math.min(1600, Math.max(200, parseInt(req.query.w, 10) || 800));
+    const h = Math.min(1200, Math.max(150, parseInt(req.query.h, 10) || 520));
+    const ck = [layer, date, bbox.join('_'), w, h].join('|');
+    const hit = _eoCache.get(ck);
+    if (hit && Date.now() - hit.at < 6 * 3600 * 1000) {
+      res.set('Content-Type', 'image/jpeg'); res.set('X-Cache', 'HIT'); res.set('Cache-Control', 'public, max-age=21600');
+      return res.send(hit.buf);
+    }
+    const url = 'https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&LAYERS=' + encodeURIComponent(layer) +
+      '&CRS=EPSG:4326&TIME=' + date + '&BBOX=' + bbox.join(',') + '&WIDTH=' + w + '&HEIGHT=' + h + '&FORMAT=image/jpeg';
+    const buf = await _httpsGetBuf(url, 35000);
+    if (!buf || !buf.length) return res.status(503).json({ error: '影像源无返回' });
+    if (!(buf.length > 4 && buf[0] === 0xFF && buf[1] === 0xD8)) return res.status(503).json({ error: '影像源返回非 JPEG' });
+    _eoCache.set(ck, { buf: buf, at: Date.now() });
+    if (_eoCache.size > 120) { const k0 = _eoCache.keys().next().value; _eoCache.delete(k0); }
+    res.set('Content-Type', 'image/jpeg'); res.set('X-Cache', 'MISS'); res.set('Cache-Control', 'public, max-age=21600');
+    res.send(buf);
+  } catch (err) {
+    console.warn('[API /eo/snapshot] 失败:', err.message);
+    res.status(503).json({ error: '影像获取失败: ' + err.message });
+  }
+});
+
+/* 通道探活实现（路由与启动预热共用）。单次硬超时 9s→6s；三通道并行；
+   探活区域取"当期确有影像"的霍尔木兹—波斯湾，避免用无数据区域探活导致语义失真。 */
+let _eoProbe = { at: 0, data: null };
+let _eoInflight = null;
+/* 单通道探活。阈值 2000 字节：黑图（该区无数据）实测 ~509~1100B，最小真实影像 ~5900B */
+async function _eoProbeOne(layer, date, timeout) {
+  let bytes = 0;
+  try {
+    const u = 'https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&LAYERS=' + encodeURIComponent(layer.id) +
+      '&CRS=EPSG:4326&TIME=' + date + '&BBOX=47,22,60,32&WIDTH=240&HEIGHT=156&FORMAT=image/jpeg';
+    const b = await _httpsGetBuf(u, timeout);
+    bytes = b ? b.length : 0;
+    const ok = !!b && bytes > 2000 && b[0] === 0xFF && b[1] === 0xD8 && b[bytes - 2] === 0xFF && b[bytes - 1] === 0xD9;
+    return { id: layer.id, name: layer.name, ok: ok, sampleBytes: bytes };
+  } catch (e) {
+    return { id: layer.id, name: layer.name, ok: false, sampleBytes: bytes };
+  }
+}
+function _eoProbeRun() {
+  const date = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  return (async () => {
+    let chans = await Promise.all(EO_LAYERS.map((l) => _eoProbeOne(l, date, 6000)));
+    /* 失败通道二次重试：冷启动/并发抖动下 NASA 偶发丢包，单次失败不代表通道不可用 */
+    const bad = chans.filter((c) => !c.ok);
+    if (bad.length) {
+      await new Promise((r) => setTimeout(r, 700));
+      const redo = await Promise.all(bad.map((c) => {
+        const lay = EO_LAYERS.find((l) => l.id === c.id) || c;
+        return _eoProbeOne(lay, date, 8000);
+      }));
+      const byId = {};
+      redo.forEach((r) => { byId[r.id] = r; });
+      chans = chans.map((c) => byId[c.id] || c);
+    }
+    const data = { ok: chans.some((c) => c.ok), date: date, channels: chans, availableAt: new Date().toISOString() };
+    /* 全通道失败时只缓存 3 分钟（快速自愈），成功缓存 10 分钟 */
+    _eoProbe = { at: Date.now() - (data.ok ? 0 : 7 * 60 * 1000), data: data };
+    return data;
+  })();
+}
+/* 通道可达性探测：stale-while-revalidate
+   过期也立即回旧值、后台异步刷新，绝不让前端等外网（该端点自身很快，
+   慢的是上游 NASA；一旦冷缓存或高峰期，原实现在过期瞬间会阻塞数十秒 → 卡片抖动）。 */
+app.get('/api/eo/status', async (req, res) => {
+  try {
+    const fresh = _eoProbe.data && (Date.now() - _eoProbe.at < 10 * 60 * 1000);
+    if (fresh) return res.json(_eoProbe.data);
+    const refresh = () => {
+      if (_eoInflight) return;
+      _eoInflight = _eoProbeRun();
+      _eoInflight.then(() => { _eoInflight = null; }).catch(() => { _eoInflight = null; });
+    };
+    if (_eoProbe.data) { refresh(); return res.json(Object.assign({}, _eoProbe.data, { stale: true })); }
+    /* 从未探活过：只此一次阻塞等待（启动 12s 预热已覆盖该场景） */
+    refresh();
+    res.json(await _eoInflight);
+  } catch (err) { _eoInflight = null; res.status(503).json({ ok: false, error: err.message }); }
+});
+/* 启动预热：避免用户首次访问时撞上冷启动（NASA 冷连接 + 并发探测 → 超时白屏）。
+   两者错峰执行：12s 预热通道探活，20s 预热走廊扫描（均为后台，不影响服务可用）。 */
+setTimeout(() => { try { _eoProbeRun().catch(() => { }); } catch (e) { } }, 12000);
+setTimeout(() => {
+  try {
+    if (!_eoCovInflight) {
+      _eoCovInflight = _eoCovRun(EO_LAYERS[0].id);
+      _eoCovInflight.then(() => { _eoCovInflight = null; }).catch(() => { _eoCovInflight = null; });
+    }
+  } catch (e) { }
+}, 20000);
+
+/* 关键战略走廊影像可用性扫描（30 分钟缓存 + in-flight 合并 + 10 路并行）
+   实测背景：NASA Worldview 对部分区域（马六甲/南海/巴拿马）当期无 MODIS 真彩数据，
+   返回纯黑图（240x156 下约 500~1100B）。故扫一遍候选走廊，只把有真实影像的区域给前端。 */
+/* 有限并发映射：避免一次性打满上游（NASA 并发过高会集体超时） */
+async function _pMapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let cursor = 0;
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+const EO_AREAS = [
+  { name: '霍尔木兹—波斯湾', bbox: '47,22,60,32' },
+  { name: '中亚—中欧班列', bbox: '55,35,90,50' },
+  { name: '红海—亚丁湾', bbox: '32,12,52,30' },
+  { name: '苏伊士—东地中海', bbox: '20,30,40,40' },
+  { name: '地中海东部', bbox: '25,30,38,42' },
+  { name: '几内亚湾', bbox: '-6,-6,10,6' },
+  { name: '孟加拉湾—印度洋', bbox: '78,5,95,22' },
+  { name: '马六甲海峡', bbox: '95,1,105,7' },
+  { name: '南海', bbox: '105,3,122,23' },
+  { name: '巴拿马运河', bbox: '-83,7,-77,11' }
+];
+let _eoCov = { at: 0, data: null };
+let _eoCovInflight = null;
+/* 走廊扫描实现（路由与启动预热共用） */
+function _eoCovRun(layer) {
+  const date = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const lay = layer || EO_LAYERS[0].id;
+  return (async () => {
+    /* 分批 4 路：与通道探活错峰，避免同时打满 NASA 触发集体超时 */
+    const areas = await _pMapLimit(EO_AREAS, 4, async (a) => {
+      let bytes = 0;
+      try {
+        const u = 'https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&LAYERS=' + encodeURIComponent(lay) +
+          '&CRS=EPSG:4326&TIME=' + date + '&BBOX=' + a.bbox + '&WIDTH=240&HEIGHT=156&FORMAT=image/jpeg';
+        const b = await _httpsGetBuf(u, 6000);
+        bytes = b ? b.length : 0;
+      } catch (e) { bytes = 0; }
+      /* 阈值 2500：黑图（无数据）实测 ~500~1100B，最小真实影像 ~5900B */
+      return { name: a.name, bbox: a.bbox, bytes: bytes, ok: bytes > 2500 };
+    });
+    const data = { date: date, layer: lay, areas: areas, okCount: areas.filter(x => x.ok).length, availableAt: new Date().toISOString() };
+    _eoCov = { at: Date.now(), data: data };
+    return data;
+  })();
+}
+app.get('/api/eo/coverage', async (req, res) => {
+  try {
+    const fresh = _eoCov.data && (Date.now() - _eoCov.at < 30 * 60 * 1000);
+    if (fresh) return res.json(_eoCov.data);
+    const start = () => {
+      if (_eoCovInflight) return;
+      _eoCovInflight = _eoCovRun(String(req.query.layer || EO_LAYERS[0].id));
+      _eoCovInflight.then(() => { _eoCovInflight = null; }).catch(() => { _eoCovInflight = null; });
+    };
+    /* 同 /api/eo/status：过期回旧值 + 后台刷新，不让前端等外网 */
+    if (_eoCov.data) { start(); return res.json(Object.assign({}, _eoCov.data, { stale: true })); }
+    start();
+    res.json(await _eoCovInflight);
+  } catch (err) { _eoCovInflight = null; res.status(503).json({ ok: false, error: err.message }); }
 });
 
 /* ===== 威胁评估 API ===== */

@@ -9718,37 +9718,66 @@ window._tierSortLive=function(a,b){
 const SDOPS={
   _data:null,_at:0,_open:'',_busy:false,
   init(){
+    /* 仅对空容器写占位：重复 init（页面二次进入该视图）不得覆盖已渲染的真实内容 */
     ['sit-duty','sit-verdict','sit-layers','sit-loop'].forEach(function(id){
       var el=document.getElementById(id);
-      if(el) el.innerHTML='<div style="padding:16px;font-size:11px;color:var(--text3)">正在读取真实运行数据…</div>';
+      if(el && !String(el.innerHTML||'').trim()) el.innerHTML='<div style="padding:16px;font-size:11px;color:var(--text3)">正在读取真实运行数据…</div>';
     });
     return this.refresh(true);
   },
   refresh(force){
     var self=this, now=Date.now();
     if(!force && this._data && now-this._at<45000){ this._render(); return Promise.resolve(); }
-    if(this._busy) return Promise.resolve();
+    if(this._busy) return this._pending||Promise.resolve();
     this._busy=true;
-    var eps=[['engine','/api/engine/status'],['orgw','/api/org-watch/status'],['matrix','/api/special-matrix/status'],['anom','/api/anomaly/signals'],['disp','/api/alerts/disposition/stats'],['src','/api/sources'],['social','/api/social/channels'],['geoint','/api/geoint/change'],['ais','/api/ais/all']];
-    return Promise.all(eps.map(function(e){ return self._get(e[1]); })).then(function(arr){
+    var eps=[['engine','/api/engine/status'],['orgw','/api/org-watch/status'],['matrix','/api/special-matrix/status'],['anom','/api/anomaly/signals'],['disp','/api/alerts/disposition/stats'],['src','/api/sources'],['social','/api/social/channels'],['geoint','/api/geoint/change'],['ais','/api/ais/all?limit=60'],['aisstat','/api/ais/stats']];
+    var ret=Promise.all(eps.map(function(e){ return self._get(e[1]); })).then(function(arr){
       var o={}; eps.forEach(function(e,i){ o[e[0]]=arr[i]; });
       self._data=o; self._at=Date.now(); self._busy=false; self._render();
+      /* EO 通道探活单独异步补齐（#775）：该端点要打外网三通道，页面加载高峰期实测可慢至
+         数十秒，若并入上面 Promise.all 会把整卡渲染一起拖住；故先渲染其余图层，
+         探活结果回来后只重绘图层矩阵。取不到时按 5s 间隔重试，最多 4 轮。 */
+      if(!o.eostat && !self._eoFill){
+        self._eoFill=true;
+        var tries=0;
+        var fillEo=function(){
+          var eos=null;
+          try{ if(typeof GEOINTLIVE!=='undefined'&&GEOINTLIVE._eos) eos=GEOINTLIVE._eos; }catch(e){}
+          if(eos&&eos.channels){ self._data.eostat=eos; self._eoFill=false; try{ self._layers(); }catch(e){} return; }
+          self._getT('/api/eo/status',15000).then(function(d){
+            if(d&&d.channels){ self._data.eostat=d; self._eoFill=false; try{ self._layers(); }catch(e){} }
+            else if(++tries<4) setTimeout(fillEo,5000);
+            else self._eoFill=false;
+          });
+        };
+        fillEo();
+      }
     }).catch(function(e){ self._busy=false; console.warn('[SDOPS]',e); });
+    this._pending=ret;
+    ret.then(function(){ self._pending=null; }, function(){ self._pending=null; });
+    return ret;
   },
   _rel(iso){ try{ if(!iso)return ''; var d=Date.now()-new Date(iso).getTime(); if(!isFinite(d))return ''; if(d<0)d=0; var m=Math.floor(d/60000); if(m<1)return '刚刚'; if(m<60)return m+'分钟前'; var h=Math.floor(m/60); if(h<24)return h+'小时前'; return Math.floor(h/24)+'天前'; }catch(e){ return ''; } },
   _hm(iso){ try{ if(!iso)return ''; var d=new Date(iso); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }catch(e){ return ''; } },
   _n(v){ v=Number(v||0); return isFinite(v)?v.toLocaleString():'0'; },
-  /* 带鉴权 GET（部分端点需 Bearer；APIClient 不可用时回退 localStorage token） */
-  _get(path){
-    try{
-      if(typeof APIClient!=='undefined'&&APIClient._fetch){
-        return APIClient._fetch('GET',path).then(function(d){ return d; }).catch(function(){ return null; });
-      }
-    }catch(e){}
+  /* 带鉴权 GET：优先原生 fetch（APIClient._fetch 存在显著队列延迟，实测单请求 50~60s，
+     并发多个端点时排尾请求必然超时 → 卡片空白）。原生失败再回退 APIClient。
+     内置超时（默认 12s）：任一请求挂起都不能拖死整卡的 Promise.all —— 否则全部子渲染
+     永不执行、图层矩阵永久停在初始占位（#775 实测坑，复现于页面加载高峰期）。 */
+  _get(path,ms){
     var h={};
     try{ var t=localStorage.getItem('orps_api_token'); if(t) h['Authorization']='Bearer '+t; }catch(e){}
-    return fetch(path,{headers:h}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; });
+    var req=fetch(path,{headers:h}).then(function(r){ return r.ok?r.json():null; }).catch(function(){
+      try{
+        if(typeof APIClient!=='undefined'&&APIClient._fetch) return APIClient._fetch('GET',path).catch(function(){ return null; });
+      }catch(e){}
+      return null;
+    });
+    var to=new Promise(function(r){ setTimeout(function(){ r(null); }, ms||12000); });
+    return Promise.race([req,to]);
   },
+  /* 指定超时的 GET（保留便捷包装） */
+  _getT(path,ms){ return this._get(path,ms); },
   /* 数组归一：端点偶有 {x:{channels:[...]}} 之类的嵌套，取第一个真数组 */
   _arr(v){
     if(Array.isArray(v)) return v;
@@ -9761,6 +9790,72 @@ const SDOPS={
     try{ this._verdict(); }catch(e){ console.warn('[SDOPS verdict]',e); }
     try{ this._layers(); }catch(e){ console.warn('[SDOPS layers]',e); }
     try{ this._loop(); }catch(e){ console.warn('[SDOPS loop]',e); }
+    try{ this._aisPanel(); }catch(e){ console.warn('[SDOPS ais]',e); }
+  },
+  /* ---------- ⑤ 全球船舶 AIS · 战略走廊（真实订阅态 + 实时船位） ---------- */
+  _aisPanel(){
+    var host=document.getElementById('sit-ais'); if(!host) return;
+    var d=this._data||{}, st=d.aisstat||{};
+    var vessels=this._arr(d.ais);
+    var areas=this._arr(st.areas);
+    var live=areas.filter(function(a){ return Number(a.count)>0; });
+    var at=document.getElementById('sit-ais-at');
+    if(at) at.textContent = st.connected ? ('订阅在线 · '+(st.lastMsgAgoSec<=2?'实时':'最新 '+this._n(st.lastMsgAgoSec)+'s 前')) : '通道未连接';
+
+    if(!st.connected){
+      host.innerHTML='<div style="padding:14px 12px;font-size:11px;color:var(--text2);line-height:1.8">'+
+        '<div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:6px">⚠️ AIS 通道未连接</div>'+
+        '<div>状态：'+(st.enabled?'已启用，等待上游握手':'未启用')+' · 重连 '+this._n(st.reconnects)+' 次'+((st.lastErr)?(' · '+esc(String(st.lastErr))):'')+'</div>'+
+        '<div style="color:var(--text3);margin-top:6px">通道恢复后本卡自动填充实时船位（10 条战略走廊网格，无需人工干预）。</div></div>';
+      return;
+    }
+
+    /* 顶部 KPI */
+    var kpi=[
+      {n:'实时船位', v:this._n(st.vessels), c:'var(--cyan)'},
+      {n:'含完整资料', v:this._n(st.withDetail), c:'var(--green)'},
+      {n:'消息速率/分', v:this._n(st.msgPerMin), c:'var(--purple)'},
+      {n:'走廊覆盖', v:live.length+'/'+areas.length, c:'var(--orange)'}
+    ];
+    var html='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:6px;margin-bottom:9px">'+
+      kpi.map(function(k){ return '<div style="padding:8px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3)">'+k.n+'</div><div style="font-size:15px;font-weight:800;color:'+k.c+'">'+k.v+'</div></div>'; }).join('')+
+      '</div>';
+
+    /* 走廊分布条 */
+    if(live.length){
+      var mx=Math.max.apply(null, live.map(function(a){ return Number(a.count)||0; }))||1;
+      html+='<div style="font-size:11px;font-weight:700;color:var(--cyan);margin-bottom:6px">🌊 战略走廊船位分布</div>';
+      html+=      live.slice(0,8).map(function(a){
+        var w=Math.round((Number(a.count)||0)/mx*100);
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'+
+          '<span style="width:88px;font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(String(a.name))+'</span>'+
+          '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:var(--cyan)"></div></div>'+
+          '<span style="width:34px;text-align:right;font-size:11px;font-weight:700;color:var(--cyan)">'+this._n(a.count)+'</span></div>';
+      }.bind(this)).join('');
+    }
+
+    /* 实时船位明细 */
+    html+='<div style="font-size:11px;font-weight:700;color:var(--cyan);margin:10px 0 6px">🚢 实时船位（按更新时间）</div>';
+    if(vessels.length){
+      html+='<div style="max-height:210px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">'+
+        '<table style="width:100%;border-collapse:collapse;font-size:10px">'+
+        '<thead><tr style="color:var(--text3);text-align:left">'+
+          '<th style="padding:5px 7px;font-weight:600">船舶 / MMSI</th><th style="padding:5px 4px;font-weight:600">走廊</th>'+
+          '<th style="padding:5px 4px;font-weight:600;text-align:right">航速</th><th style="padding:5px 7px;font-weight:600">目的港</th></tr></thead><tbody>'+
+        vessels.slice(0,16).map(function(v){
+          var kt=Number(v.sog||0);
+          return '<tr style="border-top:1px solid var(--border)">'+
+            '<td style="padding:5px 7px;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px">'+esc(String(v.name||('MMSI '+v.mmsi)))+'</td>'+
+            '<td style="padding:5px 4px;color:var(--text2)">'+esc(String(v.area||'—'))+'</td>'+
+            '<td style="padding:5px 4px;text-align:right;color:'+(kt>60?'var(--text3)':(kt>0.5?'var(--green)':'var(--text3)'))+';font-weight:700">'+kt.toFixed(1)+' kn'+(kt>60?' ⚠':'')+'</td>'+
+            '<td style="padding:5px 7px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px">'+(v.destination?esc(String(v.destination)):'—')+'</td></tr>';
+        }).join('')+
+        '</tbody></table></div>';
+    } else {
+      html+='<div style="color:var(--text3);font-size:10px">通道在线但暂未收到船位，稍后自动填充。</div>';
+    }
+    html+='<div style="margin-top:7px;font-size:9px;color:var(--text3);line-height:1.6">数据源：AISStream 全球 AIS 网络 · WebSocket 实时订阅 · 覆盖 10 条战略走廊 · ⚠ 为疑似异常航速（&gt;60 节，上游原始报文）</div>';
+    host.innerHTML=html;
   },
   /* ---------- ① AI 无人值守值班台 ---------- */
   _duty(){
@@ -9849,7 +9944,15 @@ const SDOPS={
     var sc=this._arr(d.social&&d.social.channels);
     var ais=this._arr(d.ais);
     var srcList=this._arr(d.src&&d.src.sources);
-    var geoCount=(g&&g.empty)?0:((g&&g.before!=null&&g&&g.after!=null)?2:1);
+    /* 卫星影像通道（/api/eo/status 真实探活）与 AIS 通道（/api/ais/stats 真实订阅态）
+       EO 结果优先取本卡异步补齐值，其次复用 GEOINT 卡已取到的同一份探活结果（避免重复请求） */
+    var eos=d.eostat||{};
+    if(!(eos&&eos.channels)&&typeof GEOINTLIVE!=='undefined'&&GEOINTLIVE._eos) eos=GEOINTLIVE._eos||{};
+    var eoCh=this._arr(eos.channels);
+    var eoOk=eoCh.filter(function(c){ return !!c.ok; }).length;
+    var aisStat=d.aisstat||{};
+    var aisAreas=this._arr(aisStat.areas).filter(function(a){ return Number(a.count)>0; });
+    var geoEmpty=!!(g&&g.empty);
     var defs=[
       {k:'src', ic:'📚', n:'情报信源', c:s.total||0, sub:'待命 '+this._n(s.idle)+' · 已采 '+this._n(s.items),
        list:srcList.slice(0,14).map(function(x){ return String((x.name||x.id||''))+(x.type?' · '+x.type:''); })},
@@ -9859,14 +9962,25 @@ const SDOPS={
        list:(os.droppedSamples||[]).slice(0,6).map(function(x){ return String(x.org||'')+' · '+String(x.reason||''); })},
       {k:'anom', ic:'📈', n:'异动信号', c:an.total||0, sub:'今日命中 · 扫描 '+this._n(an.scanned),
        list:(an.signals||[]).slice(0,10).map(function(x){ return String(x.country||'')+' · '+String(x.typeLabel||'')+'（'+this._n(x.today)+' 条）'; }.bind(this))},
-      {k:'geo', ic:'🛰️', n:'卫星影像', c:geoCount, sub:(g&&g.empty)?'待接入真实影像源':(g&&g.message?String(g.message).slice(0,18):'有影像更新'), dim:!!(g&&g.empty), list:[]},
-      {k:'ais', ic:'🚢', n:'船舶 AIS', c:(ais.length||0), sub:ais.length?'实时船舶':'待接入 AIS 源', dim:!ais.length, list:[]}
+      {k:'geo', ic:'🛰️', n:'卫星影像', c:eoOk, sub:(eoCh.length?('在线 '+eoOk+'/'+eoCh.length+' 通道 · 变化检测 '+(geoEmpty?'无新增':'有更新')):'探活中…'), dim:!eoOk,
+       body:(eoCh.length?eoCh.map(function(c){ return '<div>· '+esc(String(c.name||c.id))+' <b style="color:'+(c.ok?'var(--green)':'var(--red)')+'">'+(c.ok?'在线':'不可达')+'</b> <span style="color:var(--text3)">'+this._n(c.sampleBytes)+'B</span></div>'; }.bind(this)).join(''):'<div style="color:var(--text3)">通道探活中，请稍候…</div>')+
+         (eoOk?'<div style="margin-top:9px"><img src="/api/eo/snapshot?bbox=47,22,60,32&w=560&h=280&layer='+encodeURIComponent(String((eoCh[0]||{}).id||''))+'" style="width:100%;border-radius:6px;border:1px solid var(--border);display:block"><div style="color:var(--text3);margin-top:5px">实时快照 · 霍尔木兹—波斯湾 · '+(eos.date||'')+' · NASA Worldview 直连（免 Key）</div></div>':'<div style="color:var(--text3);margin-top:6px">影像源暂不可达，10 分钟后自动重探</div>')},
+      {k:'ais', ic:'🚢', n:'船舶 AIS', c:(Number(aisStat.vessels)||ais.length), sub:(aisStat.connected?('实时接入 · '+aisAreas.length+' 条走廊有船'):(aisStat.enabled?'等待上游握手':'通道未启用')), dim:!aisStat.connected,
+       body:(aisStat.connected?(
+         '<div style="margin-bottom:6px">船位 <b style="color:var(--cyan)">'+this._n(aisStat.vessels)+'</b> 艘 · 含静态资料 '+this._n(aisStat.withDetail)+' · 消息 '+this._n(aisStat.msgPerMin)+' 条/分 · 重连 '+this._n(aisStat.reconnects)+' · 最新 '+(Number(aisStat.lastMsgAgoSec)<=2?'实时':this._n(aisStat.lastMsgAgoSec)+'s 前')+'</div>'+
+         (aisAreas.length?('<div style="margin-bottom:6px">'+aisAreas.map(function(a){ return esc(String(a.name))+' <b style="color:var(--cyan)">'+Number(a.count)+'</b>'; }).join(' · ')+'</div>'):'')+
+         (ais.slice(0,14).map(function(v){
+            return '<div>· '+esc(String(v.name||('MMSI '+v.mmsi)))+' · '+esc(String(v.area||'—'))+' · '+Number(v.sog||0).toFixed(1)+' kn · '+(v.destination?('→ '+esc(String(v.destination))):'—')+'</div>';
+          }).join('')||'<div style="color:var(--text3)">暂无船位明细</div>')
+       ):'<div style="color:var(--text3)">AIS 通道未连接'+(aisStat.lastErr?('：'+esc(String(aisStat.lastErr))):'（等待上游握手）')+'</div>')}
     ];
     var open=this._open;
     var html='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">图层状态与真实计数 · 点击行展开明细</div>';
     html+=defs.map(function(L){
       var on=(open===L.k);
-      var body=(L.list&&L.list.length)?L.list.map(function(t){ return '<div>· '+esc(String(t))+'</div>'; }).join(''):'<div style="color:var(--text3)">该图层暂无明细（真实源无数据）</div>';
+      var body=(L.body!=null)
+        ? L.body
+        : ((L.list&&L.list.length)?L.list.map(function(t){ return '<div>· '+esc(String(t))+'</div>'; }).join(''):'<div style="color:var(--text3)">该图层暂无明细（真实源无数据）</div>');
       return '<div style="border-bottom:1px solid var(--border)">'+
         '<div onclick="SDOPS.toggle(\''+L.k+'\')" style="display:flex;align-items:center;gap:10px;padding:7px 0;cursor:pointer">'+
           '<span style="width:22px;text-align:center;font-size:13px">'+L.ic+'</span>'+

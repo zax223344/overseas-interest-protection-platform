@@ -488,6 +488,46 @@
       next();
     },
 
+    /* 免 Key 影像通道状态：10 分钟缓存，异步填充不阻塞渲染
+       通道探测端点同源且无需鉴权，直接用原生 fetch（最可靠）；APIClient 仅作兜底。 */
+    _eos: null, _eosAt: 0, _eosBusy: false,
+    _eoStatus: function () {
+      var self = this, now = Date.now();
+      if (this._eos && now - this._eosAt < 10 * 60 * 1000) { this._fillEoState(); return; }
+      if (this._eosBusy) return;
+      this._eosBusy = true;
+      var apply = function (d) {
+        self._eosBusy = false;
+        if (d && d.channels) { self._eos = d; self._eosAt = Date.now(); self._fillEoState(); }
+      };
+      var hdrs = {};
+      try { var t = localStorage.getItem('orps_api_token'); if (t) hdrs['Authorization'] = 'Bearer ' + t; } catch (e) { }
+      var viaApiClient = function () {
+        try {
+          if (typeof APIClient !== 'undefined' && APIClient._fetch) {
+            APIClient._fetch('GET', '/api/eo/status').then(apply).catch(function () { self._eosBusy = false; });
+          } else { self._eosBusy = false; }
+        } catch (e) { self._eosBusy = false; }
+      };
+      try {
+        fetch('/api/eo/status', { headers: hdrs })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(apply)
+          .catch(viaApiClient);
+      } catch (e) { viaApiClient(); }
+      /* 兜底：20s 仍未填充则提示，避免永久停留"探活中…" */
+      setTimeout(function () {
+        var el = document.getElementById('gl-eo-state');
+        if (el && /探活中/.test(el.textContent)) el.innerHTML = '<b style="color:var(--orange)">探测超时</b>（稍后自动重试）';
+      }, 20000);
+    },
+    _fillEoState: function () {
+      var el = document.getElementById('gl-eo-state'); if (!el || !this._eos || !this._eos.channels) return;
+      var ch = this._eos.channels, ok = 0;
+      ch.forEach(function (c) { if (c.ok) ok++; });
+      el.innerHTML = '<b style="color:' + (ok ? 'var(--green)' : 'var(--red)') + '">' + ok + '/' + ch.length + '</b> 在线 · ' + (this._eos.date || '');
+    },
+
     renderSitCard: function () {
       var el = document.getElementById('sit-geoint');
       if (!el) return;
@@ -518,6 +558,13 @@
         '<div style="padding:8px;background:var(--bg2);border-radius:8px;cursor:pointer" onclick="INTELCENTER.switch(\'geoint\')" title="查看变化事件"><div class="text-xs text-muted">变化事件</div><div style="font-size:15px;font-weight:800;color:var(--orange)">' + geointEvents.length + '</div></div>' +
         '</div>';
 
+      // 免 Key 实时真彩影像（NASA Worldview 直连，服务端代理缓存 6h）
+      var curBB = this._eoArea || '47,22,60,32', curName = this._eoAreaName || '霍尔木兹—波斯湾';
+      html += '<div style="font-size:11px;font-weight:700;color:var(--cyan);margin-bottom:6px">🛰️ 实时真彩影像 · NASA Worldview（免 Key）</div>';
+      html += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#000;margin-bottom:8px">' +
+        '<img id="gl-eo-img" src="/api/eo/snapshot?bbox=' + curBB + '&w=640&h=300" onclick="GEOINTLIVE.openFull()" style="width:100%;height:118px;object-fit:cover;display:block;cursor:zoom-in" title="点击查看高清原图" onerror="this.style.opacity=0.25">' +
+        '<div style="padding:5px 7px;font-size:9px;color:var(--text3);background:var(--bg2)"><span id="gl-eo-cap">' + curName + '</span> · 昨日真彩 · 通道 <span id="gl-eo-state">探活中…</span> · 点击图片可放大</div></div>';
+      html += '<div id="gl-eo-areas" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px"><span style="font-size:9px;color:var(--text3)">正在扫描战略走廊影像可用性…</span></div>';
       // 最新影像缩略图（带详情入口）
       var withPrev = layers.filter(function (l) { return l.previews && l.previews.length; }).slice(0, 3);
       if (withPrev.length) {
@@ -559,6 +606,61 @@
 
       if (last && last.updated) html += '<div style="font-size:9px;color:var(--text3);margin-top:8px">最近更新：' + last.updated + ' · ' + (last.source || '') + '</div>';
       el.innerHTML = html;
+      /* 必须在 innerHTML 落地之后填充通道状态：否则会填到即将被替换的旧节点上，
+         新节点永远停在"探活中…"（#775 实测坑） */
+      try { this._eoStatus(); } catch (e) { }
+      try { this._eoCoverage(); } catch (e) { }
+    },
+
+    /* 战略走廊影像可用性（哪些走廊当期真有 MODIS 真彩数据） */
+    _eoArea: '', _eoAreaName: '', _eoCov: null, _eoCovAt: 0, _eoCovBusy: false,
+    openFull: function () {
+      var bb = this._eoArea || '47,22,60,32';
+      try { window.open('/api/eo/snapshot?bbox=' + bb + '&w=1200&h=560', '_blank'); } catch (e) { }
+    },
+    showArea: function (name, bbox) {
+      this._eoArea = bbox; this._eoAreaName = name;
+      this._applyArea(); this._renderAreas();
+    },
+    _applyArea: function () {
+      var img = document.getElementById('gl-eo-img');
+      if (img) img.src = '/api/eo/snapshot?bbox=' + this._eoArea + '&w=640&h=300';
+      var cap = document.getElementById('gl-eo-cap');
+      if (cap) cap.textContent = this._eoAreaName;
+    },
+    _eoCoverage: function () {
+      var self = this, now = Date.now();
+      if (this._eoCov && now - this._eoCovAt < 30 * 60 * 1000) { this._renderAreas(); return; }
+      if (this._eoCovBusy) return;
+      this._eoCovBusy = true;
+      var apply = function (d) {
+        self._eoCovBusy = false;
+        if (d && d.areas && d.areas.length) {
+          self._eoCov = d; self._eoCovAt = Date.now();
+          if (!self._eoArea) {
+            var first = d.areas.filter(function (x) { return x.ok; })[0] || d.areas[0];
+            if (first) { self._eoArea = first.bbox; self._eoAreaName = first.name; self._applyArea(); }
+          }
+          self._renderAreas();
+        }
+      };
+      try {
+        fetch('/api/eo/coverage').then(function (r) { return r.ok ? r.json() : null; }).then(apply)
+          .catch(function () { self._eoCovBusy = false; });
+      } catch (e) { self._eoCovBusy = false; }
+    },
+    _renderAreas: function () {
+      var host = document.getElementById('gl-eo-areas'); if (!host) return;
+      var d = this._eoCov; if (!d || !d.areas) return;
+      var self = this;
+      host.innerHTML = d.areas.map(function (a) {
+        var act = (a.bbox === self._eoArea);
+        var col = act ? 'var(--cyan)' : (a.ok ? 'var(--text2)' : 'var(--text3)');
+        var bg = act ? 'rgba(0,212,255,0.12)' : 'var(--bg2)';
+        var bd = act ? 'var(--cyan)' : 'var(--border)';
+        var tip = a.ok ? ('有影像 ' + Math.round(a.bytes / 1024) + 'KB') : '当期无影像数据（源侧待更新）';
+        return '<span class="chip" onclick="GEOINTLIVE.showArea(\'' + a.name + '\',\'' + a.bbox + '\')" title="' + tip + '" style="cursor:pointer;font-size:9px;padding:3px 8px;background:' + bg + ';border:1px solid ' + bd + ';border-radius:12px;color:' + col + (a.ok ? '' : ';opacity:0.55') + '">' + a.name + (a.ok ? '' : ' ·待更新') + '</span>';
+      }).join('');
     },
 
     showLayerDetail: function (idx) {

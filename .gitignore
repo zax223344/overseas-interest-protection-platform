@@ -1,0 +1,22 @@
+*.bak
+index2234
+index3456712
+index345678
+index1
+__pycache__/
+node_modules/
+.DS_Store
+server/.env
+.env
+.env.local
+server/.env.local
+server/.cache/
+
+# 本地工具二进制（勿入库）
+tools/
+orps-tmp/
+
+# 本地容灾哨兵（铁律：server 与 .git 永不上云，容灾全部本地化）
+git-keepalive.js
+.backend_run.log
+.backup-20260804/
