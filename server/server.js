@@ -9303,6 +9303,13 @@ function _readBackupCursor() { try { return parseInt(JSON.parse(fs.readFileSync(
 function _writeBackupCursor(id) { try { fs.writeFileSync(NEON_BACKUP_CURSOR_FILE, JSON.stringify({ lastId: parseInt(id, 10) || 0, at: new Date().toISOString() })); } catch (e) {} }
 async function _runNeonBackup() {
   if (!process.env.NEON_DATABASE_URL) return;   // 未配置云端连接串：静默跳过
+  /* #781 省负载·备份单归属（2026-09-12）：workers.js 第 20 行 `require('./server')` 会连带
+   * 加载本文件，而触发点是 `if (!SCHED.klassPaused('collect'))`——klassPaused 只查**暂停旗**
+   * 不看**角色亲和**，于是 orps-server 与 orps-workers 两个进程各跑一份备份：抢同一个游标文件、
+   * 各自抓同一批 5,000 行、各自 gzip+AES+上传，一半工作被 `ON CONFLICT (id) DO NOTHING` 白扔，
+   * 断点还互相覆盖（实测 20:50 一轮 server 报连接超时、worker 同一窗口写入成功）。
+   * 备份只归属 server 进程（与 api/collect/report/watch/ai 同类），**负载直接减半**。 */
+  if (ORPS_ROLE === 'worker') return { more: false, ok: true };
   if (Date.now() < _neonBackupBusyUntil) return;
   _neonBackupBusyUntil = Date.now() + 10 * 60 * 1000;
   try {
@@ -10658,7 +10665,25 @@ async function _runGapScheduler() {
         return true;
       });
       if (oldDropped) console.log('[GAP-SCHED] 旧闻前置拦截 ' + oldDropped + ' 条（翻译前丢弃，省配额）');
-      if (fresh.length) { try { await _translateListToZhParallel(fresh, 4); } catch (e) {} fresh.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
+      /* ===== #781 省负载：翻译前置廉价闸（2026-09-12 用户指令「改一下能省负载」）=====
+       * 实测每轮抓取 ~1310 条**全量**进翻译链路（每条 2 个任务：title + content），
+       * 而其中「重复标题 146 + 噪声 11」在翻译之后的 _filterBatch 里必然被拒 → 纯白烧
+       * ~314 次翻译调用（翻译引擎受 GFW 影响、每调用数百 ms，是单轮 19min 的主因之一）。
+       * 此处前置短路**只用于省翻译**，_filterBatch 内原判定**保留不动**（双保险，结果不变）：
+       *   · 空 url：判据与后置完全一致（翻译不改 url/title）→ 严格等价
+       *   · _isDupTitle：后置还测 title_zh，此处 title_zh 尚为空 → 命中集是后置的**子集**
+       *     （前置命中必然后置也命中）→ 严格安全，不会多拒
+       *   · _BAL_NOISE：体育/娱乐/美食/旅游类，本平台永不采信；单独计数便于回溯
+       * 三项省下的翻译调用数 = 前置丢弃数 × 2（title+content 两个任务）。 */
+      let preDrop = 0, preDup = 0, preNoise = 0, preNoUrl = 0;
+      const fresh2 = fresh.filter(it => {
+        if (!(it.url || it.title)) { preNoUrl++; preDrop++; return false; }
+        if (_isDupTitle(titleKeysPre, it)) { preDup++; preDrop++; return false; }
+        if (_BAL_NOISE.test(String(it.title || '') + ' ' + String(it.content || it.description || ''))) { preNoise++; preDrop++; return false; }
+        return true;
+      });
+      if (preDrop) console.log('[GAP-SCHED] 翻译前置闸 ' + preDrop + ' 条（重复' + preDup + '/噪声' + preNoise + '/无链接' + preNoUrl + '）→ 省翻译调用 ≈' + (preDrop * 2) + ' 次');
+      if (fresh2.length) { try { await _translateListToZhParallel(fresh2, 4); } catch (e) {} fresh2.forEach(it => { try { ENTITY.enrich(it); } catch (e) {} }); }
     };
     /* 通道前置过滤（轻量；全量闸门在 _ingestLinkedItems 内）——拒因分解入库率可观测 */
     const rejBy = { noise: 0, noUrl: 0, dupTitle: 0, stale: 0, dupCache: 0, noEvent: 0, nonLatin: 0 };
@@ -11391,7 +11416,7 @@ function startGlobalMediaCron() {
   SCHED.register('neon-sync', _runNeonSync, { interval: 10 * 60 * 1000, firstRunMs: 90000, klass: 'collect' }); /* 云采集下行同步 */
   /* Neon 云端容灾增量上行：自调度链（内部按 more/ok 失败决定 60s/15min/5min 续跑），
    * 此处仅保留启动首触发；采集暂停时不启动新链 */
-  setTimeout(() => { if (!SCHED.klassPaused('collect')) _scheduleNeonBackup(2000); }, 4 * 60 * 1000);
+  setTimeout(() => { if (SCHED.roleAllows('collect') && !SCHED.klassPaused('collect')) _scheduleNeonBackup(2000); }, 4 * 60 * 1000);
 }
 
 /* ===== 全球恐怖袭击/武装袭击专项采集 ===== */
