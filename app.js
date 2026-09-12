@@ -9938,61 +9938,192 @@ const SDOPS={
         '<span class="btn sm" style="font-size:10px" onclick="SDOPS.dispose(\''+aidJs+'\',\'dismiss\')">✕ 误报归档</span>'+
       '</div>';
   },
-  /* ---------- ③ 全域感知图层矩阵 ---------- */
-  _layers(){
-    var d=this._data||{}, s=(d.src&&d.src.stat)||{}, g=d.geoint||{}, os=(d.orgw&&d.orgw.lastStats)||{}, an=d.anom||{};
-    var sc=this._arr(d.social&&d.social.channels);
-    var ais=this._arr(d.ais);
-    var srcList=this._arr(d.src&&d.src.sources);
-    /* 卫星影像通道（/api/eo/status 真实探活）与 AIS 通道（/api/ais/stats 真实订阅态）
-       EO 结果优先取本卡异步补齐值，其次复用 GEOINT 卡已取到的同一份探活结果（避免重复请求） */
-    var eos=d.eostat||{};
-    if(!(eos&&eos.channels)&&typeof GEOINTLIVE!=='undefined'&&GEOINTLIVE._eos) eos=GEOINTLIVE._eos||{};
-    var eoCh=this._arr(eos.channels);
-    var eoOk=eoCh.filter(function(c){ return !!c.ok; }).length;
-    var aisStat=d.aisstat||{};
-    var aisAreas=this._arr(aisStat.areas).filter(function(a){ return Number(a.count)>0; });
-    var geoEmpty=!!(g&&g.empty);
-    var defs=[
-      {k:'src', ic:'📚', n:'情报信源', c:s.total||0, sub:'待命 '+this._n(s.idle)+' · 已采 '+this._n(s.items),
-       list:srcList.slice(0,14).map(function(x){ return String((x.name||x.id||''))+(x.type?' · '+x.type:''); })},
-      {k:'social', ic:'📱', n:'境外社媒', c:sc.length, sub:'监测频道',
-       list:sc.slice(0,14).map(function(x){ return String(x.name||x.title||x.id||''); })},
-      {k:'org', ic:'🎯', n:'组织名录', c:os.orgsTotal||0, sub:'威胁组织在册',
-       list:(os.droppedSamples||[]).slice(0,6).map(function(x){ return String(x.org||'')+' · '+String(x.reason||''); })},
-      {k:'anom', ic:'📈', n:'异动信号', c:an.total||0, sub:'今日命中 · 扫描 '+this._n(an.scanned),
-       list:(an.signals||[]).slice(0,10).map(function(x){ return String(x.country||'')+' · '+String(x.typeLabel||'')+'（'+this._n(x.today)+' 条）'; }.bind(this))},
-      {k:'geo', ic:'🛰️', n:'卫星影像', c:eoOk, sub:(eoCh.length?('在线 '+eoOk+'/'+eoCh.length+' 通道 · 变化检测 '+(geoEmpty?'无新增':'有更新')):'探活中…'), dim:!eoOk,
-       body:(eoCh.length?eoCh.map(function(c){ return '<div>· '+esc(String(c.name||c.id))+' <b style="color:'+(c.ok?'var(--green)':'var(--red)')+'">'+(c.ok?'在线':'不可达')+'</b> <span style="color:var(--text3)">'+this._n(c.sampleBytes)+'B</span></div>'; }.bind(this)).join(''):'<div style="color:var(--text3)">通道探活中，请稍候…</div>')+
-         (eoOk?'<div style="margin-top:9px"><img src="/api/eo/snapshot?bbox=47,22,60,32&w=560&h=280&layer='+encodeURIComponent(String((eoCh[0]||{}).id||''))+'" style="width:100%;border-radius:6px;border:1px solid var(--border);display:block"><div style="color:var(--text3);margin-top:5px">实时快照 · 霍尔木兹—波斯湾 · '+(eos.date||'')+' · NASA Worldview 直连（免 Key）</div></div>':'<div style="color:var(--text3);margin-top:6px">影像源暂不可达，10 分钟后自动重探</div>')},
-      {k:'ais', ic:'🚢', n:'船舶 AIS', c:(Number(aisStat.vessels)||ais.length), sub:(aisStat.connected?('实时接入 · '+aisAreas.length+' 条走廊有船'):(aisStat.enabled?'等待上游握手':'通道未启用')), dim:!aisStat.connected,
-       body:(aisStat.connected?(
-         '<div style="margin-bottom:6px">船位 <b style="color:var(--cyan)">'+this._n(aisStat.vessels)+'</b> 艘 · 含静态资料 '+this._n(aisStat.withDetail)+' · 消息 '+this._n(aisStat.msgPerMin)+' 条/分 · 重连 '+this._n(aisStat.reconnects)+' · 最新 '+(Number(aisStat.lastMsgAgoSec)<=2?'实时':this._n(aisStat.lastMsgAgoSec)+'s 前')+'</div>'+
-         (aisAreas.length?('<div style="margin-bottom:6px">'+aisAreas.map(function(a){ return esc(String(a.name))+' <b style="color:var(--cyan)">'+Number(a.count)+'</b>'; }).join(' · ')+'</div>'):'')+
-         (ais.slice(0,14).map(function(v){
-            return '<div>· '+esc(String(v.name||('MMSI '+v.mmsi)))+' · '+esc(String(v.area||'—'))+' · '+Number(v.sog||0).toFixed(1)+' kn · '+(v.destination?('→ '+esc(String(v.destination))):'—')+'</div>';
-          }).join('')||'<div style="color:var(--text3)">暂无船位明细</div>')
-       ):'<div style="color:var(--text3)">AIS 通道未连接'+(aisStat.lastErr?('：'+esc(String(aisStat.lastErr))):'（等待上游握手）')+'</div>')}
+  /* ---------- ③ 全域感知覆盖矩阵：战略走廊 × 感知手段（#776 内容重做） ----------
+   * 重做背景（用户指令 2026-09-12）：原「全域感知图层矩阵」6 格 = 情报信源/境外社媒/
+   * 组织名录/异动信号/卫星影像/船舶 AIS，其中 4 格与上方「AI 值班台」重复、2 格与下方
+   * GEOINT 卡与 AIS 卡完全重复 —— 对「全域感知」这一命题没有任何独立价值，故按其本义换内容：
+   *   战略走廊（行） × 感知手段（列） 的覆盖矩阵，一眼识别「哪条走廊在哪种手段上失明」。
+   * 行 = 11 条战略走廊，与 server 端 EO_AREAS / aisstream.AREAS 的真实地理单元对齐（非虚构）；
+   * 列 = 事件情报(ALERTS) · 异动信号(/api/anomaly/signals) · 卫星影像(/api/eo/coverage) ·
+   *      船舶 AIS(/api/ais/stats)；
+   * 值 = 该走廊国家集内的真实聚合计数 / 通道真实可用态。零模拟：四列全 0 → 盲区（红）。
+   * 数据全部复用本卡已取的端点结果（含 GEOINT 卡已扫的走廊可用性），零新增请求。 */
+  _CORS:null,
+  _corridors(){
+    if(this._CORS) return this._CORS;
+    /* eo/ais = 对齐上游走廊名（取真实通道计数与影像可用性）；c = 走廊覆盖国家集（事件聚合用） */
+    this._CORS=[
+      {n:'霍尔木兹—波斯湾', eo:['霍尔木兹—波斯湾'], ais:['霍尔木兹海峡','波斯湾'], c:['伊朗','阿曼','阿联酋','沙特','卡塔尔','科威特','伊拉克','巴林']},
+      {n:'红海—曼德海峡', eo:['红海—亚丁湾'], ais:['红海-曼德海峡'], c:['也门','吉布提','厄立特里亚','埃塞俄比亚','索马里','苏丹']},
+      {n:'苏伊士—东地中海', eo:['苏伊士—东地中海'], ais:['苏伊士运河'], c:['埃及','以色列','黎巴嫩','叙利亚','约旦']},
+      {n:'地中海东部', eo:['地中海东部'], ais:['地中海东部'], c:['希腊','土耳其','利比亚','塞浦路斯','意大利']},
+      {n:'直布罗陀海峡', eo:[], ais:['直布罗陀'], c:['摩洛哥','西班牙','阿尔及利亚','葡萄牙']},
+      {n:'几内亚湾', eo:['几内亚湾'], ais:['几内亚湾'], c:['尼日利亚','加纳','喀麦隆','加蓬','科特迪瓦','贝宁','多哥','安哥拉','赤道几内亚']},
+      {n:'孟加拉湾—印度洋', eo:['孟加拉湾—印度洋'], ais:[], c:['孟加拉国','斯里兰卡','缅甸','印度','马尔代夫']},
+      {n:'马六甲海峡', eo:['马六甲海峡'], ais:['马六甲海峡'], c:['马来西亚','印度尼西亚','印尼','新加坡','泰国']},
+      {n:'南海—东南亚航道', eo:['南海'], ais:['南海'], c:['菲律宾','越南','马来西亚','印度尼西亚','印尼','文莱']},
+      {n:'巴拿马运河', eo:['巴拿马运河'], ais:['巴拿马运河'], c:['巴拿马','哥伦比亚','委内瑞拉','墨西哥','厄瓜多尔']},
+      {n:'中亚—中欧班列', eo:['中亚—中欧班列'], ais:[], c:['哈萨克斯坦','乌兹别克斯坦','吉尔吉斯斯坦','塔吉克斯坦','土库曼斯坦','波兰','德国']}
     ];
+    return this._CORS;
+  },
+  _layers(){
+    var d=this._data||{}, an=d.anom||{}, aisStat=d.aisstat||{};
+    var nav=this._n.bind(this);
+    var esc2=function(v){ return esc(String(v==null?'':v)); };
+    var C={ok:'var(--green)', hi:'var(--cyan)', warn:'var(--orange)', bad:'var(--red)', off:'var(--text3)'};
+    var COR=this._corridors();
+    var alerts=(typeof ALERTS!=='undefined'&&Array.isArray(ALERTS))?ALERTS:[];
+    var ready=alerts.length>0;
+    var sigs=this._arr(an.signals);
+
+    /* 单次遍历预聚合（按国家）→ 再按各走廊国家集求和：避免 11 行 × N 条重复扫描 */
+    var evC={};
+    alerts.forEach(function(a){
+      var k=String(a.country||'').trim(); if(!k) return;
+      var o=evC[k]||(evC[k]={n:0,cn:0,it:[]});
+      o.n++; if(a.chinaRelated) o.cn++;
+      if(o.it.length<60) o.it.push(a);
+    });
+    var sgC={};
+    sigs.forEach(function(s){
+      var k=String(s.country||'').trim(); if(!k) return;
+      var o=sgC[k]||(sgC[k]={n:0,r:0});
+      o.n+=Number(s.today)||0; o.r=Math.max(o.r,Number(s.risk_score)||0);
+    });
+    var hit=function(k,L){ return k===L||k.indexOf(L)>=0||L.indexOf(k)>=0; };
+    /* EO 走廊影像可用性：复用 GEOINT 卡已扫结果（同一份真实扫描，不另发请求） */
+    var cov=null; try{ cov=(typeof GEOINTLIVE!=='undefined'&&GEOINTLIVE._eoCov)?GEOINTLIVE._eoCov:null; }catch(e){}
+    var eoM={}; if(cov&&cov.areas) cov.areas.forEach(function(a){ eoM[a.name]=a; });
+    /* AIS 走廊船位：/api/ais/stats 的 areas 即走廊维度 */
+    var aisM={}; this._arr(aisStat.areas).forEach(function(a){ aisM[a.name]=a; });
+
+    var rows=COR.map(function(R){
+      var ev={n:0,cn:0,it:[]}, sg={n:0,r:0}, k, i;
+      if(ready){
+        for(k in evC){ var v=evC[k];
+          for(i=0;i<R.c.length;i++){ if(hit(k,R.c[i])){ ev.n+=v.n; ev.cn+=v.cn; for(var j=0;j<v.it.length;j++){ if(ev.it.length<60) ev.it.push(v.it[j]); } break; } }
+        }
+      }
+      for(k in sgC){ var v2=sgC[k];
+        for(i=0;i<R.c.length;i++){ if(hit(k,R.c[i])){ sg.n+=v2.n; sg.r=Math.max(sg.r,v2.r); break; } }
+      }
+      var eoOk=false, eoArea='';
+      R.eo.forEach(function(n){ var e=eoM[n]; if(e){ eoArea=n; if(e.ok) eoOk=true; } });
+      var aisN=0;
+      R.ais.forEach(function(n){ var a=aisM[n]; if(a) aisN+=Number(a.count)||0; });
+      /* 覆盖率只在「该走廊确实布了通道」的列上计算，绝不因未布通道而误判盲区 */
+      var avail=2+(R.eo.length?1:0)+(R.ais.length?1:0);
+      var live=(ev.n>0?1:0)+(sg.n>0?1:0)+(eoOk?1:0)+(aisN>0?1:0);
+      var ratio=avail?live/avail:0;
+      var lvl=ratio>=1?C.ok:(ratio>=0.6?C.hi:(ratio>0?C.warn:C.bad));
+      return {R:R,ev:ev,sg:sg,eoOk:eoOk,eoArea:eoArea,aisN:aisN,avail:avail,live:live,ratio:ratio,lvl:lvl,
+              st:(ratio>=1?'全通':(ratio>=0.6?'正常':(ratio>0?'薄弱':'盲区')))};
+    });
+
+    /* 汇总档位与行状态灯口径一致：良好 = 在线手段 ≥60%（ratio≥0.6），薄弱 = 有数据但不达 60%，盲区 = 全 0 */
+    var fullN=0, blindN=0;
+    rows.forEach(function(x){ if(x.ratio>=0.6) fullN++; if(x.live===0) blindN++; });
+    var weakN=rows.length-fullN-blindN;
+
     var open=this._open;
-    var html='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">图层状态与真实计数 · 点击行展开明细</div>';
-    html+=defs.map(function(L){
-      var on=(open===L.k);
-      var body=(L.body!=null)
-        ? L.body
-        : ((L.list&&L.list.length)?L.list.map(function(t){ return '<div>· '+esc(String(t))+'</div>'; }).join(''):'<div style="color:var(--text3)">该图层暂无明细（真实源无数据）</div>');
-      return '<div style="border-bottom:1px solid var(--border)">'+
-        '<div onclick="SDOPS.toggle(\''+L.k+'\')" style="display:flex;align-items:center;gap:10px;padding:7px 0;cursor:pointer">'+
-          '<span style="width:22px;text-align:center;font-size:13px">'+L.ic+'</span>'+
-          '<span style="flex:1;font-size:12px;color:var(--text1)">'+L.n+'</span>'+
-          '<span style="font-size:10px;color:var(--text3)">'+L.sub+'</span>'+
-          '<span style="width:58px;text-align:right;font-size:13px;font-weight:700;color:'+(L.dim?'var(--text3)':'var(--cyan)')+'">'+this._n(L.c)+'</span>'+
-          '<span style="width:12px;text-align:right;font-size:9px;color:var(--text3)">'+(on?'▾':'▸')+'</span>'+
-        '</div>'+
-        (on?'<div style="padding:2px 0 10px 32px;font-size:10px;color:var(--text2);line-height:1.7">'+body+'</div>':'')+
+    var gtc='minmax(72px,1.15fr) repeat(4,minmax(34px,0.78fr)) 26px';
+    var dash='<span style="opacity:.45">—</span>';
+    var html='';
+    /* 汇总带：走廊总数 / 全通 / 薄弱 / 盲区 */
+    html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:7px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:10px;color:var(--text3);flex-wrap:wrap">'+
+      '<span>走廊 <b style="color:var(--cyan);font-size:13px">'+rows.length+'</b></span>'+
+      '<span style="width:1px;height:11px;background:var(--border)"></span>'+
+      '<span>覆盖良好 <b style="color:var(--green);font-size:13px">'+fullN+'</b></span>'+
+      '<span style="width:1px;height:11px;background:var(--border)"></span>'+
+      '<span>薄弱 <b style="color:var(--orange);font-size:13px">'+weakN+'</b></span>'+
+      '<span style="width:1px;height:11px;background:var(--border)"></span>'+
+      '<span>盲区 <b style="font-size:13px;color:'+(blindN?'var(--red)':'var(--text2)')+'">'+blindN+'</b></span>'+
+      '<span style="margin-left:auto;font-size:9px">'+(ready?'点走廊行 → 展开真实明细':'预警库同步中…')+'</span></div>';
+
+    /* 矩阵主体 */
+    html+='<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">'+
+      '<div style="display:grid;grid-template-columns:'+gtc+';gap:4px;align-items:center;padding:6px 9px;background:var(--panel2);font-size:9px;color:var(--text3);font-weight:700">'+
+        '<span>战略走廊</span><span style="text-align:center">事件情报</span><span style="text-align:center">异动信号</span><span style="text-align:center">卫星影像</span><span style="text-align:center">船舶AIS</span><span style="text-align:center">态</span></div>';
+    rows.forEach(function(x){
+      var on=(open===x.R.n);
+      var bg=x.live===0?'rgba(255,77,79,0.07)':(on?'rgba(0,212,255,0.07)':'transparent');
+      /* 事件情报列按「涉华浓度」着色：≥35% 红 / ≥12% 橙 / 更低 青 —— 满屏同色等于没有信息 */
+      var evRate=x.ev.n?x.ev.cn/x.ev.n:0;
+      var evCol=x.ev.n===0?C.off:(evRate>=0.35?C.bad:(evRate>=0.12?C.warn:C.hi));
+      var sgCol=x.sg.r>=70?C.bad:(x.sg.r>=45?C.warn:(x.sg.n>0?C.hi:C.off));
+      var cells=''+
+        '<span title="在库事件 '+nav(x.ev.n)+' 条'+(x.ev.cn?(' · 涉华 '+nav(x.ev.cn)+' 条'):'')+'" style="text-align:center;font-size:11px;font-weight:800;color:'+evCol+';font-variant-numeric:tabular-nums">'+(x.ev.n?nav(x.ev.n):dash)+'</span>'+
+        '<span title="今日异动 '+nav(x.sg.n)+' 次'+(x.sg.r?(' · 风险分 '+nav(x.sg.r)):'')+'" style="text-align:center;font-size:11px;font-weight:800;color:'+sgCol+';font-variant-numeric:tabular-nums">'+(x.sg.n?nav(x.sg.n):dash)+'</span>'+
+        '<span title="'+esc2(x.eoArea?(x.eoOk?'影像可用 · ':'当期无有效影像 · ')+x.eoArea:'该走廊未布卫星影像通道')+'" style="text-align:center;font-size:11px;font-weight:800;color:'+(x.eoOk?C.ok:C.off)+'">'+(x.eoOk?'✓':dash)+'</span>'+
+        '<span title="实时船位 '+nav(x.aisN)+' 艘" style="text-align:center;font-size:11px;font-weight:800;color:'+(x.aisN?C.hi:C.off)+';font-variant-numeric:tabular-nums">'+(x.aisN?nav(x.aisN):dash)+'</span>'+
+        '<span title="'+x.st+' · '+x.live+'/'+x.avail+' 种手段在线" style="text-align:center;font-size:10px;color:'+x.lvl+'">'+(x.live===0?'✕':'●')+'</span>';
+      html+='<div onclick="SDOPS.toggle(\''+esc2(x.R.n)+'\')" style="display:grid;grid-template-columns:'+gtc+';gap:4px;align-items:center;padding:6px 9px;border-top:1px solid var(--border);background:'+bg+';cursor:pointer;transition:.15s" onmouseover="this.style.background=\'rgba(0,212,255,0.05)\'" onmouseout="this.style.background=\''+bg+'\'">'+
+        '<span style="font-size:10px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc2(x.R.n)+' · 覆盖 '+x.R.c.length+' 国">'+esc2(x.R.n)+'</span>'+cells+'</div>';
+    });
+    html+='</div>';
+
+    /* 展开明细（置于表格之外，避免撑破行高） */
+    var cur=null; rows.forEach(function(x){ if(x.R.n===open) cur=x; });
+    if(cur){
+      html+='<div style="margin-top:9px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);overflow:hidden">'+
+        '<div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--panel2)">'+
+          '<b style="font-size:11px;color:var(--cyan)">'+esc2(cur.R.n)+' · 感知明细</b>'+
+          '<span style="font-size:9px;color:'+cur.lvl+'">'+cur.st+' · '+cur.live+'/'+cur.avail+' 种手段在线</span>'+
+          '<span onclick="event.stopPropagation();SDOPS.toggle(\''+esc2(cur.R.n)+'\')" style="margin-left:auto;cursor:pointer;font-size:11px;color:var(--text3);padding:0 5px" title="收起">✕</span></div>'+
+        '<div style="padding:9px 10px;font-size:10px;color:var(--text2)">'+this._cBody(cur)+'</div>'+
       '</div>';
-    }.bind(this)).join('');
+    }
     var host=document.getElementById('sit-layers'); if(host) host.innerHTML=html;
+  },
+  /* 走廊感知明细体：国家分布 / 最新情报 / 今日异动 / 实时船位（全真实数据） */
+  _cBody(x){
+    var nav=this._n.bind(this), rel=this._rel.bind(this);
+    var esc2=function(v){ return esc(String(v==null?'':v)); };
+    var h='';
+    if(x.ev.it.length){
+      /* ① 事件国家分布 */
+      var byC={};
+      x.ev.it.forEach(function(a){ var k=String(a.country||'—'); byC[k]=(byC[k]||0)+1; });
+      var ks=Object.keys(byC).sort(function(a,b){ return byC[b]-byC[a]; });
+      h+='<div style="margin-bottom:8px"><div style="font-size:10px;font-weight:700;color:var(--cyan);margin-bottom:5px">📍 事件国家分布 · 在库 '+nav(x.ev.n)+' 条 · 涉华 '+nav(x.ev.cn)+' 条</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:4px">'+ks.slice(0,15).map(function(k){
+          return '<span style="font-size:10px;padding:2px 7px;border-radius:9px;background:var(--panel2);border:1px solid var(--border);color:var(--text2)">'+esc2(k)+' <b style="color:var(--cyan)">'+byC[k]+'</b></span>';
+        }).join('')+'</div></div>';
+      /* ② 最新情报 5 条 */
+      var top=x.ev.it.slice().sort(function(a,b){ return String(b.time||'').localeCompare(String(a.time||'')); }).slice(0,5);
+      h+='<div style="margin-bottom:8px"><div style="font-size:10px;font-weight:700;color:var(--cyan);margin-bottom:4px">🕐 最新情报</div>'+
+        top.map(function(a){
+          var lv=(typeof ALERT_LV!=='undefined'&&ALERT_LV[a.level])||{color:'var(--text3)',label:String(a.level||'')};
+          return '<div style="display:flex;gap:6px;align-items:baseline;padding:3px 0;border-top:1px solid var(--border)">'+
+            '<span style="flex:none;font-size:9px;color:'+lv.color+';font-weight:700">'+esc2(lv.label)+'</span>'+
+            '<span style="flex:1;min-width:0;font-size:10px;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc2(stripTags(_dedupeTitleConcat(_zhT(a)||a.title||'')))+'</span>'+
+            '<span style="flex:none;font-size:9px;color:var(--text3)">'+esc2(a.country||'')+' · '+esc2(rel(a.time))+'</span></div>';
+        }).join('')+'</div>';
+    } else {
+      h+='<div style="color:var(--text3);margin-bottom:8px">该走廊在库事件为 0 —— '+((x.eoOk||x.aisN)?'仍由影像／船位通道维持感知（属正常稀疏，非全盲）':'四类感知手段均无数据（感知盲区，需核查采集链路）')+'</div>';
+    }
+    /* ③ 今日异动 */
+    if(x.sg.n>0){
+      h+='<div style="margin-bottom:8px;font-size:10px"><span style="font-weight:700;color:var(--orange)">📈 今日异动</span> '+nav(x.sg.n)+' 次 · 最高风险分 <b style="color:'+(x.sg.r>=70?'var(--red)':'var(--orange)')+'">'+nav(x.sg.r)+'</b></div>';
+    }
+    /* ④ 实时船位 */
+    var vs=this._arr((this._data||{}).ais);
+    var mv=vs.filter(function(v){ return x.R.ais.indexOf(String(v.area||''))>=0; }).slice(0,8);
+    if(mv.length){
+      h+='<div><div style="font-size:10px;font-weight:700;color:var(--cyan);margin-bottom:4px">🚢 走廊实时船位 · '+nav(x.aisN)+' 艘</div>'+
+        mv.map(function(v){
+          var kt=Number(v.sog||0);
+          return '<div style="display:flex;gap:6px;padding:2px 0;font-size:10px;border-top:1px solid var(--border)">'+
+            '<span style="flex:1;min-width:0;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc2(v.name||('MMSI '+v.mmsi))+'</span>'+
+            '<span style="flex:none;color:var(--text3)">'+esc2(v.area||'')+'</span>'+
+            '<span style="flex:none;font-weight:700;color:var(--cyan)">'+kt.toFixed(1)+' kn</span>'+
+            '<span style="flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text3)">'+esc2(v.destination||'—')+'</span></div>';
+        }).join('')+'</div>';
+    } else if(x.R.ais.length){
+      h+='<div style="color:var(--text3)">该走廊 AIS 通道'+(x.aisN?('实时船位 '+nav(x.aisN)+' 艘（未进入当前船位列表前 60 条）'):'当前无船位回传')+' · 订阅态：'+(((this._data||{}).aisstat||{}).connected?'在线':'未连接')+'</div>';
+    }
+    return h||'<div style="color:var(--text3)">暂无明细</div>';
   },
   toggle(k){ this._open=(this._open===k?'':k); this._layers(); },
   /* ---------- ④ 处置闭环 · SLA ---------- */
@@ -10138,7 +10269,7 @@ const SITUATION={
       var _self=this;
       this._alertRetryTimer=setInterval(function(){
         _self._alertRetryCount=(_self._alertRetryCount||0)+1;
-        try{ _self.renderTrend(); _self.renderAlertType(); }catch(e){}
+        try{ _self.renderTrend(); _self.renderAlertType(); /* #776：ALERTS 异步到达后重绘走廊覆盖矩阵（首帧可能早于预警库同步，避免事件情报列全为 —） */ if(typeof SDOPS!=='undefined'&&SDOPS._data){ try{ SDOPS._layers(); }catch(e){} } }catch(e){}
         if(ALERTS.length>0 || _self._alertRetryCount>=10){ clearInterval(_self._alertRetryTimer); _self._alertRetryTimer=null; }
       },3000);
     }
