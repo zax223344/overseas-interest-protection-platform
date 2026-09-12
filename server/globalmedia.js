@@ -20,6 +20,7 @@ const crawler = require('./crawler');
 const netx = require('./netx');
 const mediaFeeds = require('./media_feeds');
 const scrapers = require('./scrapers');
+const TS = require('./title-sanity');   /* #777 P0：站点 chrome / channel 元数据标题识别 */
 
 /* ===== 全球 30+ 国家清单（ISO2 = GDELT sourcecountry 代码；dims = 该国典型海外利益维度）=====
  * 维度：A=中方直接关联 B=BRI重大项目/走廊 C=海上战略通道 D=能源/关键矿产供应链
@@ -466,7 +467,7 @@ async function _fetchRss(url, timeout) {
     return await r.text();
   } catch (e) { return ''; }
 }
-function _parseRss(xml) {
+function _parseRss(xml, feedUrl) {
   const items = [];
   const blocks = (xml || '').match(/<(item|entry)[\s>][\s\S]*?<\/(item|entry)>/gi) || [];
   blocks.forEach(b => {
@@ -479,7 +480,11 @@ function _parseRss(xml) {
     if (!link) { const lm = b.match(/<link[^>]*href="([^"]+)"/i); if (lm) link = lm[1]; }
     const pub = tg('pubDate') || tg('updated') || tg('published');
     const desc = tg('description') || tg('summary') || '';
-    if (title) items.push({ title: title, link: link, pubDate: pub, description: desc.replace(/<[^>]+>/g, '').slice(0, 400) });
+    if (!title) return;
+    /* #777 P0：feed channel 元数据 / 站点通用标题（如「关于地球的新闻」「类别|africa.com」）
+     * 不是文章标题，直接丢弃（实测污染 76 条，全部来自此类）。 */
+    if (TS.isSiteChrome(title, feedUrl || link)) return;
+    items.push({ title: title, link: link, pubDate: pub, description: desc.replace(/<[^>]+>/g, '').slice(0, 400) });
   });
   return items;
 }

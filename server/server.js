@@ -22,6 +22,8 @@ const crawler = require('./crawler');
 const zhPolish = require('./zh-polish'); /* L1 中文译文抛光（2026-08-29 翻译质量改造：尾部媒体/URL/作者残留剥离+缩写全称+标点硬伤） */
 const _TRMT = require('./translation-terms'); /* 术语库归一+数字本地化（2026-09-06 手册落地：译文残留英文术语→权威译名、50百万美元→5000万美元） */
 const zhRewrite = require('./title-rewrite');
+/* #777 P0（2026-09-12 采集审计）：标题可信度单一事实源——site chrome 标题闸（入库咽喉）+ 归档模板句可信度 */
+const TS = require('./title-sanity');
 const fieldcrypt = require('./fieldcrypt'); /* P1-3 敏感字段级加密 AES-256-GCM */ /* L2 标题句式重写（2026-08-29 翻译质量改造：欧化语序/插入语/框架句重组，病句检测命中才动手） */
 const captcha = require('./captcha'); /* 登录图形验证码（2026-09-04 用户指令：验证码要发挥真正作用——服务端答案/一次性核销/5分钟过期/失败锁定联动） */
 const agentkey = require('./agentkey');
@@ -7214,6 +7216,19 @@ async function _preInsertGate(it, existing, titleKeys, eventSigs) {
     }
     if (_poisoned) console.warn('[GATE] [object Promise] 脏值拦截 ' + _poisoned + ' 字段: ' + String(it.title || it.title_en || '').slice(0, 50));
   }
+  /* #777 P0 站点 chrome 标题闸（2026-09-12 采集审计）：
+   * 实测 76 条把 feed channel 元数据/站点通用标题当文章标题入库（terradaily
+   * 「地球日报-关于地球的新闻」、africa.com「类别|africa.com」、pcusa「每日灵修|长老会（美国）」），
+   * 对情报零价值。这是本批 P0 中唯一「直接丢弃」的闸——chrome 标题不是情报，
+   * 不属于"减量"。模板合成标题（backfill 通道）不在此丢弃，只由 _tplLowConf 标记
+   * （用户铁律：采集量不能少），前端/接口层按标记过滤展示。 */
+  {
+    const _ct = String(it.title_zh || it.title || '');
+    if (_ct && TS.isSiteChrome(_ct, it.url || '')) {
+      _gateAudit('入库闸', 'chrome-title', _ct);
+      return { ok: false, code: ['chrome-title'] };
+    }
+  }
   /* 社媒灌水/标签云闸（2026-09-05，见函数注释）：须在国别回填/质量闸之前——
    * 灌水帖含国名+暴力词，晚判会被国别回填和类别捕获"洗白"成正常条目。 */
   {
@@ -13727,7 +13742,9 @@ app.get('/api/intel/:type', ttlCache(45000), async (req, res) => {
       return res.json(r.rows.map(x => ({ id: x.id, title: x.title_zh || x.title || '' })));
     }
     const limit = Math.min(10000, Math.max(1, parseInt(req.query.limit, 10) || 3000));
-    const result = await query('SELECT * FROM intel_data WHERE data_type = $1 ORDER BY collect_time DESC LIMIT $2', [type, limit]);
+    /* #777 P0：剔除 GDELT 归档低可信模板句（_tplLowConf=true，行为体不具备该武力能力
+     * 的误码条目）。条目仍留在库中可溯源、仍计入采集总量，只是不作为情报展示。 */
+    const result = await query("SELECT * FROM intel_data WHERE data_type = $1 AND COALESCE(data_json->>'_tplLowConf','') <> 'true' ORDER BY collect_time DESC LIMIT $2", [type, limit]);
     /* 2026-08-25 铁律修复：必须回传真实入库时间 collect_time——此前只铺 data_json，
      * 历史条目 data_json 无时间字段时前端只能用 Date.now() 兜底，导致 5 月旧闻盖今日新戳
      * 混入最新预警（id 11233 事件）。DB 列置后覆盖，防止 data_json 内同名字段造假。 */

@@ -49,7 +49,9 @@ function _decodeEntities(s) {
     .replace(/&([a-z]+);/gi, (m, w) => ENT_MAP[String(w).toLowerCase()] || ' ');
 }
 
-function _cleanTitle(raw) {
+const TS = require('./title-sanity');   /* #777 P0：站点 chrome / channel 元数据标题识别 */
+
+function _cleanTitle(raw, url) {
   let t = _decodeEntities(String(raw || ''))
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
@@ -58,21 +60,25 @@ function _cleanTitle(raw) {
     .trim();
   if (t.length < 12 || t.length > 300) return '';
   if (JUNK_TITLE_RE.test(t)) return '';
+  /* #777 P0：站点 chrome / feed channel 元数据标题（如 terradaily「关于地球的新闻」、
+   * africa.com「类别|africa.com」、pcusa「每日灵修|长老会（美国）」）不是文章标题——
+   * 返回空串使该条走模板兜底 + _synthetic 标记，不把频道名冒充为情报标题。 */
+  if (TS.isSiteChrome(t, url)) return '';
   /* 至少 4 个字母/文字字符（纯符号数字/货币串非标题） */
   if ((t.match(/[a-zA-Z\u4e00-\u9fff\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\uAC00-\uD7AF]/g) || []).length < 4) return '';
   return t;
 }
 
-function _extractTitle(html) {
+function _extractTitle(html, url) {
   html = String(html || '');
   if (html.length > HTML_HEAD_LIMIT) html = html.slice(0, HTML_HEAD_LIMIT);
   let m = /<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']{5,400})["']/i.exec(html)
        || /<meta[^>]+content=["']([^"']{5,400})["'][^>]*property=["']og:title["']/i.exec(html);
-  if (m) { const t = _cleanTitle(m[1]); if (t) return t; }
+  if (m) { const t = _cleanTitle(m[1], url); if (t) return t; }
   m = /<title[^>]*>([\s\S]{0,600}?)<\/title>/i.exec(html);
-  if (m) { const t = _cleanTitle(m[1]); if (t) return t; }
+  if (m) { const t = _cleanTitle(m[1], url); if (t) return t; }
   m = /<meta[^>]+name=["']twitter:title["'][^>]*content=["']([^"']{5,400})["']/i.exec(html);
-  if (m) { const t = _cleanTitle(m[1]); if (t) return t; }
+  if (m) { const t = _cleanTitle(m[1], url); if (t) return t; }
   return '';
 }
 
@@ -87,7 +93,7 @@ async function _fetchTitleOnce(url) {
   if (!resp || !resp.ok) return '';
   let html = '';
   try { html = await resp.text(); } catch (e) { return ''; }
-  return _extractTitle(html);
+  return _extractTitle(html, url);
 }
 
 function _applyReal(it, title, via) {

@@ -110,17 +110,26 @@ function init(deps) {
  * 高频组织/国家名/州名一律入库即中文；词表外真实实体名保留原文（不编造），
  * 全大写原文回退为首字母大写化（"SOMALI" → "Somali"）提升可读性。 */
 const { actorZh } = require('./gdelt-actors');
+/* #777 P0（2026-09-12）：标题可信度单一事实源（行为体合法性 + 模板句可信度 + chrome 标题） */
+const TS = require('./title-sanity');
 function _actorName(s) {
   s = String(s || '').trim();
   if (!s) return '';
   const zh = actorZh(s);
-  if (/[一-龥]/.test(zh)) return zh;
-  return zh.toLowerCase().replace(/(^|\s|-|\/)([a-z])/g, (m, p, c) => p + c.toUpperCase());
+  if (/[一-龥]/.test(zh)) return TS.normActor(zh);   /* 中文行为体：碎片词（副/极/代表）作废 */
+  const en = zh.toLowerCase().replace(/(^|\s|-|\/)([a-z])/g, (m, p, c) => p + c.toUpperCase());
+  return TS.normActor(en);
 }
-function _title(cn, a1, a2, evCode, root, numMentions) {
+/* #777 P0 可信度：军事/暴力动词须行为体具备武力投射能力，否则判 GDELT 误码 */
+function _conf(ev, root, a1, a2) {
+  return TS.archiveTplConf(_actorName(a1), _actorName(a2), ev, root);
+}
+function _title(cn, a1, a2, evCode, root, numMentions, lowConf) {
   const A1 = _actorName(a1), A2 = _actorName(a2);
   const vt = VERB_TRANS[evCode] || VERB_TRANS[root] || '发生对抗';
   const vn = VERB_NOUN[evCode] || VERB_NOUN[root] || '对抗事件';
+  /* #777 P0：低可信条目降级为中性事件转述（不虚构主语，仍入库、量不减） */
+  if (lowConf) return cn + '：' + vn + '（' + numMentions + ' 篇报道）';
   if (A1 && A2 && A1 !== A2) return cn + '：' + A1 + ' 对 ' + A2 + ' ' + vt;
   if (A1) return cn + '：' + A1 + ' ' + vt;
   if (A2) return cn + '：' + A2 + ' 涉' + vn;
@@ -199,8 +208,12 @@ async function _archivePool(day, stat) {
   items.sort((a, b) => b._nm - a._nm);              /* 高报道量优先（选择阶段自上而下） */
   return items.map(it => {
     const cat = CODE_CAT[it._ev] || ROOT_CAT[it._root] || 'geopolitical_intel';
-    const tpl = _title(it._cn, it._a1, it._a2, it._ev, it._root, it._nm);
-    return {
+    /* #777 P0：可信度判定——军事/暴力码但行为体不具备武力能力 = GDELT 误码，
+     * 降级为中性转述（不虚构主语）。条目照常入库（用户铁律：采集量不能少），
+     * 仅以 _tplLowConf 标记，供前端/接口层过滤。 */
+    const conf = _conf(it._ev, it._root, it._a1, it._a2);
+    const tpl = _title(it._cn, it._a1, it._a2, it._ev, it._root, it._nm, conf === 'low');
+    const row = {
       title: tpl,                            /* 模板标题（回捞成功即被真实标题替换） */
       _tplTitle: tpl,                        /* #714④ 模板留档：backfill-titles 回捞目标标识 */
       _zhTitle: true,                        /* 已是中文，跳过翻译管线（仅死链兜底路径生效） */
@@ -220,6 +233,8 @@ async function _archivePool(day, stat) {
       mentions: it._nm,
       interestLinked: true
     };
+    if (conf === 'low') row._tplLowConf = true;
+    return row;
   });
 }
 
