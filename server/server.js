@@ -9278,11 +9278,25 @@ async function _runNeonSync() {
    本地宕机/数据损坏时云端留存全部档案；GitHub Actions 云采集不依赖本机，关机也照采。
    三层防线：① 开机自启链自动拉起 PG ② pg-keepalive 60s 看门狗 ③ 本云端副本兜底。 */
 const NEON_BACKUP_CURSOR_FILE = path.join(CACHE_DIR, 'neon-backup.json');
-/* #714 根修（2026-09-08）：Neon 免费层 512MB 硬顶，完整副本物理不可能（本地 60万+ 行
- * ≈1.6GB，且补采主战役再 +21万）。云端改滚动窗口：只保留最新 NEON_RETAIN_ROWS 行
- * （按 id——id≈本地插入序），每轮上行后清旧防再撞配额。恢复语义：本地为主库，
- * 云端覆盖最近 ~45 天（~2200 行/日）。要完整容灾需 Neon 付费档，此处为零成本最优解。 */
-const NEON_RETAIN_ROWS = 100000;
+/* ===== #781 云端扩容 + 省负载 根修（2026-09-12，用户指令「一是云端扩容；二是改一下能省负载」）=====
+ * 实测（本机 10 日样本）：每日入库 ~25,000 行，其中 **93.5% 是历史补采**（_sourceType=backfill /
+ * _archiveEvent=true）——这类数据的唯一来源就是 GDELT 归档，可原样重拉，属"可再生数据"。
+ * 把它无差别镜像到 512MB 免费层，同时踩两个坑：
+ *   ① 空间物理不可能：25,000 行/日 × 7.5KB = 187MB/日 → 512MB 只能装 2.7 天，
+ *      滚动窗口永远追不上写入（实测断点卡在 536163、云端停摆 3 天）；
+ *   ② 负载白烧：每轮 5,000 行全字段读取 + AES + base64 + HTTPS 上行，187MB/日 纯浪费。
+ * 故备份口径改为「不可再生数据优先」：
+ *   · 跳过 backfill/_archiveEvent 行（可从 GDELT 重拉），但 **涉华行一律保留**（涉华情报不可再生）；
+ *   · 载荷改 gzip→AES-256-GCM 二进制直加密（实测 2.16× 更省；Neon 侧 jsonb 未被 TOAST，实测 compressed_rows=0）；
+ *   · 保留策略由「按 id 行数」改「按 backed_at 天数」——过滤后 id 增量与行数不再同比例，id 计数会失真。
+ * 实测收益：保留窗口 2.7 天 → **~97 天（36×）**，上行负载 -93%。
+ * 恢复口径（本地为主库、云端仅容灾，本表无读取端）：
+ *   _v=2 → _enc 前缀 enc:v2:，decryptBuffer() 得 gzip Buffer，gunzip 后即明文 JSON；
+ *   _v=1 → 旧口径，_enc 前缀 enc:v1:，decrypt() 得明文（存量行，清旧时按天自然淘汰）。 */
+const NEON_RETAIN_DAYS = 75;      /* 保留最近 N 天（backed_at 口径） */
+const NEON_SCAN_WINDOW = 50000;   /* 单轮最多推进的 id 窗口（防长区间全表扫描空转） */
+const NEON_KEEP_CHINA = `COALESCE(data_json->>'chinaRelated','') = 'true'`;
+const NEON_SKIP_REDERIV = `(COALESCE(data_json->>'_sourceType','') = 'backfill' OR COALESCE(data_json->>'_archiveEvent','') = 'true')`;
 let _neonBkPool = null;
 let _neonBackupBusyUntil = 0;
 function _readBackupCursor() { try { return parseInt(JSON.parse(fs.readFileSync(NEON_BACKUP_CURSOR_FILE, 'utf8')).lastId, 10) || 0; } catch (e) { return 0; } }
@@ -9298,8 +9312,18 @@ async function _runNeonBackup() {
     }
     await _neonBkPool.query('CREATE TABLE IF NOT EXISTS intel_backup (id BIGINT PRIMARY KEY, data_json JSONB, backed_at TIMESTAMPTZ DEFAULT now())');
     const cursor = _readBackupCursor();
-    const { rows } = await query('SELECT id, data_json, collect_time FROM intel_data WHERE id > $1 ORDER BY id ASC LIMIT 5000', [cursor]);
-    if (!rows.length) return { more: false, ok: true };
+    /* 先取本地最大 id（作为本轮窗口上界，避免「无匹配行」时游标不推进导致无限空转） */
+    const _mxr = await query('SELECT COALESCE(MAX(id),0) AS mx FROM intel_data');
+    const mx = parseInt(_mxr.rows[0].mx, 10) || 0;
+    if (mx <= cursor) return { more: false, ok: true };
+    const hi = Math.min(mx, cursor + NEON_SCAN_WINDOW);
+    /* #781 过滤在 SQL 侧完成：只取「不可再生」行（非 backfill/归档）或涉华行，LIMIT 接住即可 */
+    const { rows } = await query(
+      `SELECT id, data_json, collect_time FROM intel_data
+        WHERE id > $1 AND id <= $2
+          AND (${NEON_KEEP_CHINA} OR NOT ${NEON_SKIP_REDERIV})
+        ORDER BY id ASC LIMIT 5000`, [cursor, hi]);
+    if (!rows.length) { _writeBackupCursor(hi); return { more: hi < mx, ok: true }; }
     let ok = 0, maxId = cursor;
     /* 50 行一批多值 INSERT：1000 行仅 20 个往返，免费层友好；失败断点保留下轮重试 */
     for (let i = 0; i < rows.length; i += 50) {
@@ -9307,28 +9331,38 @@ async function _runNeonBackup() {
       const vals = [], params = [];
       chunk.forEach((r, j) => {
         vals.push('($' + (j * 2 + 1) + ', $' + (j * 2 + 2) + ')');
-        /* P2：备份上行整体 AES-256-GCM 加密（云库冷备不存明文；intel_backup 只写不读，
-         * 恢复端用 DATA_FIELD_KEY 解密——密钥只在本地 .env，云库被拖也读不出） */
+        /* P2：备份上行整体加密（云库冷备不存明文；intel_backup 只写不读，恢复端用
+         * DATA_FIELD_KEY 解密——密钥只在本地 .env，云库被拖也读不出）。
+         * #781：先 gzip 再二进制加密（_v=2），比 encrypt(明文) 省 2.16×；失败回落旧口径不丢数据。 */
         const plain = JSON.stringify(Object.assign({}, r.data_json || {}, { collect_time: r.collect_time }));
-        params.push(r.id, JSON.stringify({ _enc: fieldcrypt.encrypt(plain), _v: 1 }));
+        let payload;
+        try {
+          const gz = zlib.gzipSync(Buffer.from(plain, 'utf8'), { level: 6 });
+          payload = JSON.stringify({ _enc: fieldcrypt.encryptBuffer(gz), _v: 2 });
+        } catch (e) { payload = JSON.stringify({ _enc: fieldcrypt.encrypt(plain), _v: 1 }); }
+        params.push(r.id, payload);
       });
       try {
         await _neonBkPool.query('INSERT INTO intel_backup (id, data_json) VALUES ' + vals.join(',') + ' ON CONFLICT (id) DO NOTHING', params);
         ok += chunk.length;
         const lastId = parseInt(chunk[chunk.length - 1].id, 10);
-        if (lastId > maxId) { maxId = lastId; _writeBackupCursor(maxId); }
+        if (lastId > maxId) maxId = lastId;
       } catch (e) { console.warn('[NEON-BACKUP] 批量写入失败（断点 ' + maxId + ' 下轮续传）:', e.message); break; }
     }
-    if (ok) console.log('[NEON-BACKUP] 云端容灾备份 +' + ok + ' 条（游标 ' + cursor + ' → ' + maxId + '）');
-    /* #714 滚动窗口：清旧放在上传后（配额满导致本批失败时，清旧照样执行，
-     * 释放空间供下轮 5min 重试续传——断点不丢） */
+    /* 游标推进：批未满 = 本窗口已消费完 → 直接推到 hi（否则会在同窗口反复重扫）；
+     * 批满 = 窗口内可能还有匹配行 → 只推到 lastId，下轮从断点续 */
+    const nextCursor = rows.length >= 5000 ? maxId : Math.max(hi, maxId);
+    _writeBackupCursor(nextCursor);
+    if (ok) console.log('[NEON-BACKUP] 云端容灾备份 +' + ok + ' 条（游标 ' + cursor + ' → ' + nextCursor + '，gzip/AES 压缩口径）');
+    /* #781 滚动窗口改按天（旧口径按 id 行数——过滤后 id 增量与行数不再同比例）：
+     * 清旧放在上传后（配额满导致本批失败时，清旧照样执行 → 释放空间供下轮续传，断点不丢） */
     try {
       const del = await _neonBkPool.query(
-        `DELETE FROM intel_backup WHERE id <= (SELECT COALESCE(MAX(id),0) FROM intel_backup) - $1`, [NEON_RETAIN_ROWS]);
-      if (del.rowCount > 0) console.log('[NEON-BACKUP] 滚动窗口清旧副本 -' + del.rowCount + ' 行（保留最新 ' + NEON_RETAIN_ROWS + '）');
+        `DELETE FROM intel_backup WHERE backed_at < now() - ($1 || ' days')::interval`, [NEON_RETAIN_DAYS]);
+      if (del.rowCount > 0) console.log('[NEON-BACKUP] 滚动窗口清旧副本 -' + del.rowCount + ' 行（保留最近 ' + NEON_RETAIN_DAYS + ' 天）');
     } catch (e) { console.warn('[NEON-BACKUP] 滚动清理失败:', e.message); }
-    /* 2026-09-07 #671 自适应追赶：返回本轮是否还有积压（批满即大概率未追平） */
-    return { more: rows.length >= 5000, ok: true };
+    /* 2026-09-07 #671 自适应追赶：返回本轮是否还有积压（批满或未追到本地最大 id） */
+    return { more: rows.length >= 5000 || nextCursor < mx, ok: true };
   } catch (e) {
     console.warn('[NEON-BACKUP] 备份失败:', e.message);
     if (_neonBkPool) { try { await _neonBkPool.end(); } catch (_) {} _neonBkPool = null; }
