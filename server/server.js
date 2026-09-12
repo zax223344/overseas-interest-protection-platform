@@ -15191,8 +15191,35 @@ async function _handleIntelEnrich(req, res) {
   } finally { _enrichBusy = false; }
 }
 
-/* ===== 进程自愈：单条未捕获异常/拒绝绝不让进程退出（避免整站被打不开） ===== */
-process.on('uncaughtException', (err) => { console.error('[GUARD] uncaughtException:', err && err.message); });
+/* ===== #780 退出取证与内存压力心跳（2026-09-12） =====
+ * 背景：2026-09-12 19:28 / 19:51 / 20:04 / 20:05 四次进程静默消失——PM2 God 日志记为
+ * `exited with code [4294967295] via signal [SIGINT]`，**既无 `Stopping app` 也无
+ * `process tree killed`**（PM2 主动停应用时这两行必然出现），且 combined.log 里
+ * `[EXIT] 收到 SIGINT` 出现 0 次 → 判定为被外部硬杀（非 PM2 / 非 watchdog / 非 pg-keepalive）。
+ * 现场取证受阻的第二个原因：PM2 的日志管道是异步的，进程猝死时最后几行会丢。
+ * 故此处改为**同步直写**独立审计文件 logs/exit-audit.log（绕过 PM2 管道），并补齐
+ * SIGHUP / SIGBREAK / beforeExit / exit 全信号面；同时每 60s 写一条含
+ * rss / heapUsed / 系统可用内存 的心跳——猝死后最后一条心跳即现场。
+ * 同一时刻实测整机物理内存 100% 占用（free 0.70GB / 15.7GB，提交 33.1GB），
+ * 符合「OS 级内存压力下强杀进程」特征，故心跳中一并记录 freeRAM 与阈值告警。 */
+function _freeRAMMB() { try { return Math.round(require('os').freemem() / 1048576); } catch (e) { return -1; } }
+function _audit(tag, note) {
+  try {
+    const m = process.memoryUsage();
+    const dir = require('path').join(__dirname, 'logs');
+    try { require('fs').mkdirSync(dir, { recursive: true }); } catch (e) {}
+    require('fs').appendFileSync(require('path').join(dir, 'exit-audit.log'),
+      new Date().toISOString() + ' [AUDIT] ' + tag +
+      ' pid=' + process.pid +
+      ' uptime=' + Math.round(process.uptime()) + 's' +
+      ' rss=' + Math.round(m.rss / 1048576) + 'MB' +
+      ' heapUsed=' + Math.round(m.heapUsed / 1048576) + 'MB' +
+      ' freeRAM=' + _freeRAMMB() + 'MB' +
+      (note ? ' | ' + note : '') + '\n');
+  } catch (e) {}
+}
+/* 进程自愈：单条未捕获异常/拒绝绝不让进程退出（避免整站被打不开） */
+process.on('uncaughtException', (err) => { _audit('uncaughtException', err && err.message); console.error('[GUARD] uncaughtException:', err && err.message); });
 process.on('unhandledRejection', (reason) => { console.error('[GUARD] unhandledRejection:', reason && (reason.message || reason)); });
 
 /* ===== 启动服务器 ===== */
@@ -15324,8 +15351,25 @@ function _forceQuit(code) {
   try { if (_httpServer && _httpServer.closeAllConnections) _httpServer.closeAllConnections(); } catch (e) {}
   setTimeout(() => { console.log('[EXIT] 退出兜底：强制 process.exit(' + code + ')'); process.exit(code); }, 8000).unref();
 }
-process.on('SIGINT', () => { console.log('[EXIT] 收到 SIGINT，8s 内强制退出'); _forceQuit(0); });
-process.on('SIGTERM', () => { console.log('[EXIT] 收到 SIGTERM，8s 内强制退出'); _forceQuit(0); });
+process.on('SIGINT', () => { _audit('SIGINT'); console.log('[EXIT] 收到 SIGINT，8s 内强制退出'); _forceQuit(0); });
+process.on('SIGTERM', () => { _audit('SIGTERM'); console.log('[EXIT] 收到 SIGTERM，8s 内强制退出'); _forceQuit(0); });
+/* #780：Windows 下「控制台被销毁」映射为 SIGHUP/SIGBREAK（本机便携版 PG 曾因此一天三死），
+ * 此前未注册 → 静默退出无痕。补上并同步落审计文件。 */
+process.on('SIGHUP', () => { _audit('SIGHUP', '控制台销毁/终端关闭'); console.log('[EXIT] 收到 SIGHUP（控制台销毁），退出'); _forceQuit(0); });
+process.on('SIGBREAK', () => { _audit('SIGBREAK'); console.log('[EXIT] 收到 SIGBREAK，退出'); _forceQuit(0); });
+process.on('exit', (code) => { _audit('exit', 'code=' + code); });
+process.on('beforeExit', (code) => { _audit('beforeExit', 'code=' + code); });
+/* #780 内存压力心跳：每 60s 同步落一行（含系统可用内存），猝死后最后一行即现场。
+ * 可用内存低于 800MB 时高声告警——本机实测曾仅剩 0.70GB，OS 会静默强杀进程。 */
+const _memHbTimer = setInterval(() => {
+  const free = _freeRAMMB();
+  const rss = Math.round(process.memoryUsage().rss / 1048576);
+  _audit('HB');
+  if (free >= 0 && free < 800) {
+    console.warn('[MEM-PRESSURE] ⚠️ 系统可用内存仅 ' + free + 'MB（本进程 rss ' + rss + 'MB）——OS 可能在内存压力下强杀进程，建议关闭大内存占用程序或重启主机');
+  }
+}, 60000);
+_memHbTimer.unref();
 
 /* ===== 隧道兜底监督 =====
  * 检查 tunnel-keepalive 单实例锁：锁文件缺失或持锁进程已死 → detached 拉起 keepalive。

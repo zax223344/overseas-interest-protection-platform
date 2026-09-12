@@ -30,7 +30,7 @@ function log(msg) {
 }
 function checkHealth() {
   return new Promise(resolve => {
-    const req = http.get('http://localhost:3000/api/health', { timeout: 8000 }, res => {
+    const req = http.get('http://localhost:3000/api/health', { timeout: 15000 }, res => {
       let body = '';
       res.on('data', c => { body += c; });
       res.on('end', () => {
@@ -81,10 +81,45 @@ function taskKill(pid) {
   });
 }
 
+/* ---------- #780 日志轮转兜底（2026-09-12） ----------
+ * 事故：ecosystem.config.js 里的 `log_max_size: '10M'` / `log_retain: 5` **不是 PM2 原生参数**
+ * （轮转须装 pm2-logrotate 模块），实测形同虚设 → logs/ 下累积 874MB
+ * （pm2-combined.log 458MB + pm2-out.log 333MB + …），既压磁盘又抬高 God 内存。
+ * pm2-logrotate 已安装为主力；但重启后引导链走的是 `pm2 start ecosystem.config.js`
+ * 而非 `pm2 resurrect`，**模块不一定被恢复**，故此处再放一个零依赖的兜底轮转：
+ * 超过 ROTATE_MB 即「保留尾部 KEEP_MB 现场 + 截断」，上限 6 文件 × KEEP ≈ 30MB。 */
+const ROT_DIR = path.join(__dirname, 'logs');
+const ROTATE_MB = 50;
+const KEEP_BYTES = 5 * 1024 * 1024;
+function rotateLogs() {
+  let files;
+  try { files = fs.readdirSync(ROT_DIR); } catch (e) { return; }
+  for (const f of files) {
+    if (!/^pm2-.*\.log$/.test(f)) continue;           /* 只轮转 PM2 输出的通道日志 */
+    const p = path.join(ROT_DIR, f);
+    let st; try { st = fs.statSync(p); } catch (e) { continue; }
+    if (st.size < ROTATE_MB * 1024 * 1024) continue;
+    try {
+      const fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(KEEP_BYTES);
+      fs.readSync(fd, buf, 0, KEEP_BYTES, st.size - KEEP_BYTES);
+      fs.closeSync(fd);
+      /* O_APPEND 下先截断再写回尾部：PM2 后续追加无缝衔接 */
+      const w = fs.openSync(p, 'w');
+      fs.writeSync(w, buf);
+      fs.closeSync(w);
+      log('★ 日志轮转 ' + f + ' ' + (st.size / 1048576).toFixed(0) + 'MB -> ' + (KEEP_BYTES / 1048576) + 'MB（保留尾部现场）');
+    } catch (e) { log('日志轮转失败 ' + f + ': ' + e.message); }
+  }
+}
+
 (async () => {
   log('看门狗启动：' + INTERVAL_MS / 1000 + 's/检，' + FAIL_THRESHOLD + ' 连败介入，冷却 ' + RESTART_COOLDOWN_MS / 60000 + 'min');
   let fails = 0, lastSrvRestart = 0, lastWrkRestart = 0;
   setInterval(async () => {
+    /* --- #780 日志体量兜底轮转（先做，避免日志膨胀本身成为故障源） --- */
+    try { rotateLogs(); } catch (e) {}
+
     /* --- 主服务健康 --- */
     const ok = await checkHealth();
     if (ok) {
