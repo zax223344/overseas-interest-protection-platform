@@ -7702,11 +7702,20 @@ function _ruUaQuotaOk(it) {
 /* 2026-09-01 扩容：×2.5 匹配日目标 2000（原帽在 500 目标下定的均衡线，新目标下核心国会提前触帽断供；
  * 比例关系不变：巴基斯坦>美国/阿富汗>伊朗>尼泊尔/尼日利亚/印度>巴勒斯坦>以色列，国别均衡逻辑保留） */
 const DOMINANT_DAILY_CAP = { '伊朗': 90, '美国': 110, '巴基斯坦': 130, '阿富汗': 110, '巴勒斯坦': 70, '以色列': 60, '尼泊尔': 100, '尼日利亚': 100, '印度': 100 };
+/* #778 P1（2026-09-12）补采侧国别帽补漏 + 消除 27 倍放大：
+ * 实测近 24h backfill 25,457 条覆盖 27 个历史日 → 本函数的 backfill 分支按
+ * 「历史日|国家」分桶，110 帽实际变成 110×27=2,970（实测美国 3,114 完全吻合）；
+ * 且旧 `if (!cap) return true` 让帽表外国家（英国 2,308 / 印度 2,295 /
+ * 澳大利亚 1,400 / 加拿大 1,275）完全无制约。修复：补采路径国别帽**覆盖全部国家**、
+ * 帽值统一 80（与 backfill.js 选择层 BF_HEAD_SHARE=0.04×2000=80 同源；选择层已先压，
+ * 本闸仅作防御性安全网）。实时侧维持原 9 国口径不变——那是为实时通道设的均衡线。 */
+const DOMINANT_BF_CAP = 80;
 const _domCounts = { date: '', by: {}, t: 0 };
 function _dominantQuotaOk(it) {
   const ctry = String(it.country || it.country_cn || '');
+  const isBf = it._sourceType === 'backfill';
   const cap = Object.keys(DOMINANT_DAILY_CAP).find(c => ctry.indexOf(c) >= 0);
-  if (!cap) return true;
+  if (!cap && !isBf) return true;
   const d = _todayKey();
   if (_domCounts.date !== d) { _domCounts.date = d; _domCounts.by = {}; }
   /* 涉华/重大伤亡豁免 */
@@ -7716,13 +7725,13 @@ function _dominantQuotaOk(it) {
   if (dm && parseInt(dm[1] || dm[2], 10) >= 5) return true;
   /* 2026-09-06 #649 backfill：高发国日帽按事件日桶计数（语义=每个历史日的均衡，
    * 不按采集日挤一桶；否则巴基斯坦 130 帽补采头两小时就触顶） */
-  if (it._sourceType === 'backfill') {
+  if (isBf) {
     const hd = String(it.event_date || it.publish_time || '').slice(0, 10) || d;
     if (!_domCounts.hist) _domCounts.hist = {};
-    const hk = hd + '|' + cap;
+    const hk = hd + '|' + (cap || ctry || '∅');
     _domCounts.hist[hk] = (_domCounts.hist[hk] || 0) + 1;
     if (Object.keys(_domCounts.hist).length > 3000) { const ks = Object.keys(_domCounts.hist); for (let i = 0; i < 1500; i++) delete _domCounts.hist[ks[i]]; }
-    return _domCounts.hist[hk] <= DOMINANT_DAILY_CAP[cap];
+    return _domCounts.hist[hk] <= DOMINANT_BF_CAP;
   }
   _domCounts.by[cap] = (_domCounts.by[cap] || 0) + 1;
   return _domCounts.by[cap] <= DOMINANT_DAILY_CAP[cap];

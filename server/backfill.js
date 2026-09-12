@@ -47,6 +47,18 @@ const SYNTHETIC_MAX_SHARE = 0.05;      /* #714④ 合成兜底占入选比 ≤5%
 const WORKERS = 4;                     /* #661：4 worker 并行处理历史日（归档日互不依赖） */
 const DAY_RETRY_MAX = 3;               /* 单日失败最多重试次数 */
 
+/* ===== #778 P1 补采配额矩阵（2026-09-12 用户指令「采集量不能少，靠结构化再分配做均衡」）=====
+ * 实测（近 24h，27 个历史日）：backfill 25,457 条 = 全库 93.2%。
+ *   ① 国别帽被放大 27 倍：`_dominantQuotaOk` 对 backfill 按「历史日|国家」分桶，
+ *      110 帽变成 110×27=2,970（实测美国 3,114 完全吻合）；
+ *   ② 帽表只列 9 国：英国 2,308 / 印度 2,295 / 澳大利亚 1,400 / 加拿大 1,275 零制约；
+ *   ③ 类别侧 43.8% 挤进 geopolitical_intel（真实标题关键词通用词兜底）→ 头尾差 1,114 倍。
+ * 本矩阵只改「席位怎么分」，不动 SELECT_TARGET / INGEST_CAP —— 采集量铁律不减。 */
+const BF_TIER_WEIGHT = { TIER1: 3, TIER2: 1.6, TIER3: 1, OTHER: 0.6 };   /* 水填充权重：重点国 3 倍席位 */
+const BF_HEAD_SHARE = 0.04;            /* 单国硬帽 = 4% × SELECT_TARGET = 80 席/历史日（全部国家，无例外） */
+const BF_CAT_HARD_CAP_SHARE = 0.30;    /* 单类硬帽 = 30% × SELECT_TARGET = 600 席/历史日 */
+let _TIER_OF = {};                     /* 国别 → 梯队（_buildCountries 填充） */
+
 let D = null;                          /* deps */
 const S = { running: false, currentDay: null, lastError: '' };
 /* 归档站自身熔断状态（与 DOC API 熔断完全解耦） */
@@ -187,16 +199,131 @@ async function _claimDay(day) {
 let _COUNTRIES = [];
 function _buildCountries() {
   _COUNTRIES = [];
+  _TIER_OF = {};
   ['TIER1', 'TIER2', 'TIER3'].forEach(tier => {
     (D.INTEREST_BASE.COUNTRY_TIERS[tier] || []).forEach(x => {
       const fips = D.crawler.gdCode(x.cn);
       const en = (D.GAP_COUNTRY_EN || {})[x.cn] || D.crawler.gdEn(x.cn);
       if (!fips && !en) return;
       _COUNTRIES.push({ cn: x.cn, tier, fips, en });
+      _TIER_OF[x.cn] = tier;   /* #778：国别 → 梯队（配额矩阵权重查表） */
     });
   });
   console.log('[BACKFILL] 国家清单 ' + _COUNTRIES.length + ' 国（TIER1 ' +
     _COUNTRIES.filter(c => c.tier === 'TIER1').length + '）');
+}
+
+/* ---------- #778 P1 配额矩阵化选择（纯函数，可单测/可干跑） ----------
+ * 输入 pool（backfill-archive.fetchPool 产物），输出 { selected, chinaN, ctryCount, catCount }。
+ * 四步：① 分类权威化（CAMEO 码 > 标题关键词 > 兜底）
+ *      ② 涉华核心优先（不占帽——重点铁律）
+ *      ③ 国别加权水填充（已选数/梯队权重 最小者优先，池尽/触帽自动出列，席位回流）
+ *      ④ 合成兜底 ≤5% 硬预算 */
+function _selNormT(s) { return String(s || '').toLowerCase().replace(/[^\w一-龥]+/g, '').slice(0, 48); }
+function _selectFromPool(pool, opts) {
+  opts = opts || {};
+  const archiveMode = !!opts.archiveMode;
+  const selTarget = opts.selTarget || SELECT_TARGET;
+  const catCapN = Math.max(1, Math.floor(selTarget * BF_CAT_HARD_CAP_SHARE));
+
+  /* ① 分类权威化 */
+  pool.forEach(it => {
+    const cameo = (archive.preciseCat && archive.preciseCat(it)) || it._cat || '';
+    it._cat = cameo || _catOf(it.title) || 'geopolitical_intel';
+    it._tk = _selNormT(it.title);
+  });
+
+  const selUrl = new Set(), selTitle = new Set(), selected = [];
+  const ctryCount = {}, catCount = {}, ptr = {};
+  /* 分阶段松帽（#778 设计决策）：实测归档池国别分布极度偏斜（单日美国 1,639 / 池 4,132 = 40%），
+   * 任何「按国均分」的硬帽都会把总量砍掉 25~50%。用户铁律是「采集量不能少」，
+   * 因此：补采侧只做「头部压制 + 中小国席位保底 + 类别不垄断」，总量缺口由
+   * 实时侧（gap-scheduler / 定向哨兵）扩产补偿 —— 见 #779 P1-2。
+   * 本阶段固定单一档（不放宽）：单国 ≤4%（80 席/历史日）、单类 ≤30%（600 席/历史日）。 */
+  const CAP_STAGES = [1];
+  let capMul = 1;
+  const _ctryCapBase = Math.max(20, Math.floor(selTarget * BF_HEAD_SHARE));
+  const _capOf = c => {
+    if (!archiveMode || capMul === 0) return Infinity;   /* test-day 指定国：不受国帽 */
+    return _ctryCapBase * capMul;
+  };
+  const _catCapOf = () => (capMul === 0 ? Infinity : catCapN * capMul);
+  const _wOf = c => BF_TIER_WEIGHT[_TIER_OF[c] || 'OTHER'] || BF_TIER_WEIGHT.OTHER;
+  function _okNew(it) {
+    if (!it.url || selUrl.has(it.url)) return false;
+    if (it._tk && it._tk.length >= 10 && selTitle.has(it._tk)) return false;
+    const c = String(it.country || '');
+    if (c && (ctryCount[c] || 0) >= _capOf(c)) return false;
+    const ct = it._cat || 'geopolitical_intel';
+    if ((catCount[ct] || 0) >= _catCapOf()) return false;
+    return true;
+  }
+  function _add(it) {
+    const c = String(it.country || '');
+    selUrl.add(it.url); if (it._tk && it._tk.length >= 10) selTitle.add(it._tk);
+    if (c) ctryCount[c] = (ctryCount[c] || 0) + 1;
+    const ct = it._cat || 'geopolitical_intel';
+    catCount[ct] = (catCount[ct] || 0) + 1;
+    selected.push(it);
+  }
+
+  /* ② 涉华核心优先（重点铁律：不受国别/类别帽限） */
+  let chinaN = 0;
+  let china = [];
+  try { china = pool.filter(it => D.isChinaRelated(String(it.title || ''))); } catch (e) { china = []; }
+  china.forEach(it => {
+    if (selected.length >= selTarget) return;
+    if (!it.url || selUrl.has(it.url)) return;
+    _add(it); chinaN++;
+  });
+
+  /* ③ 国别桶（桶内 mentions 降序——高报道量优先） */
+  const byCtry = {};
+  pool.forEach(it => { const c = String(it.country || '') || '∅'; (byCtry[c] = byCtry[c] || []).push(it); });
+  const ctryKeys = Object.keys(byCtry);
+  ctryKeys.forEach(k => {
+    byCtry[k].sort((a, b) => (b.mentions || 0) - (a.mentions || 0));
+    ptr[k] = 0;
+  });
+
+  /* ④ 加权水填充：每轮取 deficit = 已选数/权重 最小的国别（同 deficit 保持首见顺序）。
+   *    某国池尽 / 触帽 → 出列，其席位自动回流给仍有库存的国别 → 总量不减。
+   *    分阶段松帽：先紧后松，优先用均衡席位喂满，喂不满才逐步放开（见 CAP_STAGES 注释）。 */
+  for (let si = 0; si < CAP_STAGES.length && selected.length < selTarget; si++) {
+    capMul = CAP_STAGES[si];
+    ctryKeys.forEach(k => { ptr[k] = 0; });   /* 每阶段重扫（已选条目由 selUrl/selTitle 拦下） */
+    let guard = 0;
+    const guardMax = selTarget * 3 + 4000;
+    while (selected.length < selTarget && guard++ < guardMax) {
+      let bestK = null, bestD = Infinity, bestI = -1;
+      for (const k of ctryKeys) {
+        const c = ctryCount[k] || 0;
+        if (c >= _capOf(k)) continue;
+        const arr = byCtry[k];
+        let idx = -1;
+        for (let i = ptr[k]; i < arr.length; i++) { if (_okNew(arr[i])) { idx = i; break; } }
+        if (idx < 0) continue;
+        const d = c / _wOf(k);
+        if (d < bestD - 1e-9) { bestD = d; bestK = k; bestI = idx; }
+      }
+      if (!bestK) break;
+      const it = byCtry[bestK][bestI];
+      ptr[bestK] = bestI + 1;
+      _add(it);
+    }
+  }
+  capMul = 1;
+
+  /* ⑤ 合成兜底 ≤5% 硬预算：超预算按 mentions 最低者先弃（宁少勿滥） */
+  const synMax = Math.ceil(selected.length * SYNTHETIC_MAX_SHARE);
+  const synItems = selected.filter(it => it._synthetic);
+  if (synItems.length > synMax) {
+    synItems.sort((a, b) => (a.mentions || 0) - (b.mentions || 0));
+    const dropUrls = new Set(synItems.slice(0, synItems.length - synMax).map(x => x.url));
+    for (let i = selected.length - 1; i >= 0; i--) if (dropUrls.has(selected[i].url)) selected.splice(i, 1);
+    console.log('[BACKFILL] 合成兜底超预算：' + synItems.length + ' → 弃 ' + (synItems.length - synMax) + ' 留 ' + synMax);
+  }
+  return { selected, chinaN, ctryCount, catCount };
 }
 
 /* ---------- 单日处理 ---------- */
@@ -315,85 +442,16 @@ async function processDay(day, opts) {
       it._cat = it._cat || _catOf(it.title);
     }
   });
-  /* 选择：涉华优先（不占类别帽）→ 类别轮循 + 国别均衡（用户 2026-09-07 指令：
-   * 类别要均衡、国别要均衡、不要全是美俄以伊）。
-   * ① 同标题选择去重：模板标题在 (a1,a2,同root不同子码) 变体间完全相同，
-   *    只按 URL 选会把同题变体全选进来喂给标题去重闸（实测 1521/1857 白选）；
-   * ② 国别帽：归档日 ~70/国（2400 目标 ÷ ~35 个活跃国），头部热国让位中小国。 */
-  const selTarget = SELECT_TARGET;      /* #714③：归档/DOC 统一 2000 入选目标（净落 ~1500） */
-  const ccap = archiveMode ? COUNTRY_CAP : 1e9;   /* test-day 指定国实测不受国帽 */
-  const _normT = s => String(s || '').toLowerCase().replace(/[^\w一-龥]+/g, '').slice(0, 48);
-  const selTitle = new Set();
-  const ctryCount = {};
-  const _tryAdd = (it, uncapped) => {
-    if (selected.length >= selTarget) return false;
-    if (!it.url || selUrl.has(it.url)) return false;
-    const tk = _normT(it.title);
-    if (tk.length >= 10 && selTitle.has(tk)) return false;
-    const c = String(it.country || '');
-    if (!uncapped && c && (ctryCount[c] || 0) >= ccap) return false;
-    selUrl.add(it.url); if (tk.length >= 10) selTitle.add(tk);
-    if (c) ctryCount[c] = (ctryCount[c] || 0) + 1;
-    selected.push(it);
-    return true;
-  };
-  let chinaN = 0;
-  const china = pool.filter(it => { try { return D.isChinaRelated(String(it.title || '')); } catch (e) { return false; } });
-  const byCat = {};
-  pool.forEach(it => { if (!byCat[it._cat]) byCat[it._cat] = []; byCat[it._cat].push(it); });
-  const selected = [];
-  const selUrl = new Set();
-  china.forEach(it => { if (_tryAdd(it, true)) chinaN++; });   /* 涉华核心不受国别帽限（重点铁律） */
-  const catKeys = Object.keys(byCat).filter(k => k !== 'geopolitical_intel')
-    .sort((a, b) => byCat[a].length - byCat[b].length);  /* 小类先补（稀缺优先） */
-  const catCap = CAT_CAP;               /* #714③：单类 ≤600（30%），杜绝旧档单类 88% 失衡 */
-  const catCount = {};
-  const tried = new Set();   /* 轮循内已看过的 URL（题重/国帽挡下也算看过，防死循环；补偿轮仍可捞回） */
-  let more = true;
-  while (more && selected.length < selTarget) {
-    more = false;
-    for (const ct of catKeys.concat(['geopolitical_intel'])) {
-      if (selected.length >= selTarget) break;
-      if ((catCount[ct] || 0) >= catCap) continue;
-      const arr = byCat[ct] || [];
-      const it = arr.find(x => !tried.has(x.url));
-      if (!it) continue;
-      tried.add(it.url);
-      if (!_tryAdd(it, false)) continue;
-      catCount[ct] = (catCount[ct] || 0) + 1;
-      more = true;
-    }
-  }
-  /* 国别均衡补偿轮：首轮被国别帽拦下的空额，按「当前入选最少国」放开国帽再补一轮。
-   * 2026-09-08 类别均衡根修：补偿轮同样受类别帽约束——旧版此处不查 catCount，
-   * 归档池 ~80% 是言语冲突（root 10-13/16 → geopolitical_intel），兜底条目全灌
-   * 单一类别（实测新入库 94% geopolitical），违背用户「12 类别均衡化」指令。
-   * 帽后若喂不满 1500 目标，宁可少而均衡（真空缺类由实时通道补）。 */
-  if (archiveMode && selected.length < selTarget) {
-    const leftovers = pool.filter(x => !selUrl.has(x.url))
-      .sort((a, b) => (ctryCount[String(a.country || '')] || 0) - (ctryCount[String(b.country || '')] || 0));
-    for (const it of leftovers) {
-      if (selected.length >= selTarget) break;
-      const ct0 = it._cat || 'geopolitical_intel';
-      if ((catCount[ct0] || 0) >= catCap) continue;
-      const tk = _normT(it.title);
-      if (tk.length >= 10 && selTitle.has(tk)) continue;
-      selUrl.add(it.url); if (tk.length >= 10) selTitle.add(tk);
-      const c = String(it.country || ''); if (c) ctryCount[c] = (ctryCount[c] || 0) + 1;
-      catCount[ct0] = (catCount[ct0] || 0) + 1;
-      selected.push(it);
-    }
-  }
-
-  /* #714④ 合成兜底 ≤5% 硬预算：超预算按 mentions 最低者先弃（宁少勿滥）。 */
-  const synMax = Math.ceil(selected.length * SYNTHETIC_MAX_SHARE);
-  const synItems = selected.filter(it => it._synthetic);
-  if (synItems.length > synMax) {
-    synItems.sort((a, b) => (a.mentions || 0) - (b.mentions || 0));
-    const dropUrls = new Set(synItems.slice(0, synItems.length - synMax).map(x => x.url));
-    for (let i = selected.length - 1; i >= 0; i--) if (dropUrls.has(selected[i].url)) selected.splice(i, 1);
-    console.log('[BACKFILL] ' + day + ' 合成兜底超预算：' + synItems.length + ' → 弃 ' + (synItems.length - synMax) + ' 留 ' + synMax);
-  }
+  /* #778 P1 配额矩阵化选择（替代旧「类别轮循 + 国别补偿轮」）：
+   * 旧版三个结构性缺陷——① 类别帽 CAT_CAP=600 对 geopolitical_intel 形同虚设
+   * （真实标题关键词通用词兜底把它顶到 43.8%）；② 国别帽单档 120 且只对 9 国生效，
+   * 英国/澳大利亚/加拿大零制约；③ 类别轮循按池深度轮转，池深的类别反而被反复选中。
+   * 新版：CAMEO 权威分类 + 国别加权水填充 + 类别硬帽（22%），总量不变只改分配。 */
+  const _sel = _selectFromPool(pool, { archiveMode, selTarget: SELECT_TARGET });
+  const selected = _sel.selected;
+  const chinaN = _sel.chinaN;
+  const ctryCount = _sel.ctryCount;
+  const catCount = _sel.catCount;
   const realN = selected.filter(it => it._realTitle).length;
   const synN = selected.filter(it => it._synthetic).length;
 
@@ -681,4 +739,5 @@ function init(deps) {
 }
 
 /* 哨兵（backfill-watch.js）共享：暂停分层状态机 + 硬帽常量的单一来源（防双份漂移） */
-module.exports = { init, _dayList, INGEST_CAP, _isPaused, _setPaused, _getState, _setState };
+module.exports = { init, _dayList, INGEST_CAP, _isPaused, _setPaused, _getState, _setState,
+  _selectFromPool };   /* #778 导出供干跑/单测（配额矩阵生效前先量化验收） */

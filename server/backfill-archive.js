@@ -239,9 +239,15 @@ async function _archivePool(day, stat) {
 }
 
 /* #714④：CAMEO 精确子码分类（恐袭 175/176/183/185/186、制裁 172/173 高置信，
- * 真实标题关键词分类（GAP_KEYWORDS）之前优先取用） */
+ * 真实标题关键词分类（GAP_KEYWORDS）之前优先取用）
+ * #778 P1（2026-09-12）根修：补上 ROOT_CAT 根码兜底。归档池只含物质冲突
+ * （QuadClass=4）+ 抗议（root 14），可达根码 14/15/17/18/19/20 全部在 ROOT_CAT 中，
+ * 语义 100% 确定。旧版只返回 CODE_CAT（12 个子码）→ 其余全部返回 '' →
+ * 调用方退回「真实标题关键词」兜底 → 通用词（tension/dispute/summit）把 43.8%
+ * 条目录入 geopolitical_intel，补采类别头尾差 1,114 倍（11,142 vs 10）。
+ * 现在 CAMEO 码即权威分类，标题关键词仅在既无子码又无根码时兜底。 */
 function preciseCat(item) {
-  return CODE_CAT[item && item._ev] || '';
+  return CODE_CAT[item && item._ev] || ROOT_CAT[item && item._root] || '';
 }
 
 /* ---------- 源 2：ReliefWeb（真实标题，补 nature/society 域） ----------
