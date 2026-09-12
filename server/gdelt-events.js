@@ -33,48 +33,14 @@ const ROOT_ACT = {
   '19': { w: '交战', dt: 'military_conflicts', lv: 'orange' },
   '20': { w: '大规模暴力', dt: 'terror_events', lv: 'red' }
 };
-/* Actor 群体词翻译（GDELT 常给群体名而非组织名） */
-const ACTOR_ZH = {
-  POLICE: '警方', MILITARY: '军方', GOVERNMENT: '政府', REBEL: '叛军', MILITANT: '武装分子',
-  PROTESTER: '抗议者', TERRORIST: '恐怖分子', CHINESE: '中方人员', RUSSIAN: '俄方', UKRAINIAN: '乌方',
-  SOLDIER: '士兵', CIVILIAN: '平民', GUNMAN: '枪手', TROOPS: '部队', INSURGENT: '叛乱分子',
-  ISIS: '“伊斯兰国”', TALIBAN: '塔利班', STUDENT: '学生', WORKER: '工人', FARMER: '农民',
-  JUDGE: '法官', JOURNALIST: '记者', ACTIVIST: '活动人士', SEPARATIST: '分离主义者',
-  PRESIDENT: '总统', MINISTER: '部长', ARMY: '陆军', NAVY: '海军', AIR_FORCE: '空军',
-  PARAMILITARY: '准军事部队', BORDER_GUARD: '边防部队', INTELLIGENCE: '情报机构',
-  HOUTHIS: '胡塞武装', HAMAS: '哈马斯', HEZBOLLAH: '真主党', KURD: '库尔德武装',
-  AFRICA: '非洲方面', BUSINESS: '企业界', CORPORATION: '企业', RESIDENTS: '当地居民',
-  'GOVERNMENT FORCES': '政府军', 'SECURITY FORCES': '安全部队', 'ARMED FORCES': '武装部队',
-  MUSLIM: '穆斯林群体', CHRISTIAN: '基督徒群体', MILITIA: '民兵', CARTEL: '贩毒集团',
-  GANG: '帮派', INSURGENTS: '叛乱分子', OPPOSITION: '反对派', OFFICIALS: '官员'
-};
+/* 行为体/地点翻译：2026-09-06 #657 收敛至 gdelt-actors.js 单一事实源
+ * （与 backfill-archive.js 共用一份词表，词表外真实实体名保留原文不编造） */
+const { actorZh: _actorZh, locZh } = require('./gdelt-actors');
 
 const _seen = new Set();   /* GLOBALEVENTID 去重（内存，服务重启自然重置） */
 let _lastFile = '';        /* 已处理的文件批次（防重复下载） */
 
-/* 高频组织名（Actor 实体名 → 中文） */
-const ORG_ZH = {
-  'BALOCH LIBERATION ARMY': '俾路支解放军', 'BALOCHISTAN LIBERATION ARMY': '俾路支解放军',
-  'TEHRIK-E-TALIBAN': '巴基斯坦塔利班', 'TEHRIK-I-TALIBAN': '巴基斯坦塔利班',
-  'AL-SHABAAB': '“青年党”', 'AL SHABAAB': '“青年党”', 'BOKO HARAM': '“博科圣地”',
-  'ISIS': '“伊斯兰国”', 'ISIL': '“伊斯兰国”', 'ISLAMIC STATE': '“伊斯兰国”',
-  'HOUTHIS': '胡塞武装', 'HOUTHI': '胡塞武装', 'HAMAS': '哈马斯', 'HEZBOLLAH': '真主党',
-  'TALIBAN': '塔利班', 'RSF': '快速支援部队', 'RAPID SUPPORT FORCES': '快速支援部队',
-  'WAGNER': '瓦格纳集团', 'M23': '“M23”武装', 'FARC': '“哥伦比亚革命武装力量”',
-  'AL-QAEDA': '“基地”组织', 'AL QAEDA': '“基地”组织', 'ISWAP': '“伊斯兰国”西非省',
-  'PKK': '库尔德工人党'
-};
 const { gdCnFromEn } = require('./crawler');
-function _actorZh(name) {
-  const raw = String(name || '').trim();
-  if (!raw) return '';
-  const up = raw.toUpperCase();
-  if (ACTOR_ZH[up]) return ACTOR_ZH[up];
-  if (ORG_ZH[up]) return ORG_ZH[up];
-  const cn = gdCnFromEn(raw);   /* 国家名 Actor（"Pakistan"→巴基斯坦方） */
-  if (cn) return cn + '方';
-  return raw;   /* 组织/人名原文保留（真实实体名，不编造翻译） */
-}
 
 /* 行动句式：A+行动+B 通顺中文组合 */
 function _actPhrase(root, a1, a2) {
@@ -130,7 +96,7 @@ function _toItem(ev) {
   const phrase = _actPhrase(ev.rootCode, a1, a2);
   /* 地点：geoName 第一段（"Balochistan, Balochistan, Pakistan"→Balochistan），与国名重复则不显示 */
   const locEn = String(ev.geoName || '').split(',')[0].trim();
-  const loc = locEn && locEn.toLowerCase() !== String(ev.geoCtry || '').toLowerCase() && !gdCnFromEn(locEn) ? '（' + locEn + '）' : '';
+  const loc = locEn && locEn.toLowerCase() !== String(ev.geoCtry || '').toLowerCase() && !gdCnFromEn(locEn) ? '（' + locZh(locEn) + '）' : '';
   let title = cn + loc + '：' + phrase;
   if (ev.articles >= 3) title += '（' + ev.articles + ' 篇报道）';
   /* 级别：根码基线 + 高报道量/强负烈度/涉华上调 */
@@ -147,6 +113,24 @@ function _toItem(ev) {
     const ageMs = Date.now() - new Date(dt + 'T00:00:00Z').getTime();
     if (ageMs > 48 * 3600 * 1000) return null;
   }
+  /* 2026-09-12 要素补全（用户指令：大量采集数据"没有核心要素，我要翻译的内容有核心内容"）：
+   * 本通道只有 GDELT 事件编码、不抓正文，但原始记录自带结构化元数据
+   * （Goldstein 烈度 / 文章数 / 信源数 / 提及次数 / 事发日期 / 规范化行为体），
+   * 零网络成本即可造出可信要素，结构对齐 fulltext.extractFacts 输出（icon/tone/label/value/evidence），
+   * 写入 factSheet 供卡片与详情卡消费——避免「国（地）：主体 动作」一句话撑满整张卡。 */
+  const _gdFacts = [];
+  _gdFacts.push({ icon: '📍', tone: 'normal', label: '事发地点', value: cn + (loc || ''), evidence: String(ev.geoName || cn) });
+  _gdFacts.push({ icon: '⚡', tone: root.lv === 'red' ? 'critical' : 'high', label: '事件性质', value: root.w, evidence: 'GDELT CAMEO 根码 ' + ev.rootCode + '（' + root.w + '）' });
+  if (a1 && a1 !== '不明行为体') _gdFacts.push({ icon: '🎯', tone: 'critical', label: '威胁行为体', value: a1 + (a2 && a2 !== a1 && a2 !== '不明行为体' ? ' → ' + a2 : ''), evidence: 'GDELT Actor1' + (a2 ? '/Actor2' : '') + ' 规范化' });
+  if (ev.goldstein != null && ev.goldstein !== '') _gdFacts.push({ icon: '🎚️', tone: (ev.goldstein <= -8 ? 'critical' : ev.goldstein <= -5 ? 'high' : 'normal'), label: '冲突烈度', value: 'Goldstein ' + ev.goldstein, evidence: 'GDELT GoldsteinScale（-10 最敌对 / +10 最合作）' });
+  if (ev.articles) _gdFacts.push({ icon: '📰', tone: 'normal', label: '报道规模', value: ev.articles + ' 篇文章 · ' + (ev.sources || 0) + ' 个信源 · ' + (ev.mentions || 0) + ' 次提及', evidence: 'GDELT NumArticles/NumSources/NumMentions' });
+  if (dt) _gdFacts.push({ icon: '🕐', tone: 'normal', label: '事发时间线索', value: dt, evidence: 'GDELT SQLDATE' });
+  const _fs = {
+    facts: _gdFacts,
+    actors: (a1 && a1 !== '不明行为体') ? [a1] : [],
+    casualty: {}, hasCasualty: false, hasCnSubject: !!isCn,
+    incidentTypes: [root.w], extractedAt: new Date().toISOString()
+  };
   return {
     title: title, title_zh: title,
     url: ev.srcUrl,
@@ -163,6 +147,7 @@ function _toItem(ev) {
       '；' + ev.articles + ' 篇文章/' + ev.sources + ' 个信源/' + ev.mentions + ' 次提及。',
     chinaRelated: isCn || undefined,
     interestLinked: true,
+    factSheet: _fs, hasCasualty: false, incidentTypes: [root.w],
     _sourceType: 'gdelt_events', _fromSource: 'GDELT-EVENTS', _gdeltEventId: ev.id,
     _gdSources: ev.sources, _gdMentions: ev.mentions, _gdArticles: ev.articles,
     _forceDataType: true

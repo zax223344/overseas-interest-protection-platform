@@ -234,6 +234,21 @@ async function _archivePool(day, stat) {
       interestLinked: true
     };
     if (conf === 'low') row._tplLowConf = true;
+    /* 2026-09-12 要素补全（用户指令：大量采集数据"没有核心要素"）：
+     * 归档通道只有 CAMEO 码，无正文可抽，但原始记录自带结构化元数据
+     * （事件子码/根码、报道量、提及次数、事发日、规范化行为体），零网络成本成要素。
+     * ★ 低可信条目绝不写「威胁行为体」——conf==='low' 的含义正是"军事动词 + 行为体不具武力投射能力"，
+     *   把误码行为体当事实展示，比不展示更糟。 */
+    const _f = [];
+    _f.push({ icon: '📍', tone: 'normal', label: '事发地点', value: it._cn + (it._geo && it._geo !== it._cn ? '（' + it._geo + '）' : ''), evidence: 'GDELT ActionGeo=' + (it._geo || it._cn) });
+    _f.push({ icon: '⚡', tone: (it._root === '20' || it._root === '18') ? 'critical' : 'high', label: '事件性质', value: (VERB_NOUN[it._ev] || VERB_NOUN[it._root] || '对抗事件'), evidence: 'GDELT CAMEO 码 ' + it._ev + '（根码 ' + it._root + '）' });
+    if (conf !== 'low') {
+      const _A1 = _actorName(it._a1), _A2 = _actorName(it._a2);
+      if (_A1) _f.push({ icon: '🎯', tone: 'critical', label: '威胁行为体', value: _A1 + (_A2 && _A2 !== _A1 ? ' → ' + _A2 : ''), evidence: 'GDELT Actor1' + (_A2 ? '/Actor2' : '') + ' 规范化' });
+    }
+    _f.push({ icon: '📰', tone: 'normal', label: '报道规模', value: (it._na || 1) + ' 篇文章 · ' + (it._nm || 1) + ' 次提及', evidence: 'GDELT NumArticles/NumMentions' });
+    _f.push({ icon: '🕐', tone: 'normal', label: '事发时间线索', value: day, evidence: 'GDELT SQLDATE' });
+    row.factSheet = { facts: _f, actors: [], casualty: {}, hasCasualty: false, hasCnSubject: /中国|中资|中企|中方|华人|华侨/.test(it._cn || ''), incidentTypes: [VERB_NOUN[it._ev] || VERB_NOUN[it._root] || '对抗事件'], extractedAt: new Date().toISOString(), _src: 'gdelt-archive-structured' };
     return row;
   });
 }

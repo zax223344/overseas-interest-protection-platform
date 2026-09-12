@@ -10534,7 +10534,12 @@ const SITUATION={
             (isCn?'<span style="font-size:8px;padding:0 4px;border-radius:5px;border:1px solid var(--cyan);color:var(--cyan);font-weight:700">涉我海外利益</span>':'')+
             (inCorr?'<span style="font-size:8px;padding:0 4px;border-radius:5px;border:1px solid var(--red);color:var(--red)">高危走廊</span>':'')+'</div>';
         }
-        var factHtml=facts.length?'<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+facts.map(function(x){return x.k+x.v;}).join(' · ')+'</div>':'';
+        /* 2026-09-12 用户指令（要素不全）：单行 nowrap 会把 6 项要素截成一两项，改为最多两行，
+         * 并对伤亡/涉中方主体做高亮，让"核心内容"在第一眼就能看到。 */
+        var factHtml=facts.length?'<div style="font-size:9px;line-height:1.6;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+facts.map(function(x){
+          var hot=(x.k==='💀'||x.k==='🩹'||x.k==='❓'||x.k==='🇨🇳'||x.k==='🎯');
+          return '<span style="color:'+(hot?'var(--orange)':'var(--text3)')+'">'+x.k+x.v+'</span>';
+        }).join('<span style="color:var(--text3)"> · </span>')+'</div>':'';
         var _aid2=String(a.id||'');
         alertHtml+='<div class="sit-alert-row lv-'+a.level+'" onclick="showAlertDetail(\''+_aid2.replace(/'/g,"\\'")+'\')" style="display:flex;align-items:flex-start;gap:8px;padding:7px 6px;border-radius:6px;cursor:pointer;transition:.15s;border-left:3px solid '+sc+';margin-bottom:4px;background:'+bg+'" onmouseover="this.style.background=\'rgba(0,212,255,0.1)\'" onmouseout="this.style.background=\''+bg+'\'">'+
           '<div style="flex-shrink:0;width:26px;text-align:center;font-size:17px;line-height:1">'+flag+'</div>'+
@@ -13721,24 +13726,8 @@ const AVIEW={
     score=Math.max(0,Math.min(100,score));
     return {score:score,tags:tags,why:tags.length?tags.slice(0,3).map(function(x){return x.t;}).join(' · '):'一般动态监测'};
   },
-  /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
-  _liteFacts(a){
-    /* 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会让"⚡➡️"facts 显示半中半英。 */
-    var text=String(_zhT(a)||a.title||'')+' '+String(a.content_zh||'');
-    var f=[];
-    var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
-    if(tm)f.push({k:'🕐',v:tm[1]});
-    var pm=text.match(/(?:在|于)([^，。；;,.]{2,10}?(?:省|州|市|港|机场|车站|铁路|矿区|营地|边境|首都|海域|海峡))/);
-    if(pm)f.push({k:'📍',v:pm[1]});
-    else if(a.country)f.push({k:'📍',v:a.country});
-    var am=text.match(/(塔利班|青年党|博科圣地|伊斯兰国|基地组织|胡塞武装|真主党|哈马斯|俾路支|分离武装|武装分子|军方|政府军|警方|反对派)/);
-    if(am)f.push({k:'👤',v:am[1]});
-    var em=text.match(/(自杀式爆炸|连环爆炸|爆炸|武装袭击|袭击|枪击|绑架|劫持|空袭|交火|政变|大规模抗议|骚乱|地震|洪水|制裁|坠机|沉船)/);
-    if(em)f.push({k:'⚡',v:em[1]});
-    var rm=text.match(/(?:造成|致|导致)([^。；;]{2,26})/);
-    if(rm)f.push({k:'➡️',v:rm[1].slice(0,24)});
-    return f;
-  },
+  /* 2026-09-12 注：此处曾与下方（_alertValue 之后）同名重复定义 _liteFacts，
+   * 对象字面量重复键后者覆盖前者 → 本处为死代码，已删除；唯一定义保留在下方。 */
   /* ===== 预警价值引擎（2026-08-16 用户指令：预警要看得出"为什么值得预警"）===== */
   _alertValue(a){
     var text=String(a.title||'')+' '+String(a.title_zh||'')+' '+String(a.desc||'');
@@ -13765,23 +13754,94 @@ const AVIEW={
     score=Math.max(0,Math.min(100,score));
     return {score:score,tags:tags,why:tags.length?tags.slice(0,3).map(function(x){return x.t;}).join(' · '):'一般动态监测'};
   },
-  /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，正则从真实文本抽取，缺什么如实缺）===== */
+  /* ===== 五要素提炼（时间/地点/涉事方/事件/结果，缺什么如实缺）=====
+   * 2026-09-12 用户指令（"采集的数据翻译都是这么短，没有核心要素，我要翻译的内容有核心内容"）：
+   * ★ 首选消费服务端 fulltext.extractFacts 产出的结构化 factSheet（9 类硬要素：人员死亡/人员受伤/
+   *   失踪被扣/事件性质/威胁行为体/中方涉及主体/涉及金额/事发时间线索/已采取处置，每项附原文佐证句），
+   *   服务端已对 34,633 条（65%）落库该字段，此前前端卡片完全没用它、只跑下面的窄正则 →
+   *   大量卡片只剩「📍国家」一项，这就是"没有核心要素"的直接原因。
+   * 仅在 factSheet 缺失时回退窄正则兜底（已补：GDELT 模板句「国（地）：主体 动作」、
+   *   （N 篇报道）→📰、Goldstein 烈度→🎚️、ISO 日期、中文括号地名、海峡/运河等地理专名裸后缀）。
+   * 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会半中半英。 */
   _liteFacts(a){
-    /* 2026-08-27：只读中文字段。Google News RSS 的 a.content/desc 含英文原文，混入后会让"⚡➡️"facts 显示半中半英。 */
+    /* 槽位表：同一槽位只取第一个非空值（factSheet 优先，正则补位），最后按情报学顺序输出。
+     * 早期版本用「有 factSheet 就整体 return」，实测反而变差（平均要素 1.36→1.26）——
+     * factSheet 有 🕐 但无 📍 时会把兜底的国别也一起丢掉。故改为按槽位合并。 */
+    var S={};
+    function put(slot,k,v){
+      if(S[slot])return;
+      if(v===undefined||v===null||v==='')return;
+      v=String(v).replace(/\s+/g,' ').trim();
+      if(!v)return;
+      if(v.length>42)v=v.slice(0,42)+'…';
+      S[slot]={k:k,v:v};
+    }
+    /* ---------- 一级：服务端结构化 factSheet（有正文的条目命中率最高，含原文佐证） ---------- */
+    var fs=a&&a.factSheet;
+    if(fs&&fs.facts&&fs.facts.length){
+      var ord={'人员死亡':0,'人员受伤':1,'失踪/被扣':2,'事件性质':3,'威胁行为体':4,'中方涉及主体':5,'涉及金额/损失':6,'事发时间线索':7,'已采取处置':8};
+      var arr=[],i;
+      for(i=0;i<fs.facts.length;i++)arr.push(fs.facts[i]);
+      arr.sort(function(x,y){var p=ord[x.label],q=ord[y.label];return (p===undefined?9:p)-(q===undefined?9:q);});
+      for(i=0;i<arr.length;i++){
+        var lb=arr[i].label,slot=null;
+        if(lb==='人员死亡')slot='cas1';
+        else if(lb==='人员受伤')slot='cas2';
+        else if(lb==='失踪/被扣')slot='cas3';
+        else if(lb==='事件性质')slot='event';
+        else if(lb==='威胁行为体')slot='actor';
+        else if(lb==='中方涉及主体')slot='cn';
+        else if(lb==='涉及金额/损失')slot='money';
+        else if(lb==='事发时间线索')slot='time';
+        else if(lb==='已采取处置')slot='resp';
+        if(slot)put(slot,arr[i].icon||'•',arr[i].value);
+      }
+    }
+    /* ---------- 二级：正则兜底/补位（factSheet 没有的槽位在此补齐） ---------- */
     var text=String(_zhT(a)||a.title||'')+' '+String(a.content_zh||'');
-    var f=[];
-    var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
-    if(tm)f.push({k:'🕐',v:tm[1]});
-    var pm=text.match(/(?:在|于)([^，。；;,.]{2,10}?(?:省|州|市|港|机场|车站|铁路|矿区|营地|边境|首都|海域|海峡))/);
-    if(pm)f.push({k:'📍',v:pm[1]});
-    else if(a.country)f.push({k:'📍',v:a.country});
-    var am=text.match(/(塔利班|青年党|博科圣地|伊斯兰国|基地组织|胡塞武装|真主党|哈马斯|俾路支|分离武装|武装分子|军方|政府军|警方|反对派)/);
-    if(am)f.push({k:'👤',v:am[1]});
-    var em=text.match(/(自杀式爆炸|连环爆炸|爆炸|武装袭击|袭击|枪击|绑架|劫持|空袭|交火|政变|大规模抗议|骚乱|地震|洪水|制裁|坠机|沉船)/);
-    if(em)f.push({k:'⚡',v:em[1]});
+    /* GDELT/归档模板句形态「国（地）：主体 动作 …」——拆出 地点/行为体/动作 */
+    var gt=text.match(/^([\u4e00-\u9fa5]{2,14})[（(]([^）)]{1,14})[)）][：:]\s*([\s\S]+)$/);
+    if(gt){
+      put('loc','📍',gt[1]+'（'+gt[2]+'）');
+      var body=gt[3];
+      var act=body.match(/(胁迫|威慑|交战|展示武力|停止|封锁|中断|停航|袭击|空袭|交火|制裁|禁运|吞并|占领|入侵|撤离|戒严)/);
+      var a1m=body.match(/^([\u4e00-\u9fa5]{2,8}?)(?:对|与|向|同)/);
+      if(a1m&&a1m[1]&&!/^(相关|有关|各方|该)/.test(a1m[1]))put('actor','🎯',a1m[1]);
+      if(act)put('event','⚡',act[1]);
+    }else{
+      var tm=text.match(/(\d{4}年\d{1,2}月\d{1,2}日|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}月\d{1,2}日|今天|今日|昨天|昨晚)/);
+      if(tm)put('time','🕐',tm[1]);
+      var pm=text.match(/(?:在|于)([^，。；;,.]{2,12}?(?:省|州|市|港|机场|车站|铁路|矿区|营地|边境|首都|海域|海峡))/);
+      if(pm)put('loc','📍',pm[1]);
+      if(!pm){
+        var geo=text.match(/([\u4e00-\u9fa5]{2,9}(?:海峡|海域|运河|半岛|群岛|海湾|走廊))|(红海|黑海|地中海|加勒比海|亚丁湾|波斯湾|阿曼湾|孟加拉湾|马六甲)/);
+        if(geo){
+          /* 去掉跑在专名前的修饰/介词/动词（"日益严重的曼德海峡"→"曼德海峡"、
+           * "通过霍尔木兹海峡"→"霍尔木兹海峡"、"该公司控制了苏伊士运河"→"苏伊士运河"） */
+          var g=String(geo[1]||geo[2]||'');
+          var NOISE=/^(?:该公司|这家公司|该国|该公司已|已|将|正|仍|继续|日益|持续|不断|进一步|严重|严峻|最新|紧张|急剧|加剧|通过|经由|穿过|横跨|连接|封锁|控制|位于|的|了|该|本|这|那|并|且)/;
+          var guard=0;
+          while(NOISE.test(g)&&guard++<8)g=g.replace(NOISE,'');
+          if(g.length>=2&&!/^(使|让|把|被|从|向|对)/.test(g))put('loc','📍',g);
+        }
+      }
+    }
+    if(!S.loc&&a.country)put('loc','📍',a.country);
+    var am=text.match(/(塔利班|青年党|博科圣地|伊斯兰国|基地组织|胡塞武装|胡塞|胡希|真主党|哈马斯|俾路支|分离武装|武装分子|军方|政府军|警方|反对派|伊朗方?|美国方?|以色列方?|俄方|乌方|中方)/);
+    if(am)put('actor','🎯',am[1]);
+    var em=text.match(/(自杀式爆炸|连环爆炸|爆炸|武装袭击|袭击|枪击|绑架|劫持|空袭|交火|政变|大规模抗议|骚乱|地震|洪水|制裁|禁运|坠机|沉船|胁迫|威慑|封锁|停止|中断|停航|冲突)/);
+    if(em)put('event','⚡',em[1]);
     var rm=text.match(/(?:造成|致|导致)([^。；;]{2,26})/);
-    if(rm)f.push({k:'➡️',v:rm[1].slice(0,24)});
-    return f;
+    if(rm)put('result','➡️',rm[1].slice(0,24));
+    var nm=text.match(/[（(](\d+)\s*篇(?:报道|文章)[)）]/);
+    if(nm)put('media','📰',nm[1]+' 篇报道');
+    var gm=text.match(/Goldstein\s*烈度\s*(-?\d+(?:\.\d+)?)/i);
+    if(gm)put('gold','🎚️','烈度 '+gm[1]);
+    /* ---------- 按情报学顺序输出，卡面最多 6 项（两行） ---------- */
+    var order=['loc','cas1','cas2','cas3','actor','event','result','time','media','gold','resp','cn','money'];
+    var out=[];
+    for(var q=0;q<order.length&&out.length<6;q++){ if(S[order[q]])out.push(S[order[q]]); }
+    return out;
   },
   /* 事件键：国家 + 去数字/进展词/媒体腔的标题主干（同事件多次进展 = 同键） */
   _eventKey(a){
@@ -14077,7 +14137,13 @@ const AVIEW={
               (a._mergedN>1?'<span style="font-size:8px;padding:0 4px;border-radius:6px;border:1px solid var(--purple);color:var(--purple)" title="同事件进展已合并，仅显示最新">🔁×'+a._mergedN+'</span>':'')+'</div>';
           }
           if(facts.length){
-            h+='<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(facts.map(function(x){return x.k+x.v;}).join(' · '))+'</div>';
+            /* 2026-09-12 与态势总览「最新预警」卡面统一：两行显示 + 伤亡/行为体/涉华高亮。
+             * 原为单行 nowrap，要素一多就被截成一两项，等于白抽。 */
+            h+='<div style="font-size:9px;line-height:1.6;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+
+              stripTags(facts.map(function(x){
+                var hot=(x.k==='💀'||x.k==='🩹'||x.k==='❓'||x.k==='🇨🇳'||x.k==='🎯');
+                return '<span style="color:'+(hot?'var(--orange)':'var(--text3)')+'">'+x.k+x.v+'</span>';
+              }).join('<span style="color:var(--text3)"> · </span>'))+'</div>';
           }
           return h;
         })()+
@@ -14240,7 +14306,13 @@ const AVIEW={
               (a._mergedN>1?'<span style="font-size:8px;padding:0 4px;border-radius:6px;border:1px solid var(--purple);color:var(--purple)" title="同事件进展已合并，仅显示最新">🔁×'+a._mergedN+'</span>':'')+'</div>';
           }
           if(facts.length){
-            h+='<div style="font-size:9px;color:var(--text3);line-height:1.5;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+stripTags(facts.map(function(x){return x.k+x.v;}).join(' · '))+'</div>';
+            /* 2026-09-12 与态势总览「最新预警」卡面统一：两行显示 + 伤亡/行为体/涉华高亮。
+             * 原为单行 nowrap，要素一多就被截成一两项，等于白抽。 */
+            h+='<div style="font-size:9px;line-height:1.6;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'+
+              stripTags(facts.map(function(x){
+                var hot=(x.k==='💀'||x.k==='🩹'||x.k==='❓'||x.k==='🇨🇳'||x.k==='🎯');
+                return '<span style="color:'+(hot?'var(--orange)':'var(--text3)')+'">'+x.k+x.v+'</span>';
+              }).join('<span style="color:var(--text3)"> · </span>'))+'</div>';
           }
           return h;
         })()+
@@ -14286,7 +14358,30 @@ const AVIEW={
    * 没有抽到要素就不渲染这一块，绝不用占位内容凑数。 */
   _factSheetHtml(a){
     var fs = a && a.factSheet;
-    if(!fs || !fs.facts || !fs.facts.length) return '';
+    /* 2026-09-12 兜底（用户指令："我要翻译的内容有核心内容"）：
+     * 实测近 3 天库内 factSheet 落库率 65%，预警中心存量 ALERTS 仅 9/508 带该字段 →
+     * 详情卡在这些条目上整块要素区不渲染，用户点开仍"看不到核心要素"。
+     * 故无 factSheet 时改用 _liteFacts（factSheet 优先、正则补位）现算一份，并如实标注数据来源。 */
+    var synthetic = false;
+    if(!fs || !fs.facts || !fs.facts.length){
+      var lf = [];
+      try { lf = this._liteFacts(a) || []; } catch(e) { lf = []; }
+      if(!lf.length) return '';
+      var META = {
+        '📍':['事发地点','normal'], '💀':['人员死亡','critical'], '🩹':['人员受伤','high'],
+        '❓':['失踪/被扣','high'], '⚡':['事件性质','high'], '🎯':['威胁行为体','critical'],
+        '➡️':['事件结果','high'], '🕐':['事发时间线索','normal'], '📰':['报道规模','normal'],
+        '🎚️':['冲突烈度','normal'], '🛡️':['已采取处置','good'], '🇨🇳':['中方涉及主体','key'],
+        '💰':['涉及金额/损失','normal']
+      };
+      fs = {
+        facts: lf.map(function(x){ var m = META[x.k] || ['要素','normal']; return { icon:x.k, label:m[0], value:x.v, tone:m[1] }; }),
+        hasCasualty: false, hasCnSubject: false
+      };
+      fs.hasCasualty = lf.some(function(x){ return x.k==='💀'||x.k==='🩹'||x.k==='❓'; });
+      fs.hasCnSubject = lf.some(function(x){ return x.k==='🇨🇳'; });
+      synthetic = true;
+    }
     var toneColor = {
       critical:'var(--red)', high:'var(--orange)', key:'var(--cyan)',
       good:'var(--green)', normal:'var(--text2)'
@@ -14307,7 +14402,7 @@ const AVIEW={
     if(fs.hasCnSubject) badge += '<span class="badge" style="font-size:9px;padding:1px 5px;background:rgba(0,212,255,.12);color:var(--cyan)">涉中方主体</span> ';
     return '<div style="margin-top:10px;padding:10px;background:rgba(255,77,79,0.04);border:1px solid var(--border);border-radius:8px">'+
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:4px">'+
-        '<div style="font-size:11px;font-weight:700;color:var(--cyan)">🧩 情报要素（自原文正文抽取 '+fs.facts.length+' 项）</div>'+
+        '<div style="font-size:11px;font-weight:700;color:var(--cyan)">🧩 情报要素（'+(synthetic?'自标题/摘要抽取 ':'自原文正文抽取 ')+fs.facts.length+' 项）</div>'+
         '<div>'+badge+'</div>'+
       '</div>'+
       '<div style="display:grid;grid-template-columns:1fr;gap:5px">'+rows+'</div>'+
@@ -18655,6 +18750,16 @@ function showAlertDetail(id){
     _descText=_zhT(a)||a.title||'';
   }
   html+='<div style="padding:14px;background:var(--red-bg);border-left:4px solid var(--red);border-radius:8px;margin-bottom:12px"><strong style="color:var(--red)">预警描述</strong><p style="margin:8px 0 0;line-height:1.8;font-size:13px">'+esc(_descText)+'</p>'+(function(){var _d=_zhBest(a,'desc'),_do=_zhOffTxt(a,'desc');if(_d)return '<div style="margin-top:8px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:2px solid var(--cyan);border-radius:6px;font-size:12px;color:var(--cyan);line-height:1.6">译文：'+esc(_d)+'</div>';if(_do)return '<div style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.05);border-left:2px solid #f59e0b;border-radius:6px;font-size:12px;line-height:1.6">'+_OFFZ+'<span style="color:#f59e0b">'+esc(_do)+'</span></div>';return '';})()+'</div>';
+  /* 2026-09-12 情报要素卡（用户指令："采集的数据没有核心要素，我要翻译的内容有核心内容"）：
+   * 本弹窗（全局 showAlertDetail）此前完全没有要素区，用户点开只看到一段描述——
+   * 与服务端 fulltext.extractFacts 抽取的 factSheet 完全脱节。此处接入与态势总览/预警中心
+   * 卡面同源的要素卡（有 factSheet 用 factSheet 并附原文佐证句；无则 AVIEW._liteFacts 现算兜底）。 */
+  try{
+    if(typeof AVIEW!=='undefined'&&AVIEW._factSheetHtml){
+      var _fsHtml=AVIEW._factSheetHtml(a);
+      if(_fsHtml) html+='<div style="margin-bottom:12px">'+_fsHtml+'</div>';
+    }
+  }catch(e){}
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'+
     '<div style="padding:10px;background:var(--orange-bg);border-radius:6px"><strong style="color:var(--orange);font-size:12px">影响评估</strong><div style="margin-top:4px;font-size:12px;line-height:1.6">'+impactHtml+'</div>'+(_zhBest(a,'impact')?'<div style="margin-top:6px;font-size:11px;color:var(--cyan);line-height:1.5">译文：'+esc(_zhBest(a,'impact'))+'</div>':'')+'</div>'+
     '<div style="padding:10px;background:var(--blue-bg);border-radius:6px"><strong style="color:var(--cyan);font-size:12px">建议响应</strong><div style="margin-top:4px;font-size:12px;line-height:1.6">'+respHtml+'</div>'+(_zhBest(a,'response')?'<div style="margin-top:6px;font-size:11px;color:var(--cyan);line-height:1.5">译文：'+esc(_zhBest(a,'response'))+'</div>':'')+'</div>'+

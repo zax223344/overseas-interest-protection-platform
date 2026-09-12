@@ -5706,6 +5706,15 @@ app.post('/api/gap-scheduler/run', (req, res) => {
   res.json({ ok: true });
 });
 
+/* 2026-09-12 存量正文/要素兜底补抓手动端点（admin）——便于验收与按需加速 */
+app.post('/api/intel/body-backfill', async (req, res) => {
+  try {
+    if (_bbBusy) return res.json({ ok: false, error: '补抓进行中，请稍候' });
+    const out = await _runBodyBackfill();
+    res.json(out);
+  } catch (e) { res.status(500).json({ ok: false, error: String(e && e.message || e) }); }
+});
+
 /* 2026-09-03：intel_data 端 GNews 旧闻 SQL 级清扫手动端点（admin）——便于验证/极端兜底
  * 定时任务每 15 分钟自动跑一轮（_runGnewsTruthSweep 末尾触发 _gnewsDbSweep） */
 app.post('/api/admin/gnews-db-sweep', async (req, res) => {
@@ -11414,6 +11423,10 @@ function startGlobalMediaCron() {
   SCHED.register('cn-media', _runCnMedia, { interval: 10 * 60 * 1000, firstRunMs: 40000, klass: 'collect' }); /* 中文媒体涉华突发首报 */
   SCHED.register('gap-scheduler', _runGapScheduler, { interval: 30 * 60 * 1000, firstRunMs: 2 * 60 * 1000, klass: 'collect' }); /* 国家梯队×12类别缺口矩阵 */
   SCHED.register('neon-sync', _runNeonSync, { interval: 10 * 60 * 1000, firstRunMs: 90000, klass: 'collect' }); /* 云采集下行同步 */
+  /* 2026-09-12 存量正文/要素兜底补抓：把「有链接但正文空短」的历史条目补齐正文并抽 factSheet。
+   * 采集链路的正文名额受 12s/条 时限约束只能覆盖沧海一粟（见 _translateListToZhParallel 注释），
+   * 这里用独立的 30 分钟窗口慢慢啃存量，首次延后 8 分钟避开启动高峰与其他采集任务。 */
+  SCHED.register('body-backfill', _runBodyBackfill, { interval: 30 * 60 * 1000, firstRunMs: 8 * 60 * 1000, klass: 'collect' });
   /* Neon 云端容灾增量上行：自调度链（内部按 more/ok 失败决定 60s/15min/5min 续跑），
    * 此处仅保留启动首触发；采集暂停时不启动新链 */
   setTimeout(() => { if (SCHED.roleAllows('collect') && !SCHED.klassPaused('collect')) _scheduleNeonBackup(2000); }, 4 * 60 * 1000);
@@ -13268,10 +13281,19 @@ function _webBodyAggSuspicious(raw, cleaned) {
 
 /* 跟进抓取单条正文（带 SSRF 防护，复用 crawler 既有能力） */
 async function _fetchBodyForItem(it) {
-  const url = it.url || it.link;
+  let url = it.url || it.link;
   if (!url || typeof url !== 'string') return false;
   if (it.content && String(it.content).trim().length >= 80) return false;
   if (!crawler || typeof crawler.fetchPublic !== 'function') return false;
+  /* 2026-09-12：Google News RSS 的 news.google.com/rss/articles/... 是 JS 跳转页（非 HTTP 302），
+   * 直接抓只会拿到跳转壳。实测补抓失败池 TOP1 域名就是它（35/49）。
+   * 故先按标题反查真实原文地址再抓；查不到就老路回源（保留原行为，不新增失败面）。 */
+  if (/^https?:\/\/(news\.)?google\.[^/]+\//i.test(url) && typeof crawler.resolveUrl === 'function') {
+    try {
+      const real = await crawler.resolveUrl(it.title_zh || it.title || '', it);
+      if (real && /^https?:\/\//i.test(real) && !/google\./i.test(real)) url = real;
+    } catch (e) {}
+  }
   try {
     const html = await crawler.fetchPublic(String(url), 12000);
     if (!html) return false;
@@ -13288,6 +13310,21 @@ async function _fetchBodyForItem(it) {
       else { it.content = body; }
     } else { it.content = body; }
     it.translated = it.translated || !!it.content_zh;
+    /* 2026-09-12 用户指令（要素不全）：拿到正文后立刻抽 factSheet（零网络、纯正则）。
+     * 原实现只写 content 不抽要素 → 正文抓回来了卡片依旧"没有核心内容"。 */
+    try {
+      if (!it.factSheet && fulltext && typeof fulltext.extractFacts === 'function') {
+        const corpus = String(it.title_zh || '') + '。' + String(it.content_zh || '') + '。'
+                     + String(it.title || '') + '。' + String(it.content || '');
+        const fsx = fulltext.extractFacts(corpus);
+        if (fsx && fsx.facts && fsx.facts.length) {
+          it.factSheet = fsx;
+          it.hasCasualty = fsx.hasCasualty;
+          if (fsx.incidentTypes && fsx.incidentTypes.length && !it.incidentTypes) it.incidentTypes = fsx.incidentTypes;
+          if (fsx.actors && fsx.actors.length && !it.threatActors) it.threatActors = fsx.actors;
+        }
+      }
+    } catch (e) {}
     return true;
   } catch (e) { return false; }
 }
@@ -13603,10 +13640,35 @@ async function _translateListToZhParallel(list, concurrency, opts) {
     const have = it.content && String(it.content).trim().length >= 80;
     if (url && !have) needBody.push(it);
   });
+  /* 2026-09-12 用户指令（"采集的数据没有核心要素，我要翻译的内容有核心内容"）：
+   * 根因之一——正文补抓名额在原实现里是 FIFO：大批量（>90 条）恒取前 10 条，
+   * 实测单轮 ~1310 条 → 只有 0.8% 拿到正文，且命中的是最先入库的（往往是最不重要的）。
+   * 而正文是 factSheet（伤亡/行为体/事件性质/时间/金额）唯一的语料来源 → 没正文 = 没核心要素。
+   * 改法：① 名额按列表规模自适应放大（大列表 ~2.5%，上限 30，下限 10，仍受 12s/条 时限约束）；
+   *      ② 队列按「涉华 > 红/橙级 > 其余」稳定排序，把有限名额给最值得呈现的条目。
+   * 存量 1.4 万条短正文由独立调度任务 _runBodyBackfill 兜底，不靠这里堆量。 */
   let bodyCap = 10;
   if (list.length <= 40) bodyCap = needBody.length;        // 小批量（专项/区域均衡）→ 全抓
   else if (list.length <= 90) bodyCap = 25;
-  const bodyQueue = needBody.slice(0, bodyCap);
+  else bodyCap = Math.min(30, Math.max(10, Math.ceil(list.length * 0.025)));
+  const _cnBodyRe = /中国|中资|中企|中方|华人|华侨|华裔|涉华|对华|一带一路|驻华|访华|Chinese|China|CPEC/i;
+  const _bodyPrio = function (it) {
+    let p = 3;
+    try {
+      const t = String(it.title_zh || '') + ' ' + String(it.title || '') + ' ' + String(it.country || '');
+      if (it.chinaRelated === true || it.chinaNegative === true || it._chinaNegative === true || it.interestLinked === true || _cnBodyRe.test(t)) p = 0;
+      else {
+        const lv = String(it.level || it.level_norm || it.severity || '').toLowerCase();
+        if (lv === 'red' || lv === 'orange' || lv === '高' || lv === '中' || lv === 'high' || lv === 'medium') p = 1;
+      }
+    } catch (e) {}
+    return p;
+  };
+  const bodyQueue = needBody
+    .map(function (it, i) { return { it: it, i: i, p: _bodyPrio(it) }; })
+    .sort(function (a, b) { return a.p - b.p || a.i - b.i; })   /* 稳定：同优先级保持原序 */
+    .slice(0, bodyCap)
+    .map(function (x) { return x.it; });
   /* 2026-09-03：opts.skipBodyFetch 供 POST 入库端点复用时跳过正文补抓——
    * 对用户提交的 url 逐条回源抓取（12s/条）会让批量 POST 分钟级阻塞。 */
   if (bodyQueue.length && !(opts && opts.skipBodyFetch)) {
@@ -13617,8 +13679,8 @@ async function _translateListToZhParallel(list, concurrency, opts) {
         try { if (await _fetchBodyForItem(it)) bDone++; } catch (e) {}
       }
     }
-    await Promise.all(Array.from({ length: Math.min(3, bodyQueue.length) }, bworker));
-    if (bDone) console.log('[TRANSLATE] 正文补抓：' + bDone + '/' + bodyQueue.length + ' 条获得正文');
+    await Promise.all(Array.from({ length: Math.min(4, bodyQueue.length) }, bworker));
+    if (bDone) console.log('[TRANSLATE] 正文补抓：' + bDone + '/' + bodyQueue.length + ' 条获得正文（涉华/红橙优先）');
   }
   /* 收尾：① 国名本地化 ② 媒体专名本地化 ③ 城市本地化 ④ 要素抽取（location/event_date）
    * 顺序保证长词优先：媒体 > 城市，避免 "The Washington Post" 被城市表先切成 "The 华盛顿 Post"。
@@ -15248,6 +15310,104 @@ async function _handleIntelEnrich(req, res) {
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e && e.message || e) });
   } finally { _enrichBusy = false; }
+}
+
+/* ===== 存量正文/要素兜底补抓（2026-09-12 用户指令："大量采集的数据没有核心要素"）=====
+ * 现场：近 48h 有 14,756 条正文短于 200 字（其中"正文即标题复述"3,895 条），
+ * 正文是 factSheet（伤亡/行为体/事件性质/时间/金额/处置）唯一的语料来源，
+ * 正文缺 → 要素抽不出 → 卡片只剩「📍国家」一项。
+ * 本任务逐轮挑「有 url + 正文短 + 近 3 天 + 未成功补过」的条目回源抓正文并翻译成中文，
+ * 抓回后立刻抽 factSheet 回写 data_json（落库即中文：经 _translateAnyCached 译中）。
+ * 护栏：可用内存 < 350MB 或 < 系统 3% 时跳过整轮（本机常态 4~5%，故不能按绝对值卡死）；
+ * 单轮 ≤60 条；3 路小并发（内存增量仅为同时在飞的 3 篇正文）；单轮预算 240s；单飞；
+ * 失败打 _bbFail 标记，7 天内不重试（避免每轮对同一批死链接反复发请求）。 */
+const _BB_WINDOW_DAYS = 3, _BB_LIMIT = 60, _BB_BUDGET_MS = 240000, _BB_MIN_FREE_MB = 350, _BB_MIN_FREE_PCT = 3, _BB_CONC = 3;
+/* 2026-09-12 实测教训：crawler.fetchPublic 自带 12s 超时，但其后的 _translateAnyCached（四引擎）
+ * 无超时——GFW 下翻译接口会静默挂死，导致单轮 3 个 worker 全部卡住、整轮永不结束（实测挂 >8min）。
+ * 故对单条补抓加 30s 硬上限：超时即视为本轮失败，不阻塞后续条目与调度周期。 */
+const _BB_ITEM_MS = 30000;
+function _bbTimeout(p, ms) {
+  return Promise.race([p, new Promise(function (res) { setTimeout(function () { res(false); }, ms); })]);
+}
+let _bbBusy = false, _bbSince = 0;
+async function _runBodyBackfill() {
+  if (ORPS_ROLE === 'worker') return { ok: true, skipped: 'role' };
+  if (_bbBusy) {
+    /* 自愈：单条 30s 硬超时后整轮上限 240s+30s，超过 6 分钟仍占用说明进程内出现异常滞留 */
+    if (Date.now() - _bbSince < 6 * 60 * 1000) return { ok: true, skipped: 'busy' };
+    console.log('[BODY-BF] 上一轮滞留超 6 分钟，强制复位后重跑');
+    _bbBusy = false;
+  }
+  const free = _freeRAMMB();
+  let freePct = 100;
+  try { const os = require('os'); freePct = 100 * os.freemem() / os.totalmem(); } catch (e) {}
+  if (free >= 0 && (free < _BB_MIN_FREE_MB || freePct < _BB_MIN_FREE_PCT)) {
+    console.log('[BODY-BF] 内存水位不足（free=' + free + 'MB / ' + freePct.toFixed(1) + '%），跳过本轮');
+    return { ok: true, skipped: 'mem', free: free, freePct: +freePct.toFixed(1) };
+  }
+  _bbBusy = true;
+  _bbSince = Date.now();
+  const t0 = Date.now();
+  let picked = 0, ok = 0, fail = 0, fss = 0;
+  try {
+    const rows = (await query(
+      "SELECT id, data_json FROM intel_data " +
+      "WHERE collect_time >= now() - ($1 || ' days')::interval " +
+      "  AND COALESCE(data_json->>'url','') <> '' " +
+      "  AND COALESCE(data_json->>'_bbDone','') = '' " +
+      "  AND (COALESCE(data_json->>'_bbFail','') = '' OR (data_json->>'_bbFail')::date < now()::date - 7) " +
+      "  AND length(COALESCE(data_json->>'content_zh', data_json->>'content', '')) < 200 " +
+      /* 2026-09-12 归因实测（orps-tmp/_p782_bb_attr.js / _p782_gnews_probe*.js）：
+       * ① 近 3 天池 25,607 条，其中 backfill 21,242=83%，纯按时间取会让补抓预算被 archive
+       *    的疑似死链吃光（实测该批成功率仅 18%），高价值实时通道反而排不上；
+       * ② 失败池 TOP1 域名为 news.google.com（约占 68%）：Google News 已改用混淆格式
+       *    （载荷无明文 URL、无 data-n-au 属性、标题反查亦无果），构造上 0% 可抓，
+       *    强行解析需 Google batchexecute 接口（CN 不可达且易碎），故降到队尾不再消耗预算。
+       * 档位：0=涉华 → 1=实时采集通道 → 2=archive 活链 → 3=archive 死链 → 5=Google News 跳转页。 */
+      "ORDER BY (CASE " +
+      "  WHEN COALESCE(data_json->>'url','') LIKE '%news.google.com%' THEN 5 " +
+      "  WHEN COALESCE(data_json->>'chinaRelated','') = 'true' OR COALESCE(data_json->>'chinaNegative','') = 'true' THEN 0 " +
+      "  WHEN COALESCE(data_json->>'_sourceType','') <> 'backfill' THEN 1 " +
+      "  WHEN COALESCE(data_json->>'_archiveEvent','') = 'true' THEN 3 " +
+      "  ELSE 2 END), " +
+      "         collect_time DESC " +
+      "LIMIT $2", [String(_BB_WINDOW_DAYS), _BB_LIMIT]
+    )).rows;
+    picked = rows.length;
+    /* 3 路小并发池：串行版单轮最长 60×12s=12min 会拖过一个调度周期，并发版 20 轮×12s≈4min。
+     * 内存增量只等于同时在飞的 3 篇正文（每篇 ~100-500KB），可忽略。 */
+    let idx = 0;
+    async function _bbWorker() {
+      while (idx < rows.length) {
+        if (Date.now() - t0 > _BB_BUDGET_MS) return;
+        const r = rows[idx++];
+        const dj = (r.data_json && typeof r.data_json === 'object') ? r.data_json : {};
+        const it = Object.assign({}, dj);
+        let got = false;
+        try { got = await _bbTimeout(_fetchBodyForItem(it), _BB_ITEM_MS); } catch (e) { got = false; }
+        const hasBody = String(it.content_zh || it.content || '').trim().length >= 200;
+        if (got && hasBody) {
+          dj.content = it.content; dj.content_zh = it.content_zh; dj.content_en = it.content_en;
+          dj.translated = it.translated; dj.excerpt = dj.excerpt || '';
+          if (it.factSheet) { dj.factSheet = it.factSheet; dj.hasCasualty = it.hasCasualty; if (it.incidentTypes) dj.incidentTypes = it.incidentTypes; if (it.threatActors) dj.threatActors = it.threatActors; fss++; }
+          dj._bbDone = _todayKey();
+          delete dj._bbFail;
+          try { await query('UPDATE intel_data SET data_json=$1 WHERE id=$2', [JSON.stringify(dj), r.id]); ok++; } catch (e) { fail++; }
+        } else {
+          dj._bbFail = _todayKey();
+          try { await query('UPDATE intel_data SET data_json=$1 WHERE id=$2', [JSON.stringify(dj), r.id]); } catch (e) {}
+          fail++;
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(_BB_CONC, rows.length) }, _bbWorker));
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log('[BODY-BF] 候选=' + picked + ' 成功=' + ok + ' 失败=' + fail + ' 抽出要素=' + fss + ' 用时=' + sec + 's');
+    return { ok: true, picked: picked, filled: ok, failed: fail, factSheets: fss, sec: sec };
+  } catch (e) {
+    console.log('[BODY-BF] 异常：' + (e && e.message));
+    return { ok: false, error: String(e && e.message || e) };
+  } finally { _bbBusy = false; }
 }
 
 /* ===== #780 退出取证与内存压力心跳（2026-09-12） =====
