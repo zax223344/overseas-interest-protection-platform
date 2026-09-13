@@ -15,10 +15,17 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const pm2 = require('C:/Users/28737/.workbuddy/binaries/node/workspace/node_modules/pm2');
+/* #784 任务三（2026-09-13）：Windows 上 pm2.restart 会留孤儿进程占 3000 端口
+ * （孤儿照常应答 health=200，PM2 侧却卡 waiting-restart 死循环）。
+ * pm2-safe.js = stop→端口守卫→显式 start→dump→复核 的唯一安全入口。 */
+const { safeRestart } = require('./pm2-safe');
 
 const INTERVAL_MS = 30 * 1000;
 const FAIL_THRESHOLD = 5;
 const RESTART_COOLDOWN_MS = 10 * 60 * 1000;
+/* #784：PM2 状态异常而 health 正常（孤儿进程 serving）的判定阈值与冷却 */
+const STUCK_THRESHOLD = 6;                       /* 6 检 × 30s = 3min */
+const STUCK_COOLDOWN_MS = 15 * 60 * 1000;
 const HB_FILE = path.join(__dirname, 'tmp', 'sched-worker.json');
 const HB_STALE_MS = 5 * 60 * 1000;
 const LOGF = path.join(__dirname, 'logs', 'watchdog.log');
@@ -51,6 +58,17 @@ function pm2Exec(fn) {
   });
 }
 function pm2Restart(name) { return pm2Exec(cb => pm2.restart(name, cb)); }
+function pm2Status(name) {
+  return new Promise(resolve => {
+    pm2.connect(err => {
+      if (err) return resolve(null);
+      pm2.describe(name, (e, procs) => {
+        pm2.disconnect();
+        resolve(!e && procs && procs[0] && procs[0].pm2_env ? procs[0].pm2_env.status : null);
+      });
+    });
+  });
+}
 function pm2Pid(name) {
   return new Promise(resolve => {
     pm2.connect(err => {
@@ -115,7 +133,7 @@ function rotateLogs() {
 
 (async () => {
   log('看门狗启动：' + INTERVAL_MS / 1000 + 's/检，' + FAIL_THRESHOLD + ' 连败介入，冷却 ' + RESTART_COOLDOWN_MS / 60000 + 'min');
-  let fails = 0, lastSrvRestart = 0, lastWrkRestart = 0;
+  let fails = 0, lastSrvRestart = 0, lastWrkRestart = 0, stuckCnt = 0, lastStuckFix = 0;
   setInterval(async () => {
     /* --- #780 日志体量兜底轮转（先做，避免日志膨胀本身成为故障源） --- */
     try { rotateLogs(); } catch (e) {}
@@ -153,6 +171,26 @@ function rotateLogs() {
         log('二段恢复完成，health=' + (await checkHealth() ? 'OK' : '仍死（等下轮冷却窗口）'));
       }
     }
+    /* --- #784 孤儿进程 / waiting-restart 死循环检测（health 正常但 PM2 状态坏） ---
+     * 这是 pm2.restart 事故的盲区：旧进程活着应答 health=200，新进程永远起不来。
+     * 判据：health OK 且 orps-server 的 PM2 status != 'online' 连续 6 检 → pm2-safe 恢复。 */
+    try {
+      const st = await pm2Status('orps-server');
+      if (ok && st && st !== 'online') {
+        stuckCnt++;
+        log('PM2 状态异常 ' + st + ' 而 health 正常（' + stuckCnt + '/' + STUCK_THRESHOLD + '，疑孤儿进程占端口）');
+        if (stuckCnt >= STUCK_THRESHOLD && Date.now() - lastStuckFix > STUCK_COOLDOWN_MS) {
+          lastStuckFix = Date.now();
+          log('★ 介入：orps-server 疑似 pm2.restart 孤儿/死循环 → pm2-safe.js 安全重启');
+          try { const r = await safeRestart('orps-server'); log('pm2-safe 完成 ok=' + r.ok + ' status=' + r.status + ' pid=' + r.pid); }
+          catch (e) { log('pm2-safe 失败: ' + e.message); }
+          stuckCnt = 0;
+        }
+      } else if (st === 'online') {
+        stuckCnt = 0;
+      }
+    } catch (e) { /* PM2 不可达时交给 pg-keepalive */ }
+
     /* --- worker 心跳 --- */
     try {
       const st = fs.statSync(HB_FILE);

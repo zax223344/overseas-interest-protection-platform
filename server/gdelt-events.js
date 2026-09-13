@@ -36,6 +36,8 @@ const ROOT_ACT = {
 /* 行为体/地点翻译：2026-09-06 #657 收敛至 gdelt-actors.js 单一事实源
  * （与 backfill-archive.js 共用一份词表，词表外真实实体名保留原文不编造） */
 const { actorZh: _actorZh, locZh } = require('./gdelt-actors');
+/* #784（2026-09-13）：全要素中文句式单一事实源（与 backfill-archive 共用一份） */
+const ZS = require('./zh-sentence');
 
 const _seen = new Set();   /* GLOBALEVENTID 去重（内存，服务重启自然重置） */
 let _lastFile = '';        /* 已处理的文件批次（防重复下载） */
@@ -83,6 +85,7 @@ function _parseTsv(text) {
 }
 
 /* 事件 → 平台条目（真实字段格式化，非模拟） */
+function _eDom(u) { try { return String(u || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase(); } catch (e) { return ''; } }
 function _toItem(ev) {
   const root = ROOT_ACT[ev.rootCode];
   if (!root) return null;                              /* 只采 14-20 冲突根码 */
@@ -92,13 +95,18 @@ function _toItem(ev) {
   if (!ev.srcUrl) return null;                         /* 无源 URL 不入库（铁律） */
   const a1 = _actorZh(ev.a1Name), a2 = _actorZh(ev.a2Name);
   const isCn = ev.a1Ctry === 'CHN' || ev.a2Ctry === 'CHN' || /CHINESE|CHINA/i.test((ev.a1Name || '') + ' ' + (ev.a2Name || ''));
-  /* 标题：国名+地点+行动句式+报道量（结构化字段中文格式化，行动句式见 _actPhrase） */
+  /* #784 改句式：标题为「国家（地点）：主体～动作～对象（N 篇报道） · 日期 · 来源」全要素中文句，
+   * 句式与可信度判定收敛至 zh-sentence.js（旧 _actPhrase 仅保留给 desc 作描述性文本）。 */
   const phrase = _actPhrase(ev.rootCode, a1, a2);
   /* 地点：geoName 第一段（"Balochistan, Balochistan, Pakistan"→Balochistan），与国名重复则不显示 */
   const locEn = String(ev.geoName || '').split(',')[0].trim();
-  const loc = locEn && locEn.toLowerCase() !== String(ev.geoCtry || '').toLowerCase() && !gdCnFromEn(locEn) ? '（' + locZh(locEn) + '）' : '';
-  let title = cn + loc + '：' + phrase;
-  if (ev.articles >= 3) title += '（' + ev.articles + ' 篇报道）';
+  const locCn = (locEn && locEn.toLowerCase() !== String(ev.geoCtry || '').toLowerCase() && !gdCnFromEn(locEn)) ? locZh(locEn) : '';
+  const _edt = ev.sqlDate && /^\d{8}$/.test(ev.sqlDate) ? ev.sqlDate.slice(0, 4) + '-' + ev.sqlDate.slice(4, 6) + '-' + ev.sqlDate.slice(6, 8) : '';
+  /* #784：全要素句式（国家 / 地点 / 主体 / 动作 / 对象 / 规模 / 时间 / 来源） */
+  const title = ZS.buildTitle({
+    cn: cn, loc: locCn, a1: a1, a2: a2, code: ev.rootCode,
+    n: ev.articles, date: _edt, dom: _eDom(ev.srcUrl)
+  }) || (cn + '：' + root.w + '（' + (ev.articles || 1) + ' 篇报道）');
   /* 级别：根码基线 + 高报道量/强负烈度/涉华上调 */
   let lv = root.lv;
   if (ev.articles >= 20 || ev.goldstein <= -8) lv = 'red';
@@ -119,7 +127,7 @@ function _toItem(ev) {
    * 零网络成本即可造出可信要素，结构对齐 fulltext.extractFacts 输出（icon/tone/label/value/evidence），
    * 写入 factSheet 供卡片与详情卡消费——避免「国（地）：主体 动作」一句话撑满整张卡。 */
   const _gdFacts = [];
-  _gdFacts.push({ icon: '📍', tone: 'normal', label: '事发地点', value: cn + (loc || ''), evidence: String(ev.geoName || cn) });
+  _gdFacts.push({ icon: '📍', tone: 'normal', label: '事发地点', value: cn + (locCn ? '（' + locCn + '）' : ''), evidence: String(ev.geoName || cn) });
   _gdFacts.push({ icon: '⚡', tone: root.lv === 'red' ? 'critical' : 'high', label: '事件性质', value: root.w, evidence: 'GDELT CAMEO 根码 ' + ev.rootCode + '（' + root.w + '）' });
   if (a1 && a1 !== '不明行为体') _gdFacts.push({ icon: '🎯', tone: 'critical', label: '威胁行为体', value: a1 + (a2 && a2 !== a1 && a2 !== '不明行为体' ? ' → ' + a2 : ''), evidence: 'GDELT Actor1' + (a2 ? '/Actor2' : '') + ' 规范化' });
   if (ev.goldstein != null && ev.goldstein !== '') _gdFacts.push({ icon: '🎚️', tone: (ev.goldstein <= -8 ? 'critical' : ev.goldstein <= -5 ? 'high' : 'normal'), label: '冲突烈度', value: 'Goldstein ' + ev.goldstein, evidence: 'GDELT GoldsteinScale（-10 最敌对 / +10 最合作）' });
@@ -189,4 +197,4 @@ async function fetchGdeltEvents() {
   return { items, batch, rows: rows.length };
 }
 
-module.exports = { fetchGdeltEvents };
+module.exports = { fetchGdeltEvents, _toItem, _actPhrase };   /* _toItem/_actPhrase 导出供 #784 单测 */

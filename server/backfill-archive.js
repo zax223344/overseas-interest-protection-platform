@@ -69,7 +69,9 @@ const CODE_CAT = {
   '203': 'mass_violence',                                   /* 大规模驱逐/杀戮/清洗 */
   '204': 'terror_events'                                    /* 使用大规模杀伤性武器 */
 };
-/* 标题动词（模板化中文转述；双行为体用及物式，单行为体用单主体式） */
+/* 标题动词（模板化中文转述；双行为体用及物式，单行为体用单主体式）
+ * #784（2026-09-13）起标题句形改由 zh-sentence.js 的 FRAME 表产出；本表保留为
+ * 「历史句形词表」——存量迁移解析（zh-sentence.LEGACY_TRANS/NOUN 与之同源）与审计对照用。 */
 const VERB_TRANS = {  /* A1 对 A2 ___ */
   '10': '提出要求', '11': '表达反对', '12': '拒绝合作',
   '13': '发出威胁', '14': '发起抗议', '15': '展示军事姿态', '16': '降级外交关系',
@@ -109,9 +111,11 @@ function init(deps) {
 /* 行为体名翻译（2026-09-06 #657）：gdelt-actors.js 单一事实源——群体词/机构词/
  * 高频组织/国家名/州名一律入库即中文；词表外真实实体名保留原文（不编造），
  * 全大写原文回退为首字母大写化（"SOMALI" → "Somali"）提升可读性。 */
-const { actorZh } = require('./gdelt-actors');
+const { actorZh, locZh } = require('./gdelt-actors');
 /* #777 P0（2026-09-12）：标题可信度单一事实源（行为体合法性 + 模板句可信度 + chrome 标题） */
 const TS = require('./title-sanity');
+/* #784（2026-09-13）：全要素中文句式单一事实源（用户指令「改成中文表达的全要素句式」） */
+const ZS = require('./zh-sentence');
 function _actorName(s) {
   s = String(s || '').trim();
   if (!s) return '';
@@ -124,16 +128,26 @@ function _actorName(s) {
 function _conf(ev, root, a1, a2) {
   return TS.archiveTplConf(_actorName(a1), _actorName(a2), ev, root);
 }
-function _title(cn, a1, a2, evCode, root, numMentions, lowConf) {
-  const A1 = _actorName(a1), A2 = _actorName(a2);
-  const vt = VERB_TRANS[evCode] || VERB_TRANS[root] || '发生对抗';
+function _dom(u) { try { return String(u || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase(); } catch (e) { return ''; } }
+/**
+ * #784（2026-09-13 用户指令）：改句式——产出「中文表达的全要素句式」。
+ * 国家（地点）：主体～动作～对象（N 篇报道） · 日期 · 来源域名
+ * 句式本体与可信度判定收敛到 server/zh-sentence.js（与 gdelt-events 通道共用一份）。
+ * @param {object} o {geo 地点原文, date 事件日, dom 来源域名}
+ */
+function _title(cn, a1, a2, evCode, root, numMentions, o) {
+  o = o || {};
+  const g0 = String(o.geo || '').split(',')[0].trim();
+  const loc = g0 ? locZh(g0) : '';
+  const t = ZS.buildTitle({
+    cn: cn, loc: loc, a1: _actorName(a1), a2: _actorName(a2),
+    code: evCode || root, n: numMentions, date: o.date, dom: o.dom
+  });
+  if (t) return t;
+  /* 未知 CAMEO 码兜底：保持中性名词转述（不虚构成分句） */
   const vn = VERB_NOUN[evCode] || VERB_NOUN[root] || '对抗事件';
-  /* #777 P0：低可信条目降级为中性事件转述（不虚构主语，仍入库、量不减） */
-  if (lowConf) return cn + '：' + vn + '（' + numMentions + ' 篇报道）';
-  if (A1 && A2 && A1 !== A2) return cn + '：' + A1 + ' 对 ' + A2 + ' ' + vt;
-  if (A1) return cn + '：' + A1 + ' ' + vt;
-  if (A2) return cn + '：' + A2 + ' 涉' + vn;
-  return cn + '：' + vn + '（' + numMentions + ' 篇报道）';
+  const sfx = [o.date, o.dom].filter(Boolean).join(' · ');
+  return cn + '：' + vn + '（' + numMentions + ' 篇报道）' + (sfx ? ' · ' + sfx : '');
 }
 
 /* ---------- 源 1：GDELT 2.1 事件归档 ---------- */
@@ -212,7 +226,13 @@ async function _archivePool(day, stat) {
      * 降级为中性转述（不虚构主语）。条目照常入库（用户铁律：采集量不能少），
      * 仅以 _tplLowConf 标记，供前端/接口层过滤。 */
     const conf = _conf(it._ev, it._root, it._a1, it._a2);
-    const tpl = _title(it._cn, it._a1, it._a2, it._ev, it._root, it._nm, conf === 'low');
+    /* #783 修正：`day` 来自脏 varchar，可能是 `2026-09`（只有年月）→ 会产出 ` · 2026-09` 半截日期。
+     * 只接受完整 YYYY-MM-DD；域名缺失时不留悬空分隔符（避免 ` · 2026-09-13 ·`）。 */
+    const _dOk = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '').trim());
+    const _dm = _dom(it._url);
+    const tpl = _title(it._cn, it._a1, it._a2, it._ev, it._root, it._nm, {
+      geo: it._geo, date: _dOk ? String(day).trim() : '', dom: _dm
+    });
     const row = {
       title: tpl,                            /* 模板标题（回捞成功即被真实标题替换） */
       _tplTitle: tpl,                        /* #714④ 模板留档：backfill-titles 回捞目标标识 */
@@ -344,4 +364,4 @@ async function probeArchive(day) {
   return { ok: !r.err, err: r.err || null, rows: r.rows || 0 };
 }
 
-module.exports = { init, fetchPool, probeArchive, preciseCat };
+module.exports = { init, fetchPool, probeArchive, preciseCat, _title };   /* _title 导出供 #784 单测 */

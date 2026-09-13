@@ -49,6 +49,9 @@ const ABBR = {
   'NATO': '北约',
   'ARUP': '奥雅纳',                  /* 英国工程咨询巨头 Arup，基建新闻高频 */
   'Fed': '美联储',
+  /* 2026-09-06 #657 手册落地扩充（实测残留："突然CEO继任测试""任命Dim DCG，五个ACG"） */
+  'CEO': '首席执行官', 'CFO': '首席财务官', 'CTO': '首席技术官',
+  'DCG': '副总关长', 'ACG': '助理总关长',  /* 尼日利亚海关 Deputy/Assistant Comptroller-General */
 };
 
 /* 能源/金融期货缩写：保留缩写形态（行业通行），仅防"X公司"病句（见 fixBrokenTitle） */
@@ -59,6 +62,8 @@ const TERM_FIX = [
   [/石油包装/g, '石油综述'],          /* Oil Wrap */
   [/石油补丁/g, '石油产区'],          /* Oil Patch */
   [/石油包装纸/g, '石油综述'],        /* Oil Wrap 变体 */
+  /* 2026-09-06 #657：菲媒缩写残留（"PH军队在BARMM选举之前加强…"→"菲军队…"） */
+  [/(?<![A-Za-z0-9])PH(?=军队|军方|政府|海警|海军|空军|陆军|总统)/g, '菲'],
 ];
 
 /* 人名（高频政要，机翻不译直接残留） */
@@ -162,7 +167,7 @@ const MEDIA_EN = [
   'BBC', 'CNN', 'Reuters', 'Al Jazeera', 'Bloomberg', 'DW', 'Al Arabiya',
   'TRT', 'TRT World', 'Aaj English TV', 'Aaj News', 'EL PAGES',
   'Dunya News', 'Dunya', 'Realcleardefense', 'RealClearPolitics', 'PM News',
-  'The Point NG', 'Asharq Al-Awsat',
+  'The Point NG', 'Asharq Al-Awsat', 'Khaleej Times',
 ];
 /* 域名尾巴（正则片段）：-nhk.or.jp / -tgnews.com.ng / -vijesti.me 等 */
 const DOMAIN_TAIL = '(?:\\.[a-z]{2,4}){1,2}';
@@ -178,6 +183,71 @@ const MEDIA_ZH = [
   '今日俄罗斯', '独立报', '电讯报', '国家报', '每日新闻',
   /* 2026-09-04 #581 扩充（实测残尾：「- 施工性能」「- 能源连接」） */
   '施工性能', '能源连接', '能源连线', '石油评论', '法律确信',
+  /* 2026-09-07 #663 扩充（实测残尾：「-彭博社-美国。新闻」双层、「- 盾牌」=The Shield） */
+  '彭博社', '盾牌', 'Naija新闻',
+  /* 2026-09-09 #733 扩充（混排审计实测：「-雅虎财经英国」=Yahoo Finance UK） */
+  '雅虎财经英国',
+];
+
+/* ============ ②b 机翻媒体落款扩充表（2026-09-13 #783）============
+ * 来源：intel_data 尾部 token 频次实测（6000 条混排标题样本，按 `分隔符+尾段` 分组）——
+ *   中文侧 TOP：撒哈拉记者 555、国家 322、逆流而 188、别人 140、国际 128、薄荷 99、
+ *   粉丝的攻击 91、第一个门户网站 78、希腊 63、投资门 46、财富 44、檀香山明星广告人 30、
+ *   傻瓜 27、峰值 26、法律和法院 25、诚信报告 23、非洲审查员 23、意见 22、那个玛丽苏 21、
+ *   生物识别更新 20、全省 17、知情人 17、大学修复 16、赤裸裸的资本主义 15、亚拉巴马浸信会 14；
+ *   英文侧 TOP：LBC 340、ZeroHedge 269、TRP 70、ICN 44、JD 38、Zawya 37、Kiwiblog 29、
+ *   YNaija 26、TechCrunch 20、Aero 19、Rediff 15、Pina 14、Malaysiakini 13、MyJoyOnline 13、
+ *   Alhurra 13、LewRockwell 12、HapaKenya 12、FXStreet 10、TechRadar 9、KPFA 5、MEED 5。
+ * 与上方 MEDIA_EN/MEDIA_ZH 的差别：**本表统一带守卫**——必须由分隔符（空白/-/|）引导，
+ * 且剥后主体须仍含 ≥8 汉字。原因：条目短且可能是普通词（国家/意见/政治/希腊/LBC/CBC），
+ * 无守卫会把「不要相信别人」「创造财富」这类正文误剥；带守卫后只吃"分隔符+落款"形态。
+ * 铁律沿用：扩表须先有样本频次支撑，禁止拍脑袋。 */
+const MEDIA_TAIL_SIG = [
+  /* —— 中文：机翻后的英文媒体名（特征性强）—— */
+  '撒哈拉记者', '逆流而', '薄荷', '粉丝的攻击', '第一个门户网站', '投资门',
+  '檀香山明星广告人', '法律和法院', '诚信报告', '非洲审查员', '那个玛丽苏',
+  '生物识别更新', '全省', '知情人', '大学修复', '赤裸裸的资本主义', '亚拉巴马浸信会',
+  '的 Motley 傻瓜',
+  /* —— 中文：国名/泛称类落款（弱词，靠守卫兜底）—— */
+  '国家', '国际', '别人', '希腊', '财富', '意见', '政治', '英国', '峰值',
+  /* —— 英文：原样残留的媒体名/栏目名 —— */
+  'LBC', 'LBCI', 'ZeroHedge', 'TRP', 'ICN', 'Zawya', 'Kiwiblog', 'YNaija', 'TechCrunch', 'JD',
+  'Aero', 'Rediff', 'Pina', 'Malaysiakini', 'MyJoyOnline', 'Alhurra', 'LewRockwell',
+  'HapaKenya', 'FXStreet', 'TechRadar', 'KPFA', 'MEED', 'Malawi', 'Sahara Reporters',
+  'Countercurrents', 'Firstpost', 'Biometric Update', 'Naked Capitalism', 'The Mary Sue',
+  'Alabama Baptist', 'Campus Reform', 'Hellenic Shipping News', 'The Nation', 'The Province',
+  'The Insider', 'Mint', 'Fortune', 'Motley Fool', 'Truth Report', 'African Examiner',
+  'LankaWeb', 'Awaaz', 'TRT World', 'Punch NG',
+  /* —— 2026-09-13 #783 第二轮：**全库**尾巴分布补全（上次只看 6000 行样本的 TOP30，
+   * 漏了长尾）。以下全部来自 intel_data 147,006 条中文标题的实测尾段频次，
+   * 均为外媒名/署名被机翻或原样残留（括注真实媒体名）：
+   *   欧亚评论 286(EurAsian Review)、今日直播 269、伊斯兰邀请土耳其 252、
+   *   波士顿地球仪 202(Boston Globe)、东京记者 129(Tokyo Reporter)、企业防御网 83、
+   *   商业世界在线 73(BusinessWorld)、埃及独立 67(Egypt Independent)、人民评论 59、
+   *   安东尼洛温斯坦 58(Anthony Loewenstein 署名)、加拿大之声 57、最后的避难所 51(The Last Refuge)、
+   *   沙夫奈 51(Shafaqna)、美国文艺复兴 49、烈酒业务 41(The Spirits Business)、
+   *   亚拉巴马的月亮 34、世界观 38、图形在线 30(Graphic Online)、圣地亚哥犹太世界 29、
+   *   美国在线 27、牛肉中心 25(Beef Central)、阿里兰 24(Aliran)、车铲 23(CarScoops)、
+   *   美国旁观者 22、哈佛深红 21、阿姆斯特朗经济学 21、基督徒为以色列国际 16、
+   *   克洛弗代尔记者 16、北湾掘金 15(Red Deer/North Bay 系)、红鹿倡导者 15、马拉维的脸 14、
+   *   现代加纳 13、肯特记者 13、温和的声音 13(The Moderate Voice)、布兰特福德解释器 12、
+   *   黑色议程报告 11、美国观察家 11、今日自由马来西亚(Free Malaysia Today)、
+   *   国家泰国(The Nation Thailand)、全球银行 财经评论、公司公告/公司简介（港交所公告栏目）、新华社。
+   * 注意：**绝不收录模板动词尾**（发动军事打击 1152 / 实施轰炸 293 / 发起抗议 292 …），
+   * 那些是 backfill `_title()` 的正文，不是落款。 */
+  '欧亚评论', '今日直播', '伊斯兰邀请土耳其', '波士顿地球仪', '东京记者', '企业防御网', '防御网',
+  '商业世界在线', '埃及独立', '人民评论', '安东尼洛温斯坦', '安东尼勒文斯坦', '加拿大之声',
+  '最后的避难所', '沙夫奈', '美国文艺复兴', '新华社', '烈酒业务', '亚拉巴马的月亮', '世界观',
+  '图形在线', '圣地亚哥犹太世界', '美国在线', '牛肉中心', '阿里兰', '阿利兰', '车铲',
+  '美国旁观者', '哈佛深红', '阿姆斯特朗经济学', '基督徒为以色列国际', '克洛弗代尔记者',
+  '北湾掘金', '红鹿倡导者', '马拉维的脸', '现代加纳', '肯特记者', '温和的声音',
+  '布兰特福德解释器', '黑色议程报告', '美国观察家', '今日自由马来西亚', '国家泰国',
+  '全球银行 财经评论', '公司公告', '公司简介',
+  /* —— 2026-09-13 #783 第三轮：残余 chrome（抽样核验）——栏目/署名标签 + 媒体名 ——
+   * 媒体 126（含 "FoodBev 媒体""大火 媒体"）、分析 116（Analysis 栏）、亚利布南 92、
+   * 上文 85（JD Supra 的 Supra）、报告 85（Report 署名）、工人革命党 67（Workers Revolutionary Party）、
+   * 专栏文章 64（Column）。均带分隔符引导 + ≥8 汉字守卫。 */
+  '媒体', '分析', '亚利布南', '上文', '报告', '工人革命党', '专栏文章',
 ];
 
 /* ============ ③ 硬译小错修正（无上下文安全的才入表） ============ */
@@ -288,6 +358,25 @@ function _stripMediaTail(t) {
       const re = new RegExp('[\\s\\-–—|｜]{1,3}' + m + '\\s*$');
       out = out.replace(re, '').trim();
     }
+    /* 尾部 "分隔符 + 机翻媒体落款"（2026-09-13 #783：MEDIA_TAIL_SIG 统一守卫——
+     * ① 必须由空白/连字符/管道引导（"El-Rufai" 这类连字符人名不命中，因为 '-' 前无空白）；
+     * ② 剥后主体须仍含 ≥8 汉字（"六张账单|Kiwiblog" 这类短标题保守不动，防误剥）。 */
+    for (const m of MEDIA_TAIL_SIG) {
+      const g = out.match(new RegExp('[\\s\\-–—|｜]{1,3}' + m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i'));
+      if (!g) continue;
+      const kept = out.slice(0, g.index).trim();
+      if (kept.replace(/[^\u4e00-\u9fa5]/g, '').length >= 8) out = kept;
+    }
+    /* 尾部 "- 拉丁媒体名/缩写+国名"（2026-09-09 #733 实测：「- LBCI黎巴嫩」=LBCI Lebanon、
+     * 「- Dunya尼日利亚」类转载签名——拉丁词紧跟国名收尾是媒体落款特征，正常标题不这样收尾。
+     * 守卫同通用启发规则：剥后主体纯中文且 ≥8 汉字） */
+    {
+      const m3 = out.match(/[\s\-–—|｜]{1,3}[A-Za-z][A-Za-z .]{1,14}(?:英国|美国|法国|德国|印度|巴基斯坦|孟加拉国|尼泊尔|斯里兰卡|尼日利亚|加纳|肯尼亚|南非|津巴布韦|坦桑尼亚|乌干达|埃塞俄比亚|黎巴嫩|以色列|土耳其|埃及|摩洛哥|突尼斯|阿根廷|巴西|墨西哥|菲律宾|印度尼西亚|马来西亚|泰国|越南|柬埔寨)\s*$/);
+      if (m3) {
+        const kept3 = out.slice(0, m3.index).trim();
+        if ((kept3.match(/[一-龥]/g) || []).length >= 8 && !/[A-Za-z]{3,}/.test(kept3)) out = kept3;
+      }
+    }
     /* 尾部 "- 中文媒体名 . com"（"- 自然新闻 . com" 类机翻媒体+域名） */
     out = out.replace(/[\s\-–—|｜]{1,3}[一-龥]{2,8}\s*\.\s*(?:com|net|org|news|live|tv)\s*$/i, '').trim();
     /* 尾部 "- 拉丁词+机翻媒体后缀"（"- Dunya新闻"、"- Aaj电视"、"- EL英语" 类混排残尾）：
@@ -303,6 +392,23 @@ function _stripMediaTail(t) {
     /* 尾部 "- 专名+现在/今天"（"-伦敦现在"=London Now、"-土耳其今天"=TRT Today 类机翻媒体名：
      * 正常标题不会以"-XX现在/今天"结尾） */
     out = out.replace(/[\s\-–—|｜]{1,3}[一-龥]{2,12}(?:现在|今天)\s*$/, '').trim();
+    /* 尾部 "- XX。新闻"（2026-09-07 #663 实测残尾："-第四。新闻"="- Fourth. News"机翻、
+     * "-美国。新闻"="- US. News"机翻——英文媒体名带句点被机翻成"XX。媒体型后缀"，
+     * 下方通用启发的前缀段 [一-龥]{0,10} 不含句号兜不住，单列一条） */
+    out = out.replace(/[\s\-–—|｜]{1,3}[一-龥A-Za-z]{1,12}[。.]\s*(?:新闻|时报|日报|电视|频道|杂志|周刊|快讯)\s*$/, '').trim();
+    /* 尾部 "- 本周"（2026-09-07 #663 实测："- This Week" 机翻残尾；句中"本周"是合法时间状语不动，
+     * 只剥分隔符引导的独立尾巴） */
+    out = out.replace(/[\s\-–—|｜]{1,3}本周\s*$/, '').trim();
+    /* 尾部 "：全大写署名"（2026-09-07 #663 实测高频：「…丧生：ISPR」=巴军方公关署名、
+     * 「…实施制裁：MOC」=商务部署名——机构署名不是标题内容。
+     * 守卫：剥后主体须含 ≥8 个汉字，防误伤"2027：INEC"类首段缩写） */
+    {
+      const m2 = out.match(/[：:]\s*[A-Z]{2,8}\s*$/);
+      if (m2) {
+        const kept2 = out.slice(0, m2.index).trim();
+        if ((kept2.match(/[一-龥]/g) || []).length >= 8) out = kept2;
+      }
+    }
     /* 尾部 "- XX报/日报/时报/新闻/英语/电视/频道/杂志…"（通用启发：正常标题不会以"- 媒体型后缀词"结尾，
      * 兜住词表外的残尾；前缀放宽到 0-10 汉字以覆盖"- 英语""- 新闻"这类极短残尾） */
     out = out.replace(/[\s\-–—|｜]{1,3}[《“]?[一-龥]{0,10}(?:报|日报|时报|新闻|新闻网|周刊|通讯社|电视台|电台|先驱报|邮报|电视|频道|英语|杂志|卫报|论坛)\s*[》”]?\s*$/, '').trim();
@@ -427,19 +533,63 @@ function fixBrokenTitle(t) {
   return s;
 }
 
+/* ============ 本地残留 artifact 确定性清理（2026-09-13 #783）============
+ * 来源：intel_data 全库实测量化（逐类抽样核验后入表）——
+ *   ① "原标题：" / "摘要：" / "导语：" 前缀 11 行（机翻把喂入模板的提示词一起译出）
+ *   ② 段首编辑标签 [看]/[照片]/[更新]/[今天’s信号] 109 行（外媒栏目 chrome，非情报内容）
+ *   ③ 【国·类别】系统标签重复写（title-rewrite.templateSentence 被套两遍）104 行
+ *   ④ 行尾 " #<id>" 自伤消歧尾巴 11 行（#783 临时脚本二次消歧加的，已无必要）
+ *   ⑤ 悬空 "https：//"（无路径，旧 URL 规则用 \S+ 需至少 1 字符 → 漏网）12 行
+ *   ⑥ 邮件回复前缀 "回复："/"转发：" 4 行
+ * 铁律：只剥 chrome，绝不改正文语义；剥后必须仍有汉字且长度 ≥4，否则回退原值（幂等）。
+ * 与"重译"的区别：本函数零引擎调用、零语义推断，纯字符串剥离。 */
+function _stripArtifacts(t) {
+  const orig = String(t || '');
+  let s = orig;
+  /* ③ 重复系统/编辑标签：【A】【A】… → 【A】（不限位置、可多组连续重复） */
+  s = s.replace(/(【[^】]{1,20}】)\s*(?:\1\s*)+/g, '$1');
+  s = s.replace(/(\[[^\]]{1,20}\])\s*(?:\1\s*)+/g, '$1');
+  /* ② 段首编辑标签（≤14 字，外媒栏目标记） */
+  s = s.replace(/^\[[^\]\n]{1,14}\]\s*/g, '');
+  /* ① 机翻模板前缀 */
+  s = s.replace(/^\s*(?:原标题|摘要|导语|内容提要|正文)\s*[:：]\s*/g, '');
+  /* ⑥ 邮件/转发前缀 */
+  s = s.replace(/^\s*(?:回复|转发|答复|Re|RE|Fwd|FW)\s*[:：]\s*/g, '');
+  /* ⑤ 悬空 URL / ④ 自伤 #id 尾巴 */
+  s = s.replace(/\s*https?[:：]\/\/\s*/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+  s = s.replace(/\s+#\d{3,8}\s*$/, '').trim();
+  s = s.replace(/^[\s\-–—|｜:：,，、]+/, '').trim();
+  /* 守卫：剥完仍须是像样的中文标题，否则原样返回 */
+  if (!/[\u4e00-\u9fa5]/.test(s) || s.length < 4) return orig;
+  return s;
+}
+
 /* 标题专用抛光：通用 polish + 标题 URL 全删 + 尾部媒体剥离（正文太长不剥尾，防误伤） */
 function polishTitle(text) {
   let t = polish(text);
   if (!t) return t;
-  /* 标题里的 URL 一律全删（标题不应有链接；正文信息链接已在 polish 中保留） */
-  t = t.replace(/https?[:：]\/\/\S+/gi, '').replace(/\s{2,}/g, ' ');
+  const _base = t;                              /* #783：剥过度时的回退基线 */
+  /* #783：先清本地 artifact（标签/前缀/悬空 URL），否则标签会挡住后续媒体剥离规则 */
+  t = _stripArtifacts(t);
+  /* 标题里的 URL 一律全删（标题不应有链接；正文信息链接已在 polish 中保留）。
+   * #783 修正：\S+ → \S*，否则 "…https：//"（尾部无路径）无法命中。 */
+  t = t.replace(/https?[:：]\/\/\S*/gi, '').replace(/\s{2,}/g, ' ');
+  /* 装饰符剥离（2026-09-07 #663 实测：「▲李嘉诚…」段首装饰、★☆ 等栏目标记。
+   * 只剥首尾两侧——标题正文的 ●○ 列表符已在 polish 通用层处理，此处防误伤句中符号） */
+  t = t.replace(/^[★☆▲△►▻※◆◇●○◎■□▪▫▽▼◢◣◤◥☆\s]+/, '').replace(/[★☆▲△►▻※◆◇●○◎■□▪▫▽▼◢◣◤◥\s]+$/, '').trim();
   t = _stripMediaTail(t);
+  /* 2026-09-09 #733：机翻专名括号重复去重——「安德烈·罗德里格斯（安德烈·罗德里格斯）」
+   * （引擎把人名括注整体音译，括内外相同）→ 去重保留一个 */
+  t = t.replace(/([一-龥·]{2,20})（\s*\1\s*）/g, '$1');
   /* #581 病句闸（"WTI公司"类） */
   t = fixBrokenTitle(t);
   /* 剥完收尾：尾部悬空连接符/引号清理（’为实体&#8217;转换残留、“为机翻残留的前引号悬在尾部——
    * 正常闭引号”不清，防破坏引语；“”正常引语不清防破坏引语） */
-  t = t.replace(/[\s\-–—|｜,，:：'’“]+\s*$/, '').trim();
+  t = t.replace(/[\s\-–—|｜@,，:：'’“]+\s*$/, '').trim();
+  /* #783 兜底：剥过度保护——剥完若只剩 <4 个汉字（如「回复：https://…」→「回复」），
+   * 说明原始标题几乎全是 chrome，此时回退到 polish 后的基线，绝不产出废标题。 */
+  if (t.replace(/[^\u4e00-\u9fa5]/g, '').length < 4) t = _base;
   return t;
 }
 
-module.exports = { polish, polishTitle, fixNames, fixMilitary, fixCausal, fixBrokenTitle, ABBR, NAMES, NAME_FIX, MEDIA_EN, MEDIA_ZH, MILITARY_FIX, TERM_FIX };
+module.exports = { polish, polishTitle, fixNames, fixMilitary, fixCausal, fixBrokenTitle, stripMediaTail: _stripMediaTail, stripArtifacts: _stripArtifacts, ABBR, NAMES, NAME_FIX, MEDIA_EN, MEDIA_ZH, MEDIA_TAIL_SIG, MILITARY_FIX, TERM_FIX };

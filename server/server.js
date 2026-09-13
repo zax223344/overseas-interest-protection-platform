@@ -12822,9 +12822,11 @@ async function _runTranslateRetry() {
     /* ⓪ #739（2026-09-10）混排增量修复：每 15min 修最新 120 行（id DESC），
      * 与每日 _trMixedBackfillSweep/_fixMixedSweep(800) 存量扫互补；_mixfixAt 7 天重访。 */
     try { await _fixMixedSweep(120); } catch (e) {}
-    /* ① 完全未翻译：标题无中文且无 title_zh */
+    /* ① 完全未翻译：标题无中文且无 title_zh。
+     * #784（2026-09-13）时效窗 3d→14d：实测存量 215 行中 91 行（84 行在 3~7d 段）落在旧窗外，
+     * 通道永远够不着 → 永久残留。放宽后 LIMIT 30/轮 + _translationOk 质量闸不变，非大批量重译。 */
     const untr = await query(
-      `SELECT id, title, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '3 days'
+      `SELECT id, title, data_json FROM intel_data WHERE collect_time >= NOW() - INTERVAL '14 days'
        AND (data_json->>'title_zh' IS NULL OR data_json->>'title_zh' = '')
        AND title !~ '[一-龥]' ORDER BY collect_time DESC LIMIT 30`);
     let fixed = 0;

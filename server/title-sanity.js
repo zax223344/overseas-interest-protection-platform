@@ -18,6 +18,14 @@
  */
 'use strict';
 
+const { US_STATE_ZH } = require('./gdelt-actors');
+const { GD_COUNTRIES } = require('./crawler');
+
+/* 平台覆盖国中文名集合（GD_COUNTRIES 键 = 中文国名）。
+ * #784 补充：STATE_RE 是手写清单，漏了塞拉利昂/厄立特里亚等小国 →
+ * 这些国家当主语时被误判"无行为能力"而降级。国名兜底用 GD_COUNTRIES 单一取源。 */
+const _CN_COUNTRIES = new Set(Object.keys(GD_COUNTRIES).map(s => String(s).trim()));
+
 /* ---------- 一、行为体名合法性 ---------- */
 
 /* 无主语意义的碎片词（出现在行为体位即作废）。
@@ -27,8 +35,38 @@ const ACTOR_FRAG = new Set([
   '副', '极', '代表', '其他', '其它', '某', '该', '此', '其', '本', '方', '者', '人',
   '州', '市', '县', '区', '镇', '村', '部', '局', '处', '科', '司', '厅', '委', '办',
   '状态', '邻域', '国籍', '机关', '单位', '部门', '人士',
-  '政府方', '官方', '有关方面', '消息人士', '分析人士', '观察人士'
+  '政府方', '官方', '有关方面', '消息人士', '分析人士', '观察人士',
+  /* #784（2026-09-13）：占位/泛指行为体——不是真实主体，出现在主语位即作废。 */
+  '相关方', '多方', '各方', '对方', '我方', '你方', '某一方',
+  '不明行为体', '行为体', '目标', '目标方', '相关目标'
 ]);
+
+/* 「X方」国别简称的**保留白名单**（中文媒体惯用）。其余「XX方」一律还原为「XX」——
+ * 实测 GDELT 行为体名把国名机械加「方」产生大量非惯用形态
+ * （尼日利亚方/澳大利亚方/埃塞俄比亚方/斯里兰卡方），中文里不这么写。 */
+const SIDE_KEEP = new Set(['伊方', '美方', '以方', '俄方', '乌方', '中方', '日方', '韩方',
+  '英方', '法方', '德方', '印方', '巴方', '土方', '越方', '泰方', '菲方', '黎方', '叙方',
+  '埃方', '墨方', '沙方', '朝方', '澳方', '加方', '意方']);
+
+/**
+ * 「X方」归一：#784 起长国名 + 方 一律还原（尼日利亚方 → 尼日利亚）；
+ * 单字惯用简称（伊方/美方/中方）保留；纯占位（相关方/多方）返回 ''。
+ * ★ 守卫：词根若本身以机构/称谓字收尾（苏丹**军**方 / 中国**官**方 / 英国**警**方），
+ *   说明「方」不是国别后缀而是词的一部分 → 原样保留（否则会被错切成「苏丹军」）。
+ */
+const SIDE_BASE_STOP = /[军警民兵队部局院会司校团党府界方区州省旗员长]$/;
+
+function normSide(s) {
+  const t = String(s || '').trim();
+  const m = t.match(/^(.{1,8}?)方$/);
+  if (!m) return t;
+  if (SIDE_KEEP.has(t)) return t;
+  if (ACTOR_FRAG.has(t)) return '';
+  const base = m[1];
+  if (base.length <= 1) return t;          /* 「警方」「军方」「美方」等：base 单字，保留 */
+  if (SIDE_BASE_STOP.test(base)) return t; /* 词根以机构字收尾 → 「方」是词的一部分 */
+  return base;
+}
 
 /**
  * 行为体名合法性：单字碎片 / 纯标点 / 无义词一律作废（返回 ''）。
@@ -36,6 +74,8 @@ const ACTOR_FRAG = new Set([
  */
 function normActor(s) {
   s = String(s || '').trim().replace(/^[·•\-–—\s|]+|[·•\-–—\s|]+$/g, '');
+  if (!s) return '';
+  s = normSide(s);                                   /* #784 「XX方」还原（尼日利亚方→尼日利亚） */
   if (!s) return '';
   if (/^[\u4e00-\u9fa5]$/.test(s)) return '';        /* 纯单字中文（副/极/州…） */
   if (/^[A-Za-z]{1,2}$/.test(s)) return '';          /* 1~2 个字母（A、Us…） */
@@ -45,6 +85,22 @@ function normActor(s) {
 }
 
 /* ---------- 二、归档模板标题可信度（动词决定所需主体能力等级） ---------- */
+
+/* 行政区划后缀：GDELT 常把「地名」填进 Actor 位（实测「加利福尼亚州发起抗议」
+ * 「纽约州胁迫媒体」「威尔士展示武力」「以方与村庄交战」）。
+ * 地名不是行为主体：作主语时降为地点要素，作对称动词的另一方时整条判误码。 */
+const PLACE_SUF_RE = /(州|省|邦|市|县|区|岛|港|镇|村|庄|郡)$/;
+/* 以「区/邦」收尾但实为机构/建制的词，不得按地名处理 */
+const PLACE_ALLOW = new Set(['联邦', '军区', '战区', '警区', '防区', '管区', '辖区', '边区', '自治区']);
+const _US_STATE_VALS = new Set(Object.values(US_STATE_ZH));
+
+function isPlaceActor(name) {
+  const t = String(name || '').trim();
+  if (!t) return false;
+  if (PLACE_ALLOW.has(t)) return false;
+  if (_US_STATE_VALS.has(t)) return true;
+  return t.length >= 2 && PLACE_SUF_RE.test(t);
+}
 
 /* CAMEO 码 → 所需主体能力等级：
  *   mil   = 战争行为（打击/轰炸/封锁/占领/空袭/屠杀/清洗/绑架），须军事主体或国家
@@ -58,6 +114,10 @@ const REQUIRE_MIL = new Set([
 ]);
 const REQUIRE_STATE = new Set(['10', '11', '12', '13', '16', '172', '173']);
 const REQUIRE_LAW = new Set(['17', '174']);
+
+/* #784（2026-09-13）对称行为：语义要求**双方**都是行为主体，不能有一方是地名。
+ * 「以方与村庄交战」「美国与多方关系降级」——只有一方合格时句子本身不成立 → 判误码降级。 */
+const REQUIRE_BOTH = new Set(['16', '19', '196']);
 
 /* 军事主体（具备武力投射能力）。注意：不含警察/警方——警方无权实施轰炸/空袭/占领。 */
 const MIL_ACTOR_RE = /(军|部队|武装|联军|国防|防务|参谋|军区|战区|卫队|民兵|叛军|军阀|恐怖|圣战|塔利班|伊斯兰国|极端组织|激进组织|雇佣|特种部队|陆战队|空降兵|火箭军|国民警卫|海岸警卫|政府军|国民军|革命卫队|陆军|海军|空军|战机|战舰|火箭|导弹|无人机|坦克|军事|袭击者|枪手|武装分子|反政府|分离|游击|military|army|troops|forces|militia|terror|jihad|rebel|insurg|guerrilla|navy|soldier|gunmen|bomber|militant|warlord|air ?force|national ?guard|marine)/i;
@@ -73,11 +133,15 @@ const STATE_SIDE_RE = /^[\u4e00-\u9fa5]{1,5}方$/;
 
 /** 行为体能力分级：'mil' | 'law' | 'state' | ''（不具备任何行为能力） */
 function actorClass(name) {
-  const s = String(name || '').trim();
+  let s = String(name || '').trim();
+  if (s.length < 2) return '';
+  s = normSide(s);                      /* #784 「XX方」先归一（埃塞俄比亚方→埃塞俄比亚） */
   if (s.length < 2) return '';
   if (MIL_ACTOR_RE.test(s)) return 'mil';
   if (LAW_ACTOR_RE.test(s)) return 'law';
   if (STATE_RE.test(s) || STATE_SIDE_RE.test(s)) return 'state';
+  /* 国名兜底（含「XX方」形态）：手写 STATE_RE 覆盖不全（塞拉利昂/厄立特里亚/巴新…） */
+  if (_CN_COUNTRIES.has(s) || _CN_COUNTRIES.has(s.replace(/方$/, ''))) return 'state';
   return '';
 }
 
@@ -87,28 +151,49 @@ function actorCapable(name) {
   return k === 'mil' || k === 'state';
 }
 
+/** 动词所需的主体能力等级：'mil' | 'state' | 'law' | ''（该动词不设闸） */
+function requireLevel(ev, root) {
+  for (const k of [String(ev || ''), String(root || '')]) {
+    if (!k) continue;
+    if (REQUIRE_MIL.has(k)) return 'mil';
+    if (REQUIRE_STATE.has(k)) return 'state';
+    if (REQUIRE_LAW.has(k)) return 'law';
+  }
+  return '';
+}
+
+/**
+ * 主语是否具备该动词所需能力（#784 抽出：标题降级判定与可信度判定共用一个判据，
+ * 避免「警方发动军事打击」这类「主语失格但仍被当主语」的漏网）。
+ */
+function subjectOk(a1, ev, root) {
+  const need = requireLevel(ev, root);
+  if (!need) return true;                    /* 非受限动词不设此闸 */
+  const c1 = actorClass(a1);
+  if (need === 'mil') return c1 === 'mil' || c1 === 'state';
+  if (need === 'state') return c1 === 'state';
+  return c1 === 'mil' || c1 === 'law' || c1 === 'state';
+}
+
 /**
  * 归档模板标题可信度。
  * @param {string} a1 行为体1（已中文化）
  * @param {string} a2 行为体2（已中文化）
  * @param {string} ev CAMEO 事件子码（如 '190'）
  * @param {string} root CAMEO root 码（如 '19'）
- * @returns {'ok'|'low'} low = 动词所需的主体能力等级无人满足 → GDELT 误码
+ * @returns {'ok'|'low'} low = 动词所需能力无人满足 / 主语不成主体 → GDELT 误码
  */
 function archiveTplConf(a1, a2, ev, root) {
-  let need = '';
-  for (const k of [String(ev || ''), String(root || '')]) {
-    if (!k) continue;
-    if (REQUIRE_MIL.has(k)) { need = 'mil'; break; }
-    if (REQUIRE_STATE.has(k)) { need = 'state'; break; }
-    if (REQUIRE_LAW.has(k)) { need = 'law'; break; }
+  if (!requireLevel(ev, root)) return 'ok';
+  /* 主语（A1）必须具备动词所需能力。
+   * #784 根修：旧规则「A1 或 A2 任一合格即放行」→「A1 垃圾 + A2 军事实体」全部漏网
+   * （实测「公司与武装力量交战」「监狱胁迫美国」「珀斯胁迫警方」「方丈胁迫英国」）。 */
+  if (!subjectOk(a1, ev, root)) return 'low';
+  /* 对称动词：另一方不得是地名（「与村庄交战」这类结构不成立） */
+  if (REQUIRE_BOTH.has(String(ev || '')) || REQUIRE_BOTH.has(String(root || ''))) {
+    if (isPlaceActor(a1) || isPlaceActor(a2)) return 'low';
   }
-  if (!need) return 'ok';                    /* 非受限动词不设此闸 */
-  const c1 = actorClass(a1), c2 = actorClass(a2);
-  if (need === 'mil') return (c1 === 'mil' || c2 === 'mil' || c1 === 'state' || c2 === 'state') ? 'ok' : 'low';
-  if (need === 'state') return (c1 === 'state' || c2 === 'state') ? 'ok' : 'low';
-  /* law：军事/执法/国家任一即可 */
-  return (c1 || c2) ? 'ok' : 'low';
+  return 'ok';
 }
 
 /* ---------- 二·补：归档模板标题解析（还原行为体） ---------- */
@@ -182,6 +267,7 @@ function isSiteChrome(title, url) {
 }
 
 module.exports = {
-  normActor, actorClass, actorCapable, archiveTplConf, isSiteChrome, parseTplTitle,
-  MIL_ACTOR_RE, LAW_ACTOR_RE, STATE_RE, REQUIRE_MIL, REQUIRE_STATE, REQUIRE_LAW, TPL_VERBS
+  normActor, actorClass, actorCapable, archiveTplConf, isSiteChrome, parseTplTitle, normSide, isPlaceActor,
+  requireLevel, subjectOk,
+  MIL_ACTOR_RE, LAW_ACTOR_RE, STATE_RE, REQUIRE_MIL, REQUIRE_STATE, REQUIRE_LAW, REQUIRE_BOTH, TPL_VERBS
 };
