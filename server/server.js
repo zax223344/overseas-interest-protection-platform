@@ -42,6 +42,7 @@ const wechatNeg = require('./wechat-negative'); /* 公众号涉华负面专项�
 const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索→抓取入库 四步管线（2026-08-26 用户指令：公众号只查询线索，不再从公众号抓数据入库） */
 const RS = require('./report-standard'); /* #625 统一报告标准模块：手册规范+GB/T 9704 版式+完稿质检，四处消费同一来源 */
 const CAT_STD = require('./category-standard'); /* #627 分类体系 v2.0 单一事实源：5 域 18 子类 + 旧→新映射 + 采集词表，全部消费方禁止自带副本 */
+const CORE = require('./core-rank'); /* #785 核心度筛选单一事实源：资格闸+0-100 评分+涉华分层——显示类接口统一"核心优先、时间次之"，替代谁新谁上 */
 const RL = require('./risk-level'); /* #724 P0-3 定级单一事实源：红区双条件闸（RED-1 涉华生命安全/RED-2 重大地溢）+ 蓝区内容维度闸 + assessLevel 读取归一——四个功能区的定级口径全部收敛于此，禁止业务文件自带本地副本 */
 const FORECAST_ENGINE = require('./forecast-engine'); /* #626 统一国别预测推演引擎：intel_data 真实数据驱动，前端 FORECAST 优先消费本端点 */
 const coreThreatWatch = require('./core-threat-watch'); /* 海外核心安全威胁一分钟哨兵（2026-08-27 用户铁指令：巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚 恐袭/袭击/绑架/刑案，1 分钟一轮） */
@@ -671,20 +672,21 @@ const PUBLIC_INTEL_TYPES = ['osint_intel','collect_logs'];
  * 改为本接口按标题要素（中国/中资/华人/China/Chinese/一带一路等，含 title_zh）全量返回。 */
 app.get('/api/intel/china', async (req, res) => {
   try {
-    const r = await query(`
-      SELECT * FROM intel_data
-      WHERE audit_status='approved' AND (
-        title ILIKE '%中国%' OR title ILIKE '%中资%' OR title ILIKE '%中企%' OR title ILIKE '%中方%'
-        OR title ILIKE '%华人%' OR title ILIKE '%华侨%' OR title ILIKE '%华裔%' OR title ILIKE '%涉华%'
-        OR title ILIKE '%对华%' OR title ILIKE '%一带一路%' OR title ILIKE '%驻华%' OR title ILIKE '%访华%'
-        OR title ILIKE '%China%' OR title ILIKE '%Chinese%' OR title ILIKE '%Beijing%'
-        OR title ILIKE '%Belt and Road%' OR title ILIKE '%CPEC%'
-        OR data_json->>'title_zh' ILIKE '%中国%' OR data_json->>'title_zh' ILIKE '%中资%'
-        OR data_json->>'title_zh' ILIKE '%中企%' OR data_json->>'title_zh' ILIKE '%华人%'
-        OR data_json->>'title_zh' ILIKE '%一带一路%'
-      )
-      ORDER BY collect_time DESC LIMIT 500`);
+    /* #785 涉华面板重做（用户指令：涉华筛选按专家视角重新设计）。三层修法：
+     * ① 召回——弃"纯标题 ILIKE 硬扫"，优先用入库时 isChinaRelatedStrict 判定好的
+     *    chinaRelated 标记（实测 5,815 行）+ _chinaNegative，关键词仅作 flag 未打存量的兜底；
+     * ② 资格闸——core-rank 同源（审核通过/非归档/非降级/标题有中文），合成噪声不再混入；
+     * ③ 分层排序——层1: 24h 涉华负面（硬规则：24h 涉华负面最优先）→ 层2: 涉华负面
+     *    → 层3: 涉华(flag) → 层4: 仅关键词命中(弱涉华沉底)；同层按核心度，再按时间。 */
+    const kwPats = CORE.CN_KEYWORDS.map(k => '%' + k + '%');
+    const r = await query(
+      "SELECT intel_data.*, (" + CORE.SCORE_SQL.replace(/\n\s*/g, ' ') + ") AS _core FROM intel_data" +
+      " WHERE " + CORE.GATE_SQL.replace(/\n\s*/g, ' ') +
+      " AND ( data_json->>'chinaRelated' = 'true' OR data_json->>'_chinaNegative' = 'true'" +
+      "    OR title ILIKE ANY($1) OR data_json->>'title_zh' ILIKE ANY($1) )" +
+      " ORDER BY _core DESC, collect_time DESC LIMIT 1500", [kwPats]);
     const _seen = {};
+    const nowMs = Date.now();
     const list = [];
     for (const row of r.rows) {
       const j = row.data_json || {};
@@ -693,7 +695,7 @@ app.get('/api/intel/china', async (req, res) => {
       const k = _normTitleKey(j.title_zh || row.title) || _normTitleKey(row.title);
       if (k && _seen[k]) continue;
       if (k) _seen[k] = 1;
-      list.push(Object.assign({}, j, {
+      const it = Object.assign({}, j, {
         id: row.id,
         title: j.title_zh || row.title || '',
         title_zh: j.title_zh || '',
@@ -706,9 +708,23 @@ app.get('/api/intel/china', async (req, res) => {
         audit_status: row.audit_status,
         data_type: row.data_type,
         chinaRelated: true,
-        _chinaNegative: j._chinaNegative === true || j._chinaNegative === 'true'
-      }));
+        _chinaNegative: j._chinaNegative === true || j._chinaNegative === 'true',
+        _core: Number(row._core) || 0
+      });
+      /* 分层用入库原始 flag（payload 的 chinaRelated=true 仅表示"面板命中"，不代表强涉华口径） */
+      it._cnLayer = CORE.cnLayer({
+        title_zh: it.title_zh, title: it.title_en, _chinaNegative: it._chinaNegative,
+        chinaRelated: (j.chinaRelated === true || j.chinaRelated === 'true'),
+        collect_time: it.collect_time
+      }, nowMs);
+      list.push(it);
     }
+    /* 分层排序（稳定排序：同层保持核心度序；层1 内按时间倒序保证最新负面最先） */
+    list.sort((a, b) => {
+      if (a._cnLayer !== b._cnLayer) return a._cnLayer - b._cnLayer;
+      if (a._cnLayer === 1) return new Date(b.collect_time) - new Date(a.collect_time);
+      return 0;
+    });
     res.json(list);
   } catch (e) {
     console.warn('[CHINA LIST] 查询失败:', e.message);
@@ -5389,8 +5405,11 @@ app.get('/api/intel/public/:type', ttlCache(10000), async (req, res) => {
        * 3. 同一国家/地区最多 12 条，防止单一方向刷屏；
        * 4. 总量 300 条，按时间倒序。 */
       const dayAgo = new Date(); dayAgo.setHours(0,0,0,0); /* 2026-08-17 铁律：实时流只流今日采集（原 24h 窗口会让昨日条目跨天残留） */
+      /* #785 核心度重排：今日窗口内按核心度取前 1500（资格闸同源），涉华保底/国别限额逻辑不变 */
       const result = await query(
-        "SELECT * FROM intel_data WHERE (data_type = $1 OR data_type = 'geopolitical_intel') AND audit_status = 'approved' AND collect_time >= $2 ORDER BY collect_time DESC LIMIT 1500",
+        "SELECT intel_data.*, (" + CORE.SCORE_SQL.replace(/\n\s*/g, ' ') + ") AS _core FROM intel_data" +
+        " WHERE (data_type = $1 OR data_type = 'geopolitical_intel') AND collect_time >= $2 AND " + CORE.GATE_SQL.replace(/\n\s*/g, ' ') +
+        " ORDER BY _core DESC, collect_time DESC LIMIT 1500",
         [type, dayAgo]
       );
       const _seen = {};
@@ -13951,11 +13970,17 @@ app.get('/api/intel/:type', ttlCache(45000), async (req, res) => {
     const limit = Math.min(10000, Math.max(1, parseInt(req.query.limit, 10) || 3000));
     /* #777 P0：剔除 GDELT 归档低可信模板句（_tplLowConf=true，行为体不具备该武力能力
      * 的误码条目）。条目仍留在库中可溯源、仍计入采集总量，只是不作为情报展示。 */
-    const result = await query("SELECT * FROM intel_data WHERE data_type = $1 AND COALESCE(data_json->>'_tplLowConf','') <> 'true' ORDER BY collect_time DESC LIMIT $2", [type, limit]);
+    /* #785 核心度重排（用户指令：显示类筛选要"核心重点数据"，不是谁新谁上）：
+     * 资格闸（审核通过/非归档/非降级/标题有中文）+ 核心度 0-100 评分排序，
+     * 同分才按 collect_time。旧 collect_time DESC 纯时间序被 backfill 低危噪声淹没。 */
+    const result = await query(
+      "SELECT intel_data.*, (" + CORE.SCORE_SQL.replace(/\n\s*/g, ' ') + ") AS _core FROM intel_data" +
+      " WHERE data_type = $1 AND " + CORE.GATE_SQL.replace(/\n\s*/g, ' ') +
+      " ORDER BY _core DESC, collect_time DESC, id DESC LIMIT $2", [type, limit]);
     /* 2026-08-25 铁律修复：必须回传真实入库时间 collect_time——此前只铺 data_json，
      * 历史条目 data_json 无时间字段时前端只能用 Date.now() 兜底，导致 5 月旧闻盖今日新戳
      * 混入最新预警（id 11233 事件）。DB 列置后覆盖，防止 data_json 内同名字段造假。 */
-    res.json(result.rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time, collect_time: r.collect_time })));
+    res.json(result.rows.map(r => ({ ...r.data_json, id: r.id, audit_status: r.audit_status, audit_time: r.audit_time, collect_time: r.collect_time, _core: Number(r._core) || 0 })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

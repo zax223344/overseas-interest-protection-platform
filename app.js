@@ -16426,6 +16426,13 @@ const AVIEW={
       }).catch(function(){});
     }
     var all=[];
+    /* 服务器全量先行（带 _core/_cnLayer 核心度与分层字段；去重时优先保留服务端版本） */
+    (self._chinaServerList||[]).forEach(function(it){
+      if(!it) return;
+      var text=(it.title||'')+' '+(it.content||'')+' '+(it.title_zh||'')+' '+(it.content_zh||'');
+      if(!self._hasChinaElement(text)) return;
+      all.push(it);
+    });
     var stores=CATV2_SCAN;
     stores.forEach(function(s){
       try{
@@ -16439,17 +16446,17 @@ const AVIEW={
           }else{
             it.chinaRelated=true;
           }
+          /* #785 涉华分层（本地条目无服务端 _cnLayer，按负面+时间就地定层） */
+          if(!it._cnLayer){
+            var _lt=Date.parse(it.collect_time||it.publishedAt||it.pubDate||0);
+            var _age=_lt?(Date.now()-_lt):Infinity;
+            it._cnLayer=it._chinaNegative?(_age<=86400e3?1:2):3;
+          }
           all.push(it);
         });
       }catch(e){}
     });
     /* 合并服务器涉华全量（标题口径已在服务端过滤，前端再过一遍要素闸双保险） */
-    (self._chinaServerList||[]).forEach(function(it){
-      if(!it) return;
-      var text=(it.title||'')+' '+(it.content||'')+' '+(it.title_zh||'')+' '+(it.content_zh||'');
-      if(!self._hasChinaElement(text)) return;
-      all.push(it);
-    });
     var seen={};
     all=all.filter(function(it){
       /* 去重键用中文标题优先（服务器与本地来源字符串不同，标题归一化后才是同一事件） */
@@ -16464,7 +16471,10 @@ const AVIEW={
       var t=Date.parse(it.collect_time||it.publishedAt||it.pubDate||it.audit_time||'');
       return t && t>=_dsC.getTime();
     });
+    /* #785 分层优先：层1(24h涉华负面)→层2(负面)→层3(涉华)→层4(弱涉华)；同层按时间倒序 */
     all.sort(function(a,b){
+      var la=a._cnLayer||3, lb=b._cnLayer||3;
+      if(la!==lb)return la-lb;
       var ta=Date.parse(a.publishedAt||a.pubDate||a.collect_time||a.audit_time||0);
       var tb=Date.parse(b.publishedAt||b.pubDate||b.collect_time||b.audit_time||0);
       return tb-ta;
@@ -16542,6 +16552,9 @@ const AVIEW={
         html+='<div style="flex:1"><div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">';
         html+='<span class="badge '+lv+'" style="font-size:9px;padding:1px 4px;background:'+lvColor+'22;color:'+lvColor+';border:1px solid '+lvColor+'55">'+lvLabel+'</span>';
         html+='<span class="badge '+(isNeg?'b-red':'b-blue')+'" style="font-size:9px;padding:1px 4px">'+isNegLabel+'</span>';
+        /* #785 涉华分层 + 核心度角标（层1 红色高亮=24h 涉华负面置顶；核心度≥60 才亮标） */
+        if(it._cnLayer)html+='<span class="badge" style="font-size:9px;padding:1px 4px;border:1px solid '+(it._cnLayer===1?'var(--red)':'var(--text3)')+'55;color:'+(it._cnLayer===1?'var(--red)':'var(--text3)')+';background:transparent">'+(it._cnLayer===1?'置顶·24h负面':'层'+it._cnLayer)+'</span>';
+        if(Number(it._core)>=60)html+='<span class="badge" style="font-size:9px;padding:1px 4px;border:1px solid var(--orange)55;color:var(--orange);background:transparent">⭐核心 '+Number(it._core)+'</span>';
         if(it.country_cn)html+='<span style="font-size:9px;color:var(--text3)">📍'+it.country_cn+'</span>';
         if(it.source)html+='<span style="font-size:9px;color:var(--text3)">🔗'+it.source+'</span>';
         if(ts)html+='<span style="font-size:9px;color:var(--text3)">🕐'+ts+'</span>';
@@ -20640,6 +20653,8 @@ function _ingestPublicIntel(list){
         publishedAt: it.publishedAt||it.pubDate||'', charCount: it.charCount||0,
         /* 保留后端回填的翻译结果，否则前端落库后丢失 title_zh/content_zh 又回退英文 */
         title_zh: it.title_zh||'', content_zh: it.content_zh||'',
+        /* #785 核心度（服务端 0-100 评分）随条目落库，供列表角标与排序 */
+        _core: Number(it._core)||0,
         audit_status:'approved', _sim:false, is_simulated:false
       }]);
       added++;
