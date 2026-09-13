@@ -2862,7 +2862,7 @@ var DATACENTER={
       html+='<div style="margin-top:12px;padding:10px;background:var(--bg2);border-radius:8px;font-size:12px;line-height:1.6">'+esc(item.content||item.desc)+'</div>';
     }
     if(item.url){
-      html+='<div style="margin-top:8px;font-size:11px">🔗 <a href="'+esc(item.url)+'" target="_blank" style="color:var(--cyan)">查看原文</a></div>';
+      html+='<div style="margin-top:8px;font-size:11px">🔗 <a href="'+esc(item.url)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(item.url||'')+'\'))" style="color:var(--cyan)">查看原文</a></div>';
     }
     /* 状态信息 + 操作按钮 */
     var isDistributed=!!item._distributed || !!(typeof ALERTS!=='undefined' && ALERTS.some(function(a){return String(a._srcId||a.id)===sid || String(a.id)===sid;}));
@@ -3285,7 +3285,7 @@ var DATACENTER={
     }
     /* ---- 原文链接（可点击溯源） ---- */
     if(row.url){
-      html+='<div style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:11px">🔗 原文链接：<a href="'+esc(row.url)+'" target="_blank" rel="noopener" style="color:var(--cyan);word-break:break-all">'+esc(row.url)+'</a></div>';
+      html+='<div style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:11px">🔗 原文链接：<a href="'+esc(row.url)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(row.url||'')+'\'))" style="color:var(--cyan);word-break:break-all">'+esc(row.url)+'</a></div>';
     }
     /* ---- 操作区 ---- */
     if(this.currentTab!=='collect_logs'&&PERM.isAdmin()){
@@ -14418,7 +14418,7 @@ const AVIEW={
     var desc = String(a.desc||'').trim();
     var title = String(a.title||'').trim();
     var link = a.url || a.ext_url || '';
-    var linkHtml = link ? '<a href="'+esc(link)+'" target="_blank" rel="noopener" style="font-size:10px;color:var(--cyan);text-decoration:none">🔗 查看原文 →</a>' : '';
+    var linkHtml = link ? '<a href="'+esc(link)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(link||'')+'\'))" style="font-size:10px;color:var(--cyan);text-decoration:none">🔗 查看原文 →</a>' : '';
     /* 正文有效性判定：不能等于标题、不能等于已展示的摘要、要有足够长度 */
     var valid = body && body !== title && body.length >= 200 && body !== desc;
     if(!valid){
@@ -18859,7 +18859,7 @@ function showAlertDetail(id){
     }
   }catch(e){}
   html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">'+metaBits.join('')+'</div>';
-  if(a.url){ html+='<div style="margin-bottom:10px"><a href="'+a.url+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--cyan);text-decoration:none;padding:6px 12px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);border-radius:6px">🔗 查看原文链接</a></div>'; }
+  if(a.url){ html+='<div style="margin-bottom:10px"><a href="'+a.url+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(a.url||'')+'\'))" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--cyan);text-decoration:none;padding:6px 12px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);border-radius:6px">🔗 查看原文链接</a></div>'; }
   html+='<div class="mt-8 text-xs text-muted">生成时间: '+a.time+'</div>';
   /* 状态流转操作条 */
   var _akey=String(a.alert_no||a.id||'').replace(/'/g,''); /* 稳定键：alert_no 优先（实时流重建后仍有效） */
@@ -20586,6 +20586,24 @@ function _parseIntelTime(it){
  * 修复案例：《所有CS:GO和CS2的Major冠军及MVP》因 Counter-Strike 含 strike 子串误过闸门 */
 var _NOISE_RE=/电竞|电子竞技|游戏攻略|游戏指南|游戏更新|CS:GO|CSGO|CS2|Counter-Strike|反恐精英|英雄联盟|League of Legends|Dota|王者荣耀|绝地求生|PUBG|Valorant|无畏契约|守望先锋|炉石传说|星际争霸|魔兽世界|原神|米哈游|Major冠军|Major赛事|战队夺冠|职业选手|电竞选手|锦标赛MVP|总决赛MVP|季后赛|常规赛|NBA|英超|西甲|意甲|德甲|欧冠联赛|世界杯预选赛|转会费|球星|球员合同|演唱会|综艺节目|票房|影视剧|电视剧|明星八卦|娱乐圈|选秀节目|颁奖典礼|格莱美|奥斯卡/i;
 function _isNoiseIntel(text){ return !!text && _NOISE_RE.test(text); }
+/* #786 原文链接打开器：Google News 跳转壳（/rss/articles/…）在内地浏览器必然打不开
+ * （news.google.com 被阻断 + 新版 token 需 Google 内部接口解码），先调服务端
+ * /api/gnews-resolve 换真实原文 URL 再打开；解码失败兜底开壳。返回 false 拦截默认跳转。 */
+function _openSrcUrl(u){
+  try{
+    u=String(u||''); if(!u) return false;
+    if(/\/\/news\.google\.com\/rss\/(?:articles|read)\//.test(u)){
+      if(typeof showToast==='function')showToast('🔗 正在解析原文真实链接…');
+      fetch('/api/gnews-resolve?u='+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(d){
+        var t=(d&&d.ok&&d.url)?d.url:u;
+        window.open(t,'_blank','noopener');
+      }).catch(function(){ window.open(u,'_blank','noopener'); });
+      return false;
+    }
+    window.open(u,'_blank','noopener');
+    return false;
+  }catch(e){ return true; }
+}
 function _ingestPublicIntel(list){
   if(!list||!list.length||typeof DBCenter==='undefined') return 0;
   var added=0, seen={};

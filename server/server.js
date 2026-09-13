@@ -43,6 +43,7 @@ const wechatLeads = require('./wechat-leads'); /* 公众号线索→全球搜索
 const RS = require('./report-standard'); /* #625 统一报告标准模块：手册规范+GB/T 9704 版式+完稿质检，四处消费同一来源 */
 const CAT_STD = require('./category-standard'); /* #627 分类体系 v2.0 单一事实源：5 域 18 子类 + 旧→新映射 + 采集词表，全部消费方禁止自带副本 */
 const CORE = require('./core-rank'); /* #785 核心度筛选单一事实源：资格闸+0-100 评分+涉华分层——显示类接口统一"核心优先、时间次之"，替代谁新谁上 */
+const GNR = require('./gnews-resolve'); /* #786 Google News 跳转壳解码：壳 URL→真实原文 URL（内地浏览器打不开 news.google.com，点原文必挂） */
 const RL = require('./risk-level'); /* #724 P0-3 定级单一事实源：红区双条件闸（RED-1 涉华生命安全/RED-2 重大地溢）+ 蓝区内容维度闸 + assessLevel 读取归一——四个功能区的定级口径全部收敛于此，禁止业务文件自带本地副本 */
 const FORECAST_ENGINE = require('./forecast-engine'); /* #626 统一国别预测推演引擎：intel_data 真实数据驱动，前端 FORECAST 优先消费本端点 */
 const coreThreatWatch = require('./core-threat-watch'); /* 海外核心安全威胁一分钟哨兵（2026-08-27 用户铁指令：巴基斯坦/CPEC、阿富汗、非洲、中亚、东南亚 恐袭/袭击/绑架/刑案，1 分钟一轮） */
@@ -730,6 +731,18 @@ app.get('/api/intel/china', async (req, res) => {
     console.warn('[CHINA LIST] 查询失败:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+/* #786 Google News 跳转壳即时解码：前端点「原文」时若 href 是 news.google.com 壳，
+ * 先调本接口换真实原文 URL 再打开（内地浏览器无法访问 news.google.com，直接点必报
+ * 「重定向到无效网址」）。成功解码同时回写库内该行 url（_gnewsUrl 留壳），全站一次解码永久生效。 */
+app.get('/api/gnews-resolve', async (req, res) => {
+  try {
+    const u = String(req.query.u || '');
+    if (!GNR.isGnewsUrl(u)) return res.status(400).json({ ok: false, error: '非 Google News 跳转壳 URL' });
+    const url = await GNR.resolveAndPersist(u, query);
+    res.json({ ok: !!url, url: url || '' });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 /* 前后端权威同步对账（2026-08-13 体检 P0-3）：返回服务端全部已审核条目 ID，
@@ -11417,6 +11430,7 @@ function startGlobalMediaCron() {
   SCHED.register('consular-watch', _runConsularWatch, { interval: 10 * 60 * 1000, firstRunMs: 320000, klass: 'collect' }); /* 涉华受害核心，10min */
   SCHED.register('core-threat-sentinel', _runCoreThreatSentinel, { interval: 10 * 60 * 1000, firstRunMs: 350000, klass: 'collect' });
   SCHED.register('china-terror-collect', _runChinaTerrorCollect, { interval: 10 * 60 * 1000, firstRunMs: 410000, klass: 'collect' }); /* #689 涉华恐袭矩阵 */
+  SCHED.register('gnews-resolve', () => GNR.sweepUnresolved(query, 30).then(r => { if (r.resolved) console.log('[GNEWS-RESOLVE] 解码原文 ' + r.resolved + '/' + r.scanned); }).catch(() => {}), { interval: 30 * 60 * 1000, firstRunMs: 240000, klass: 'collect' }); /* #786 每 30min 消化跳转壳存量 */
   SCHED.register('ent-risk-collect', _runEntRiskCollect, { interval: 30 * 60 * 1000, firstRunMs: 500000, klass: 'collect' }); /* #698 12 查询轮换 4/轮 */
   /* —— 补采/归档类（#713 迁 worker 进程：60s tick，活跃时每 150s 推进一个 15 天历史切片）—— */
   SCHED.register('china-terror-backfill-tick', _chinaTerrorBackfillTick, { interval: 60 * 1000, klass: 'backfill' });
