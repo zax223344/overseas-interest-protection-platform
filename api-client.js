@@ -104,6 +104,17 @@ var APIClient = {
       return fetch(self._baseUrl + path, opts).then(function (r) {
         return r.json().then(function (data) {
           if (!r.ok) {
+            /* #792：带凭据请求收到 401 = token 过期/失效 → 全局强制回登录页。
+               5 秒防抖：开屏多接口并发 401 只弹一次。 */
+            if (r.status === 401 && !noAuth) {
+              if (!self._401Fired) {
+                self._401Fired = true;
+                setTimeout(function () { self._401Fired = false; }, 5000);
+                setTimeout(function () {
+                  try { if (typeof AUTH !== 'undefined' && AUTH.forceLogin) AUTH.forceLogin('登录已过期，请重新登录'); } catch (e) {}
+                }, 50);
+              }
+            }
             var err = new Error(data.error || 'API请求失败 (' + r.status + ')');
             err.status = r.status;
             throw err;
@@ -192,6 +203,9 @@ var APIClient = {
   // 情报数据 API (DBCenter)
   // ================================================================
   getIntel: function(type) { return this._fetch('GET', '/api/intel/' + type); },
+
+  /* 2026-09-07 #668：标题→行号映射轻量模式（只回 id+title，替代全量拉取 33s 的重负载） */
+  getIntelMap: function(type) { return this._fetch('GET', '/api/intel/' + type + '?map=1'); },
 
   addIntel: function(type, item) { return this._fetch('POST', '/api/intel/' + type, item); },
 

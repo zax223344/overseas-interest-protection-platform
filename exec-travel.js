@@ -82,19 +82,51 @@ var EXECTRAVEL = (function () {
 
   /* ---------- 工具 ---------- */
   function _tok() { try { return (typeof APIClient !== 'undefined' && APIClient.getToken) ? APIClient.getToken() : (localStorage.getItem('orps_api_token') || ''); } catch (e) { return ''; } }
-  function _api(method, path, body) {
+  function _api(method, path, body, attempt) {
+    /* #788 根治：页面 bootstrap 期 /api/intel/* 等慢端点（实测单发 5.5~7.6s、14 并发 11~14s）
+     * 占满浏览器每域名 6 连接池，本功能区请求排队饿死 → 白屏"装载中"。
+     * 自愈：超时放弃 + 多级退避重试（9s→+3s→15s→+6s→15s→+12s→15s），拥堵窗过后必然成功 */
+    const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const n = attempt || 0;
+    const tmo = n === 0 ? 9000 : 15000;
+    const backoff = [0, 3000, 6000, 12000][Math.min(n, 3)];
+    const timer = ctl ? setTimeout(function () { try { ctl.abort(); } catch (e) {} }, tmo) : null;
     return fetch('/api/exec-travel' + path, {
       method: method,
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _tok() },
-      body: body ? JSON.stringify(body) : undefined
-    }).then(function (r) { return r.json(); });
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (r) {
+      if (timer) clearTimeout(timer);
+      /* #792：401/403 = 凭据失效，重试无意义 → 交给全局 forceLogin，立即抛出不退避 */
+      if (r.status === 401 || r.status === 403) {
+        try { if (typeof AUTH !== 'undefined' && AUTH.forceLogin) AUTH.forceLogin('登录已过期，请重新登录'); } catch (e) {}
+        var ea = new Error('登录已过期，请重新登录'); ea.status = r.status; throw ea;
+      }
+      return r.json();
+    })
+      .catch(function (e) {
+        if (timer) clearTimeout(timer);
+        /* 401/403 不重试（#792）；仅网络/超时类错误走退避 */
+        if (e && e.status) throw e;
+        if (n < 3) {
+          return new Promise(function (res) { setTimeout(function () { res(_api(method, path, body, n + 1)); }, backoff[n + 1] || 3000); });
+        }
+        throw e;
+      });
   }
   function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   var LV_CN = { red: '红色预警', yellow: '黄色预警', green: '绿色放行' };
   var LV_COLOR = { red: '#ff5577', yellow: '#fbbf24', green: '#4ade80' };
   var TITLE_CN = { ceo: 'CEO/董事长', cto: 'CTO/首席技术官', cfo: 'CFO/首席财务官', vp: 'VP/副总裁', director: '总监', other: '其他' };
   var MEET_CN = { core: '核心机密', internal: '内部', public: '公开' };
-  var HR_NAME = { H01: 'H01 制裁名单（人员）', H02: 'H02 过境国引渡×技术敏感', H03: 'H03 过境停留≥4h', H04: 'H04 在途执法案件' };
+  var HR_NAME = { H01: 'H01 制裁名单（人员）', H02: 'H02 过境引渡×技术敏感', H03: 'H03 过境管辖接触', H04: 'H04 点名执法（T级）' };
+  /* #788 v3 新增词表 */
+  var ENTRY_CN = { airside: '空侧中转（不入境）', landside: '落地入境（不宿夜）', overnight: '入境过夜' };
+  var EXPO_CN = { core: '核心级', high: '高曝光', normal: '常规' };
+  var DEV_CN = { clean: '专用清洁机', standard: '常规设备', unmanaged: '无管控' };
+  var DEBRIEF_CN = { smooth: '顺利无异常', questioned: '盘查/问询', incident: '安全事件', detained: '拘押/羁押', denied: '入境拒绝/遣返' };
+  var DEBRIEF_COLOR = { smooth: '#4ade80', questioned: '#fbbf24', incident: '#ff8899', detained: '#ff5577', denied: '#ff5577' };
 
   /* ---------- 行程卡 ---------- */
   function _tripCard(t) {
@@ -110,11 +142,14 @@ var EXECTRAVEL = (function () {
       '<span class="nm">' + _esc(t.person_name || ('#' + t.person_id)) + '</span>' +
       '<span class="rt">→ ' + _esc(t.dest_country) + (t.transit_country && !t.direct_flight ? '（经' + _esc(t.transit_country) + (t.transit_hours ? ' ' + t.transit_hours + 'h' : '') + '）' : '·直飞') + '</span>' +
       '<span class="xt-lv ' + lv + '">' + (LV_CN[lv] || lv) + '</span>' +
+      (t.realert ? '<span class="xt-lv red">⚠ 重预警</span>' : '') +
       '<span class="xt-sc" style="color:' + (LV_COLOR[lv] || '#4ade80') + '">' + (risk.score != null ? risk.score : (t.risk_score != null ? t.risk_score : '—')) + '分</span>' +
       '<span style="flex:1"></span>' +
       '<span class="rt">' + _esc(String(t.dep_date || '').slice(0, 10) || '') + '</span>' +
       '</div>' +
-      '<div style="margin-top:5px">' + hr + '<span class="rt">· ' + _esc(t.person_org || '') + ' · ' + _esc(TITLE_CN[risk.dims && risk.dims.d3 ? '' : ''] || '') + _esc(t.person_org ? '' : '') + '</span></div>';
+      '<div style="margin-top:5px">' + hr + '<span class="rt">· ' + _esc(t.person_org || '') + (t.person_title ? ' · ' + _esc(t.person_title) : '') +
+      (t.transit_country && !t.direct_flight && risk.matrix && risk.matrix.entryMode ? ' · 过境方式：' + _esc((ENTRY_CN[risk.matrix.entryMode] || risk.matrix.entryModeCN || '').replace(/（.*?）/g, '')) : '') + '</span>' +
+      (t.debrief_outcome ? '<span class="rt" style="color:' + (DEBRIEF_COLOR[t.debrief_outcome] || '#7aa5c9') + '"> · 复盘：' + _esc(DEBRIEF_CN[t.debrief_outcome] || t.debrief_outcome) + '</span>' : '') + '</div>';
     if (open && risk.dims) {
       h += '<div class="xt-detail">' +
         '<div class="dsec">六维加权评分（每一分可下钻信源）</div>';
@@ -141,6 +176,20 @@ var EXECTRAVEL = (function () {
           h += '<div style="color:' + (hh.hit ? '#ff8899' : '#5a7a99') + '">' + (hh.hit ? '⛔' : '✔') + ' <b>' + _esc(HR_NAME[hh.id] || hh.id) + '</b>：' + _esc(hh.detail) + (hh.action ? '<br><span style="color:#ffcc00">→ ' + _esc(hh.action) + '</span>' : '') + '</div>';
         });
       }
+      if (risk.outcomes && risk.outcomes.length) {
+        h += '<div class="dsec">后果分层（风险若兑现，最可能出什么事）</div>';
+        risk.outcomes.forEach(function (o) {
+          var oc = o.likelihood === '高' ? '#ff5577' : o.likelihood === '中' ? '#fbbf24' : '#5a7a99';
+          h += '<div class="xt-item"><span>▸ ' + _esc(o.cn) + ' <span style="color:#3d5570">（' + _esc(o.basis) + '）</span></span><span class="pts" style="color:' + oc + '">' + _esc(o.likelihood) + '</span></div>';
+        });
+      }
+      h += '<div class="dsec">行程复盘（事后评审 · ISO 31030 §8）</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+        '<select class="xt-inp" id="xt-db-out-' + t.id + '" style="width:auto"><option value="">选择复盘结果…</option>' +
+        Object.keys(DEBRIEF_CN).map(function (k) { return '<option value="' + k + '"' + (t.debrief_outcome === k ? ' selected' : '') + '>' + DEBRIEF_CN[k] + '</option>'; }).join('') +
+        '</select>' +
+        '<input class="xt-inp" id="xt-db-note-' + t.id + '" placeholder="复盘备注" style="flex:1;min-width:120px" value="' + _esc(t.debrief_notes || '') + '">' +
+        '<button class="xt-btn warn" onclick="event.stopPropagation();EXECTRAVEL.saveDebrief(' + t.id + ')">💾 保存复盘</button></div>';
       if (risk.levelAction) h += '<div class="xt-note"><b>处置动作：</b>' + _esc(risk.levelAction) + '</div>';
       h += '<div class="xt-actions">' +
         '<button class="xt-btn violet" onclick="event.stopPropagation();EXECTRAVEL.rescan(' + t.id + ')">🔄 重新扫描</button>' +
@@ -154,7 +203,12 @@ var EXECTRAVEL = (function () {
   }
 
   /* ---------- 渲染 ---------- */
+  /* #788：渲染包裹 try/catch——任何渲染异常必须进控制台，不允许静默白屏 */
   function _render() {
+    try { _renderInner(); }
+    catch (e) { try { console.error('[exec-travel] 渲染失败:', (e && e.message) || e); } catch (_) {} }
+  }
+  function _renderInner() {
     var root = document.getElementById('exec-travel-root');
     if (!root) return;
     if (!_dash && !_rules) { root.innerHTML = '<div class="xt-loading">高管出境风险监测装载中……</div>'; return; }
@@ -185,11 +239,16 @@ var EXECTRAVEL = (function () {
       '<div><label class="xt-lb">职务</label><input class="xt-inp" id="xt-p-title" placeholder="如：首席技术官"></div>' +
       '<div><label class="xt-lb">所属企业（35 企）</label><input class="xt-inp" id="xt-p-org" placeholder="如：华为"></div>' +
       '<div class="full"><label class="xt-lb">技术方向（敏感度评分口径）</label><input class="xt-inp" id="xt-p-tech" placeholder="如：5G / 半导体 / 人工智能"></div>' +
+      '<div><label class="xt-lb">公开曝光层级</label><select class="xt-inp" id="xt-p-expo"><option value="normal">常规</option><option value="high">高曝光（涉密岗/名单关注）</option><option value="core">核心级（峰会/签约唯一代表）</option></select></div>' +
+      '<div><label class="xt-lb">设备策略</label><select class="xt-inp" id="xt-p-dev"><option value="standard">常规公司设备</option><option value="clean">专用差旅清洁机</option><option value="unmanaged">无管控（个人机）</option></select></div>' +
+      '<div class="full"><label class="xt-lb">既往摩擦记录（签证受限/口岸盘查史，选填）</label><input class="xt-inp" id="xt-p-fric" placeholder="如：2025-07 纽瓦克机场边检盘查 2h"></div>' +
       '<div class="full"><button class="xt-btn" onclick="EXECTRAVEL.addPerson()">＋ 新增关键人员</button></div>' +
       '</div>' +
       (_people.length ? _people.map(function (p) {
         return '<div class="xt-person"><span class="nm">' + _esc(p.name) + '</span>' +
-          '<span class="ds">' + _esc(TITLE_CN[p.title_level] || p.title || '') + ' · ' + _esc(p.org || '—') + ' · ' + _esc(p.tech_field || '—') + '</span>' +
+          '<span class="ds">' + _esc(TITLE_CN[p.title_level] || p.title || '') + ' · ' + _esc(p.org || '—') + ' · ' + _esc(p.tech_field || '—') +
+          (p.exposure_level && p.exposure_level !== 'normal' ? ' · <span style="color:#ffcc00">' + _esc(EXPO_CN[p.exposure_level] || p.exposure_level) + '</span>' : '') +
+          (p.device_policy === 'clean' ? ' · <span style="color:#4ade80">清洁机</span>' : p.device_policy === 'unmanaged' ? ' · <span style="color:#ff5577">设备无管控</span>' : '') + '</span>' +
           '<span class="xt-x" onclick="EXECTRAVEL.delPerson(' + p.id + ')">✕</span></div>';
       }).join('') : '<div class="xt-empty">暂无关键人员——先录入人员再提交行程</div>') +
       '</div>' +
@@ -206,6 +265,8 @@ var EXECTRAVEL = (function () {
         }).join(' · ') + '</div>' +
         '<div style="font-size:10px;color:#94a8c0;line-height:1.9;margin-top:6px">分级：<span style="color:#ff5577">红 ≥75 或硬规则命中</span> / <span style="color:#fbbf24">黄 55-74</span> / <span style="color:#4ade80">绿 <55</span></div>' +
         '<div class="xt-note">' + _esc(_rules.mengNote) + '</div>' +
+        (_rules.matrix ? '<div style="font-size:9px;color:#5a7a99;margin-top:6px;line-height:1.8">执法引渡矩阵（' + _esc(_rules.matrix.meta.version) + '）：高档 ' + _rules.matrix.highRisk.length + ' 法域 · 中档 ' + _rules.matrix.midRisk.length + ' · 低档若干。高档典型：' + _esc(_rules.matrix.highRisk.slice(0, 8).join('、')) + '…</div>' : '') +
+        (_rules.iso31030 ? '<div style="font-size:9px;color:#3d5570;margin-top:4px">对齐标准：' + _esc(_rules.iso31030.standard) + '</div>' : '') +
         '<div style="font-size:9px;color:#3d5570;margin-top:6px">制裁名单库：' + (_rules.sanc && _rules.sanc.entities ? _rules.sanc.entities.toLocaleString() + ' 实体（OpenSanctions）' : '加载中') + '</div>' +
         '</div>' : '') +
       '</div><div>' +
@@ -216,6 +277,7 @@ var EXECTRAVEL = (function () {
       '<div><label class="xt-lb">目的地国家 *</label><input class="xt-inp" id="xt-t-dest" placeholder="如：美国"></div>' +
       '<div><label class="xt-lb">过境国（第三国）</label><input class="xt-inp" id="xt-t-transit" placeholder="如：加拿大（直飞留空）"></div>' +
       '<div><label class="xt-lb">过境停留（小时）</label><input class="xt-inp" id="xt-t-hours" type="number" min="0" max="48" placeholder="5"></div>' +
+      '<div><label class="xt-lb">过境方式（管辖接触判定）</label><select class="xt-inp" id="xt-t-entry"><option value="airside">空侧中转·不入境</option><option value="landside">落地入境（不宿夜）</option><option value="overnight">入境过夜</option></select></div>' +
       '<div><label class="xt-lb">出发日期</label><input class="xt-inp" id="xt-t-dep" type="date"></div>' +
       '<div><label class="xt-lb">返回日期</label><input class="xt-inp" id="xt-t-ret" type="date"></div>' +
       '<div><label class="xt-lb">会议敏感级别</label><select class="xt-inp" id="xt-t-meet"><option value="internal">内部</option><option value="core">核心机密</option><option value="public">公开</option></select></div>' +
@@ -235,6 +297,17 @@ var EXECTRAVEL = (function () {
       }).join('') : '<div class="xt-empty">当前无红色待处置行程</div>') +
       '<div class="xt-sop" style="margin-top:8px"><b>红色预警四级响应 SOP：</b><br>T+0 系统命中 → T+15min 安全值班复核（名单消歧：生日/职务/国籍） → T+30min 上报（董事会级） → T+2h 处置（强制改签评估 / 领事保护预沟通 / 应急包下发 / 预案激活）</div>' +
       (_dash ? '<div class="xt-note" style="margin-top:8px"><b>典型场景：</b>' + _esc(_dash.mengNote) + '</div>' : '') +
+      '</div>' +
+      /* #788 P1：组合风险（key-person concentration） */
+      '<div class="xt-panel" style="border-color:rgba(255,204,0,.3)"><div class="xt-sec" style="color:#ffcc00;border-left-color:#f59e0b">🧮 组合风险（同期同向/人员集中度）</div>' +
+      ((_dash && _dash.combos && _dash.combos.length) ? _dash.combos.map(function (c) {
+        return '<div class="xt-trip" style="border-color:' + (c.kind === '高危' ? 'rgba(239,68,68,.35)' : 'rgba(255,204,0,.2)') + '"><div class="row1">' +
+          '<span class="nm">' + _esc(c.org) + ' → ' + _esc(c.dest) + '</span>' +
+          '<span class="xt-lv ' + (c.kind === '高危' ? 'red' : 'yellow') + '">' + _esc(c.kind) + '</span>' +
+          '<span class="rt">' + c.n + ' 人 · ' + (c.hot || 0) + ' 人红/黄</span></div>' +
+          '<div class="rt" style="margin-top:4px">' + _esc(c.persons) + (c.dates ? ' · ' + _esc(c.dates) : '') + '</div>' +
+          '<div style="font-size:10px;color:#7aa5c9;line-height:1.7;margin-top:3px">' + _esc(c.note) + '</div></div>';
+      }).join('') : '<div class="xt-empty">暂无组合风险——同企业多人同期同向出行时自动聚合告警</div>') +
       '</div>' +
       /* 右列：场景测算 */
       '<div class="xt-panel violet"><div class="xt-sec">📐 孟晚舟式场景测算 <span style="font-size:9px;color:#5a7a99;font-weight:400">规则引擎自检·不入台账</span></div>' +
@@ -274,10 +347,12 @@ var EXECTRAVEL = (function () {
 
   /* ---------- 数据操作 ---------- */
   function loadAll() {
-    _api('GET', '/rules').then(function (d) { if (d && d.ok) { _rules = d; _render(); } }).catch(function () {});
-    _api('GET', '/dashboard').then(function (d) { if (d && d.ok) { _dash = d; _render(); } }).catch(function () {});
-    _api('GET', '/people').then(function (d) { if (d && d.ok) { _people = d.items || []; _render(); } }).catch(function () {});
-    _api('GET', '/trips').then(function (d) { if (d && d.ok) { _trips = d.items || []; _render(); } }).catch(function () {});
+    /* #788：静默 catch 改显式上报——装载失败必须可在控制台定位 */
+    function _lg(path){ return function(e){ try{ console.error('[exec-travel] 装载失败 '+path+':', (e&&e.message)||e); }catch(_){} }; }
+    _api('GET', '/rules').then(function (d) { if (d && d.ok) { _rules = d; _render(); } }).catch(_lg('/rules'));
+    _api('GET', '/dashboard').then(function (d) { if (d && d.ok) { _dash = d; _render(); } }).catch(_lg('/dashboard'));
+    _api('GET', '/people').then(function (d) { if (d && d.ok) { _people = d.items || []; _render(); } }).catch(_lg('/people'));
+    _api('GET', '/trips').then(function (d) { if (d && d.ok) { _trips = d.items || []; _render(); } }).catch(_lg('/trips'));
   }
 
   function addPerson() {
@@ -288,9 +363,12 @@ var EXECTRAVEL = (function () {
       pinyin: document.getElementById('xt-p-pinyin').value.trim(),
       title: document.getElementById('xt-p-title').value.trim(),
       org: document.getElementById('xt-p-org').value.trim(),
-      tech_field: document.getElementById('xt-p-tech').value.trim()
+      tech_field: document.getElementById('xt-p-tech').value.trim(),
+      exposure_level: document.getElementById('xt-p-expo').value,
+      device_policy: document.getElementById('xt-p-dev').value,
+      visa_incidents: document.getElementById('xt-p-fric').value.trim()
     }).then(function (d) {
-      if (d.ok) { ['xt-p-name', 'xt-p-pinyin', 'xt-p-title', 'xt-p-tech'].forEach(function (id) { document.getElementById(id).value = ''; }); loadAll(); }
+      if (d.ok) { ['xt-p-name', 'xt-p-pinyin', 'xt-p-title', 'xt-p-tech', 'xt-p-fric'].forEach(function (id) { document.getElementById(id).value = ''; }); loadAll(); }
       else alert('新增失败：' + d.error);
     }).catch(function (e) { alert('请求失败：' + e.message); });
   }
@@ -310,6 +388,7 @@ var EXECTRAVEL = (function () {
       person_id: Number(pid), dest_country: dest,
       dest_city: '', transit_country: direct ? '' : document.getElementById('xt-t-transit').value.trim(),
       transit_hours: Number(document.getElementById('xt-t-hours').value || 0),
+      transit_entry: document.getElementById('xt-t-entry').value,
       dep_date: document.getElementById('xt-t-dep').value, ret_date: document.getElementById('xt-t-ret').value,
       direct_flight: direct, night_flight: document.getElementById('xt-t-night').checked,
       meeting_level: document.getElementById('xt-t-meet').value
@@ -325,6 +404,15 @@ var EXECTRAVEL = (function () {
 
   function rescan(id) {
     _api('POST', '/trips/' + id + '/scan').then(function (d) { if (d.ok) loadAll(); else alert(d.error); }).catch(function (e) { alert(e.message); });
+  }
+
+  function saveDebrief(id) {
+    var out = document.getElementById('xt-db-out-' + id);
+    var note = document.getElementById('xt-db-note-' + id);
+    if (!out || !out.value) { alert('请选择复盘结果'); return; }
+    _api('PUT', '/trips/' + id + '/debrief', { debrief_outcome: out.value, debrief_notes: note ? note.value : '' })
+      .then(function (d) { if (d.ok) loadAll(); else alert(d.error); })
+      .catch(function (e) { alert(e.message); });
   }
 
   function delTrip(id) {
@@ -360,6 +448,6 @@ var EXECTRAVEL = (function () {
 
   return {
     init: init, addPerson: addPerson, delPerson: delPerson, addTrip: addTrip,
-    setStatus: setStatus, rescan: rescan, delTrip: delTrip, runScenario: runScenario, sel: sel, loadAll: loadAll
+    setStatus: setStatus, rescan: rescan, saveDebrief: saveDebrief, delTrip: delTrip, runScenario: runScenario, sel: sel, loadAll: loadAll
   };
 })();

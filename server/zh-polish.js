@@ -212,7 +212,7 @@ const MEDIA_TAIL_SIG = [
   '国家', '国际', '别人', '希腊', '财富', '意见', '政治', '英国', '峰值',
   /* —— 英文：原样残留的媒体名/栏目名 —— */
   'LBC', 'LBCI', 'ZeroHedge', 'TRP', 'ICN', 'Zawya', 'Kiwiblog', 'YNaija', 'TechCrunch', 'JD',
-  'Aero', 'Rediff', 'Pina', 'Malaysiakini', 'MyJoyOnline', 'Alhurra', 'LewRockwell',
+  'Aero', 'Rediff', 'Pina', 'Malaysiakini', 'MyJoyOnline', 'Alhurra', 'Mwebantu', 'CBC', 'BetaKit', 'FoodBev', 'LocalGov', 'ScienceBlogs', 'Eastleigh Voice', 'VRT NWS', 'WisBusiness', 'Daily Post Nigeria', 'LewRockwell',
   'HapaKenya', 'FXStreet', 'TechRadar', 'KPFA', 'MEED', 'Malawi', 'Sahara Reporters',
   'Countercurrents', 'Firstpost', 'Biometric Update', 'Naked Capitalism', 'The Mary Sue',
   'Alabama Baptist', 'Campus Reform', 'Hellenic Shipping News', 'The Nation', 'The Province',

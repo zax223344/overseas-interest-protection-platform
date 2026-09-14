@@ -170,7 +170,7 @@ const _DOMESTIC_CHINA_DISASTER_RE = /\b(China|Chinese|中国)\b.*\b(typhoon|muds
 /* ===== 软性/评论体裁闸门（2026-08-13 方向偏差修复）=====
  * 背景：闸门在英文原文上跑，国内噪声正则多为中文词 → 英文软性新闻漏网入库。
  * 评论/观点/社论 与 生活方式/体育/娱乐/旅游/美食/农科 等内容不属海外利益安全情报。 */
-const _SOFT_JUNK_RE = /\b(opinion|op-ed|editorial|commentary|columnist|essay|book review|movie review|film review)\b|^(意见|社论|评论|专栏|述评|观点|时评)[|：:丨 ]|\b(lifestyle|fashion|recipe|cuisine|travel guide|tourism|festival|concert|celebrity|gossip|horoscope|sports?|football|soccer|basketball|baseball|tennis|golf|olympics?|box office|tv series|drama series|reality show)\b|文化遗产|民俗|非遗|美食|旅游|足球|篮球|奥运|演唱会|电影|电视剧|综艺|时尚|考古/i;
+const _SOFT_JUNK_RE = /\b(opinion|op-ed|editorial|commentary|columnist|essay|book review|movie review|film review)\b|^(意见|社论|评论|专栏|述评|观点|时评)[|：:丨 ]|\b(lifestyle|fashion|recipe|cuisine|travel guide|tourism|festival|concert|celebrity|gossip|horoscope|sports?|football|soccer|basketball|baseball|tennis|golf|olympics?|box office|tv series|drama series|reality show|skits?|skitmaker|nollywood|comedian|comedy sketch|stand-up comedy|big brother naija|afrobeats|gospel musician)\b|#Skitmaker|娱乐八卦|明星绯闻|文化遗产|民俗|非遗|美食|旅游|足球|篮球|奥运|演唱会|电影|电视剧|综艺|时尚|考古/i;
 /* 真实安全事件特征（2026-08-13 用户指令）：全球武装组织动态/战术能力类情报不设涉华门槛，
  * 主题检索通道中，袭击/爆炸/武装冲突/清剿/无人机武器化等真实安全事件即使不涉华也放行 */
 const _SECURITY_EVENT_RE = /attack|blast|explosion|explosive|bombing|bomb|killed|deadly|militants?|terrorists?|terror|insurgents?|insurgency|gunmen|airstrike|air strike|drone strike|drone program|weapons program|arms deal|arms trafficking|\bVBIED\b|car bomb|suicide|ambush|kidnap|hostage|clash|offensive|ceasefire|weaponiz|assassination|shooting|raid|artillery|shelling|missile strike|\bIED\b|improvised explosive|warlord|militia|jihad|extremist/i;

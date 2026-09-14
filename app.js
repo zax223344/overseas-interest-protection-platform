@@ -2862,7 +2862,7 @@ var DATACENTER={
       html+='<div style="margin-top:12px;padding:10px;background:var(--bg2);border-radius:8px;font-size:12px;line-height:1.6">'+esc(item.content||item.desc)+'</div>';
     }
     if(item.url){
-      html+='<div style="margin-top:8px;font-size:11px">🔗 <a href="'+esc(item.url)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(item.url||'')+'\'))" style="color:var(--cyan)">查看原文</a></div>';
+      html+='<div style="margin-top:8px;font-size:11px">🔗 <a href="'+esc(item.url)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(item.url||'')+'\'),decodeURIComponent(\''+encodeURIComponent(item.title||item.title_zh||'')+'\'))" style="color:var(--cyan)">查看原文</a></div>';
     }
     /* 状态信息 + 操作按钮 */
     var isDistributed=!!item._distributed || !!(typeof ALERTS!=='undefined' && ALERTS.some(function(a){return String(a._srcId||a.id)===sid || String(a.id)===sid;}));
@@ -3285,7 +3285,7 @@ var DATACENTER={
     }
     /* ---- 原文链接（可点击溯源） ---- */
     if(row.url){
-      html+='<div style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:11px">🔗 原文链接：<a href="'+esc(row.url)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(row.url||'')+'\'))" style="color:var(--cyan);word-break:break-all">'+esc(row.url)+'</a></div>';
+      html+='<div style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:11px">🔗 原文链接：<a href="'+esc(row.url)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(row.url||'')+'\'),decodeURIComponent(\''+encodeURIComponent(row.title||row.title_zh||'')+'\'))" style="color:var(--cyan);word-break:break-all">'+esc(row.url)+'</a></div>';
     }
     /* ---- 操作区 ---- */
     if(this.currentTab!=='collect_logs'&&PERM.isAdmin()){
@@ -5227,8 +5227,12 @@ const AUTH={
     }
   },
   _localInit(){
+    /* #792：orps_user 只是显示名缓存，不能当登录凭据。此前有缓存即 showApp，
+       token 过期后用户照样进主界面 → 全接口 401 刷屏、面板全死（"signal is aborted"）。 */
+    var _tok=(typeof APIClient!=='undefined'&&APIClient.getToken)?APIClient.getToken():(function(){try{return localStorage.getItem('orps_api_token')||'';}catch(e){return '';}})();
     const u=localStorage.getItem('orps_user');
-    if(u){try{this.user=JSON.parse(u);this.showApp();return;}catch(e){}}
+    if(_tok&&u){try{this.user=JSON.parse(u);this.showApp();return;}catch(e){}}
+    try{localStorage.removeItem('orps_user');}catch(e){}
     this.showLogin();
     this.startLoginAnim();
     /* 2026-08-31 修竞态：登录卡片已渲染后激活 AUTH._ready + 启用输入框/按钮，
@@ -5611,6 +5615,17 @@ const AUTH={
   },
   showReg(){document.getElementById('auth-card-login').style.display='none';document.getElementById('auth-card-register').style.display='block';},
   showLogin(){document.getElementById('auth-card-login').style.display='block';document.getElementById('auth-card-register').style.display='none';},
+  /* #792：运行中 token 失效（任意接口 401）→ 清凭据、弹回登录页。防抖由 api-client 侧控制。 */
+  forceLogin(msg){
+    try{ if(typeof APIClient!=='undefined'&&APIClient._clearToken) APIClient._clearToken(); }catch(e){}
+    try{ localStorage.removeItem('orps_user'); }catch(e){}
+    this.user=null;
+    try{ document.getElementById('app').style.display='none'; }catch(e){}
+    try{ document.getElementById('auth-overlay').style.display='flex'; }catch(e){}
+    this.showLogin();
+    try{ this.startLoginAnim(); }catch(e){}
+    if(msg&&typeof showToast==='function') showToast(msg);
+  },
   showApp(){
     this.stopLoginAnim();
     document.getElementById('auth-overlay').style.display='none';
@@ -14418,7 +14433,7 @@ const AVIEW={
     var desc = String(a.desc||'').trim();
     var title = String(a.title||'').trim();
     var link = a.url || a.ext_url || '';
-    var linkHtml = link ? '<a href="'+esc(link)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(link||'')+'\'))" style="font-size:10px;color:var(--cyan);text-decoration:none">🔗 查看原文 →</a>' : '';
+    var linkHtml = link ? '<a href="'+esc(link)+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(link||'')+'\'),decodeURIComponent(\''+encodeURIComponent(a.title||a.title_zh||a.title_en||'')+'\'))" style="font-size:10px;color:var(--cyan);text-decoration:none">🔗 查看原文 →</a>' : '';
     /* 正文有效性判定：不能等于标题、不能等于已展示的摘要、要有足够长度 */
     var valid = body && body !== title && body.length >= 200 && body !== desc;
     if(!valid){
@@ -18859,7 +18874,7 @@ function showAlertDetail(id){
     }
   }catch(e){}
   html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">'+metaBits.join('')+'</div>';
-  if(a.url){ html+='<div style="margin-bottom:10px"><a href="'+a.url+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(a.url||'')+'\'))" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--cyan);text-decoration:none;padding:6px 12px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);border-radius:6px">🔗 查看原文链接</a></div>'; }
+  if(a.url){ html+='<div style="margin-bottom:10px"><a href="'+a.url+'" target="_blank" rel="noopener" onclick="return _openSrcUrl(decodeURIComponent(\''+encodeURIComponent(a.url||'')+'\'),decodeURIComponent(\''+encodeURIComponent(a.title||a.title_zh||a.title_en||'')+'\'))" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--cyan);text-decoration:none;padding:6px 12px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);border-radius:6px">🔗 查看原文链接</a></div>'; }
   html+='<div class="mt-8 text-xs text-muted">生成时间: '+a.time+'</div>';
   /* 状态流转操作条 */
   var _akey=String(a.alert_no||a.id||'').replace(/'/g,''); /* 稳定键：alert_no 优先（实时流重建后仍有效） */
@@ -20589,15 +20604,22 @@ function _isNoiseIntel(text){ return !!text && _NOISE_RE.test(text); }
 /* #786 原文链接打开器：Google News 跳转壳（/rss/articles/…）在内地浏览器必然打不开
  * （news.google.com 被阻断 + 新版 token 需 Google 内部接口解码），先调服务端
  * /api/gnews-resolve 换真实原文 URL 再打开；解码失败兜底开壳。返回 false 拦截默认跳转。 */
-function _openSrcUrl(u){
+function _openSrcUrl(u,t){
   try{
+    t=String(t||'').slice(0,120);
     u=String(u||''); if(!u) return false;
     if(/\/\/news\.google\.com\/rss\/(?:articles|read)\//.test(u)){
       if(typeof showToast==='function')showToast('🔗 正在解析原文真实链接…');
       fetch('/api/gnews-resolve?u='+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(d){
-        var t=(d&&d.ok&&d.url)?d.url:u;
-        window.open(t,'_blank','noopener');
-      }).catch(function(){ window.open(u,'_blank','noopener'); });
+        if(d&&d.ok&&d.url){ window.open(d.url,'_blank','noopener'); return; }
+        /* #794：解码失败绝不打开 GN 壳（内地浏览器必报"重定向到无效网址"）→ 必应标题检索兜底 */
+        var t=t||'';
+        if(typeof showToast==='function')showToast('⚠️ 原文解码暂不可用（Google 风控），已为你用标题在必应检索');
+        window.open('https://www.bing.com/search?q='+encodeURIComponent((t||u.slice(0,80)).slice(0,120)),'_blank','noopener');
+      }).catch(function(){
+        if(typeof showToast==='function')showToast('⚠️ 原文解码暂不可用，已用标题在必应检索');
+        window.open('https://www.bing.com/search?q='+encodeURIComponent((t||u.slice(0,80)).slice(0,120)),'_blank','noopener');
+      });
       return false;
     }
     window.open(u,'_blank','noopener');

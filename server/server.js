@@ -282,6 +282,31 @@ app.use((req, res, next) => {
  * 同 key 并发未命中合并回源（防过期瞬间 50 人齐刷刷击穿数据库）。 */
 const _ttlStore = new Map();   /* key → {at, status, body, ct} */
 const _ttlPending = new Map(); /* key → {promise, resolve} 同 key 回源合并 */
+/* #789 连接池饿死根治（2026-09-14）：浏览器每域名仅 6 条连接，开屏 14 个 /api/intel/* 冷查询
+ * 并发（单发 2~7s，互相拖到 11~14s）占满连接池 → 全站功能视图"装载中"白屏、新请求排队饿死。
+ * 两招：① STALE-while-revalidate——有过期缓存先毫秒级回旧数据，服务端自取（走 127.0.0.1，
+ * 不占浏览器连接）刷新；② 冷计算全局并发闸 3——MISS 回源排队进 DB，不再 14 连击互相拖垮。 */
+let _ttlActive = 0;
+const _ttlWaitQ = [];
+const _ttlMAX_CONC = 3;
+function _ttlAcquire(go2) {
+  const run = () => { _ttlActive++; go2(); };
+  if (_ttlActive < _ttlMAX_CONC) run(); else _ttlWaitQ.push(run);
+}
+function _ttlRelease() {
+  _ttlActive--;
+  const w = _ttlWaitQ.shift();
+  if (w) w();
+}
+function _ttlSelfRefresh(req) {
+  /* 后台自取：走本机回环刷新缓存（带上原请求鉴权头），异常静默——下次真请求会再触发 */
+  try {
+    const port = process.env.PORT || 3000;
+    fetch('http://127.0.0.1:' + port + req.originalUrl, {
+      headers: req.headers.authorization ? { 'Authorization': req.headers.authorization } : {}
+    }).then(r => r.text()).catch(() => {});
+  } catch (e) {}
+}
 function _ttlInvalidate(prefix) {
   let n = 0;
   for (const k of _ttlStore.keys()) { if (k.indexOf(prefix) === 0) { _ttlStore.delete(k); n++; } }
@@ -317,6 +342,16 @@ function ttlCache(ms) {
         next(); /* 回源方出错（非200/异常）：本请求自行回源 */
       });
     }
+    /* #789 STALE：有过期缓存 → 先毫秒级回旧数据，后台自取刷新（不占浏览器连接）。
+     * 删除/审计走 _ttlInvalidate/_intelCachePurge 主动删键，不会误回已删数据。 */
+    if (hit) {
+      res.set('X-Cache', 'STALE');
+      res.set('Content-Type', hit.ct);
+      res.status(hit.status);
+      res.end(hit.body);
+      _ttlSelfRefresh(req);
+      return;
+    }
     let settled = false;
     const pend = { promise: null, resolve: null };
     pend.promise = new Promise(rs => { pend.resolve = rs; });
@@ -339,7 +374,15 @@ function ttlCache(ms) {
       return origJson(obj);
     };
     res.on('finish', () => { if (!settled) { settled = true; _ttlPending.delete(key); pend.resolve(null); } });
-    next();
+    /* #789 冷计算并发闸：MISS 回源排队（并发 3），14 个重查询不再同时砸 DB 互相拖垮 */
+    _ttlAcquire(() => {
+      let released = false;
+      const rel = () => { if (!released) { released = true; _ttlRelease(); } };
+      res.on('finish', rel);
+      const safety = setTimeout(rel, 60000); /* 处理器挂死兜底：60s 强制释放槽位 */
+      if (typeof safety.unref === 'function') { try { safety.unref(); } catch (e) {} }
+      next();
+    });
   };
 }
 
@@ -11430,7 +11473,7 @@ function startGlobalMediaCron() {
   SCHED.register('consular-watch', _runConsularWatch, { interval: 10 * 60 * 1000, firstRunMs: 320000, klass: 'collect' }); /* 涉华受害核心，10min */
   SCHED.register('core-threat-sentinel', _runCoreThreatSentinel, { interval: 10 * 60 * 1000, firstRunMs: 350000, klass: 'collect' });
   SCHED.register('china-terror-collect', _runChinaTerrorCollect, { interval: 10 * 60 * 1000, firstRunMs: 410000, klass: 'collect' }); /* #689 涉华恐袭矩阵 */
-  SCHED.register('gnews-resolve', () => GNR.sweepUnresolved(query, 30).then(r => { if (r.resolved) console.log('[GNEWS-RESOLVE] 解码原文 ' + r.resolved + '/' + r.scanned); }).catch(() => {}), { interval: 30 * 60 * 1000, firstRunMs: 240000, klass: 'collect' }); /* #786 每 30min 消化跳转壳存量 */
+  SCHED.register('gnews-resolve', () => GNR.sweepUnresolved(query, 120).then(r => { if (r.resolved || r.dateVerified) console.log('[GNEWS-RESOLVE] 解码原文 ' + r.resolved + '/' + r.scanned + '，日期校验旧文 ' + r.dateVerified); }).catch(() => {}), { interval: 15 * 60 * 1000, firstRunMs: 240000, klass: 'collect' }); /* #786/#787 每 15min 消化跳转壳+真实日期校验（60/轮，已审核行优先；Google /sorry 时模块内自动 45min 退避） */
   SCHED.register('ent-risk-collect', _runEntRiskCollect, { interval: 30 * 60 * 1000, firstRunMs: 500000, klass: 'collect' }); /* #698 12 查询轮换 4/轮 */
   /* —— 补采/归档类（#713 迁 worker 进程：60s tick，活跃时每 150s 推进一个 15 天历史切片）—— */
   SCHED.register('china-terror-backfill-tick', _chinaTerrorBackfillTick, { interval: 60 * 1000, klass: 'backfill' });
@@ -11922,7 +11965,34 @@ function _guessLang(t) {
   if (/[\u0400-\u04FF]/.test(t)) return 'ru';
   if (/[\u3040-\u30FF]/.test(t)) return 'ja';
   if (/[\uAC00-\uD7AF]/.test(t)) return 'ko';
-  return 'en';
+  if (/[\u0370-\u03FF]/.test(t)) return 'el';
+  if (/[\u0E00-\u0E7F]/.test(t)) return 'th';
+  /* #796：拉丁语系小语种停词识别——此前一律按 'en' 发给引擎 → 原样回显未译（芬兰语 Israelin 一类） */
+  const s = ' ' + String(t).toLowerCase().replace(/[^\p{L}\s]/gu, ' ').replace(/\s+/g, ' ') + ' ';
+  const STOPS = {
+    fi: [' että ', ' eikä ', ' kanssa ', ' haluaa ', ' ministeri ', ' palkitun '],
+    de: [' der ', ' die ', ' das ', ' und ', ' nicht ', ' über ', ' für '],
+    nl: [' het ', ' een ', ' van ', ' niet ', ' zijn '],
+    sv: [' och ', ' att ', ' inte ', ' för '],
+    'da': [' og ', ' ikke ', ' af '],
+    tr: [' ve ', ' bir ', ' için ', ' ile '],
+    es: [' que ', ' los ', ' las ', ' una ', ' para ', ' del '],
+    pt: [' não ', ' uma ', ' pelo ', ' das ', ' dos '],
+    it: [' che ', ' non ', ' degli ', ' della ', ' per '],
+    fr: [' les ', ' des ', ' une ', ' est ', ' avec ', ' dans '],
+    pl: [' nie ', ' jest ', ' oraz ', ' się '],
+    hu: [' egy ', ' nem ', ' hogy ', ' az '],
+    ro: [' este ', ' pentru ', ' în '],
+    cs: [' je ', ' se ', ' že ', ' na '],
+    id: [' yang ', ' dan ', ' dengan ', ' untuk '],
+  };
+  let best = 'en', bestScore = 0;
+  for (const [lang, words] of Object.entries(STOPS)) {
+    let sc = 0;
+    for (const w of words) { let idx = 0; while ((idx = s.indexOf(w, idx)) >= 0) { sc++; idx += w.length; } }
+    if (sc > bestScore) { bestScore = sc; best = lang; }
+  }
+  return bestScore >= 2 ? best : 'en';   /* ≥2 个停词命中才判定，防英文偶合误判 */
 }
 async function _myMemoryOne(t, key) {
   const q = String(t || '').slice(0, 500);
@@ -14730,7 +14800,8 @@ app.put('/api/enterprise-projects', authMiddleware, async (req, res) => {
 });
 
 /* ===== 风险融合 API ===== */
-app.get('/api/risk-fusion', async (req, res) => {
+/* #789：加 TTL 缓存壳——该端点曾在开屏并发风暴下挂 14s 占死连接（单查实测 15ms） */
+app.get('/api/risk-fusion', ttlCache(20000), async (req, res) => {
   try {
     const result = await query('SELECT * FROM risk_fusion ORDER BY fusion_time DESC');
     res.json(result.rows.map(r => ({ ...r.data_json, _dbId: r.id, fusionTime: r.fusion_time })));
@@ -14757,6 +14828,7 @@ app.put('/api/risk-fusion', authMiddleware, async (req, res) => {
         inserted++;
       } catch (e) { skipped++; }
     }
+    _ttlInvalidate('/api/risk-fusion'); /* #789：写后失效缓存，写入立即可见 */
     res.json({ success: true, count: inserted, skipped });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

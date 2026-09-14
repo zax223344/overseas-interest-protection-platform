@@ -18,9 +18,12 @@ module.exports = {
       // 报告引擎 + 50人并发，V8 常态贴 1G 帽→06:36-06:39 连续 4 次 FATAL heap OOM 崩溃
       // → 服务反复重启断线即用户感知的"卡顿/慢"。16GB 整机给 ORPS 3G 合理，
       // max_memory_restart 留 3.5G 防漏兜底（贴帽前主动重启，不再等 V8 崩溃）。
-      max_memory_restart: '3500M',
-      // 限制 Node 老年代空间，配合 max_memory_restart 提前触发重启
-      node_args: '--max-old-space-size=3072',
+      // 内存上限（#792 2026-09-14：老年代帽降到 2048M 强迫 V8 在 PM2 杀手线之前做 full GC——
+      // 实测 boot 后 catchup 瞬时垃圾 47s 内把堆顶到 3.5G，PM2 max_memory_restart 的
+      // Windows restart 必留孤儿 → unstable-restart 死循环。2G 是 #665 事故 1G 帽的 2 倍余量）。
+      max_memory_restart: '4500M',
+      // 老年代帽 2048：配合上方 4500M 杀手线，内存治理唯一执行者=watchdog 硬顶熔断（3200M，pm2-safe 干净重启）
+      node_args: '--max-old-space-size=2048',
       // 崩溃/退出后 3 秒重启
       restart_delay: 3000,
       // 30 秒内最多 5 次异常重启则锁定

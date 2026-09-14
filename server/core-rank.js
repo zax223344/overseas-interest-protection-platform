@@ -24,6 +24,7 @@ const GATE_SQL = `
       audit_status = 'approved'
       AND COALESCE(data_json->>'_archiveEvent','') <> 'true'
       AND COALESCE(data_json->>'_tplLowConf','') <> 'true'
+      AND COALESCE(data_json->>'_staleReal','') <> 'true'
       AND (COALESCE(data_json->>'title_zh','') ~ '[一-龥]' OR title ~ '[一-龥]')`;
 
 /* ---------- 二、核心度评分（SQL 表达式；调用处须能引用 title / data_json / collect_time / data_type） ---------- */

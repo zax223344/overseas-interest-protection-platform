@@ -82,7 +82,37 @@ async function decodeGnews(gurl) {
 }
 
 /**
+ * 真实发布日期校验（#787，2026-09-13）：Google News RSS 主题源会给旧文盖新鲜 pubDate
+ * （实测：2017-11-13 yenisafak 旧文 pubDate=2026-09-12，骗过时效闸进预警中心）。
+ * 解码出真实 URL 后抓原文页解析 article:published_time / JSON-LD datePublished / <time>，
+ * 找得到且早于 STALE_MS（72h）→ 该行打 _staleReal='true'（降权+全闸排除，不删行）。
+ */
+const STALE_MS = 72 * 3600 * 1000;
+
+function extractPubDate(html) {
+  const h = String(html || '').slice(0, 300000);
+  const pats = [
+    /<meta[^>]+property=["']article:published_time["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']article:published_time["']/i,
+    /"datePublished"\s*:\s*"([^"]+)"/i,
+    /<meta[^>]+name=["']pubdate["'][^>]+content=["']([^"']+)["']/i,
+    /<time[^>]+datetime=["']([^"']+)["']/i,
+  ];
+  for (const p of pats) { const m = h.match(p); if (m) { const d = new Date(m[1]); if (!isNaN(d.getTime()) && d.getTime() > 946684800000) return d; } }
+  return null;
+}
+
+async function verifyRealDate(realUrl) {
+  try {
+    const resp = await netx.smartFetch(realUrl, { timeout: 12000, headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' } });
+    if (!resp || !resp.ok) return null;
+    return extractPubDate(await resp.text());
+  } catch (e) { return null; }
+}
+
+/**
  * 解码并回写 intel_data（按 url=壳 定位行；url 列在 data_json 内）。
+ * 附带真实日期校验：原文发布时间早于 72h → _staleReal='true'（#787 旧文穿闸根治）。
  * @returns {Promise<string>} 原文 URL（成功）或 ''（失败）
  */
 async function resolveAndPersist(gurl, query) {
@@ -95,22 +125,63 @@ async function resolveAndPersist(gurl, query) {
           || jsonb_strip_nulls(jsonb_build_object('ext_url', $2::text)))::json
         WHERE data_json->>'url' = $1 AND COALESCE(data_json->>'url','') <> $2`, [String(gurl), orig]);
   } catch (e) { /* 回写失败不影响返回（至少本次点击能打开） */ }
+  /* #787：真实日期校验（best-effort，页面取不到日期则不动） */
+  const pub = await verifyRealDate(orig);
+  if (pub && (Date.now() - pub.getTime()) > STALE_MS) {
+    try {
+      await query(
+        `UPDATE intel_data SET data_json = (data_json::jsonb
+            || jsonb_build_object('_staleReal', 'true', '_staleRealDate', $2::text))::json
+          WHERE data_json->>'url' = $1`, [orig, pub.toISOString()]);
+      return orig;   /* 已回写真实 URL，_staleReal 标记完成 */
+    } catch (e) { /* 落标失败不阻断 */ }
+  }
   return orig;
 }
 
-/** 定时清扫：消化未解析存量（每轮 limit 条，2.5s 限流；被 translate-retry 同款调度器驱动） */
+/** 定时清扫：消化未解析存量（每轮 limit 条，2.5s 限流；被 translate-retry 同款调度器驱动）
+ *  #787 整改：已审核行（用户可见）优先解码——旧文穿闸的暴露面全在核心视图 */
 async function sweepUnresolved(query, limit) {
+  /* #794：_gnFail 计数防死循环重扫——解码失败（非风控）的行最多重试 3 次，
+   * 否则 41/60 的失败行永久霸占配额，存量 2,340 条永远清不完（实测成功率仅 ~50%） */
   const { rows } = await query(
     `SELECT id, data_json->>'url' AS url FROM intel_data
       WHERE data_json->>'url' LIKE '%news.google.com%' AND COALESCE(data_json->>'_gnewsUrl','') = ''
-      ORDER BY collect_time DESC LIMIT $1`, [limit || 30]);
+        AND COALESCE((data_json->>'_gnFail')::int, 0) < 3
+      ORDER BY (CASE WHEN audit_status='approved' THEN 1 ELSE 0 END) DESC, collect_time DESC LIMIT $1`, [limit || 30]);
   let ok = 0;
   for (const r of rows) {
     if (blocked()) break;                                   /* Google 风控退避中，本轮立即收工 */
-    if (await resolveAndPersist(r.url, query)) ok++;
+    const real = await resolveAndPersist(r.url, query);
+    if (real) ok++;
+    else await query(
+      `UPDATE intel_data SET data_json = (data_json::jsonb
+          || jsonb_build_object('_gnFail', (COALESCE((data_json->>'_gnFail')::int, 0) + 1)::text))::json
+        WHERE id = $1`, [r.id]).catch(() => {});
     await new Promise(s => setTimeout(s, 2500));
   }
-  return { scanned: rows.length, resolved: ok };
+  /* #787 第二分支：已解码但未做真实日期校验的行（含 #786 批量解码存量），补打 _staleReal */
+  let verified = 0;
+  if (!blocked()) {
+    const v = await query(
+      `SELECT id, data_json->>'url' AS url FROM intel_data
+        WHERE COALESCE(data_json->>'_gnewsUrl','') <> ''
+          AND COALESCE(data_json->>'_staleReal','') = ''
+          AND data_json->>'url' NOT LIKE '%news.google.com%'
+        ORDER BY (CASE WHEN audit_status='approved' THEN 1 ELSE 0 END) DESC, collect_time DESC LIMIT $1`, [limit || 30]);
+    for (const r of v.rows) {
+      const pub = await verifyRealDate(r.url);
+      if (pub && (Date.now() - pub.getTime()) > STALE_MS) {
+        await query(
+          `UPDATE intel_data SET data_json = (data_json::jsonb
+              || jsonb_build_object('_staleReal', 'true', '_staleRealDate', $2::text))::json
+            WHERE id = $1`, [r.id, pub.toISOString()]);
+        verified++;
+      }
+      await new Promise(s => setTimeout(s, 2000));
+    }
+  }
+  return { scanned: rows.length, resolved: ok, dateVerified: verified };
 }
 
-module.exports = { isGnewsUrl, decodeGnews, resolveAndPersist, sweepUnresolved };
+module.exports = { isGnewsUrl, decodeGnews, resolveAndPersist, sweepUnresolved, extractPubDate, verifyRealDate, STALE_MS };

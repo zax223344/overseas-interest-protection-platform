@@ -46,6 +46,11 @@ const _TERM_DEFS = [
   [['improvised explosive device', 'IED'], '简易爆炸装置'],
   [['suicide bombing', 'suicide attack'], '自杀式爆炸袭击'],
   [['suicide bomber'], '自杀式袭击者'],
+  /* ── 社会/治安案件缩写（#794：GBV 直译空缺导致"警方在GBV案件中逮捕"类病题） ── */
+  [['gender-based violence', 'gender based violence', 'GBV'], '基于性别的暴力（家暴/性暴力）'],
+  [['sexual and gender-based violence', 'SGBV'], '基于性别的暴力'],
+  [['domestic violence', 'DV'], '家庭暴力'],
+  [['intimate partner violence', 'IPV'], '亲密伴侣暴力'],
   [['car bomb', 'car bombing'], '汽车炸弹'],
   [['roadside bomb'], '路边炸弹'],
   [['rocket-propelled grenade', 'RPG'], '火箭推进榴弹'],
@@ -77,6 +82,17 @@ const _TERM_DEFS = [
   [['IMF', 'International Monetary Fund'], '国际货币基金组织'],
   [['European Union', 'EU'], '欧盟'],
   [['African Development Bank'], '非洲开发银行'],
+
+  /* ── 政党/安全机构/监管机构（2026-09-09 #733 混排审计实测高频残留缩写） ──
+   * 印度 BJP/NIA、巴基斯坦 ISPR、尼日利亚 INEC、FATF 均为引擎不译的整词缩写，
+   * 混排标题「在Rahul对音乐家死亡的攻击之后，BJP提出了……」「喀布尔在FATF审查之前……」根因。 */
+  [['Bharatiya Janata Party', 'BJP'], '印度人民党'],
+  [['Member of Legislative Assembly', 'MLA'], '立法会议员'],
+  [['Financial Action Task Force', 'FATF'], '金融行动特别工作组'],
+  [['National Investigation Agency', 'NIA'], '国家调查局'],
+  [['Inter-Services Public Relations', 'ISPR'], '三军公共关系局'],
+  [['Independent National Electoral Commission', 'INEC'], '全国独立选举委员会'],
+  [['Election Commission of India', 'ECI'], '印度选举委员会'],
 
   /* ── 涉华高频 ── */
   [['Belt and Road Initiative', 'Belt and Road', 'BRI'], '一带一路'],
@@ -166,6 +182,20 @@ function localizeNums(text) {
   t = t.replace(/(\d+(?:\.\d+)?)\s*十亿(?![美])/g, function (_, n) {
     const v = parseFloat(n) * 10;
     return (Number.isInteger(v) ? v : v.toFixed(1).replace(/\.0$/, '')) + '亿';
+  });
+  /* 2026-09-06 #657：尼日利亚奈拉符号残留（手册 6.2 货币，实测 "产生N4.3tn"）：
+   *   N4.3tn → 4.3万亿奈拉；N500bn → 5000亿奈拉；N2m → 200万奈拉 */
+  t = t.replace(/(?<![A-Za-z0-9])N(\d+(?:\.\d+)?)\s*tn\b/gi, function (_, n) {
+    const v = parseFloat(n);
+    return (Number.isInteger(v) ? v : v) + '万亿奈拉';
+  });
+  t = t.replace(/(?<![A-Za-z0-9])N(\d+(?:\.\d+)?)\s*bn\b/gi, function (_, n) {
+    const v = parseFloat(n) * 10;
+    return (Number.isInteger(v) ? v : v.toFixed(1).replace(/\.0$/, '')) + '亿奈拉';
+  });
+  t = t.replace(/(?<![A-Za-z0-9])N(\d+(?:\.\d+)?)\s*m\b/gi, function (_, n) {
+    const v = parseFloat(n) * 100;
+    return (Number.isInteger(v) ? v : v.toFixed(1).replace(/\.0$/, '')) + '万奈拉';
   });
   return t;
 }

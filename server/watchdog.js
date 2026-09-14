@@ -18,14 +18,33 @@ const pm2 = require('C:/Users/28737/.workbuddy/binaries/node/workspace/node_modu
 /* #784 任务三（2026-09-13）：Windows 上 pm2.restart 会留孤儿进程占 3000 端口
  * （孤儿照常应答 health=200，PM2 侧却卡 waiting-restart 死循环）。
  * pm2-safe.js = stop→端口守卫→显式 start→dump→复核 的唯一安全入口。 */
-const { safeRestart } = require('./pm2-safe');
+/* #792：pm2-safe.js 已全面 CLI 化（jlist/describe 等走 pm2 jlist 子进程），
+ * watchdog 一并弃用进程内 pm2 库——sock-null 竞态曾把 13 次「介入」打断成空转。 */
+const { safeRestart, describe: pm2DescribeCli } = require('./pm2-safe');
+const { execSync } = require('child_process');
+
+/* #791（2026-09-14）：pm2 库 5.x 竞态 bug——connect 回调里 self.client.sock 为 null
+ * 时在 socket 事件回调同步抛 TypeError，try/catch 接不住 → uncaughtException 杀进程
+ * （watchdog 两小时崩 631 次的根因之一）。看门狗自身绝不允许被依赖库拖死：
+ * 拦截后记日志继续跑。 */
+process.on('uncaughtException', e => {
+  try { log('uncaughtException 已拦截（看门狗不退出）: ' + ((e && e.stack) || e)); } catch (_) {}
+});
+process.on('unhandledRejection', e => {
+  try { log('unhandledRejection 已拦截（看门狗不退出）: ' + ((e && e.stack) || e)); } catch (_) {}
+});
 
 const INTERVAL_MS = 30 * 1000;
 const FAIL_THRESHOLD = 5;
 const RESTART_COOLDOWN_MS = 10 * 60 * 1000;
 /* #784：PM2 状态异常而 health 正常（孤儿进程 serving）的判定阈值与冷却 */
 const STUCK_THRESHOLD = 6;                       /* 6 检 × 30s = 3min */
-const STUCK_COOLDOWN_MS = 15 * 60 * 1000;
+const STUCK_COOLDOWN_MS = 5 * 60 * 1000;
+/* #790：内存膨胀护栏（rss 持续超限 → pm2-safe 重启） */
+const MEM_THRESHOLD_MB = 3000;
+const MEM_HARD_MB = 3200;                        /* #792 硬顶：超过即立即熔断，不等 5 连检 */
+const MEM_CHECKS = 5;                            /* 5 检 × 30s = 2.5min 持续超限才动手 */
+const MEM_COOLDOWN_MS = 30 * 60 * 1000;
 const HB_FILE = path.join(__dirname, 'tmp', 'sched-worker.json');
 const HB_STALE_MS = 5 * 60 * 1000;
 const LOGF = path.join(__dirname, 'logs', 'watchdog.log');
@@ -49,34 +68,43 @@ function checkHealth() {
     req.on('error', () => resolve(false));
   });
 }
-function pm2Exec(fn) {
+/* #792：以下三个函数全部改走 CLI 子进程，不再触碰 pm2 lib（sock-null 竞态源）。
+ * 路径必须显式 node+bin——cmd 子进程 PATH 无 pm2 shim（#792 实锤）。 */
+const NODE_BIN = 'C:/Users/28737/.workbuddy/binaries/node/versions/22.22.2-2/node.exe';
+const PM2_BIN = 'C:/Users/28737/.workbuddy/binaries/node/workspace/node_modules/pm2/bin/pm2';
+function pm2Restart(name) {
   return new Promise(resolve => {
-    pm2.connect(err => {
-      if (err) { log('pm2 connect 失败: ' + err.message); return resolve(null); }
-      fn((e, res) => { pm2.disconnect(); resolve(e ? { err: e.message } : res); });
-    });
+    try {
+      execSync('"' + NODE_BIN + '" "' + PM2_BIN + '" restart ' + name, { shell: 'cmd.exe', encoding: 'utf8', timeout: 30000 });
+      resolve({ ok: true });
+    } catch (e) { resolve({ err: (e.message || '').split('\n')[0] }); }
   });
 }
-function pm2Restart(name) { return pm2Exec(cb => pm2.restart(name, cb)); }
 function pm2Status(name) {
   return new Promise(resolve => {
-    pm2.connect(err => {
-      if (err) return resolve(null);
-      pm2.describe(name, (e, procs) => {
-        pm2.disconnect();
-        resolve(!e && procs && procs[0] && procs[0].pm2_env ? procs[0].pm2_env.status : null);
-      });
-    });
+    const d = pm2DescribeCli(name);
+    resolve(d ? d.status : null);
   });
 }
 function pm2Pid(name) {
   return new Promise(resolve => {
-    pm2.connect(err => {
-      if (err) return resolve(null);
-      pm2.describe(name, (e, procs) => {
-        pm2.disconnect();
-        resolve(!e && procs && procs[0] ? procs[0].pid : null);
-      });
+    const d = pm2DescribeCli(name);
+    resolve(d ? d.pid : null);
+  });
+}
+/* #790：读进程实时状态+内存。#791 改走 `pm2 jlist` CLI 子进程——
+ * pm2 库 connect 有竞态 bug（sock null 直接崩进程），CLI 隔离在子进程里，崩也不波及看门狗。 */
+function pm2Monit(name) {
+  return new Promise(resolve => {
+    exec('"' + NODE_BIN + '" "' + PM2_BIN + '" jlist', { shell: 'cmd.exe', encoding: 'utf8', timeout: 15000 }, (e, out) => {
+      if (e || !out) return resolve(null);
+      try {
+        const raw = String(out).trim();
+        const list = JSON.parse(raw.slice(raw.indexOf('[') >= 0 ? raw.indexOf('[') : 0));
+        const p = (list || []).find(x => x && x.name === name);
+        if (!p || !p.pm2_env) return resolve(null);
+        resolve({ status: p.pm2_env.status, rss: Math.round((p.monit && p.monit.memory || 0) / 1048576) });
+      } catch (_) { resolve(null); }
     });
   });
 }
@@ -134,6 +162,7 @@ function rotateLogs() {
 (async () => {
   log('看门狗启动：' + INTERVAL_MS / 1000 + 's/检，' + FAIL_THRESHOLD + ' 连败介入，冷却 ' + RESTART_COOLDOWN_MS / 60000 + 'min');
   let fails = 0, lastSrvRestart = 0, lastWrkRestart = 0, stuckCnt = 0, lastStuckFix = 0;
+  let memCnt = 0, lastMemFix = 0;   /* #790 内存护栏 */
   setInterval(async () => {
     /* --- #780 日志体量兜底轮转（先做，避免日志膨胀本身成为故障源） --- */
     try { rotateLogs(); } catch (e) {}
@@ -190,6 +219,35 @@ function rotateLogs() {
         stuckCnt = 0;
       }
     } catch (e) { /* PM2 不可达时交给 pg-keepalive */ }
+
+    /* --- #790 内存膨胀护栏（2026-09-14 事故）---
+     * orps-server rss 涨到 4784MB → 系统仅剩 530MB → DB 连接全超时 + 事件循环 4s，
+     * 进程被压入 waiting-restart 死循环；期间 health=200（孤儿应答），既有三道防线全哑。
+     * 补位：rss 持续超 3000MB（5 检×30s=2.5min）→ pm2-safe 安全重启（唯一安全入口）。 */
+    try {
+      const m = await pm2Monit('orps-server');
+      if (m && m.rss > MEM_THRESHOLD_MB) {
+        /* #792 硬顶熔断：冷启动缓存风暴实测 0→3.83GB 只需 3min（2026-09-14 11:30 实锤），
+         * PM2 max_memory_restart=3500M 的 Windows restart 必留孤儿 → EADDRINUSE 死循环。
+         * rss 破 3200MB 立即 pm2-safe 重启，抢在 PM2 杀手前面从源头消灭孤儿循环。 */
+        if (m.rss > MEM_HARD_MB && Date.now() - lastMemFix > MEM_COOLDOWN_MS) {
+          lastMemFix = Date.now(); memCnt = 0;
+          log('★ 硬顶熔断：rss ' + m.rss + 'MB > ' + MEM_HARD_MB + 'MB（PM2 上限 3500M）→ 立即 pm2-safe 安全重启');
+          try { const r = await safeRestart('orps-server'); log('硬顶熔断 pm2-safe 完成 ok=' + r.ok + ' status=' + r.status + ' pid=' + r.pid); }
+          catch (e) { log('硬顶熔断 pm2-safe 失败: ' + e.message); }
+        } else {
+          memCnt++;
+          log('内存膨胀 ' + m.rss + 'MB > ' + MEM_THRESHOLD_MB + 'MB（' + memCnt + '/' + MEM_CHECKS + '）');
+          if (memCnt >= MEM_CHECKS && Date.now() - lastMemFix > MEM_COOLDOWN_MS) {
+            lastMemFix = Date.now();
+            log('★ 介入：orps-server 内存超阈值持续 ' + MEM_CHECKS + ' 检 → pm2-safe 安全重启');
+            try { const r = await safeRestart('orps-server'); log('内存护栏 pm2-safe 完成 ok=' + r.ok + ' status=' + r.status + ' pid=' + r.pid); }
+            catch (e) { log('内存护栏 pm2-safe 失败: ' + e.message); }
+            memCnt = 0;
+          }
+        }
+      } else if (m) { memCnt = 0; }
+    } catch (e) { /* monit 不可达忽略 */ }
 
     /* --- worker 心跳 --- */
     try {
