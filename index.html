@@ -126,17 +126,18 @@ function fetchJsonFromSources(idx){
  * 会把用户直接甩到一个空白/报错页 —— 表现就是"引导页打不开"。故先探 /api/health，
  * 通过才自动进入；不通过则停在引导页并给出明确提示与重试入口。 */
 function healthOK(u){
-  return fetch(u + '/api/health', {cache:'no-store', signal: AbortSignal.timeout(7000)})
+  return fetch(u + '/api/health', {cache:'no-store', signal: AbortSignal.timeout(10000)})
     .then(function(r){ if(!r.ok) throw 0; return r.json(); })
     .then(function(d){ return !!(d && (d.status === 'ok' || d.database === 'connected')); })
     .catch(function(){ return false; });
 }
-function waitHealthy(u, tries, gap){
+function waitHealthy(u, tries, gap, onRetry){
   return healthOK(u).then(function(ok){
     if(ok) return true;
     if(tries <= 1) return false;
+    if(onRetry) onRetry(tries - 1);
     return new Promise(function(res){ setTimeout(res, gap); })
-      .then(function(){ return waitHealthy(u, tries - 1, gap); });
+      .then(function(){ return waitHealthy(u, tries - 1, gap, onRetry); });
   });
 }
 
@@ -151,22 +152,19 @@ function startAutoEnter(){
   }, 1000);
 }
 
-/* 2026-09-15 #801 超龄检测修复。
- * 旧式 new Date(String(updated).replace(' ','T') + '+08:00') 对已含时区的
- * "2026-09-14 23:47:27+08:00" 会拼成 "…T23:47:27+08:00+08:00" → Invalid Date
- * → getTime()=NaN → 永远不告警。改为直接解析（缺失时区时按 UTC 兜底）。 */
-function staleTxt(updated){
+/* 2026-09-15 #801：地址"龄"只作中性信息，不再当告警。
+ * 起因：keeper 仅在隧道换域名时才写 orps-server.json，隧道稳定 → 时间戳自然变旧（并非故障），
+ * 旧逻辑会误报"已 N 小时未刷新"。真正的可用性现由 waitHealthy() 探活判定。
+ * 另修：旧式 new Date(s.replace(' ','T') + '+08:00') 对已含时区的串会拼成双时区 → Invalid Date。 */
+function ageNote(updated){
   try{
     var s = String(updated || '').trim().replace(' ', 'T');
-    var tms = Date.parse(s);
-    if(isNaN(tms)) tms = Date.parse(s.slice(0,19) + 'Z');
-    if(isNaN(tms)) return '';
-    var ageMs = Date.now() - tms;
-    if(ageMs > 3 * 3600 * 1000){
-      return '（地址已 ' + Math.round(ageMs / 3600000) + ' 小时未刷新，如无法进入请稍后点「重新检测」）';
-    }
-  }catch(e){}
-  return '';
+    var t = Date.parse(s);
+    if(isNaN(t)) t = Date.parse(s.slice(0,19) + 'Z');
+    if(isNaN(t)) return '';
+    var h = Math.round((Date.now() - t) / 3600000);
+    return h >= 3 ? '（该地址已 ' + h + ' 小时未变更）' : '';
+  }catch(e){ return ''; }
 }
 
 function boot(){
@@ -185,18 +183,21 @@ function boot(){
     .then(function(j){
       if(!j || !j.url) throw 0;
       liveUrl = j.url.replace(/\/+$/, '');
-      var warn = staleTxt(j.updated);
+      var note = ageNote(j.updated);
       $('urlBox').textContent = liveUrl;
       makeQr($('qrWeb'), liveUrl);
       $('statusText').textContent = '正在验证服务器连通性…';
 
-      return waitHealthy(liveUrl, 3, 4000).then(function(ok){
+      return waitHealthy(liveUrl, 3, 2500, function(left){
+        $('statusText').style.color = '#e6a23c';
+        $('statusText').textContent = '服务器响应较慢，正在重试（还剩 ' + left + ' 次）…';
+      }).then(function(ok){
         var b = $('enterBtn');
         b.href = liveUrl; b.style.opacity = 1; b.style.pointerEvents = 'auto'; // 无论如何都允许手动进入
         if(ok){
           setDot('on');
-          $('statusText').style.color = warn ? '#e6a23c' : '';
-          $('statusText').textContent = '服务器在线 · 地址更新于 ' + (j.updated || '未知时间') + warn;
+          $('statusText').style.color = '';
+          $('statusText').textContent = '服务器在线 · 连接正常 · 地址更新于 ' + (j.updated || '未知时间') + note;
           startAutoEnter();
         }else{
           setDot('off');
