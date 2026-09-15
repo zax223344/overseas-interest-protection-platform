@@ -18,12 +18,14 @@ h1{font-size:24px;font-weight:700;color:#eef3fc;letter-spacing:2px}
 .dot{width:9px;height:9px;border-radius:50%;background:#ffd60a;flex:none}
 .dot.on{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.6)}
 .dot.off{background:#ff4d5e}
+.dot.wait{background:#ffd60a}
 .url-box{font-family:Consolas,monospace;font-size:12px;color:#5b9bff;background:#0a101d;border:1px solid #16223c;border-radius:6px;padding:8px 12px;word-break:break-all;margin:6px 0}
 .btn{display:block;width:100%;text-align:center;background:linear-gradient(135deg,#2f6bff,#1d4fd8);color:#fff;font-size:16px;font-weight:700;letter-spacing:4px;padding:15px 0;border-radius:8px;text-decoration:none;margin-top:12px;transition:filter .15s}
 .btn:hover{filter:brightness(1.15)}
 .btn.apk{background:linear-gradient(135deg,#0f9d6c,#0b7a54)}
 .btn.ghost{background:transparent;border:1px solid #2a3a5f;color:#9fb4d8;font-size:13px;letter-spacing:2px;padding:11px 0}
 .note{font-size:11px;color:#5d6f8f;line-height:1.8;margin-top:10px}
+.note.warn{color:#e6a23c}
 .cols{display:flex;gap:16px;flex-wrap:wrap}
 .col{flex:1;min-width:220px;text-align:center}
 .qr-host{background:#fff;border-radius:8px;padding:10px;display:inline-block;margin:8px 0}
@@ -42,10 +44,12 @@ h1{font-size:24px;font-weight:700;color:#eef3fc;letter-spacing:2px}
 
 <div class="card">
   <div class="card-tt">📡 服务器接入状态</div>
-  <div class="status-row"><span class="dot" id="dot"></span><span id="statusText">正在检测服务器接入地址…</span></div>
+  <div class="status-row"><span class="dot wait" id="dot"></span><span id="statusText">正在检测服务器接入地址…</span></div>
   <div class="url-box" id="urlBox">—</div>
   <a class="btn" id="enterBtn" href="javascript:void(0)" style="opacity:.45;pointer-events:none">进 入 系 统</a>
+  <a class="btn ghost" id="retryBtn" href="javascript:void(0)" onclick="boot()" style="display:none">重 新 检 测</a>
   <div class="note" id="cdNote" style="display:none">将在 <span id="cd">3</span> 秒后自动进入系统 …</div>
+  <div class="note warn" id="hintNote" style="display:none"></div>
 </div>
 
 <div class="card">
@@ -78,6 +82,10 @@ h1{font-size:24px;font-weight:700;color:#eef3fc;letter-spacing:2px}
 var PAGE_BASE = location.href.replace(/[^\/]*$/, '');
 var APK_URL = PAGE_BASE + '%E6%B5%B7%E5%AE%89%E9%A2%84%E8%AD%A6.apk';
 var liveUrl = '';
+var enterTimer = null;
+
+function $(id){ return document.getElementById(id); }
+function setDot(cls){ $('dot').className = 'dot' + (cls ? (' ' + cls) : ''); }
 
 function makeQr(el, text){
   try{ new QRCode(el, {text:text, width:150, height:150, correctLevel:QRCode.CorrectLevel.M}); }
@@ -95,7 +103,6 @@ function copyUrl(){
 }
 
 // 多源容灾：github.io 主源 → jsDelivr CDN（主）→ fastly（purge 立刷）→ gcore 镜像 → raw 直连兜底
-// 2026-09-08 #711 加固：fastly 为强刷验证源（purge 后立即更新）；raw 为最终兜底（无 CDN 缓存，永远最新）
 var TS = Date.now();
 var JSON_SOURCES = [
   'orps-server.json?t=' + TS,
@@ -114,41 +121,105 @@ function fetchJsonFromSources(idx){
     .catch(function(){ return fetchJsonFromSources(idx+1); });
 }
 
-fetchJsonFromSources(0)
-  .then(function(j){
-    if(!j || !j.url) throw 0;
-    liveUrl = j.url.replace(/\/+$/,'');
-    document.getElementById('dot').className = 'dot on';
-    document.getElementById('statusText').textContent = '服务器在线 · 地址更新于 ' + (j.updated || '未知时间');
-    // 2026-09-08 #711 超龄检测：地址 >3h 未刷新（keeper 推送链可能断了），仍可进入但明示
-    try{
-      var ageMs = Date.now() - (new Date(String(j.updated||'').replace(' ','T')+'+08:00')).getTime();
-      if(ageMs > 3*3600*1000){
-        var st = document.getElementById('statusText');
-        st.textContent = '服务器在线（注意：地址已 ' + Math.round(ageMs/3600000) + ' 小时未刷新，如无法进入请稍后再试）';
-        st.style.color = '#e6a23c';
-      }
-    }catch(e){}
-    document.getElementById('urlBox').textContent = liveUrl;
-    var btn = document.getElementById('enterBtn');
-    btn.href = liveUrl;
-    btn.style.opacity = 1; btn.style.pointerEvents = 'auto';
-    makeQr(document.getElementById('qrWeb'), liveUrl);
-    // 倒计时自动进入（3 秒，提速）
-    document.getElementById('cdNote').style.display = 'block';
-    document.getElementById('cd').textContent = '3';
-    var n = 3, el = document.getElementById('cd');
-    var timer = setInterval(function(){
-      n--; el.textContent = n;
-      if(n <= 0){ clearInterval(timer); location.href = liveUrl; }
-    }, 1000);
-  })
-  .catch(function(){
-    document.getElementById('dot').className = 'dot off';
-    document.getElementById('statusText').textContent = '暂时无法获取服务器地址（服务器可能在维护），请稍后再试';
-    document.getElementById('urlBox').textContent = '—';
-    makeQr(document.getElementById('qrWeb'), location.href);
+/* 2026-09-15 #801 跳转前连通性预检。
+ * 起因：隧道断线时 trycloudflare 会返回 Cloudflare 530/1033 错误页；旧版无条件 3 秒后跳转，
+ * 会把用户直接甩到一个空白/报错页 —— 表现就是"引导页打不开"。故先探 /api/health，
+ * 通过才自动进入；不通过则停在引导页并给出明确提示与重试入口。 */
+function healthOK(u){
+  return fetch(u + '/api/health', {cache:'no-store', signal: AbortSignal.timeout(7000)})
+    .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+    .then(function(d){ return !!(d && (d.status === 'ok' || d.database === 'connected')); })
+    .catch(function(){ return false; });
+}
+function waitHealthy(u, tries, gap){
+  return healthOK(u).then(function(ok){
+    if(ok) return true;
+    if(tries <= 1) return false;
+    return new Promise(function(res){ setTimeout(res, gap); })
+      .then(function(){ return waitHealthy(u, tries - 1, gap); });
   });
+}
+
+function startAutoEnter(){
+  if(enterTimer) clearInterval(enterTimer);
+  var n = 3, el = $('cd');
+  $('cdNote').style.display = 'block';
+  el.textContent = n;
+  enterTimer = setInterval(function(){
+    n--; el.textContent = n;
+    if(n <= 0){ clearInterval(enterTimer); enterTimer = null; location.href = liveUrl; }
+  }, 1000);
+}
+
+/* 2026-09-15 #801 超龄检测修复。
+ * 旧式 new Date(String(updated).replace(' ','T') + '+08:00') 对已含时区的
+ * "2026-09-14 23:47:27+08:00" 会拼成 "…T23:47:27+08:00+08:00" → Invalid Date
+ * → getTime()=NaN → 永远不告警。改为直接解析（缺失时区时按 UTC 兜底）。 */
+function staleTxt(updated){
+  try{
+    var s = String(updated || '').trim().replace(' ', 'T');
+    var tms = Date.parse(s);
+    if(isNaN(tms)) tms = Date.parse(s.slice(0,19) + 'Z');
+    if(isNaN(tms)) return '';
+    var ageMs = Date.now() - tms;
+    if(ageMs > 3 * 3600 * 1000){
+      return '（地址已 ' + Math.round(ageMs / 3600000) + ' 小时未刷新，如无法进入请稍后点「重新检测」）';
+    }
+  }catch(e){}
+  return '';
+}
+
+function boot(){
+  if(enterTimer){ clearInterval(enterTimer); enterTimer = null; }
+  $('cdNote').style.display = 'none';
+  $('hintNote').style.display = 'none';
+  $('retryBtn').style.display = 'none';
+  $('statusText').style.color = '';
+  $('urlBox').textContent = '—';
+  setDot('wait');
+  $('statusText').textContent = '正在检测服务器接入地址…';
+  var eb = $('enterBtn');
+  eb.href = 'javascript:void(0)'; eb.style.opacity = .45; eb.style.pointerEvents = 'none';
+
+  fetchJsonFromSources(0)
+    .then(function(j){
+      if(!j || !j.url) throw 0;
+      liveUrl = j.url.replace(/\/+$/, '');
+      var warn = staleTxt(j.updated);
+      $('urlBox').textContent = liveUrl;
+      makeQr($('qrWeb'), liveUrl);
+      $('statusText').textContent = '正在验证服务器连通性…';
+
+      return waitHealthy(liveUrl, 3, 4000).then(function(ok){
+        var b = $('enterBtn');
+        b.href = liveUrl; b.style.opacity = 1; b.style.pointerEvents = 'auto'; // 无论如何都允许手动进入
+        if(ok){
+          setDot('on');
+          $('statusText').style.color = warn ? '#e6a23c' : '';
+          $('statusText').textContent = '服务器在线 · 地址更新于 ' + (j.updated || '未知时间') + warn;
+          startAutoEnter();
+        }else{
+          setDot('off');
+          $('statusText').style.color = '#e6a23c';
+          $('statusText').textContent = '服务器暂时不可达（正在重连），已暂停自动跳转';
+          var hn = $('hintNote');
+          hn.style.display = 'block';
+          hn.innerHTML = '检测到服务器当前不可达，为避免跳转到空白页，已暂停自动进入。<br>请稍后点「重新检测」；或点「进入系统」手动尝试。';
+          $('retryBtn').style.display = 'block';
+        }
+      });
+    })
+    .catch(function(){
+      setDot('off');
+      $('statusText').style.color = '';
+      $('statusText').textContent = '暂时无法获取服务器地址（服务器可能在维护）';
+      $('urlBox').textContent = '—';
+      makeQr($('qrWeb'), location.href);
+      $('retryBtn').style.display = 'block';
+    });
+}
+
+boot();
 </script>
 </body>
 </html>
